@@ -803,7 +803,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.model.pipeline_dtype is None
         assert cfg.model.virtual_pipeline_model_parallel_size is None
         assert cfg.model.context_parallel_size == 8
-        assert cfg.model.expert_model_parallel_size == 16
+        assert cfg.model.expert_model_parallel_size == 8
         assert cfg.model.expert_tensor_parallel_size == 1
         assert cfg.model.sequence_parallel is False
         assert cfg.model.moe_token_dispatcher_type == "flex"
@@ -831,9 +831,9 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert isinstance(cfg.dataset, EnergonDatasetConfig)
         assert cfg.dataset.path is None  # Caller supplies prepared CLEVR2 shards.
         assert cfg.dataset.micro_batch_size == 1
-        assert cfg.dataset.num_workers == 1
-        assert cfg.dataset.shuffle_buffer_size == 2
-        assert cfg.dataset.packing_buffer_size == 8
+        assert cfg.dataset.num_workers == 2
+        assert cfg.dataset.shuffle_buffer_size == 16
+        assert cfg.dataset.packing_buffer_size == 16
         assert cfg.dataset.dataset_kwargs == {"image_decode_spec": "pilrgb"}
         encoder = cfg.dataset.task_encoder
         assert isinstance(encoder, QwenVLEnergonTaskEncoderConfig)
@@ -852,7 +852,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.comm_overlap.overlap_param_gather is True
         assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
         assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
-        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
+        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
 
     assert bf16_cfg.mixed_precision.fp8 is None
     assert bf16_cfg.mixed_precision.fp8_param_gather is False

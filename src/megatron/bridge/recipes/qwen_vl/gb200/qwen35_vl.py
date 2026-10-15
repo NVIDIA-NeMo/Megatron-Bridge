@@ -237,7 +237,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.model.seq_length = 131072
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.context_parallel_size = 8
-    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -258,9 +258,9 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.dataset = EnergonDatasetConfig(
         seq_length=cfg.model.seq_length,
         micro_batch_size=cfg.train.micro_batch_size,
-        num_workers=1,
-        shuffle_buffer_size=2,
-        packing_buffer_size=8,
+        num_workers=2,
+        shuffle_buffer_size=16,
+        packing_buffer_size=16,
         dataset_kwargs={"image_decode_spec": "pilrgb"},
         task_encoder=QwenVLEnergonTaskEncoderConfig(
             hf_processor_path=hf_path,
@@ -298,7 +298,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
         "NVTE_UNFUSED_ATTN": 1,
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
@@ -308,7 +308,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContainer:
-    """Return 128K BF16 Qwen3.5-VL SFT with TP1/CP8/EP16 on 32 GB200 GPUs.
+    """Return 128K BF16 Qwen3.5-VL SFT with TP1/CP8/EP8 on 32 GB200 GPUs.
 
     Override with ``"dataset.path=$CLEVR2_ENERGON"`` to select the prepared
     Nemotron Image Training v3 ``clevr_2`` Energon shards, and supply a
