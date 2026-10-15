@@ -359,7 +359,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     cfg.model.moe_use_grouped_tensor = True
 
     cfg.train.micro_batch_size = 1
-    cfg.train.global_batch_size = 128
+    cfg.train.global_batch_size = 64
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
