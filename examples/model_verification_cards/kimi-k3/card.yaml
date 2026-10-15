@@ -3,20 +3,23 @@
 
 title: kimi_k3
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. This card covers the Kimi K3 language backbone in the published
+  Performance disclaimer: this card does not record a canonical pretrain
+  performance result; reported timing and throughput metrics are functional
+  verification observations, not standalone optimized performance results.
+  This card covers the Kimi K3 language backbone in the published
   multimodal checkpoint. It does not claim support for the vision tower or
-  multimodal inputs. Full-checkpoint GPU import and deterministic Megatron
-  greedy text generation are verified. CPU conversion, GPU export,
+  multimodal inputs. Full-checkpoint GPU import is verified. The historical
+  deterministic
+  Megatron generation result is preserved below, but the portable inference
+  launcher still requires verification. CPU conversion, GPU export,
   full-model Hugging Face/Megatron forward correlation, and every training
   workflow remain unverified.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
-      - inference
     unverified:
+      - inference
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
@@ -31,7 +34,7 @@ model:
   min_transformers_version: "4.56.2"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: ae77a6703c61669f15936a12ddf542c2cf5cbc3b  # pragma: allowlist secret
+  bridge_commit: 13beeed42020d09d8591718d7d5fd62b0f9aa68b  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -115,20 +118,28 @@ items:
       reported maximum and mean absolute logit differences.
 
   inference:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: eb91f8be86e5f88771bfa020b33cd74dd3de80ad  # pragma: allowlist secret
     command: >
-      uv run python examples/conversion/hf_to_megatron_generate_text.py
+      ./scripts/inference/infer.sh --nodes 8 --gpus-per-node 3
+      --task legacy-full-prefix-generation --legacy-full-prefix
       --hf_model_path moonshotai/Kimi-K3 --trust-remote-code
+      --hf-revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
       --apply-chat-template --thinking-mode disabled
       --prompt "What is 15% of 240? Answer in one short sentence."
       --max_new_tokens 32 --tp 1 --pp 3 --ep 8 --etp 1
-    last_verified: 2026-07-27
+    last_verified: null
     expected_result: >-
-      On 24x GB300, the pinned complete language backbone imports directly into
-      Megatron at TP1/PP3/EP8/ETP1. The command exits successfully in 22:59
-      after exactly 32 new greedy tokens and prints this completion,
+      The command is a pending 8-node, 3-GPU-per-node verification candidate
+      using the card's default Bridge revision. It explicitly selects
+      slow full-prefix decoding; the historical run used a static inference
+      context. Validate the complete pinned language backbone and deterministic
+      completion before recording a new verification commit and date.
+      Historical evidence from 2026-07-27 at Bridge
+      eb91f8be86e5f88771bfa020b33cd74dd3de80ad used 24 GB300 GPUs across
+      eight nodes at TP1/PP3/EP8/ETP1, completed in 22:59, and generated
+      exactly 32 new greedy tokens. Its worker command omitted the launcher,
+      so that result does not verify the candidate above. Historical completion,
       represented with JSON Unicode escapes for the model control-token
       brackets:
       "15% of 240 = 0.15 × 240 = 36.\u003c|close|\u003ethink\u003c|sep|\u003e\u003c|open|\u003eresponse\u003c|sep|\u003e15% of 240 is 36.".

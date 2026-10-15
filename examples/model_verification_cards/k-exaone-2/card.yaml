@@ -3,9 +3,10 @@
 
 title: k_exaone_2_750b_a37b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining,
+  Performance disclaimer: this card does not record a canonical pretrain
+  performance result; reported timing and throughput metrics are functional
+  verification observations, not standalone optimized performance results.
+  K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining,
   full SFT, and PEFT in this Bridge revision. CPU conversion, GPU export,
   training, export-after-SFT, long-context SFT, and checkpoint resume remain
   unverified. A complete 750B GPU import from a clean commit persisted and
@@ -14,8 +15,10 @@ summary: >
   finite optimizer steps and saved checkpoints, but does not substitute for a
   full-model training item. A memory-bounded reference forward processed all
   78 Hugging Face decoder layers for a Korean prompt; Megatron matched its
-  next token with 0.999993 cosine similarity. Complete-model deterministic
-  inference generated and independently confirmed exactly 16 new tokens. The
+  next token with 0.999993 cosine similarity. Historical complete-model
+  deterministic
+  inference generated and independently confirmed exactly 16 new tokens, but
+  the portable inference launcher still requires verification. The
   implementation fixes are committed; GPU export remains unverified pending
   its own clean-commit rerun and exact audit.
 verification_index:
@@ -23,8 +26,8 @@ verification_index:
     verified:
       - hf_to_megatron_gpu
       - manual_forward_pass
-      - inference
     unverified:
+      - inference
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
@@ -127,11 +130,11 @@ items:
       differences are 7.500000 and 1.621717.
 
   inference:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: bd56432512613a88ceae9ecb05654b63955f6dcb  # pragma: allowlist secret
     command: >
-      uv run python scripts/inference/text_generation.py
+      ./scripts/inference/infer.sh --nodes 6 --gpus-per-node 8
+      --task text-generation
       --hf-model-path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
       --megatron-model-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000
       --prompt "대한민국의 수도는" --max_new_tokens 16 --temperature 0
@@ -139,9 +142,20 @@ items:
       --dtype bf16 --max_seq_length 128 --max_batch_size 1
       --use-coordinator --inference-moe-token-dispatcher-type nccl
       --distributed-timeout-minutes 180
-    last_verified: 2026-07-31
+    last_verified: null
     expected_result: |-
-      Generates an exact 16-token result. Literal completion: '?
+      The command is a pending 6-node, 8-GPU-per-node verification candidate
+      using the card's default Bridge revision and the imported checkpoint.
+      This layout matches the documented 48-H100 import allocation; it does
+      not claim to recover the historical inference launcher. Validate the
+      complete model, deterministic completion, and reachable source provenance
+      before recording a new verification commit and date.
+      Historical evidence from 2026-07-31 at Bridge
+      bd56432512613a88ceae9ecb05654b63955f6dcb reported exactly 16 new tokens.
+      That revision could not be retrieved from the public upstream repository,
+      and the recorded worker command omitted its launcher, so the old result
+      does not verify the candidate.
+      Historical result: generates an exact 16-token result. Literal completion: '?
 
       Answer: Seoul
 
