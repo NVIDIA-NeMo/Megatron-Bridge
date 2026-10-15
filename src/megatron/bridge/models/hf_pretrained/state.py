@@ -14,8 +14,8 @@
 
 import fnmatch
 import json
-import os
 import logging
+import os
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Mapping
