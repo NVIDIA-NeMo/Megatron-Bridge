@@ -25,6 +25,7 @@ import threading
 from abc import ABC
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from enum import Enum, auto
 from functools import partial
 from logging import getLogger
@@ -44,9 +45,13 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelSaveStrategyWrapper,
 )
 from megatron.core.dist_checkpointing.strategies.torch import (
+    MCoreSavePlanner,
     TorchDistLoadShardedStrategy,
     TorchDistSaveShardedStrategy,
     _get_filesystem_reader,
+    _get_filesystem_writer,
+    _replace_state_dict_keys_with_sharded_keys,
+    mcore_to_pyt_state_dict,
 )
 from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -238,6 +243,82 @@ class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
             finalize_fns=[partial(self._run_finalize, finalize_fn) for finalize_fn in async_request.finalize_fns],
         )
         async_request.execute_sync()
+
+
+# Default process group and the gloo group created from it for torch DCP save coordination.
+_DCP_SAVE_COORDINATION_GROUP: tuple[torch.distributed.ProcessGroup, torch.distributed.ProcessGroup] | None = None
+
+
+def _dcp_save_coordination_group(cfg: ConfigContainer) -> torch.distributed.ProcessGroup | None:
+    """Return the gloo group that synchronous torch_dist saves coordinate on.
+
+    torch DCP exchanges save plans and write results with ``gather_object`` and
+    ``scatter_object_list``. On the default NCCL group these run as point-to-point
+    transfers, so after the first save the coordinator rank keeps NCCL buffers for a
+    connection to every other rank (2.6 GiB on rank 0 of an 8-GPU H100 node). A gloo
+    group keeps this metadata exchange on the CPU.
+
+    The group spans all ranks, is created collectively on the first save, and is
+    recreated if the default process group changes. It uses the timeout that the
+    default group has after the first training iteration. Runs without gloo process
+    groups, with a single rank, or whose default group is already gloo keep the
+    default group.
+
+    Args:
+        cfg: Training configuration.
+
+    Returns:
+        The gloo group, or None to let torch DCP use the default process group.
+    """
+    global _DCP_SAVE_COORDINATION_GROUP
+    if (
+        cfg.dist is None
+        or not cfg.dist.use_gloo_process_groups
+        or not torch.distributed.is_initialized()
+        or torch.distributed.get_world_size() == 1
+        or torch.distributed.get_backend() == "gloo"
+    ):
+        return None
+    default_group = torch.distributed.group.WORLD
+    if _DCP_SAVE_COORDINATION_GROUP is None or _DCP_SAVE_COORDINATION_GROUP[0] is not default_group:
+        if cfg.dist.distributed_timeout_seconds_after_init is not None:
+            timeout = timedelta(seconds=cfg.dist.distributed_timeout_seconds_after_init)
+        else:
+            timeout = timedelta(minutes=cfg.dist.distributed_timeout_minutes)
+        gloo_group = torch.distributed.new_group(backend="gloo", timeout=timeout, group_desc="dcp_save_coordination")
+        _DCP_SAVE_COORDINATION_GROUP = (default_group, gloo_group)
+        print_rank_0("Coordinating synchronous torch_dist checkpoint saves on a gloo process group.")
+    return _DCP_SAVE_COORDINATION_GROUP[1]
+
+
+class _GlooCoordinatedTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
+    """Run MCore's synchronous torch-dist save with torch DCP coordinating on a given process group."""
+
+    def __init__(self, *args: Any, process_group: torch.distributed.ProcessGroup, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.process_group = process_group
+
+    def save(self, sharded_state_dict: ShardedStateDict, checkpoint_dir: Path) -> None:
+        """Save as ``TorchDistSaveShardedStrategy.save`` does, passing ``process_group`` to torch DCP."""
+        if self.separation_hint is not None:
+            raise NotImplementedError(
+                "separation_hint is only supported by async_save (requires "
+                "nvidia-resiliency-ext); it is not supported for sync save."
+            )
+
+        sharded_state_dict, _, _ = _replace_state_dict_keys_with_sharded_keys(
+            sharded_state_dict, self.keep_only_main_replica
+        )
+        torch.distributed.checkpoint.save(
+            mcore_to_pyt_state_dict(sharded_state_dict, False),
+            storage_writer=_get_filesystem_writer(checkpoint_dir, thread_count=self.thread_count),
+            planner=MCoreSavePlanner(
+                dedup_replicated_tensors=not self.keep_only_main_replica,
+                flatten_state_dict=False,
+                flatten_sharded_tensors=False,
+            ),
+            process_group=self.process_group,
+        )
 
 
 # ============================================================================
@@ -1512,13 +1593,17 @@ def save_checkpoint(
             else:
                 validate_sharding_integrity = True
                 if ckpt_cfg.ckpt_format == "torch_dist":
-                    save_strategy = TorchDistSaveShardedStrategy(
-                        "torch_dist",
-                        1,
-                        thread_count=ckpt_cfg.storage_writers_per_rank,
-                    )
+                    strategy_args = ("torch_dist", 1)
+                    strategy_kwargs = {"thread_count": ckpt_cfg.storage_writers_per_rank}
                 else:
-                    save_strategy = TorchDistSaveShardedStrategy()
+                    strategy_args, strategy_kwargs = (), {}
+                coordination_group = None if ckpt_cfg.async_save else _dcp_save_coordination_group(cfg)
+                if coordination_group is None:
+                    save_strategy = TorchDistSaveShardedStrategy(*strategy_args, **strategy_kwargs)
+                else:
+                    save_strategy = _GlooCoordinatedTorchDistSaveShardedStrategy(
+                        *strategy_args, process_group=coordination_group, **strategy_kwargs
+                    )
                 if ckpt_cfg.ckpt_assume_constant_structure and ckpt_cfg.ckpt_format == "torch_dist":
                     save_strategy.use_cached_ckpt_structure = ckpt_cfg.ckpt_assume_constant_structure
                     if checkpointing_context is not None and "load_strategy" in checkpointing_context:
