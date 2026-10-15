@@ -157,6 +157,48 @@ def _project_multimodal_embeddings(
     return projected.reshape(*input_shape, projected.shape[-1])
 
 
+def _project_multimodal_embeddings_by_media(
+    projection: torch.nn.Module,
+    embedding_chunks: list[torch.Tensor],
+    media_chunk_counts: Optional[torch.Tensor | list[int]],
+) -> torch.Tensor:
+    """Project each scheduler media item with its original token-row batch size.
+
+    Dynamic RADIO returns one shuffled feature chunk per image or temporal
+    tubelet. ``media_chunk_counts`` contains the number of those chunks that
+    belong to each original media item (one for a still image, one or more for a
+    video). Keeping a video's tubelets together matches rollout preprocessing
+    while avoiding a single GEMM whose row count changes with the number of
+    independent images packed by the learner.
+    """
+
+    if not embedding_chunks:
+        raise ValueError("Cannot project an empty list of multimodal embedding chunks")
+
+    if media_chunk_counts is None:
+        chunk_counts = [1] * len(embedding_chunks)
+    elif torch.is_tensor(media_chunk_counts):
+        chunk_counts = [int(value) for value in media_chunk_counts.reshape(-1).tolist()]
+    else:
+        chunk_counts = [int(value) for value in media_chunk_counts]
+
+    if any(count <= 0 for count in chunk_counts) or sum(chunk_counts) != len(embedding_chunks):
+        raise ValueError(
+            "Projected-media chunk counts must be positive and cover every RADIO chunk: "
+            f"counts={chunk_counts}, chunks={len(embedding_chunks)}."
+        )
+
+    projected_media = []
+    chunk_start = 0
+    for chunk_count in chunk_counts:
+        media_embeddings = torch.cat(
+            embedding_chunks[chunk_start : chunk_start + chunk_count], dim=0
+        )
+        projected_media.append(_project_multimodal_embeddings(projection, media_embeddings))
+        chunk_start += chunk_count
+    return torch.cat(projected_media, dim=0)
+
+
 class NemotronOmniModel(MegatronModule):
     """Nemotron Omni model whose input sequence is already media-expanded.
 
@@ -501,7 +543,7 @@ class NemotronOmniModel(MegatronModule):
                 num_frames=num_frames,
             )
             if use_temporal:
-                encoded, imgs_sizes, _ = vision_output
+                encoded, imgs_sizes, num_frames = vision_output
             else:
                 encoded = vision_output
             sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
@@ -527,14 +569,19 @@ class NemotronOmniModel(MegatronModule):
                 shuffled.append(
                     _pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0)
                 )
-            encoded = torch.cat(shuffled, dim=0)
+
+            projected = _project_multimodal_embeddings_by_media(
+                self.vision_projection,
+                shuffled,
+                num_frames,
+            )
 
             if shard_vision:
                 # Project before the gather so the projector stays sharded, then
                 # restore the global feature set every CP rank's media merge needs.
-                projected = _project_multimodal_embeddings(self.vision_projection, encoded)
                 gathered = gather_from_context_parallel_ranks_dynamic_res(projected, num_padded_ranks)
                 return gathered.contiguous()
+            return projected.contiguous()
         else:
             encoded = self.vision_model(images)
             class_tokens = self.vision_model.class_token_len

@@ -729,6 +729,71 @@ class _FakeDynamicVisionModel(nn.Module):
         return torch.arange(patches * self.hidden_size, dtype=torch.float32).reshape(1, patches, self.hidden_size)
 
 
+class _FakeTemporalDynamicVisionModel(_FakeDynamicVisionModel):
+    """Returns one still chunk and two tubelets for a three-frame video."""
+
+    temporal_patch_dim = 2
+
+    def forward(self, images, *, imgs_sizes, packed_seq_params, num_frames):
+        del packed_seq_params
+        self.seen = {"images": images, "imgs_sizes": imgs_sizes, "num_frames": num_frames}
+        grouped_sizes = torch.stack((imgs_sizes[0], imgs_sizes[1], imgs_sizes[1]))
+        self.returned_num_frames = torch.tensor([1, 2], dtype=num_frames.dtype, device=num_frames.device)
+        patches = sum(
+            (int(height) // self.patch_dim) * (int(width) // self.patch_dim)
+            for height, width in grouped_sizes.tolist()
+        )
+        encoded = torch.arange(patches * self.hidden_size, dtype=torch.float32).reshape(
+            1, patches, self.hidden_size
+        )
+        return encoded + self.scale, grouped_sizes, self.returned_num_frames
+
+
+class _RecordingLinearProjection(nn.Module):
+    def __init__(self, input_size: int, output_size: int):
+        super().__init__()
+        self.config = SimpleNamespace(fp8=None)
+        self.linear = nn.Linear(input_size, output_size, bias=False)
+        self.row_counts = []
+
+    def forward(self, hidden_states):
+        self.row_counts.append(hidden_states.shape[0])
+        return self.linear(hidden_states)
+
+
+def test_dynamic_encode_projects_once_per_media_and_keeps_video_tubelets_together():
+    hidden_size = 2
+    patch_dim = 16
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.patch_dim = patch_dim
+    model.vision_dp_over_cp = False
+    model.vision_model = _FakeTemporalDynamicVisionModel(hidden_size, patch_dim)
+    model.vision_projection = _RecordingLinearProjection(hidden_size * 4, 3)
+
+    # One 32x32 still followed by a three-frame 32x64 video. RADIO temporally
+    # groups the video into two tubelets, but both tubelet chunks belong to the
+    # same scheduler media item and must share one projector call.
+    sizes = torch.tensor([[32, 32], [32, 64], [32, 64], [32, 64]], dtype=torch.int32)
+    patch_count = sum((int(height) // patch_dim) * (int(width) // patch_dim) for height, width in sizes)
+    images = torch.randn(1, patch_count, 3 * patch_dim**2)
+
+    projected = model._encode_images(
+        images,
+        sizes,
+        vision_packed_seq_params=None,
+        num_frames=torch.tensor([1, 3], dtype=torch.int32),
+    )
+    projected.sum().backward()
+
+    assert model.vision_model.returned_num_frames.tolist() == [1, 2]
+    assert model.vision_projection.row_counts == [1, 4]
+    assert projected.shape == (5, 3)
+    assert model.vision_model.scale.grad is not None
+    assert torch.count_nonzero(model.vision_model.scale.grad) > 0
+    assert torch.count_nonzero(model.vision_projection.linear.weight.grad) > 0
+
+
 def test_sharded_encode_projects_locally_then_gathers_the_global_features():
     # The distributed equivalence test covers the numerics, but it runs in a
     # torchrun subprocess. This exercises the same Bridge-side wiring in-process:
