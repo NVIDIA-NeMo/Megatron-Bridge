@@ -14,7 +14,7 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import numpy as np
 import pytest
@@ -23,7 +23,7 @@ import transformers
 from packaging.version import Version
 from PIL import Image
 
-from megatron.bridge.models.conversion.auto_bridge import _resolve_pretrained_wrapper_cls
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge, _resolve_pretrained_wrapper_cls
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni.hf_pretrained import Nemotron35VLPretrained
 
@@ -205,3 +205,49 @@ def test_native_processor_load_save_reload(processor_source, tmp_path, trust_rem
     assert (processor_source / "preprocessor_config.json").read_bytes() == before
     with pytest.raises(ValueError, match="no audio encoder"):
         processor(text="<so_embedding>", audio=np.zeros(1600))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("artifact_source", ["hf_model_id", "source_path"])
+def test_super_vl_config_only_export_preserves_native_processor(processor_source, tmp_path, artifact_source):
+    config = transformers.AutoConfig.for_model(
+        "nemotron_h_omni", architectures=["NemotronH_Omni_Reasoning_V3"], audio_config=None
+    )
+    config.save_pretrained(processor_source)
+    original = Nemotron35VLPretrained(processor_source, trust_remote_code=False).processor
+    bridge = AutoBridge(config)
+    assert bridge.trust_remote_code is False
+    save_kwargs = {}
+    if artifact_source == "hf_model_id":
+        bridge.hf_model_id = str(processor_source)
+    else:
+        save_kwargs["source_path"] = processor_source
+    output = tmp_path / "config-only-export"
+    # Exercise real artifact serialization while isolating distributed weight I/O.
+    model_bridge = Mock(SUPPORTS_HF_PRETRAINED_EXPORT=True, ADDITIONAL_FILE_PATTERNS=[])
+    model_bridge.get_hf_tokenizer_kwargs.return_value = {}
+    with (
+        patch.object(AutoBridge, "_model_bridge", PropertyMock(return_value=model_bridge)),
+        patch.object(AutoBridge, "save_hf_weights") as save_weights,
+        patch.object(torch.distributed, "is_initialized", return_value=False),
+        patch.object(transformers.AutoModelForCausalLM, "from_pretrained") as causal_load,
+        patch.object(transformers.AutoModelForImageTextToText, "from_pretrained") as vl_load,
+    ):
+        bridge.save_hf_pretrained([Mock()], output, **save_kwargs)
+    save_weights.assert_called_once()
+    causal_load.assert_not_called()
+    vl_load.assert_not_called()
+    saved = json.loads((output / "processor_config.json").read_text())
+    assert saved["video_temporal_patch_dim"] == 2
+    reloaded = Nemotron35VLPretrained(output, trust_remote_code=False).processor
+    image = Image.fromarray(np.zeros((48, 80, 3), dtype=np.uint8))
+    video = np.zeros((2, 48, 80, 3), dtype=np.uint8)
+    for kwargs in (
+        {"text": "<image>", "images": [image]},
+        {"text": "<video>", "videos": [video], "do_sample_frames": False},
+    ):
+        expected = original(**kwargs, return_tensors="pt")
+        actual = reloaded(**kwargs, return_tensors="pt")
+        assert actual.keys() == expected.keys()
+        for key in expected:
+            torch.testing.assert_close(actual[key], expected[key], rtol=0, atol=0)

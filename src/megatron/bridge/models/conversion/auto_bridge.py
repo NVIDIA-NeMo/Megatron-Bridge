@@ -1263,7 +1263,12 @@ class AutoBridge(Generic[MegatronModelT]):
                             .hf_pretrained
                         )
                     else:
-                        artifact_source = PreTrainedCausalLM.from_pretrained(artifact_source_path, **artifact_kwargs)
+                        artifact_cls = _resolve_pretrained_wrapper_cls(self.hf_pretrained)
+                        # Preserve specialized causal-family processor loaders without
+                        # changing the artifact contract for non-causal model heads.
+                        if not issubclass(artifact_cls, PreTrainedCausalLM):
+                            artifact_cls = PreTrainedCausalLM
+                        artifact_source = artifact_cls.from_pretrained(artifact_source_path, **artifact_kwargs)
                     artifact_source.config = self.hf_pretrained
                     additional_files = getattr(model_bridge_instance, "ADDITIONAL_FILE_PATTERNS", None) or None
                     artifact_source.save_artifacts(
