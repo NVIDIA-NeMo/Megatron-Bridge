@@ -357,6 +357,10 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 128
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -397,8 +401,6 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdp2_config() -> ConfigContainer:
     # cfg.model.recompute_modules = []
     # cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
 
-    cfg.train.micro_batch_size = 2
-    cfg.train.global_batch_size = 128
     return cfg
 
 
