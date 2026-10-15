@@ -21,6 +21,12 @@ from transformers import AutoModelForImageTextToText, AutoProcessor, ProcessorMi
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
+# Bound the processor workaround to the releases whose loading behavior we tested.
+# Future releases use their own loader and surface errors rather than silently
+# dropping a required VLM artifact during conversion/export.
+_PROCESSOR_ADAPTER_RELEASES = ("5.19.0", "5.20.0")
+
+
 class Nemotron35VLPretrained(PreTrainedCausalLM):
     """Keep native processor compatibility separate from legacy remote-code loading."""
 
@@ -51,10 +57,7 @@ class Nemotron35VLPretrained(PreTrainedCausalLM):
             raise ValueError("Native Super-VL requires Transformers >=5.19.0; use trust_remote_code=True otherwise.")
 
         processor_cls = AutoProcessor
-        # Bound the workaround to the release whose loading behavior we tested.
-        # Future releases use their own loader and surface errors rather than
-        # silently dropping a required VLM artifact during conversion/export.
-        if version.base_version == "5.19.0" and getattr(self.config, "audio_config", None) is None:
+        if version.base_version in _PROCESSOR_ADAPTER_RELEASES and getattr(self.config, "audio_config", None) is None:
             from megatron.bridge.models.nemotron_omni.processing_super_vl import Nemotron35VLProcessor
 
             processor_cls = Nemotron35VLProcessor

@@ -9,7 +9,7 @@ Bridge applies its full partial-3D vision RoPE correction only on Transformers
 [HF PR #49164](https://github.com/huggingface/transformers/pull/49164), so Bridge
 leaves those versions unpatched.
 
-The native 5.18/5.19 implementation stores inverse frequencies in buffers.
+The native 5.18-5.20 implementation stores inverse frequencies in buffers.
 Explicit `.half()` or `.bfloat16()` casts can round these buffers, producing
 different results from the earlier FP32-per-forward calculation. Bridge accepts
 this precision difference and does not promise bitwise equality across these

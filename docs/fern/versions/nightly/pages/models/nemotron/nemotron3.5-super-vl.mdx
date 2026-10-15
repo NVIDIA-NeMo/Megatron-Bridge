@@ -14,16 +14,16 @@ For language-only conversion and training without media components, see [the tex
 
 ## Native Hugging Face processor compatibility
 
-With Transformers 5.19.0, `AutoBridge.from_hf_pretrained(..., trust_remote_code=False)`
+With Transformers 5.19.0 or 5.20.0, `AutoBridge.from_hf_pretrained(..., trust_remote_code=False)`
 uses a Bridge-local processor loading adapter for Super VL. It removes a legacy
 read-only video configuration field in memory and does not require an audio feature
 extractor for this audio-free model. The source checkpoint and installed Transformers
 code are not modified; image/video processing and token expansion use the native HF
 implementation. Remote-code loading remains available on older supported HF versions.
 
-The adapter is version-guarded to Transformers 5.19.0. Processor artifacts can be saved
+The adapter is version-guarded to Transformers 5.19.0 and 5.20.0. Processor artifacts can be saved
 and reloaded through Bridge, but ordinary `AutoProcessor.from_pretrained` outside
-Bridge still encounters the native 5.19.0 audio-component requirement. This workaround
+Bridge still encounters the native 5.19.0/5.20.0 audio-component requirement. This workaround
 does not imply standalone HF processor compatibility or full model forward parity.
 The wrapper's `hf_pretrained.model` accessor selects `AutoModelForImageTextToText`
 for native Super VL and retains `AutoModelForCausalLM` for legacy remote-code

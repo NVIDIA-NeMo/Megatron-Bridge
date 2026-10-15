@@ -25,7 +25,7 @@ from PIL import Image
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge, _resolve_pretrained_wrapper_cls
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.nemotron_omni.hf_pretrained import Nemotron35VLPretrained
+from megatron.bridge.models.nemotron_omni.hf_pretrained import _PROCESSOR_ADAPTER_RELEASES, Nemotron35VLPretrained
 
 
 @pytest.mark.unit
@@ -116,7 +116,7 @@ def test_native_processor_version_bounds():
     ):
         wrapper.processor
     with (
-        patch.object(transformers, "__version__", "5.20.0"),
+        patch.object(transformers, "__version__", "5.21.0"),
         patch.object(transformers.AutoProcessor, "from_pretrained") as load,
     ):
         assert wrapper.processor is load.return_value
@@ -124,11 +124,12 @@ def test_native_processor_version_bounds():
 
 
 @pytest.mark.unit
-def test_native_audio_config_is_not_discarded():
+@pytest.mark.parametrize("version", _PROCESSOR_ADAPTER_RELEASES)
+def test_native_audio_config_is_not_discarded(version):
     wrapper = Nemotron35VLPretrained("unused", trust_remote_code=False, revision="pinned-revision")
     wrapper.config = SimpleNamespace(audio_config={"model_type": "parakeet"})
     with (
-        patch.object(transformers, "__version__", "5.19.0"),
+        patch.object(transformers, "__version__", version),
         patch.object(
             transformers.AutoProcessor, "from_pretrained", side_effect=ValueError("invalid processor")
         ) as load,
@@ -140,8 +141,8 @@ def test_native_audio_config_is_not_discarded():
 
 @pytest.fixture
 def processor_source(tmp_path):
-    if Version(transformers.__version__).base_version != "5.19.0":
-        pytest.skip("Compatibility adapter specifically targets Transformers 5.19.0")
+    if Version(transformers.__version__).base_version not in _PROCESSOR_ADAPTER_RELEASES:
+        pytest.skip(f"Compatibility adapter specifically targets Transformers {_PROCESSOR_ADAPTER_RELEASES}")
     from tokenizers import Tokenizer
     from tokenizers.models import WordLevel
     from transformers import PreTrainedTokenizerFast
