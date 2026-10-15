@@ -145,10 +145,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="nvfp4" data-hardware="GB300" data-status="verified" data-entry="nemotron-3-super-120b-a12b-pretrain-performance-gb300" aria-controls="nemotron-3-super-120b-a12b-pretrain-performance-gb300" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="nvfp4" data-hardware="GB300" data-status="unverified" data-entry="nemotron-3-super-120b-a12b-pretrain-performance-gb300" aria-controls="nemotron-3-super-120b-a12b-pretrain-performance-gb300" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Benchmark · GB300</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">NVFP4</span>
     </button>
@@ -757,35 +757,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-super-120b-a12b-pretrain-performance-gb300" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-pretrain-performance-gb300" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Benchmark · GB300</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB300</dd></div>
         <div><dt>Precision</dt><dd>NVFP4</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-18</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.17656</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.01398012</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>6,357.940 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>873.330 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>10,307.741 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -801,7 +801,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 GB300s, the canonical NVFP4 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.17656 to 0.01398012; the final ten steps average 6357.940 ms, 873.330 TFLOP/s/GPU, and 10307.741 tokens/s/GPU. The resolved configuration persists. Mock data and forced routing make the loss a finiteness check rather than convergence evidence.</p>
+        <p>Historical evidence from 2026-08-18 at Bridge 0480586879: on exactly 64 GB300s, the then-canonical NVFP4 mock-data recipe completed exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192, with finite loss and zero skipped or NaN iterations; loss moved from 12.17656 to 0.01398012 and the final ten steps averaged 6357.940 ms, 873.330 TFLOP/s/GPU, and 10307.741 tokens/s/GPU. The recipe has since moved to the NCCL EP dispatcher and full-iteration CUDA graphs, and the published command no longer completes: it trains three steps and then fails at CUDA graph capture in the Megatron Core MoE router aux-loss scaling. Promote only after the published command completes 50 steps at a public Bridge commit that includes the Megatron Core fix.</p>
       </section>
     </article>
   </div>
