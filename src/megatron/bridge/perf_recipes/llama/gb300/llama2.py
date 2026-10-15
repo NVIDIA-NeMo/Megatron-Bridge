@@ -16,8 +16,8 @@
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
-    _llama2_benchmark_common,
     _llama2_70b_precision_config,
+    _llama2_benchmark_common,
     llama2_70b_peft_config,
 )
 
