@@ -1668,11 +1668,14 @@ class TestAutoBridge:
         mock_load_weights.assert_not_called()
         mock_save_hf_weights.assert_called_once()
 
+    @pytest.mark.parametrize("architecture", ["LlamaForCausalLM", "BertForMaskedLM", "BertForTokenClassification"])
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
-    def test_save_hf_pretrained_config_only_uses_reference_artifact_saver(self, _mock_dist_avail, _mock_dist_init):
+    def test_save_hf_pretrained_config_only_uses_reference_artifact_saver(
+        self, _mock_dist_avail, _mock_dist_init, architecture
+    ):
         """Config-only save delegates all artifacts and model-specific options to the lazy HF wrapper."""
-        config = LlamaConfig(architectures=["LlamaForCausalLM"])
+        config = LlamaConfig(architectures=[architecture])
         bridge = AutoBridge(config)
         bridge.hf_model_id = "some-org/some-model"
 
