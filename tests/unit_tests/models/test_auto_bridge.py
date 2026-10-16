@@ -826,6 +826,35 @@ class TestAutoBridge:
         assert model_config.transformer.perform_initialization is True
         assert model_config.pre_wrap_hooks == [original_hook]
 
+    def test_get_model_projects_explicit_text_only_source(self):
+        """Builder-backed text conversion uses the same source projection as providers."""
+        bridge = AutoBridge.from_hf_config(_make_tiny_llama_config())
+        bridge.text_only = True
+        config = bridge.get_model_config()
+        projected = create_mock_pretrained_causal_lm()
+        model = Mock()
+        model_bridge = Mock()
+        model_bridge.load_weights_hf_to_megatron.side_effect = lambda source, models: models
+
+        class RecordingBuilder:
+            def __init__(self, config):
+                self.config = config
+
+            def build_distributed_models(self, **kwargs):
+                models = [model]
+                for hook in self.config.pre_wrap_hooks:
+                    models = hook(models)
+                return models
+
+        with (
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock, return_value=model_bridge),
+            patch.object(BridgeGPTModelConfig, "get_builder_cls", return_value=RecordingBuilder),
+            patch.object(bridge, "_text_only_pretrained_from_path", return_value=projected) as select,
+        ):
+            bridge.get_model(config, hf_path="replacement/vl", pg_collection=Mock())
+        select.assert_called_once_with("replacement/vl")
+        model_bridge.load_weights_hf_to_megatron.assert_called_once_with(projected, [model])
+
     def test_get_model_restores_source_metadata_after_build_failure(self):
         """A failed explicit-path build must not leave partial source metadata."""
         config = _make_tiny_llama_config()
@@ -1639,11 +1668,14 @@ class TestAutoBridge:
         mock_load_weights.assert_not_called()
         mock_save_hf_weights.assert_called_once()
 
+    @pytest.mark.parametrize("architecture", ["LlamaForCausalLM", "BertForMaskedLM", "BertForTokenClassification"])
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
-    def test_save_hf_pretrained_config_only_uses_reference_artifact_saver(self, _mock_dist_avail, _mock_dist_init):
+    def test_save_hf_pretrained_config_only_uses_reference_artifact_saver(
+        self, _mock_dist_avail, _mock_dist_init, architecture
+    ):
         """Config-only save delegates all artifacts and model-specific options to the lazy HF wrapper."""
-        config = LlamaConfig(architectures=["LlamaForCausalLM"])
+        config = LlamaConfig(architectures=[architecture])
         bridge = AutoBridge(config)
         bridge.hf_model_id = "some-org/some-model"
 

@@ -98,8 +98,11 @@ class _FakeBridge:
     def __init__(self):
         pass
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GLM-4.5 recipes must use get_model_config(), not the legacy provider API")
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
@@ -112,7 +115,7 @@ class _RealDepthFakeBridge(_FakeBridge):
     def __init__(self, num_layers: int):
         self.num_layers = num_layers
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         model = _FakeModelCfg()
         model.num_layers = self.num_layers
         return model
@@ -546,3 +549,66 @@ def test_glm45_recompute_configuration(monkeypatch: pytest.MonkeyPatch):
     assert hasattr(cfg.model, "recompute_granularity")
     assert hasattr(cfg.model, "recompute_method")
     assert hasattr(cfg.model, "recompute_num_layers")
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig at the recipe's GLM-4.5 depth while rejecting the provider API."""
+
+    def __init__(self, num_layers: int):
+        self.num_layers = num_layers
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge(46 if hf_path.endswith("Air") else 92)
+
+    def get_model_config(self):
+        from transformers import Glm4MoeConfig
+
+        from megatron.bridge import AutoBridge
+
+        config = Glm4MoeConfig(
+            hidden_size=64,
+            intermediate_size=128,
+            moe_intermediate_size=32,
+            num_hidden_layers=self.num_layers,
+            num_attention_heads=8,
+            num_key_value_heads=4,
+            n_routed_experts=16,
+            n_shared_experts=1,
+            num_experts_per_tok=2,
+            first_k_dense_replace=1,
+            max_position_embeddings=131072,
+            vocab_size=151552,
+        )
+        config.architectures = ["Glm4MoeForCausalLM"]
+        config.num_nextn_predict_layers = 1
+        return AutoBridge.from_hf_config(config).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GLM-4.5 recipes must not call the legacy provider API")
+
+
+@pytest.mark.parametrize("recipe_func", _GLM45_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_each_glm45_recipe_uses_strict_builder_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Every GLM-4.5 recipe should configure a ModelConfig without provider fallback."""
+    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _BuilderOnlyBridge)
+    # Avoid HF I/O for SFT/PEFT tokenizers.
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
+
+    if "peft" in recipe_func.__name__:
+        cfg = recipe_func(peft_scheme="lora")
+    else:
+        cfg = recipe_func()
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.normalization == "RMSNorm"
+    assert cfg.model.moe_router_score_function == "sigmoid"
+    assert cfg.model.mtp_num_layers == 1
