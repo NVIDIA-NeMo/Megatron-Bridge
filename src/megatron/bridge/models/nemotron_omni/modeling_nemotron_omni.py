@@ -519,12 +519,17 @@ class NemotronOmniModel(MegatronModule):
         """
 
         vision_packed_seq_params = _build_vision_packed_seq_params(imgs_sizes, self.patch_dim)
-        vision_output = self.vision_model(
-            images,
-            imgs_sizes=imgs_sizes,
-            packed_seq_params=vision_packed_seq_params,
-            num_frames=num_frames,
-        )
+        from nemo_rl.models.vision_parity_dump import vision_parity_layer_hooks
+
+        with vision_parity_layer_hooks(
+            self.vision_model, "policy", images, imgs_sizes
+        ):
+            vision_output = self.vision_model(
+                images,
+                imgs_sizes=imgs_sizes,
+                packed_seq_params=vision_packed_seq_params,
+                num_frames=num_frames,
+            )
         use_temporal = getattr(self.vision_model, "temporal_patch_dim", 1) > 1
         if use_temporal:
             encoded, encoded_sizes, media_tubelet_counts = vision_output
@@ -560,23 +565,41 @@ class NemotronOmniModel(MegatronModule):
             dim=0,
         )
 
+        radio_features = []
         shuffled = []
         for chunk, (height, width) in zip(chunks, sizes, strict=True):
             grid_height = height // self.patch_dim
             grid_width = width // self.patch_dim
             features = chunk[class_tokens:].unsqueeze(0)
+            radio_features.append(features)
             if shard_vision:
                 features, grid_height, grid_width = _pad_patch_grid_to_even(
                     features, height=grid_height, width=grid_width
                 )
             shuffled.append(
-                _pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0)
+                _pixel_shuffle_dynamic_resolution(
+                    features, height=grid_height, width=grid_width
+                ).squeeze(0)
             )
 
-        return _project_multimodal_embeddings(
-            self.vision_projection,
-            torch.cat(shuffled, dim=0),
+        from nemo_rl.models.vision_parity_dump import dump_vision_features
+
+        radio_output = torch.cat(radio_features, dim=1)
+        dump_vision_features(
+            "policy", images, radio_output, imgs_sizes, stage="radio"
         )
+        shuffled_output = torch.cat(shuffled, dim=0)
+        dump_vision_features(
+            "policy", images, shuffled_output, imgs_sizes, stage="shuffle"
+        )
+        projected = _project_multimodal_embeddings(
+            self.vision_projection,
+            shuffled_output,
+        )
+        dump_vision_features(
+            "policy", images, projected, imgs_sizes, stage="projected"
+        )
+        return projected
 
     def _encode_images(
         self,

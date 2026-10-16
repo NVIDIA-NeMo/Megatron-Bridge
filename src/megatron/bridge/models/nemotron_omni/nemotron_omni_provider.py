@@ -16,15 +16,19 @@ import copy
 import warnings
 from abc import ABC
 from dataclasses import dataclass
+from types import MethodType
 from types import SimpleNamespace
 from typing import Callable, Literal, Optional
 
+import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from megatron.core import parallel_state
-from megatron.core.activations import fast_gelu, squared_relu
+from megatron.core.activations import squared_relu
 from megatron.core.models.gpt.gpt_layer_specs import get_mlp_module_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.tensor_parallel.mappings import reduce_from_tensor_model_parallel_region
 from megatron.core.transformer.spec_utils import get_submodules
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
@@ -35,6 +39,80 @@ from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import Ne
 
 NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT = "expanded_sequence_v1"
 NEMOTRON_OMNI_LLAVA_CONTRACT = "llava_collapse_expand_v1"
+
+
+def _torch_layernorm_linear_forward(module, hidden_states, *args, **kwargs):
+    """Run a TE LayerNormLinear's BF16 math through PyTorch for parity testing."""
+    normalized = F.layer_norm(
+        hidden_states,
+        (hidden_states.shape[-1],),
+        module.layer_norm_weight,
+        getattr(module, "layer_norm_bias", None),
+        module.config.layernorm_epsilon,
+    )
+    output = F.linear(
+        normalized,
+        module.weight,
+        getattr(module, "bias", None),
+    )
+    return output, None
+
+
+def _torch_sdpa_attention_forward(
+    module,
+    query,
+    key,
+    value,
+    attention_mask,
+    attn_mask_type=None,
+    attention_bias=None,
+    packed_seq_params=None,
+):
+    """Run RADIO attention through the same PyTorch SDPA API used by vLLM."""
+    if attention_mask is not None:
+        raise ValueError("RADIO torch SDPA parity mode requires attention_mask=None.")
+    if attention_bias is not None:
+        raise ValueError("RADIO torch SDPA parity mode does not support attention bias.")
+    if packed_seq_params is not None:
+        raise ValueError("RADIO torch SDPA parity mode does not support packed sequences.")
+
+    # Megatron: [sequence, batch, heads, head_dim].
+    # vLLM's TORCH_SDPA vision backend calls the same API with
+    # [batch, heads, sequence, head_dim].
+    query = query.permute(1, 2, 0, 3)
+    key = key.permute(1, 2, 0, 3)
+    value = value.permute(1, 2, 0, 3)
+    # vLLM disables cuDNN SDPA in its CUDA platform initialization.  PyTorch
+    # otherwise selects cuDNN here on Blackwell, which produces a different
+    # BF16 result from vLLM even when Q/K/V are bitwise identical.  Keep the
+    # backend selection local to RADIO instead of changing global SDPA state.
+    with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+        context = F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            dropout_p=0.0,
+            # RADIO has no query-key layer scaling.  Derive the same explicit
+            # head-dimension scale that vLLM passes to TORCH_SDPA instead of
+            # relying on a Transformer Engine private attribute.
+            scale=module.config.kv_channels**-0.5,
+        )
+    context = context.permute(2, 0, 1, 3).contiguous()
+    return context.view(context.shape[0], context.shape[1], -1)
+
+
+def _torch_row_parallel_linear_forward(module, hidden_states, *args, **kwargs):
+    """Run RADIO's sharded attention output projection with PyTorch GEMM."""
+    # ``linear_proj`` owns the input-dimension shard for this TP rank.  Match
+    # RowParallelLinear semantics: form the local partial output, sum it over
+    # TP, and return the replicated bias separately for the caller's fused
+    # bias/dropout/add path.
+    output_parallel = F.linear(hidden_states, module.weight, None)
+    output = reduce_from_tensor_model_parallel_region(
+        output_parallel,
+        group=module._tp_group,
+    )
+    return output, getattr(module, "bias", None)
 
 
 def _get_transformer_engine_projection_submodules():
@@ -95,6 +173,9 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
     radio_interpolate_only_cpe: bool = True
     radio_cpe_aspect_ratio_select: bool = False
     radio_disable_cpe: bool = False
+    vision_qkv_impl: Literal["transformer_engine", "torch"] = "transformer_engine"
+    vision_attention_impl: Literal["transformer_engine", "torch_sdpa"] = "transformer_engine"
+    vision_mlp_impl: Literal["transformer_engine", "torch"] = "transformer_engine"
     recompute_vision: bool = False
     vision_recompute_granularity: Literal["full", "selective"] | None = None
     vision_recompute_modules: list[str] | None = None
@@ -127,12 +208,20 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
         vision_cfg.hidden_size = 1280
         vision_cfg.ffn_hidden_size = 5120
         vision_cfg.gated_linear_unit = False
-        vision_cfg.activation_func = fast_gelu
+        # vLLM's RADIO config names this activation ``gelu``, which resolves
+        # to the exact erf implementation rather than the ``fast_gelu`` tanh
+        # approximation.
+        vision_cfg.activation_func = F.gelu
         vision_cfg.kv_channels = 80
         vision_cfg.num_query_groups = 16
         vision_cfg.layernorm_zero_centered_gamma = False
         vision_cfg.apply_query_key_layer_scaling = False
         vision_cfg.attention_softmax_in_fp32 = True
+        # Keep RADIO's bias and residual additions as distinct BF16
+        # operations, matching the vLLM vision tower.  Inheriting the language
+        # model's fused BDA setting changes rounding at every residual update
+        # even though RADIO dropout is zero.
+        vision_cfg.bias_dropout_fusion = False
         vision_cfg.normalization = "LayerNorm"
         vision_cfg.qk_layernorm = False
         vision_cfg.layernorm_epsilon = 1e-6
@@ -206,6 +295,56 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
         vision_proj_cfg.ffn_hidden_size = self.vision_proj_ffn_hidden_size
         vision_proj_cfg.bias_activation_fusion = False
         return vision_proj_cfg
+
+    def _configure_vision_qkv_impl(self, model) -> None:
+        """Optionally use unfused PyTorch norm/QKV math in RADIO only."""
+        if self.vision_qkv_impl == "transformer_engine":
+            return
+        if self.vision_qkv_impl != "torch":
+            raise ValueError(
+                "vision_qkv_impl must be 'transformer_engine' or 'torch', "
+                f"got {self.vision_qkv_impl!r}."
+            )
+        if model.vision_model is None:
+            return
+        for layer in model.vision_model.decoder.layers:
+            qkv = layer.self_attention.linear_qkv
+            qkv.forward = MethodType(_torch_layernorm_linear_forward, qkv)
+
+    def _configure_vision_attention_impl(self, model) -> None:
+        """Optionally match vLLM's TORCH_SDPA vision-attention execution path."""
+        if self.vision_attention_impl == "transformer_engine":
+            return
+        if self.vision_attention_impl != "torch_sdpa":
+            raise ValueError(
+                "vision_attention_impl must be 'transformer_engine' or 'torch_sdpa', "
+                f"got {self.vision_attention_impl!r}."
+            )
+        if model.vision_model is None:
+            return
+        for layer in model.vision_model.decoder.layers:
+            self_attention = layer.self_attention
+            attention = self_attention.core_attention
+            attention.forward = MethodType(_torch_sdpa_attention_forward, attention)
+            projection = self_attention.linear_proj
+            projection.forward = MethodType(_torch_row_parallel_linear_forward, projection)
+
+    def _configure_vision_mlp_impl(self, model) -> None:
+        """Optionally match vLLM's unfused PyTorch RADIO MLP path."""
+        if self.vision_mlp_impl == "transformer_engine":
+            return
+        if self.vision_mlp_impl != "torch":
+            raise ValueError(
+                "vision_mlp_impl must be 'transformer_engine' or 'torch', "
+                f"got {self.vision_mlp_impl!r}."
+            )
+        if model.vision_model is None:
+            return
+        for layer in model.vision_model.decoder.layers:
+            fc1 = layer.mlp.linear_fc1
+            fc1.forward = MethodType(_torch_layernorm_linear_forward, fc1)
+            fc2 = layer.mlp.linear_fc2
+            fc2.forward = MethodType(_torch_row_parallel_linear_forward, fc2)
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None):
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
@@ -459,6 +598,9 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             separate_video_embedder=self.separate_video_embedder,
             temporal_ckpt_compat=self.temporal_ckpt_compat,
         )
+        self._configure_vision_qkv_impl(llava_model)
+        self._configure_vision_attention_impl(llava_model)
+        self._configure_vision_mlp_impl(llava_model)
 
         self._configure_llava_preprocess_contract(llava_model)
 
@@ -565,6 +707,9 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
             sound_token_index=self.sound_context_token_id,
             vp_stage=vp_stage,
         )
+        self._configure_vision_qkv_impl(model)
+        self._configure_vision_attention_impl(model)
+        self._configure_vision_mlp_impl(model)
 
         if any(
             (

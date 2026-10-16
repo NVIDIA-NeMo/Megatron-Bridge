@@ -43,6 +43,7 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_LLAVA_CONTRACT,
     NemotronOmniLlavaModelProvider,
     NemotronOmniModelProvider,
+    _torch_row_parallel_linear_forward,
 )
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 
@@ -361,6 +362,87 @@ def test_vision_projection_matches_hf_and_vllm_activation():
 
     assert vision_projection_config.activation_func is squared_relu
     assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
+
+
+def test_vision_backbone_matches_vllm_exact_gelu():
+    # Exercise the production builder.  _TinyOmniProvider intentionally
+    # replaces it with a reduced one-layer fixture for model smoke tests.
+    provider = NemotronOmniModelProvider()
+
+    vision_config = provider._build_vision_config(provider)
+
+    assert vision_config.activation_func is torch.nn.functional.gelu
+
+
+def test_vision_backbone_disables_language_residual_fusion():
+    provider = NemotronOmniModelProvider(bias_dropout_fusion=True)
+
+    vision_config = provider._build_vision_config(provider)
+
+    assert vision_config.bias_dropout_fusion is False
+    assert provider.bias_dropout_fusion is True
+
+
+def test_torch_row_parallel_projection_reduces_local_pytorch_gemm():
+    module = SimpleNamespace(
+        weight=torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+        bias=torch.tensor([0.5, -0.5]),
+        _tp_group=object(),
+    )
+    hidden_states = torch.tensor([[[2.0, 3.0]]])
+
+    with patch(
+        "megatron.bridge.models.nemotron_omni.nemotron_omni_provider.reduce_from_tensor_model_parallel_region",
+        side_effect=lambda value, *, group: value + 7.0,
+    ) as reduce_mock:
+        output, bias = _torch_row_parallel_linear_forward(module, hidden_states)
+
+    assert torch.equal(output, torch.tensor([[[15.0, 25.0]]]))
+    assert bias is module.bias
+    assert reduce_mock.call_args.kwargs["group"] is module._tp_group
+
+
+def test_torch_sdpa_mode_patches_radio_core_and_output_projection():
+    core_attention = SimpleNamespace(forward=Mock())
+    linear_proj = SimpleNamespace(forward=Mock())
+    layer = SimpleNamespace(
+        self_attention=SimpleNamespace(
+            core_attention=core_attention,
+            linear_proj=linear_proj,
+        )
+    )
+    model = SimpleNamespace(
+        vision_model=SimpleNamespace(
+            decoder=SimpleNamespace(layers=[layer]),
+        )
+    )
+    provider = NemotronOmniModelProvider(vision_attention_impl="torch_sdpa")
+
+    provider._configure_vision_attention_impl(model)
+
+    assert core_attention.forward.__self__ is core_attention
+    assert core_attention.forward.__func__.__name__ == "_torch_sdpa_attention_forward"
+    assert linear_proj.forward.__self__ is linear_proj
+    assert linear_proj.forward.__func__ is _torch_row_parallel_linear_forward
+
+
+def test_torch_mlp_mode_patches_radio_fc1_and_fc2():
+    linear_fc1 = SimpleNamespace(forward=Mock())
+    linear_fc2 = SimpleNamespace(forward=Mock())
+    layer = SimpleNamespace(
+        mlp=SimpleNamespace(linear_fc1=linear_fc1, linear_fc2=linear_fc2)
+    )
+    model = SimpleNamespace(
+        vision_model=SimpleNamespace(decoder=SimpleNamespace(layers=[layer]))
+    )
+    provider = NemotronOmniModelProvider(vision_mlp_impl="torch")
+
+    provider._configure_vision_mlp_impl(model)
+
+    assert linear_fc1.forward.__self__ is linear_fc1
+    assert linear_fc1.forward.__func__.__name__ == "_torch_layernorm_linear_forward"
+    assert linear_fc2.forward.__self__ is linear_fc2
+    assert linear_fc2.forward.__func__ is _torch_row_parallel_linear_forward
 
 
 def test_vision_backbone_fp8_policy_does_not_disable_language_or_projection_fp8():
