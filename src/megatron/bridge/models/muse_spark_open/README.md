@@ -38,9 +38,10 @@ embeddings for context parallelism. Callers must not pre-slice those inputs.
 
 ## Loading configuration
 
-Loading the checkpoint natively needs a Transformers build that includes
-Muse Spark Open. Bridge registers the checkpoint's older `muse_spark` config alias
-when such a build is installed; source files remain unchanged.
+Loading the checkpoint natively needs Transformers 5.20 or later, which provides
+`transformers.models.muse_spark`. Bridge registers the checkpoint's `muse_spark` config
+type when an installed Transformers build provides the module without registering it;
+source files remain unchanged.
 
 ```python
 from megatron.bridge import AutoBridge
@@ -84,13 +85,14 @@ perception weights, configs, and processors. Text-only native models reject
 perception tensors. Media token IDs remain in the vocabulary but no longer
 trigger media insertion or placeholder replacement.
 
-The Transformers text-only `MuseSparkForCausalLM` omits the VL output
-multiplier and tanh soft-cap. Export includes `muse_spark_open_transformers_patch.py`, which
-reuses the HF text model and applies those missing operations to its existing
-LM head. It preserves parameter names and values, including the untied head,
-and delegates HF backend capability detection to the original class. This patch
-is used only by exported HF checkpoints, never by the Megatron forward pass.
-Load the exported model with a Transformers build that includes Muse Spark Open and the exported local code:
+Transformers provides the Muse Spark Open language model (`MuseSparkTextModel`) but
+no text-only causal LM. Export includes `muse_spark_open_transformers_patch.py`,
+which defines `MuseSparkForCausalLM` on top of `MuseSparkTextModel` with the VL
+model's output head, including its output multiplier and tanh soft-cap. It
+preserves parameter names and values, including the untied head, and delegates HF
+experts-backend detection to the Transformers model. This file is used only by
+exported HF checkpoints, never by the Megatron forward pass. Load the exported
+model with Transformers 5.20 or later and the exported local code:
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -101,8 +103,8 @@ model = AutoModelForCausalLM.from_pretrained(
 tokenizer = AutoTokenizer.from_pretrained("/path/to/text-hf")
 ```
 
-This standalone HF model has no Bridge dependency. Loading the unwrapped Transformers
-text class directly bypasses the output operations and changes logits.
+This standalone HF model has no Bridge dependency. Loading the exported weights into
+`MuseSparkTextModel` alone gives hidden states, not logits.
 
 ## Current limits and validation
 
@@ -116,9 +118,12 @@ Native full-model outputs vary even on repeated identical inference. A controlle
 expert-accumulation-only FP64 swap restores exact repeats and exact VL/text-only
 wrapper agreement, isolating BF16 combination variation; production arithmetic
 remains unchanged.
-Available storage prevented writing an additional full native/HF checkpoint pair,
-so full-model standalone text HF loading remains untested. The model verification
-card, `examples/model_verification_cards/muse-spark-open-816b-a42b/card.yaml`,
+On the full checkpoint with Transformers 5.20, a text-only TP4/EP16 import and
+TP2/EP32 export reproduce all 1,119 language tensors, again except the final-norm
+rounding. The exported checkpoint loads standalone through `AutoModelForCausalLM`
+at TP16/EP16 and gives the same next token as the text-only Megatron model at
+TP4/EP16 (logit cosine 0.99955). The model verification card,
+`examples/model_verification_cards/muse-spark-open-816b-a42b/card.yaml`,
 records the native inference comparison.
 
 The checkpoint is downloaded. The initial 17 focused unit checks passed. A small instance

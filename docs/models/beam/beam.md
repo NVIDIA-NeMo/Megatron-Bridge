@@ -1,0 +1,419 @@
+# Beam
+
+[Beam](https://huggingface.co/reflection/Beam-1.0-501B-A23B) is a 52-layer sparse mixture-of-experts language model with about 501B parameters: three dense layers followed
+by 49 MoE layers with 256 routed experts (top-8, grouped sigmoid routing). Attention alternates five sliding-window
+RoPE layers with one full-attention NoPE layer. Megatron Bridge builds it as a native Megatron-Core `HybridModel`
+through the builder-backed `BeamModelConfig`.
+
+- Examples: [`examples/models/beam`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/beam)
+  (modeling notes, recipes, parallelism guidance)
+- Verification: [model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/beam/card.yaml)
+
+<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+
+## Verified configurations
+
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
+
+<a id="verified-beam"></a>
+### Run a configuration
+
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
+
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
+    </div>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H200">H200</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="beam-hf-to-megatron-cpu" aria-controls="beam-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="beam-hf-to-megatron-gpu" aria-controls="beam-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="beam-megatron-to-hf-cpu" aria-controls="beam-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="beam-megatron-to-hf-gpu" aria-controls="beam-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H200" data-status="verified" data-entry="beam-pretrain-h200" aria-controls="beam-pretrain-h200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · H200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H200" data-status="verified" data-entry="beam-sft-h200" aria-controls="beam-sft-h200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · H200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H200" data-status="verified" data-entry="beam-sft-long-context-h200" aria-controls="beam-sft-long-context-h200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · H200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H200" data-status="verified" data-entry="beam-peft-h200" aria-controls="beam-peft-h200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · H200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="beam-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="beam-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1 --hf-model reflection/Beam-1.0-501B-A23B --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/cpu-megatron --torch-dtype bfloat16</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The single-process CPU import materializes the full BF16 model on one B300 host with 3 TB of memory (the run requested 2000 GiB) and completes in 2607 s. It requests one runtime GPU because Beam&#x27;s attention layers are Transformer Engine modules and Transformer Engine refuses to construct them without CUDA; the GPU held only the CUDA context (at most 800 MiB) while every weight stayed on CPU, and a GPU-less run fails with &quot;TransformerEngine needs CUDA&quot;. The CPU export below reloads the resulting checkpoint and reproduces the pinned source exactly.
+</p>
+      </section>
+    </article>
+    <article id="beam-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="beam-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/imported-megatron --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --low-memory-save</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On 2 nodes x 8 H200 at TP1/PP1/EP16/ETP1 the import completes in 685 s and writes a complete 16-shard, 934 GiB iter_0000000 checkpoint (about 75 GiB per GPU during the import; EP8 on one node would leave too little headroom). The checkpoint reloads in the GPU export, whose output matches the pinned source exactly, and in the inference and forward-pass items.
+</p>
+      </section>
+    </article>
+    <article id="beam-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="beam-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 1 --hf-model reflection/Beam-1.0-501B-A23B --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/cpu-megatron/iter_0000000 --hf-path work/model-verification/beam/cpu-hf-export --torch-dtype bfloat16</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The single-process CPU export of the CPU-imported checkpoint completes in 2853 s on the same host, again with one runtime GPU that holds only the CUDA context while the weights stay on CPU. Reloading every exported safetensors shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes, shapes, and values for all 501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json differs only in transformers_version. The launcher&#x27;s distributed CPU export requests no GPU resources and therefore fails for Beam on GPU-less hosts with &quot;TransformerEngine needs CUDA&quot;.
+</p>
+      </section>
+    </article>
+    <article id="beam-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="beam-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/imported-megatron/iter_0000000 --hf-path work/model-verification/beam/hf-export-gpu --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The 2-node EP16 export completes in 1530 s. Reloading every exported safetensors shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes, shapes, and values for all 501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json differs only in transformers_version.
+</p>
+      </section>
+    </article>
+    <article id="beam-pretrain-h200" class="verification-model-detail" data-entry-detail="beam-pretrain-h200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · H200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>0.7239673</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.7262869</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>20,287.320 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>51.950 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>403.799 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_pretrain_128gpu_h200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_beam_text_document&quot;],null]&#x27; dataset.path_to_cache=work/model-verification/beam/cache/wikitext103 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 checkpoint.load=null --save_dir work/model-verification/beam/pretrain-reference/checkpoints --save_interval 50 logger.save_config_filepath=work/model-verification/beam/pretrain-reference/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On 128 H200 (16 nodes x 8), TP2/PP1/EP128/ETP1, DP64, SP on, full recompute, GBS/MBS 256/1 (4 micro-batches per step) at 4,096 tokens and natural routing (fixed expert bias, no auxiliary loss), with BF16 gradient reduction and a precision-aware distributed optimizer (FP32 master weights, BF16 Adam moments). The run warm starts from the imported checkpoint on Beam-tokenized wikitext-103 with LR 1e-4 cosine to 1e-5 after 40 warmup steps and weight decay 0.1. All 100 steps are finite with no skipped or NaN iterations. Single-step LM loss varies by batch between 0.63 and 0.78, so the first and last steps are close; the 10-step mean falls from 0.734 (steps 1-10) to 0.685 (steps 91-100) while the gradient norm settles from 0.72 to about 0.2. All five metrics are recorded and the post-setup configuration persists. The full-state checkpoints at steps 50 and 100 are complete (128 distcp shards, 5.01 TB and 45,711 entries each); step 50 feeds the resume item.
+</p>
+      </section>
+    </article>
+    <article id="beam-sft-h200" class="verification-model-detail" data-entry-detail="beam-sft-h200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · H200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.04323</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.7587349</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>2,330.710 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>28.300 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>219.676 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;3ea13c81833d9a523ed4bdc4152a33edd16bbd30&quot;&#x27; dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-8k-pad8 +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false --save_dir work/model-verification/beam/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120 logger.save_config_filepath=work/model-verification/beam/sft/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On 128 H200 (16 nodes x 8), TP8/PP2/EP64/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2 with FP32 gradient reduction, FP32 master weights and FP32 Adam moments. Pad-8 offline packing is 99.59% efficient; Tulu 3 train[:10000] packs into 503 8K packs, so the 100 steps sample 800 packs (501 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,952,199 supervised tokens after label masking. LM loss is finite from 1.04323 to 0.7587349 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 128-shard weights-only iter_0000100 checkpoint (1.0 TB, 26,131 entries, model state only) is the one the export item consumes. An earlier run of the same command on the same packed data started from the same loss, ended at 0.7583156 and matched these throughput figures within 0.2%. The 120-minute collective timeout covers rank 0&#x27;s offline packing while the other ranks wait.
+</p>
+      </section>
+    </article>
+    <article id="beam-sft-long-context-h200" class="verification-model-detail" data-entry-detail="beam-sft-long-context-h200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · H200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.659422</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.7725405</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>16,694.410 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>31.280 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>245.352 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 30 --seq_length 65536 model.transformer.context_parallel_size=8 model.transformer.tensor_model_parallel_size=1 model.transformer.sequence_parallel=false model.transformer.pipeline_model_parallel_size=2 model.transformer.expert_model_parallel_size=64 --lr 5e-6 --min_lr 0 --warmup_iters 3 &#x27;dataset.hf_dataset.split=&quot;train[:100000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;3ea13c81833d9a523ed4bdc4152a33edd16bbd30&quot;&#x27; dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-64k-pad16 +dataset.offline_packing_specs.pad_seq_to_mult=16 scheduler.lr_decay_iters=30 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120 logger.save_config_filepath=work/model-verification/beam/long-context/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On 128 H200 (16 nodes x 8), TP1/PP2/CP8/EP64/ETP1 with all-to-all context parallelism, DP8, SP off, full recompute, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), with the SFT recipe&#x27;s FP32 gradient reduction, FP32 master weights and FP32 Adam moments. This item is outside the 8K v2 cohort: 65,536-token packs need more data, so it reads Tulu 3 train[:100000]. Pad-16 offline packing (2 x CP) is 99.96% efficient and yields 580 packs; the 30 steps sample 240 distinct packs whose 15,728,640 token slots contain 2,701,436 supervised tokens after label masking. LM loss is finite from 1.659422 to 0.7725405 with no skipped or NaN iterations, all five metrics are recorded and the post-setup configuration persists; the run saves no checkpoint.
+</p>
+      </section>
+    </article>
+    <article id="beam-peft-h200" class="verification-model-detail" data-entry-detail="beam-peft-h200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · H200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.190599</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.8183495</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>3,474.810 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>150.020 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>1,178.769 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe beam_peft_16gpu_h200_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;3ea13c81833d9a523ed4bdc4152a33edd16bbd30&quot;&#x27; dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-8k-pad2 +dataset.offline_packing_specs.pad_seq_to_mult=2 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/beam/peft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/beam/peft/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On 16 H200 (2 nodes x 8), TP2/PP1/EP16/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2. Pad-2 offline packing is 99.65% efficient; Tulu 3 train[:10000] packs into 499 8K packs with Beam&#x27;s chat template, so the 100 steps sample 800 packs (497 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,992,654 supervised tokens after label masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_qkv (fused Q/K/V and attention output gate) and linear_proj is trainable. LM loss is finite from 1.190599 to 0.8183495 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 16-shard iter_0000100 adapter checkpoint holds all 208 expected adapter entries (52 attention layers x 2 projections x 2 LoRA matrices).
+</p>
+      </section>
+    </article>
+  </div>
+</div>
+
+<!-- END GENERATED VERIFIED CONFIGURATIONS -->

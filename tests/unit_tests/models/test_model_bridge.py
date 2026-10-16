@@ -38,6 +38,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import partial_rotary_factor_from_hf
 
 
 class DummyBridge(MegatronModelBridge):
@@ -1744,3 +1745,28 @@ def test_non_yarn_mapping_adds_no_yarn_defaults():
 
     assert "position_embedding_type" not in kwargs
     assert not any(key.startswith("yarn_") for key in kwargs)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        SimpleNamespace(partial_rotary_factor=0.25, rope_parameters={"rope_theta": 10000.0}),
+        SimpleNamespace(rope_parameters={"rope_theta": 10000.0, "partial_rotary_factor": 0.25}),
+    ],
+)
+def test_partial_rotary_factor_from_hf_reads_attribute_or_rope_parameters(config):
+    assert partial_rotary_factor_from_hf(config) == 0.25
+
+
+def test_partial_rotary_factor_from_hf_raises_when_absent():
+    with pytest.raises(ValueError, match="partial_rotary_factor not found"):
+        partial_rotary_factor_from_hf(SimpleNamespace(rope_parameters={"rope_theta": 10000.0}))
+
+
+def test_mapping_reads_partial_rotary_factor_from_hf_config():
+    """Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters, not as an attribute."""
+    config = Qwen2Config(hidden_size=64, num_attention_heads=4, num_key_value_heads=2, partial_rotary_factor=0.5)
+
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
+
+    assert kwargs["rotary_percent"] == 0.5
