@@ -80,6 +80,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
 )
 from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.transformers_compat import (
+    partial_rotary_factor_from_hf,
     rope_theta_from_hf,
 )
 from megatron.bridge.models.conversion.utils import (
@@ -697,6 +698,12 @@ class MegatronModelBridge(
             else:
                 value = getattr(hf_config, hf_name, None)
                 has_value = hasattr(hf_config, hf_name)
+                if not has_value and hf_name == "partial_rotary_factor":
+                    # Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters.
+                    try:
+                        value, has_value = partial_rotary_factor_from_hf(hf_config), True
+                    except ValueError:
+                        pass
             if (
                 has_value
                 and megatron_name not in provider_kwargs

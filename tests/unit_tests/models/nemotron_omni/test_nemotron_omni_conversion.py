@@ -849,13 +849,14 @@ def test_super_vl_remote_config_remains_supported(version):
 
 
 @pytest.mark.unit
-def test_super_vl_native_config_preserves_language_and_image_settings():
+@pytest.mark.parametrize("version", ["5.18.0", "5.19.0", "5.20.0"])
+def test_super_vl_native_config_preserves_language_and_image_settings(version):
     config = _mock_nemotron_35_super_vl_hf_config()
     config.text_config = config.llm_config
     del config.llm_config
     config.image_token_id = 123
     del config.img_context_token_id
-    with patch("transformers.__version__", "5.19.0"):
+    with patch("transformers.__version__", version):
         provider = Nemotron35SuperVLBridge().provider_bridge(SimpleNamespace(config=config))
     assert provider.hybrid_layer_pattern == "ME*E"
     assert provider.mtp_num_layers == 2
