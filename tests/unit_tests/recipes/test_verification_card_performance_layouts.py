@@ -37,6 +37,9 @@ PERFORMANCE_LEAVES = [
 
 @pytest.fixture(autouse=True)
 def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The dependency helper patches recipe modules that are already imported.
+    for _, _, module in PERFORMANCE_LEAVES:
+        importlib.import_module(module)
     patch_recipe_construction_dependencies(monkeypatch)
 
 
