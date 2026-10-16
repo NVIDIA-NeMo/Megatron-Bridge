@@ -182,11 +182,6 @@ class MultiLoRALinear(AdapterWrapper):
         self._gather_output = not self.replicate_adapter and (
             attrs.input_is_parallel or not attrs.base_linear_is_parallel
         )
-        # Without sequence parallelism a column-parallel base all-reduces its own input
-        # gradient, but each rank's adapter only contributes ``A_r^T @ dmid_r`` for its rank
-        # shard, so the adapter branch needs the same reduction (as ColumnParallelLinear does
-        # for its input). Under SP the sequence gather's reduce-scatter sums it instead, and a
-        # base with suppressed TP comm (shared experts under overlap) leaves it to the caller.
         self._reduce_input_grad = (
             not attrs.replicate_adapter
             and not attrs.input_is_parallel
@@ -293,9 +288,6 @@ class MultiLoRALinear(AdapterWrapper):
 
         # TP collective between A and B: row-parallel A needs an all-reduce;
         # column-parallel A needs an all-gather; replicated A is already complete.
-        # Every rank then multiplies the full ``mid`` by its own shard of B, so the
-        # gradient of ``mid`` is a sum over ranks: all-reduce it in backward, as
-        # ColumnParallelLinear does for its input.
         if not self.replicate_adapter:
             if self.input_is_parallel:
                 mid = reduce_from_tensor_model_parallel_region(mid)
