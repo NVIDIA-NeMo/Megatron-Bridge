@@ -110,9 +110,39 @@ def setup_optimizer(
             pg_collection=pg_collection,
         )
 
+    _align_distributed_optimizer_checkpoint_indices(optimizer)
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
     return optimizer, scheduler
+
+
+def _align_distributed_optimizer_checkpoint_indices(optimizer: MegatronOptimizer) -> None:
+    """Match checkpoint lookups to the release pin's final optimizer shard order.
+
+    MCore #7336 fixes this upstream. The r0.7.0 pin builds checkpoint indices in
+    gradient-buffer order, but places native FP32 shards before FP16/BF16 shards
+    in each optimizer group. Rebuild only the lookup, without moving parameters
+    or state, so mixed-dtype groups save and restore the correct tensors.
+    """
+    from megatron.core.optimizer import DistributedOptimizer
+
+    children = getattr(optimizer, "chained_optimizers", None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            _align_distributed_optimizer_checkpoint_indices(child)
+        return
+    if not isinstance(optimizer, DistributedOptimizer):
+        return
+    if optimizer.is_stub_optimizer or optimizer.ddp_config.use_megatron_fsdp:
+        return
+
+    optimizer.model_param_group_index_map = {
+        param: (group_index, param_index)
+        for group_index, (fp32_params, float16_params) in enumerate(
+            zip(optimizer.model_fp32_groups, optimizer.model_float16_groups, strict=True)
+        )
+        for param_index, param in enumerate([*fp32_params, *float16_params])
+    }
 
 
 def _optimizer_state_is_fp32_adam(state_dict: Mapping[str, object]) -> bool:
