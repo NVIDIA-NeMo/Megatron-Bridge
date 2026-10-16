@@ -20,7 +20,6 @@ residual gates, the separate LM head, and the Hugging Face vision tower, vision 
 projection, and audio tower. Only the sizes are reduced.
 """
 
-import importlib.util
 import re
 import subprocess
 import sys
@@ -30,13 +29,6 @@ import pytest
 import torch
 from safetensors import safe_open
 
-
-# Skip each test rather than the module: a module-level skip leaves the launcher with no collected tests, and
-# pytest then exits with code 5, which fails the L0 job.
-pytestmark = pytest.mark.skipif(
-    importlib.util.find_spec("transformers.models.muse_spark") is None,
-    reason="The installed Transformers release does not include Muse Spark Open.",
-)
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _TEXT_CONFIG = {
