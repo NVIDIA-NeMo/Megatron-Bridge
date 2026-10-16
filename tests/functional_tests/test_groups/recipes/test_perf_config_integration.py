@@ -189,11 +189,7 @@ class TestPerfConfigIntegration:
                     "megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3:"
                     "deepseek_v3_pretrain_256gpu_gb200_bf16_config"
                 ),
-                {
-                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-                    "NCCL_EP_HT_EM_PULL_PUSH": 1,
-                    "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-                },
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NCCL_EP_HT_EM_PULL_PUSH": 1},
             ),
             (
                 "gpt_oss",
