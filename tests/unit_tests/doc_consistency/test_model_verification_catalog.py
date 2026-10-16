@@ -506,3 +506,22 @@ def test_non_benchmark_card_commands_do_not_launch_benchmark_recipes() -> None:
                         offenders.append(f"{card_path.parent.name}/{item_name}: {recipe_name}")
 
     assert offenders == []
+
+
+def test_catalog_preserves_leaf_source_overrides_without_relabeling_other_runs(generator, tmp_path):
+    source = REPO_ROOT / "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+    card = yaml.safe_load(source.read_text(encoding="utf-8"))
+    item = card["items"]["pretrain"]["GB200"]
+    item["hf_revision"] = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+    item["base_container"] = "nvcr.io/nvidia/pytorch:25.01-py3"
+    path = tmp_path / "examples/model_verification_cards/fixture/card.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(yaml.safe_dump(card, sort_keys=False), encoding="utf-8")
+    model = generator.normalize_card(path, tmp_path)
+    entries = {entry["hardware"]: entry for entry in model["entries"] if entry["workflow"] == "pretrain"}
+    assert entries["GB200"]["hf_revision"] == item["hf_revision"]
+    assert entries["GB200"]["base_container"] == item["base_container"]
+    assert "hf_revision" not in entries["H100"]
+    assert "base_container" not in entries["H100"]
+    assert model["hf_revision"] == card["model"]["hf_revision"]
+    assert model["base_container"] == card["verification_environment"]["base_container"]

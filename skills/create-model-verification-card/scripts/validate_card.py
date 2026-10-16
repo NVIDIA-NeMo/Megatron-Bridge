@@ -153,6 +153,8 @@ ITEM_KEYS = frozenset(
         "status",
         "precision",
         "bridge_commit",
+        "hf_revision",
+        "base_container",
         "depends_on",
         "command",
         "commands",
@@ -164,7 +166,18 @@ ITEM_KEYS = frozenset(
         "variants",
     }
 )
-WEAK_SCALING_KEYS = frozenset({"status", "precision", "bridge_commit", "last_verified", "expected_result", "points"})
+WEAK_SCALING_KEYS = frozenset(
+    {
+        "status",
+        "precision",
+        "bridge_commit",
+        "hf_revision",
+        "base_container",
+        "last_verified",
+        "expected_result",
+        "points",
+    }
+)
 WEAK_SCALING_POINT_KEYS = frozenset({"num_gpus", "global_batch_size", "command", "metrics"})
 RESUME_KEYS = frozenset(
     {
@@ -1302,7 +1315,7 @@ def _validate_manual_forward_pass(
     if len(revision_flags) != len(revision_values) or len(revision_values) > 1:
         errors.append(f"{_pointer(*path, 'command')}: specify --hf-revision at most once with a value")
     elif revision_values and revision_values[0] != model_revision:
-        errors.append(f"{_pointer(*path, 'command')}: --hf-revision must equal model.hf_revision")
+        errors.append(f"{_pointer(*path, 'command')}: --hf-revision must equal the effective hf_revision")
     elif not revision_values:
         last_verified = item.get("last_verified")
         if isinstance(last_verified, dt.datetime):
@@ -1521,6 +1534,21 @@ def _validate_training_window(
         errors.append(f"{_pointer(*path)}: last-10 metrics require at least 10 executed optimizer steps")
 
 
+def _validate_item_source_overrides(item: Mapping[str, Any], *, path: tuple[str, ...], errors: list[str]) -> None:
+    """Allow independently verified runs to retain their exact input and base image."""
+    for field, pattern, description in (
+        ("hf_revision", REVISION_RE, "an immutable 40-hex revision"),
+        ("base_container", PUBLIC_BASE_CONTAINER_RE, "a public nvcr.io/nvidia/nemo or pytorch image"),
+    ):
+        if field not in item:
+            continue
+        if item.get("status") != "verified":
+            errors.append(f"{_pointer(*path, field)}: item overrides are allowed only when verified")
+        value = item[field]
+        if not isinstance(value, str) or pattern.fullmatch(value) is None:
+            errors.append(f"{_pointer(*path, field)}: expected {description}")
+
+
 def _validate_item(
     item_name: str,
     value: Any,
@@ -1560,6 +1588,9 @@ def _validate_item(
             errors.append(f"{_pointer(*path, 'bridge_commit')}: item overrides are allowed only when verified")
         if not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None:
             errors.append(f"{_pointer(*path, 'bridge_commit')}: expected an immutable 40-hex commit")
+
+    _validate_item_source_overrides(item, path=path, errors=errors)
+    model_revision = item.get("hf_revision", model_revision)
 
     precision = item.get("precision")
     if precision is not None and (not isinstance(precision, str) or precision not in PRECISIONS):
@@ -1768,11 +1799,12 @@ def _validate_weak_scaling_group(
     _check_keys(
         group,
         allowed=WEAK_SCALING_KEYS,
-        required=WEAK_SCALING_KEYS - {"bridge_commit"},
+        required=WEAK_SCALING_KEYS - {"bridge_commit", "hf_revision", "base_container"},
         path=path,
         errors=errors,
     )
 
+    _validate_item_source_overrides(group, path=path, errors=errors)
     if group.get("status") != "verified":
         errors.append(f"{_pointer(*path, 'status')}: weak scaling must be verified; otherwise omit the item")
 
@@ -1942,8 +1974,11 @@ def _walk_keys(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[tuple[s
 
 
 def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, ...], errors: list[str]) -> None:
+    items = card.get("items")
+    leaves = list(_iter_item_leaves(items)) if isinstance(items, Mapping) else []
+    container_paths = {("verification_environment",)} | {path for _, _, _, path in leaves}
     for path, key in _walk_keys(card):
-        if path == ("verification_environment",) and key == "base_container":
+        if path in container_paths and key == "base_container":
             continue
         normalized = key.lower().replace("-", "_")
         if any(fragment in normalized for fragment in FORBIDDEN_KEY_FRAGMENTS):
@@ -1953,6 +1988,11 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
     environment = card.get("verification_environment")
     if isinstance(environment, Mapping):
         base_container = environment.get("base_container")
+        if isinstance(base_container, str) and PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is not None:
+            privacy_raw = privacy_raw.replace(base_container, "")
+
+    for _, _, item, _ in leaves:
+        base_container = item.get("base_container")
         if isinstance(base_container, str) and PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is not None:
             privacy_raw = privacy_raw.replace(base_container, "")
 
@@ -2141,6 +2181,27 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
             )
 
         item_leaves = list(_iter_item_leaves(items))
+        source_defaults = {
+            "hf_revision": model_revision,
+            "base_container": environment.get("base_container") if environment is not None else None,
+        }
+        for _, _, item, path in item_leaves:
+            for field, default in source_defaults.items():
+                if field in item and item[field] == default:
+                    errors.append(f"{_pointer(*path, field)}: omit a redundant override of the card default")
+        for dependent, reference in (("checkpoint_resume", "pretrain"), ("sft_export_inference", "sft")):
+            for hardware, item in hardware_groups.get(dependent, {}).items():
+                other = hardware_groups.get(reference, {}).get(hardware)
+                if item.get("status") != "verified" or other is None:
+                    continue
+                for field, default in source_defaults.items():
+                    if dependent == "sft_export_inference" and field == "base_container":
+                        continue
+                    if item.get(field, default) != other.get(field, default):
+                        errors.append(
+                            f"{_pointer('items', dependent, hardware, field)}: "
+                            f"dependent item and {reference} must use the same {field}"
+                        )
         performance_variants = hardware_groups.get("pretrain_performance", {})
         concrete_performance_variants = {
             hardware: item for hardware, item in performance_variants.items() if hardware != "all"

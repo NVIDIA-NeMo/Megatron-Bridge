@@ -52,6 +52,18 @@ the leaf's optional `bridge_commit` field. Omit the field when it would repeat
 the top-level value, and never use a commit field to disguise uncommitted
 runtime changes. Items that are not verified must not carry a commit override.
 
+A verified leaf may also override `hf_revision` and `base_container` when its
+checkpoint or public base image differs from the card default. This preserves
+historical results when new hardware is verified against a later public release.
+Use the same immutable revision and public-image restrictions as the defaults;
+omit redundant overrides. These fields are also allowed on a weak-scaling
+hardware leaf and apply to all its points. Dependent resume and SFT-export items
+must resolve to the same revision as their reference training item. Direct
+checkpoint resume must also use the reference base image; export and inference
+may record their own verified public base image. The catalog retains these optional overrides; consumers resolve an absent
+field from the model-level default. Never relabel old measurements with the
+inputs or environment of a newer run.
+
 ### 2. Create the core inventory and add performance when available
 
 Include these twelve required items, even when their status is `unsupported` or
@@ -707,7 +719,8 @@ result. Private executor configuration stays outside the card.
   to `examples/conversion/compare_hf_and_megatron/compare.py`. Record whether
   the next token matches, the cosine similarity, and the maximum and mean
   absolute logit differences. For new evidence, pass `--hf-revision` with the
-  exact `model.hf_revision` so the command itself is reproducibly pinned.
+  effective `hf_revision` (leaf override or `model.hf_revision`) so the command
+  itself is reproducibly pinned.
   Historical evidence verified before 2026-07-20, when the helper gained
   explicit revision pinning, may remain verified without a rerun when its
   clean-run provenance is tied to the card's immutable `model.hf_revision`;
@@ -947,7 +960,7 @@ entry in the generator's `MODEL_PAGE_PATHS` table.
 - Include commands and concrete expected results for verified items.
 - For manual forward pass, require a next-token match and cosine similarity of
   at least 0.99, and record numeric max/mean absolute logit differences without
-  guarding on them. New evidence must pass the exact `model.hf_revision`
+  guarding on them. New evidence must pass the effective `hf_revision`
   through `--hf-revision`; retain older unpinned evidence only under the
   explicitly documented grandfathering rule above.
 - Use `convert.sh --executor slurm` for conversion, `train.sh` for training,

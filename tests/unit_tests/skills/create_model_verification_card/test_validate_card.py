@@ -818,3 +818,108 @@ def test_resume_reference_only_warm_start(resume_initialization, expected_errors
     )
 
     assert errors == expected_errors
+
+
+def _card_with_distinct_run_inputs():
+    card_path = REPO_ROOT / "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+    card = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    item = card["items"]["inference"]
+    item["hf_revision"] = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+    item["base_container"] = "nvcr.io/nvidia/pytorch:25.01-py3"
+    return card, item
+
+
+def test_verified_leaf_can_preserve_distinct_checkpoint_and_public_base():
+    validator = _load_validator()
+    card, _ = _card_with_distinct_run_inputs()
+    raw = yaml.safe_dump(card, sort_keys=False)
+    assert validator._validate_card(card, raw, ()) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("hf_revision", "main", "expected an immutable 40-hex revision"),
+        ("hf_revision", None, "expected an immutable 40-hex revision"),
+        ("base_container", "private.example/team/image:tag", "expected a public"),
+        ("base_container", None, "expected a public"),
+    ],
+)
+def test_leaf_source_overrides_reject_mutable_or_private_values(field, value, message):
+    validator = _load_validator()
+    card, item = _card_with_distinct_run_inputs()
+    item[field] = value
+    errors = validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ())
+    assert any(f"/items/inference/{field}: {message}" in error for error in errors)
+
+
+@pytest.mark.parametrize("status", ["unverified", "unsupported", "not_applicable"])
+def test_unverified_leaf_cannot_claim_run_source_overrides(status):
+    validator = _load_validator()
+    card, item = _card_with_distinct_run_inputs()
+    item["status"] = status
+    errors = validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ())
+    for field in ("hf_revision", "base_container"):
+        assert f"/items/inference/{field}: item overrides are allowed only when verified" in errors
+
+
+@pytest.mark.parametrize("field", ["hf_revision", "base_container"])
+def test_redundant_leaf_source_override_is_rejected(field):
+    validator = _load_validator()
+    card, item = _card_with_distinct_run_inputs()
+    defaults = card["model"] if field == "hf_revision" else card["verification_environment"]
+    item[field] = defaults[field]
+    errors = validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ())
+    assert f"/items/inference/{field}: omit a redundant override of the card default" in errors
+
+
+@pytest.mark.parametrize("field", ["hf_revision", "base_container"])
+def test_resume_requires_same_resolved_source_as_pretrain(field):
+    validator = _load_validator()
+    card, item = _card_with_distinct_run_inputs()
+    card["items"]["pretrain"]["H100"][field] = item[field]
+    errors = validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ())
+    expected = f"/items/checkpoint_resume/H100/{field}: dependent item and pretrain must use the same {field}"
+    assert expected in errors
+    card["items"]["checkpoint_resume"]["H100"][field] = item[field]
+    assert validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ()) == []
+
+
+def test_forward_command_uses_leaf_revision_override():
+    validator = _load_validator()
+    card, source = _card_with_distinct_run_inputs()
+    item = card["items"]["manual_forward_pass"]
+    revision = source["hf_revision"]
+    item["hf_revision"] = revision
+    command = item["command"]
+    if "--hf-revision" in command:
+        command = command.replace(card["model"]["hf_revision"], revision)
+    else:
+        command += f" --hf-revision {revision}"
+    item["command"] = command
+    assert validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ()) == []
+    item["command"] = command.replace(revision, card["model"]["hf_revision"])
+    errors = validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ())
+    assert "/items/manual_forward_pass/command: --hf-revision must equal the effective hf_revision" in errors
+
+
+def test_weak_scaling_source_overrides_apply_to_the_whole_run_group():
+    group = _weak_scaling_group()
+    group["hf_revision"] = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+    group["base_container"] = "nvcr.io/nvidia/pytorch:25.01-py3"
+    assert _validate_weak_scaling_group(_load_validator(), group) == []
+
+
+def test_sft_export_can_use_a_different_public_base_but_requires_same_source_revision():
+    validator = _load_validator()
+    card, source = _card_with_distinct_run_inputs()
+    item = card["items"]["sft_export_inference"]["H100"]
+    item["base_container"] = source["base_container"]
+    assert validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ()) == []
+    item["hf_revision"] = source["hf_revision"]
+    errors = validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ())
+    assert (
+        "/items/sft_export_inference/H100/hf_revision: dependent item and sft must use the same hf_revision"
+    ) in errors
+    card["items"]["sft"]["H100"]["hf_revision"] = source["hf_revision"]
+    assert validator._validate_card(card, yaml.safe_dump(card, sort_keys=False), ()) == []
