@@ -1472,14 +1472,24 @@ class ConfigContainer(Container):
                 "validation_set_names must be unique: duplicate names collide in logging keys and "
                 "in the per-set loss dict."
             )
-        if self.validation.multiple_validation_sets:
+        if self.validation.multiple_validation_sets or self.validation.eval_at_step_zero:
             from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 
             if isinstance(self.model, MegatronMIMOProvider):
+                if self.validation.multiple_validation_sets:
+                    raise ValueError(
+                        "multiple_validation_sets is not supported for MegatronMIMO models: the MIMO data "
+                        "path builds per-rank validation loaders and bypasses per-set bookkeeping."
+                    )
                 raise ValueError(
-                    "multiple_validation_sets is not supported for MegatronMIMO models: the MIMO data "
-                    "path builds per-rank validation loaders and bypasses per-set bookkeeping."
+                    "eval_at_step_zero is not supported for MegatronMIMO models: the MIMO training loop "
+                    "does not run a pre-training validation pass."
                 )
+        if self.validation.multiple_validation_sets and isinstance(self.dataset, DPODatasetConfig):
+            raise ValueError(
+                "multiple_validation_sets is not supported for DPO: the DPO data path builds a single "
+                "validation loader and bypasses per-set bookkeeping."
+            )
 
         enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
         enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (

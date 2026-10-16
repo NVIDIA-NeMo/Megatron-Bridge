@@ -665,6 +665,23 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_eval_at_step_zero_rejects_megatron_mimo(self):
+        """eval_at_step_zero is rejected for MegatronMIMO models, whose training loop never runs it."""
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.eval_at_step_zero = True
+
+        container.model = MagicMock(spec=MegatronMIMOProvider)
+
+        try:
+            with pytest.raises(ValueError, match="eval_at_step_zero is not supported for MegatronMIMO"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_duplicate_validation_set_names_rejected(self):
         """Duplicate set names would collide in logging keys and the per-set loss dict."""
         container, og_ws, cfg_mod = create_test_config_container(
@@ -1748,6 +1765,30 @@ class TestConfigContainerValidation:
 
         try:
             with pytest.raises(ValueError, match=match):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_multiple_validation_sets_rejects_dpo(self):
+        """multiple_validation_sets is rejected for DPO, whose loader builds a single validation set."""
+        gpt_model_cfg = create_test_gpt_config(calculate_per_token_loss=True)
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = DPODatasetConfig(
+            seq_length=512,
+            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.dpo = DPOLossConfig()
+        container.ddp.average_in_collective = False
+        container.validation.multiple_validation_sets = True
+
+        try:
+            with pytest.raises(ValueError, match="multiple_validation_sets is not supported for DPO"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
