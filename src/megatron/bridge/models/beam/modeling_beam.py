@@ -28,11 +28,8 @@ cover Beam except for:
 
 Everything except the last item is swapped into the stack spec by
 :func:`beam_hybrid_stack_spec`, which builds the hybrid layers from Megatron-Core's
-Transformer Engine GPT layer submodules with the subclasses below. Megatron-Core offers
-no hook for one piece: the distributed optimizer's parameter-group index map, which
-assumes a group holds a single parameter dtype.
-:func:`patch_distributed_optimizer_group_index_map` monkey patches it once the first
-fp32 Beam router is built.
+Transformer Engine GPT layer submodules with the subclasses below. The pinned Megatron-Core
+distributed optimizer supports mixed FP32/BF16 parameter groups directly.
 """
 
 import dataclasses
@@ -649,7 +646,6 @@ class BeamTopKRouter(TopKRouter):
             self.bias.data = self.bias.data.to(dtype=torch.float32)
             setattr(self.bias, "sequence_parallel", self.config.sequence_parallel)
             mark_keep_in_fp32(self.bias)
-        patch_distributed_optimizer_group_index_map()
 
     def gating(self, input: torch.Tensor):
         """``Router.gating`` through :func:`beam_router_gating_linear`."""
@@ -664,40 +660,6 @@ class BeamTopKRouter(TopKRouter):
         elif self.config.moe_router_dtype == "fp64":
             router_dtype = torch.float64
         return beam_router_gating_linear(input, self.weight, self.bias, router_dtype)
-
-
-def _fix_group_index_map(optimizer) -> None:
-    """Point ``model_param_group_index_map`` at the inner optimizer's parameter order.
-
-    ``DistributedOptimizer`` builds each inner-optimizer group as fp32 shards followed by
-    float16-derived shards, while ``model_param_group_index_map`` follows the original
-    parameter order. With mixed dtypes in one group (fp32 router + bf16 rest) the two
-    orders differ and checkpointed optimizer state lands in the wrong slots.
-    """
-    for group_index, (fp32_params, float16_params) in enumerate(
-        zip(optimizer.model_fp32_groups, optimizer.model_float16_groups)
-    ):
-        if not fp32_params or not float16_params:
-            continue
-        for group_order, model_param in enumerate([*fp32_params, *float16_params]):
-            optimizer.model_param_group_index_map[model_param] = (group_index, group_order)
-
-
-def patch_distributed_optimizer_group_index_map() -> None:
-    """Monkey patch ``DistributedOptimizer.__init__`` to apply :func:`_fix_group_index_map` (idempotent)."""
-    from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
-
-    if getattr(DistributedOptimizer.__init__, "_beam_group_index_fix", False):
-        return
-    original_init = DistributedOptimizer.__init__
-
-    @functools.wraps(original_init)
-    def __init__(self, *args, **kwargs):
-        original_init(self, *args, **kwargs)
-        _fix_group_index_map(self)
-
-    __init__._beam_group_index_fix = True
-    DistributedOptimizer.__init__ = __init__
 
 
 # ---------------------------------------------------------------------------

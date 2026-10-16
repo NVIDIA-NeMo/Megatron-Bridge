@@ -15,9 +15,9 @@ summary: >
   work for Beam. The CPU items ran on a B300 host; every other item ran on H200. Loading the full fine-tuned export
   in Transformers on one 8x H200 node needs the HF inference verifier's --max-gpu-memory-gib cap: device_map auto
   otherwise fills each GPU with seven decoder layers, and the load-time stacking of per-expert tensors then runs out
-  of GPU memory. The verification runs fetched the
-  pinned revision under the repository's earlier, private name, which the Hub redirects to
-  reflection/Beam-1.0-501B-A23B; the revision is the same.
+  of GPU memory. These historical verification runs used the recorded checkpoint revision, which is no longer
+  publicly resolvable. Current recipes pin the public release revision instead; the historical metrics do not
+  establish identical results for those weights. GB200 recipe validation is pending.
 
   Full SFT and PEFT follow qwen3_30b_a3b_convergence_v2 (Tulu 3 train[:10000], 8K offline packs, GBS 8, 100 steps,
   FP32 optimizer state); Beam's chat template packs that split into 499 packs, so 100 steps take about 1.6 passes.
@@ -37,6 +37,8 @@ verification_index:
   training:
     H200:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+    GB200:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 
 model:
   hf_id: reflection/Beam-1.0-501B-A23B

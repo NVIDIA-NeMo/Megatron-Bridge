@@ -584,12 +584,6 @@ class TestRouterParameters:
         wrapped = Float16Module(cfg, _cpu_router(cfg))
         assert wrapped.module.weight.dtype == wrapped.module.bias.dtype == torch.float32
 
-    def test_fp32_router_installs_the_optimizer_patch(self):
-        from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
-
-        _cpu_router(_router_config(moe_router_fp32_params=True, moe_router_dtype="fp32"))
-        assert getattr(DistributedOptimizer.__init__, "_beam_group_index_fix", False)
-
 
 class TestGatingTorchPath:
     """Force the torch GEMM path even when TE is installed."""
@@ -679,16 +673,35 @@ def test_router_gating_backward_accepts_expanded_grad_output(weight_dtype):
         torch.testing.assert_close(xi.grad.float(), expected_x, rtol=0, atol=0, msg=kind)
 
 
+@pytest.mark.unit
 class TestDistributedOptimizerGroupIndexMap:
-    def test_fix_reorders_only_mixed_groups(self):
-        a, gate, b, c = (torch.nn.Parameter(torch.zeros(1)) for _ in range(4))
-        opt = SimpleNamespace(
-            model_fp32_groups=[[gate], []],
-            model_float16_groups=[[a, b], [c]],
-            model_param_group_index_map={a: (0, 0), gate: (0, 1), b: (0, 2), c: (1, 5)},
-        )
-        modeling_beam._fix_group_index_map(opt)
-        assert opt.model_param_group_index_map == {gate: (0, 0), a: (0, 1), b: (0, 2), c: (1, 5)}
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+    def test_frozen_optimizer_after_fp32_router_construction(self):
+        """A Beam router must not break empty optimizers used for frozen model chunks."""
+        from megatron.core.distributed import DistributedDataParallelConfig
+        from megatron.core.optimizer import OptimizerConfig
+        from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
+
+        teardown = _distributed_context()
+        try:
+            _cpu_router(_router_config(moe_router_fp32_params=True, moe_router_dtype="fp32"))
+            optimizer = DistributedOptimizer(
+                optimizer=None,
+                config=OptimizerConfig(bf16=True, use_distributed_optimizer=True),
+                grad_scaler=None,
+                init_state_fn=None,
+                model_chunks=[SimpleNamespace(ddp_config=DistributedDataParallelConfig())],
+                per_model_buffers={},
+                data_parallel_group=torch.distributed.group.WORLD,
+                data_parallel_group_gloo=None,
+                data_parallel_group_idx=0,
+                distributed_optimizer_instance_id=0,
+            )
+            assert optimizer.is_stub_optimizer
+            assert optimizer.get_parameters() == []
+            optimizer.zero_grad()
+        finally:
+            teardown()
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
     def test_mixed_dtype_param_group_lookup(self):
@@ -696,10 +709,8 @@ class TestDistributedOptimizerGroupIndexMap:
         from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
         from megatron.core.optimizer import OptimizerConfig, get_megatron_optimizer
         from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
-        from megatron.core.transformer.module import mark_keep_in_fp32
         from megatron.core.transformer.transformer_config import TransformerConfig
 
-        modeling_beam.patch_distributed_optimizer_group_index_map()
         teardown = _distributed_context()
         try:
 
@@ -707,8 +718,14 @@ class TestDistributedOptimizerGroupIndexMap:
                 def __init__(self):
                     super().__init__()
                     self.a = torch.nn.Linear(64, 64, bias=False, dtype=torch.bfloat16, device="cuda")
-                    self.gate = torch.nn.Linear(64, 8, bias=False, device="cuda")
-                    mark_keep_in_fp32(self.gate.weight)
+                    self.gate = _cpu_router(
+                        _router_config(
+                            hidden_size=64,
+                            num_moe_experts=8,
+                            moe_router_fp32_params=True,
+                            moe_router_dtype="fp32",
+                        )
+                    ).cuda()
                     self.b = torch.nn.Linear(64, 32, bias=False, dtype=torch.bfloat16, device="cuda")
 
             model = Mixed()

@@ -13,7 +13,9 @@ current verification status.
 | --- | --- | --- |
 | Beam-1.0-501B-A23B | `reflection/Beam-1.0-501B-A23B` | BF16 |
 
-The commands below pin revision `3ea13c81833d9a523ed4bdc4152a33edd16bbd30`, the revision the verification card records.
+The commands below pin the public release revision `06641076793dad51b8907f7eb2a14f4e08fd3ec8`.
+The verification card retains the exact revisions used for historical runs; its original H200 revision is no longer
+publicly resolvable. Those historical measurements do not establish identical results for the public release weights.
 
 ## Modeling
 
@@ -35,7 +37,7 @@ bounded pretraining recipe keep the published router bias fixed and add no auxil
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained(
-    "reflection/Beam-1.0-501B-A23B", revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"  # pragma: allowlist secret
+    "reflection/Beam-1.0-501B-A23B", revision="06641076793dad51b8907f7eb2a14f4e08fd3ec8"  # pragma: allowlist secret
 )
 model_config = bridge.get_model_config()
 
@@ -62,11 +64,15 @@ export SLURM_PARTITION=your-partition
 export CONTAINER_IMAGE=your-container-image
 ```
 
-The conversion and Megatron inference commands below follow the verification card's commands with shorter paths; the
-card's commands ran on H200 (CPU conversion on a B300 host) through the launchers' Python entry points. The training commands are shortened from the
+The conversion and Megatron inference examples below adapt the historical verification commands to the public release
+revision and shorter paths. The historical runs used H200 (CPU conversion on a B300 host). The training commands are shortened from the
 card's commands, which add the pinned dataset revision, seeds, NaN checks and logging options.
 
 ## Conversion
+
+Bridge includes a configuration-only fallback for Transformers builds without native Beam registration.
+It supports Bridge model construction and checkpoint conversion; HF model inference still requires a
+Transformers build that implements `BeamForCausalLM`. Existing native Beam registrations take precedence.
 
 The BF16 checkpoint is about 1 TB. GPU import and export on H200 use two nodes at EP16, which places about 69 GiB of
 weights on each GPU; EP8 on one node would need about 127 GiB per GPU and leaves too little headroom.
@@ -75,21 +81,21 @@ weights on each GPU; EP8 on one node would need about 127 GiB per GPU and leaves
 # HF -> Megatron (2 x 8 H200)
 ./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 8 \
   --hf-model reflection/Beam-1.0-501B-A23B \
-  --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 \
+  --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8 \
   --megatron-path work/models/beam --torch-dtype bfloat16 \
   --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --low-memory-save
 
 # Megatron -> HF (2 x 8 H200)
 ./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 8 \
   --hf-model reflection/Beam-1.0-501B-A23B \
-  --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 \
+  --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8 \
   --megatron-path work/models/beam/iter_0000000 \
   --hf-path work/models/beam-hf-export --torch-dtype bfloat16 \
   --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 \
   --distributed-save --save-every-n-ranks 1 --no-progress
 ```
 
-The GPU round trip reproduces all 38,366 source tensors exactly; `config.json` differs only in `transformers_version`.
+The historical GPU round trip reproduced all 38,366 source tensors exactly; `config.json` differs only in `transformers_version`.
 
 CPU import and export run in a single process on a host with well over 1 TB of memory and need one runtime GPU
 (`--gpus-per-node 1`): Beam's attention layers are Transformer Engine modules, and Transformer Engine refuses to
@@ -98,12 +104,12 @@ construct them without CUDA even though the weights stay on CPU. The GPU holds o
 ```bash
 ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1 \
   --hf-model reflection/Beam-1.0-501B-A23B \
-  --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 \
+  --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8 \
   --megatron-path work/models/beam-cpu --torch-dtype bfloat16
 
 ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 1 \
   --hf-model reflection/Beam-1.0-501B-A23B \
-  --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 \
+  --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8 \
   --megatron-path work/models/beam-cpu/iter_0000000 \
   --hf-path work/models/beam-cpu-hf-export --torch-dtype bfloat16
 ```
@@ -115,7 +121,7 @@ Megatron generation uses the non-cached legacy full-prefix path on 2 x 8 H200:
 ```bash
 ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 8 --task legacy-full-prefix-generation \
   --hf_model_path reflection/Beam-1.0-501B-A23B \
-  --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 \
+  --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8 \
   --megatron_model_path work/models/beam/iter_0000000 \
   --tp 1 --pp 1 --ep 16 --etp 1 \
   --prompt 'Explain why the sky appears blue in one sentence.' \
@@ -127,7 +133,7 @@ so short token budgets end before the final channel.
 
 To compare the imported checkpoint with Hugging Face, use `--task model-comparison` with reference logits from a BF16
 Hugging Face forward of the same revision (`--hf-logits-path`). On the prompt "The capital of France is the city of"
-both predict " Paris" with cosine similarity 0.9997.
+the historical comparison predicted " Paris" in both implementations with cosine similarity 0.9997.
 
 For Hugging Face inference on a single 8 x H200 node, cap each GPU at 110 GiB so Transformers offloads the remaining
 layers to CPU. Uncapped `--device-map auto` placement runs out of memory while it stacks the per-expert weights, and
@@ -150,12 +156,35 @@ Hardware-qualified library recipes are defined under [`recipes/beam`](../../../s
 | `beam_sft_128gpu_h200_bf16_config` | 16 nodes, TP8 / PP2 / EP64, SP | Full SFT on 8K packed sequences, GBS 8, DP 8 |
 | `beam_peft_16gpu_h200_bf16_config` | 2 nodes, TP2 / EP16, SP | LoRA (rank 8, alpha 16) on `linear_qkv` and `linear_proj`, 8K packed sequences, GBS 8 |
 
-All three recipes resolve the model and tokenizer from the pinned Hub revision; pass `hf_path` to use a local
+These H200 recipes resolve the model and tokenizer from the pinned Hub revision; pass `hf_path` to use a local
 checkpoint instead. They use the all-to-all MoE dispatcher and full recompute. Use expert parallelism first: the
 experts hold about 493B of the 501B parameters, so pipeline parallelism does not lower the memory floor. All-to-all
 context parallelism needs the KV heads per tensor-parallel rank to be divisible by the context-parallel size, so CP8
 runs at TP1. With context parallelism, SFT switches to per-token loss normalization, which is why the 8K SFT
 layout reaches DP8 without it.
+
+### GB200 library recipes
+
+The GB200 variants use four GPUs per node within one NVLink domain. Their initial configurations are listed below;
+validation and performance measurements are pending.
+
+| Recipe | GPUs | TP / PP / CP / EP / ETP | Sequence length | GBS / MBS |
+| --- | --- | --- | --- | --- |
+| `beam_pretrain_64gpu_gb200_bf16_config` | 64 | 2 / 1 / 1 / 64 / 1 | 4096 | 256 / 1 |
+| `beam_sft_64gpu_gb200_bf16_config` | 64 | 8 / 1 / 1 / 64 / 1 | 8192 | 8 / 1 |
+| `beam_peft_32gpu_gb200_bf16_config` | 32 | 4 / 1 / 1 / 32 / 1 | 8192 | 8 / 1 |
+
+These variants use HybridEP with natural routing, fixed expert biases, BF16 computation, and FP32 main gradients,
+master parameters and Adam moments. They start without activation recompute. Unlike H200 pretraining, the GB200
+pretraining recipe does not use BF16 gradients or optimizer moments; performance comparisons must account for this
+precision difference. Full SFT and LoRA retain the H200 learning rates, schedules, dataset selection and adapter scope.
+
+Offline packing aligns individual sequences to 8 tokens for SFT and 4 for LoRA. The LoRA alignment differs from the
+H200 recipe's alignment of 2 and can change pack membership and order. Prepare a separate dataset output for each
+alignment. Matched performance comparisons must use the same prepared packs and starting checkpoint.
+
+Fine-grained expert communication overlap is disabled because its layer schedule does not execute Beam's sandwich
+norms and depth-scaled residuals. Enabling that schedule would change the model's computation.
 
 All training commands below start from the imported Megatron checkpoint, keep Beam's routing natural
 (`model.transformer.moe_router_force_load_balancing=false`), and raise the collective timeout because rank 0 packs
@@ -175,7 +204,7 @@ the dataset offline while the other ranks wait.
   checkpoint.save_optim=false checkpoint.save_rng=false \
   --save_dir work/results/beam-sft --save_interval 100 \
   dist.distributed_timeout_minutes=120 \
-  '++tokenizer.hf_tokenizer_kwargs.revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"'  # pragma: allowlist secret
+  '++tokenizer.hf_tokenizer_kwargs.revision="06641076793dad51b8907f7eb2a14f4e08fd3ec8"'  # pragma: allowlist secret
 ```
 
 For 64K sequences, keep the SFT recipe and switch to all-to-all context parallelism of 8 at TP1:
@@ -195,7 +224,7 @@ model.transformer.expert_model_parallel_size=64 +dataset.offline_packing_specs.p
   +dataset.offline_packing_specs.pad_seq_to_mult=2 scheduler.lr_decay_iters=100 \
   model.transformer.moe_router_force_load_balancing=false \
   --save_dir work/results/beam-peft --save_interval 100 \
-  '++tokenizer.hf_tokenizer_kwargs.revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"'  # pragma: allowlist secret
+  '++tokenizer.hf_tokenizer_kwargs.revision="06641076793dad51b8907f7eb2a14f4e08fd3ec8"'  # pragma: allowlist secret
 ```
 
 The adapter checkpoint holds 208 LoRA matrices (52 attention layers x 2 projections x 2 matrices).
@@ -232,6 +261,6 @@ The dataset must be tokenized with Beam's tokenizer into Megatron's indexed form
 - The launcher's distributed CPU export requests no GPU resources and therefore fails for Beam with
   "TransformerEngine needs CUDA". Use the single-process CPU commands above with one runtime GPU.
 - Megatron KV-cache inference is not verified; use the legacy full-prefix generation path.
-- Only BF16 recipes are provided; FP8 and Blackwell recipes are not part of this release.
+- Only BF16 recipes are provided. The GB200 variants are pending validation; no FP8 recipe is provided.
 - Beam is not in a Transformers release yet, so loading the Hugging Face checkpoint currently needs a Transformers
   nightly build.

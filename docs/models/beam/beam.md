@@ -9,6 +9,14 @@ through the builder-backed `BeamModelConfig`.
   (modeling notes, recipes, parallelism guidance)
 - Verification: [model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/beam/card.yaml)
 
+## GB200 recipes
+
+The GB200 library variants target 64 GPUs for pretraining and full SFT, and 32 GPUs for LoRA, within one NVLink
+domain. They use HybridEP, BF16 computation and FP32 optimizer state while retaining Beam's natural routing.
+Validation and performance measurements are pending. See the
+[recipe guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/beam#gb200-library-recipes)
+for the parallel layouts and data-packing requirements.
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations
