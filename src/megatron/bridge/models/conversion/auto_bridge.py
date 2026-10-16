@@ -1100,7 +1100,6 @@ class AutoBridge(Generic[MegatronModelT]):
             build_adapter_config_dict,
             convert_adapter_weights_to_peft_state,
             infer_rank_pattern_from_adapter_weights,
-            infer_target_modules_from_adapter_weights,
         )
 
         if dist.is_initialized():
@@ -1141,7 +1140,7 @@ class AutoBridge(Generic[MegatronModelT]):
                     or getattr(self.hf_pretrained, "name_or_path", "")
                 )
 
-            target_modules = infer_target_modules_from_adapter_weights(module_adapter_keys)
+            target_modules = self._model_bridge._adapter_target_modules(module_adapter_keys)
             adapter_config = build_adapter_config_dict(
                 peft_config,
                 target_modules=target_modules,
@@ -1875,11 +1874,21 @@ class AutoBridge(Generic[MegatronModelT]):
         # adapter weights are exported at full precision; bfloat16 downstream
         # PEFT merges can introduce ~1e-3 weight errors that compound into
         # large logit diffs.
-        provider = self.to_megatron_provider(load_weights=True)
-        provider.pipeline_dtype = torch.float32
-        provider.params_dtype = torch.float32
-        provider.finalize()
-        provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+        use_model_config = self._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION
+        if use_model_config:
+            # Builder-backed families: build through ModelConfig/ModelBuilder (get_model loads
+            # the base weights in its first pre-wrap hook, before the LoRA hook).
+            model_config = self.get_model_config()
+            model_config.transformer.pipeline_dtype = torch.float32
+            model_config.transformer.params_dtype = torch.float32
+            model_config.transformer.use_cpu_initialization = True
+            model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
+        else:
+            provider = self.to_megatron_provider(load_weights=True)
+            provider.pipeline_dtype = torch.float32
+            provider.params_dtype = torch.float32
+            provider.finalize()
+            provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
 
         def _load_and_export_adapter(model):
             """Load adapter weights into a materialized model and export them as PEFT."""
@@ -1920,11 +1929,14 @@ class AutoBridge(Generic[MegatronModelT]):
             nullcontext() if torch.distributed.is_initialized() else temporary_distributed_context(backend="gloo")
         )
         with model_context:
-            model = provider.provide_distributed_model(
-                wrap_with_ddp=False,
-                use_cpu_initialization=True,
-                init_model_with_meta_device=False,
-            )
+            if use_model_config:
+                model = self.get_model(model_config, wrap_with_ddp=False, mixed_precision_wrapper=None)
+            else:
+                model = provider.provide_distributed_model(
+                    wrap_with_ddp=False,
+                    use_cpu_initialization=True,
+                    init_model_with_meta_device=False,
+                )
             _load_and_export_adapter(model)
 
     def push_to_hub(self, path: str | Path) -> None: ...
