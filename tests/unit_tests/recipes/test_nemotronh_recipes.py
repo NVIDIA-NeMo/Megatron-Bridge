@@ -400,13 +400,14 @@ def test_nemotron_3_super_64gpu_h100_matches_benchmark_execution_configuration()
     ],
 )
 def test_nemotron_3_super_64gpu_b200_uses_single_nvlink_domain_ep(recipe_name):
-    """B200 BF16, MXFP8, and NVFP4 recipes keep HybridEP within one NVLink domain."""
+    """B200 BF16, MXFP8, and NVFP4 recipes use NCCL EP with EP8."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
     cfg = getattr(module, recipe_name)()
 
     assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
 
 
 def test_nemotron_3_super_64gpu_b200_fp8mx_uses_selective_recompute():
