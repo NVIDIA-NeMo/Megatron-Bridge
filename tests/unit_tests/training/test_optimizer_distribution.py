@@ -25,7 +25,7 @@ from megatron.bridge.training.utils.optimizer_utils import (
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("name", ["muon", "dist_muon", "adaptive_muon", "soap"])
+@pytest.mark.parametrize("name", ["muon", "dist_muon", "adaptive_muon", "soap", "lion"])
 @pytest.mark.parametrize("source", ["optimizer", "ddp", "layerwise"])
 def test_distributed_emerging_optimizer_normalization(name, source):
     cfg = SimpleNamespace(
@@ -42,11 +42,11 @@ def test_distributed_emerging_optimizer_normalization(name, source):
         assert cfg.optimizer.optimizer == name.removeprefix("dist_")
         assert cfg.optimizer.use_layer_wise_distributed_optimizer
         assert not cfg.optimizer.use_distributed_optimizer
-        assert cfg.ddp.use_distributed_optimizer
+        assert not cfg.ddp.use_distributed_optimizer
         assert uses_distributed_optimizer(cfg.optimizer)
 
 
-@pytest.mark.parametrize("name", ["adam", "sgd", "muon"])
+@pytest.mark.parametrize("name", ["adam", "sgd", "muon", "lion"])
 def test_replicated_optimizer_stays_replicated(name):
     cfg = OptimizerConfig(optimizer=name, use_distributed_optimizer=False)
     normalize_optimizer_config(cfg)
@@ -70,6 +70,42 @@ def test_reject_layerwise_adam_or_sgd(name):
     cfg = OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=True)
     with pytest.raises(ValueError, match="Layer-wise distribution requires"):
         cfg.finalize()
+
+
+@pytest.mark.parametrize("name", ["muonn", "dist_muonn"])
+def test_reject_unknown_optimizer_before_distribution_is_changed(name):
+    with pytest.raises(ValueError, match="Unsupported optimizer"):
+        cfg = OptimizerConfig(optimizer=name, use_distributed_optimizer=True)
+        cfg.finalize()
+
+
+def test_setup_optimizer_normalizes_dist_muon_without_container_validation():
+    from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+
+    from megatron.bridge.training.config import SchedulerConfig
+    from megatron.bridge.training.optim import setup_optimizer
+
+    optimizer_config = MCoreOptimizerConfig(optimizer="dist_muon")
+    override_provider = Mock()
+    override_provider.build_config_overrides.return_value = None
+    model = Mock()
+
+    with (
+        patch("megatron.bridge.training.optim.get_model_config", return_value=SimpleNamespace(use_mup=False)),
+        patch("megatron.bridge.training.optim.get_megatron_optimizer", return_value=Mock()) as factory,
+        patch("megatron.bridge.training.optim.OptimizerParamScheduler"),
+    ):
+        setup_optimizer(
+            optimizer_config,
+            SchedulerConfig(),
+            model,
+            optimizer_config_override_provider=override_provider,
+        )
+
+    assert optimizer_config.optimizer == "muon"
+    assert optimizer_config.use_layer_wise_distributed_optimizer
+    assert not optimizer_config.use_distributed_optimizer
+    assert factory.call_args.kwargs["config"] is optimizer_config
 
 
 def test_reject_layerwise_optimizer_step_overlap():
@@ -99,7 +135,8 @@ def test_layerwise_overlap_configuration(name, layerwise, overlap):
 
 @pytest.mark.parametrize("builder", [False, True])
 @pytest.mark.parametrize("name,layerwise", [("adam", False), ("muon", True), ("dist_muon", False)])
-def test_model_setup_forwards_layerwise_layout(builder, name, layerwise):
+@pytest.mark.parametrize("param_layout", [False, True])
+def test_model_setup_forwards_layerwise_layout(builder, name, layerwise, param_layout):
     from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
     from megatron.bridge.models.transformer_config import TransformerConfig
     from megatron.bridge.training.config import DistributedInitConfig
@@ -115,7 +152,11 @@ def test_model_setup_forwards_layerwise_layout(builder, name, layerwise):
     cfg = SimpleNamespace(
         model=model,
         ddp=DistributedDataParallelConfig(),
-        optimizer=OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=layerwise),
+        optimizer=OptimizerConfig(
+            optimizer=name,
+            use_layer_wise_distributed_optimizer=layerwise,
+            use_layer_wise_param_layout=param_layout,
+        ),
         dist=DistributedInitConfig(),
         rng=SimpleNamespace(data_parallel_random_init=False),
     )
@@ -131,6 +172,7 @@ def test_model_setup_forwards_layerwise_layout(builder, name, layerwise):
             _build_distributed_model(cfg, Mock())
             kwargs = model.provide_distributed_model.call_args.kwargs
     assert kwargs["use_layer_wise_distributed_optimizer"] is (name != "adam")
+    assert kwargs["use_layer_wise_param_layout"] is param_layout
 
 
 def test_provider_forwards_layerwise_layout_to_get_model():
@@ -143,8 +185,10 @@ def test_provider_forwards_layerwise_layout_to_get_model():
             ddp_config=DistributedDataParallelConfig(),
             pg_collection=Mock(),
             use_layer_wise_distributed_optimizer=True,
+            use_layer_wise_param_layout=False,
         )
     assert build.call_args.kwargs["use_layer_wise_distributed_optimizer"] is True
+    assert build.call_args.kwargs["use_layer_wise_param_layout"] is False
 
 
 @pytest.mark.parametrize(

@@ -49,6 +49,11 @@ layer-wise Muon. The current Core implementation requires one distributed
 optimizer instance and does not support `overlap_param_gather_with_optimizer_step`
 or either FSDP implementation with Muon.
 
+By default, `use_layer_wise_param_layout=True` builds shard-aligned DDP buffers
+for the LayerWise optimizer. Set it to `False` to retain compact DDP buffers and
+use LayerWise's variable-size parameter synchronization path. This reduces
+layout padding while preserving the configured parameter-gather behavior.
+
 Resuming Muon training restores Muon optimizer state. When changing optimization
 algorithms between runs, load model weights with fresh optimizer state using
 `checkpoint.load_optim=False` or the appropriate finetuning configuration;

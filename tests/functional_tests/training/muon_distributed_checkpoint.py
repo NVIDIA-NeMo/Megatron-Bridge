@@ -111,7 +111,9 @@ def run_case(root: Path, case: str) -> None:
             vocab_size=1024,
             share_embeddings_and_output_weights=True,
         )
-    cfg.train.train_iters = 6
+    # The resize source saves at step 2 and continues through step 3, providing
+    # an uninterrupted two-rank control for the one-rank resume.
+    cfg.train.train_iters = 3 if case.startswith("muon_dp") else 6
     cfg.train.global_batch_size = 4
     cfg.train.micro_batch_size = 1
     # Keep hash checks separate: they force a gather and could hide a broken
@@ -162,7 +164,9 @@ def run_case(root: Path, case: str) -> None:
         # Exercise the lifecycle gate independently of CommOverlapConfig.
         cfg.ddp.overlap_param_gather = True
         cfg.optimizer.overlap_param_gather = True
-    if case.endswith("_resume"):
+    if case == "muon_dp1_resume":
+        cfg.checkpoint.load = str(root / "muon_dp2_save" / "checkpoints" / "iter_0000002")
+    elif case.endswith("_resume"):
         source = case.removesuffix("_resume") + "_on"
         cfg.checkpoint.load = str(root / source / "checkpoints" / "iter_0000002")
     pretrain(cfg, forward_step, callbacks=[RecordTraining(root / case)])
@@ -195,7 +199,36 @@ def compare(root: Path) -> None:
                 for c in (reference, candidate)
             ]
             torch.testing.assert_close(*weights, rtol=0, atol=0)
-    logger.info("All optimizer modes, overlap pairs and fresh-process resumes match exactly.")
+    compare_dp_resize(root)
+    logger.info("All optimizer modes, overlap pairs and fresh-process resumes match their expected tolerances.")
+
+
+def compare_dp_resize(root: Path) -> None:
+    """Compare a one-rank resume with its uninterrupted two-rank source run."""
+    dp_resize = json.loads((root / "muon_dp1_resume" / "records-rank0.json").read_text())
+    dp_controls = [json.loads((root / "muon_dp2_save" / f"records-rank{rank}.json").read_text()) for rank in range(2)]
+    assert dp_resize["start_step"] == 2
+    assert dp_resize["end_step"] == 3
+    assert len(dp_resize["records"]) == 1
+    for control in dp_controls:
+        assert control["start_step"] == 0
+        assert control["end_step"] == 3
+        assert len(control["records"]) == 3
+        resumed_record = dp_resize["records"][0]
+        control_record = control["records"][2]
+        assert resumed_record["grad_norm"] == control_record["grad_norm"]
+        assert resumed_record["losses"].keys() == control_record["losses"].keys()
+        for name, resumed_loss in resumed_record["losses"].items():
+            # Changing DP size changes the loss-reduction order, while the
+            # restored optimizer trajectory and final BF16 model remain exact.
+            torch.testing.assert_close(resumed_loss, control_record["losses"][name], rtol=0, atol=1e-6)
+    weights = [
+        torch.load(root / case / "weights-rank0.pt", map_location="cpu", weights_only=True)
+        for case in ("muon_dp2_save", "muon_dp1_resume")
+    ]
+    torch.testing.assert_close(*weights, rtol=0, atol=0)
+    dp2_rank1 = torch.load(root / "muon_dp2_save" / "weights-rank1.pt", map_location="cpu", weights_only=True)
+    torch.testing.assert_close(weights[0], dp2_rank1, rtol=0, atol=0)
 
 
 if __name__ == "__main__":
@@ -219,6 +252,8 @@ if __name__ == "__main__":
             "muon_builder_resume",
             "muon_reshard_on",
             "muon_reshard_resume",
+            "muon_dp2_save",
+            "muon_dp1_resume",
         ],
     )
     parser.add_argument("--compare", action="store_true")

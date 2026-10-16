@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Dict, Optional
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from torch import nn
 
+from megatron.bridge.utils.common_utils import warn_rank_0
+
 
 if TYPE_CHECKING:
     from megatron.core.distributed import (
@@ -36,6 +38,7 @@ def wrap_megatron_mimo_model_distributed(
     pg_collections: Dict[str, Optional["ProcessGroupCollection"]],
     *,
     use_layer_wise_distributed_optimizer: bool = False,
+    use_layer_wise_param_layout: bool = True,
 ) -> "MimoModel":
     """Wrap MegatronMIMO model's submodules with DDP.
 
@@ -48,6 +51,8 @@ def wrap_megatron_mimo_model_distributed(
         grids: Module name to HyperCommGrid mapping.
         pg_collections: Module name to ProcessGroupCollection mapping.
         use_layer_wise_distributed_optimizer: Build shard-aligned layouts for layer-wise optimizers.
+        use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+            False retains compact DDP buffers and variable-size parameter synchronization.
 
     Returns:
         The same megatron_mimo_model with wrapped submodules.
@@ -61,6 +66,18 @@ def wrap_megatron_mimo_model_distributed(
     # Lazy import to avoid circular dependency (models layer loads before training layer)
     from megatron.bridge.training.megatron_mimo_parallel_utils import is_current_rank_in_grid
 
+    disable_encoder_overlap = ddp_config.overlap_grad_reduce is True or ddp_config.overlap_param_gather is True
+    has_modality_grid = any(
+        module_name != MIMO_LANGUAGE_MODULE_KEY and grid is not None for module_name, grid in grids.items()
+    )
+    if disable_encoder_overlap and has_modality_grid:
+        # Emit before per-grid rank filtering so global rank zero reports the
+        # override even when it does not participate in an encoder grid.
+        warn_rank_0(
+            "Disabling gradient-reduce and parameter-gather overlap for modality encoders because "
+            "not every rank is guaranteed to execute an encoder backward pass."
+        )
+
     def wrap_module(
         module: nn.Module,
         config: "TransformerConfig",
@@ -68,7 +85,7 @@ def wrap_megatron_mimo_model_distributed(
         module_ddp_config: "DistributedDataParallelConfig",
     ) -> "DistributedDataParallel":
         layout = None
-        if use_layer_wise_distributed_optimizer:
+        if use_layer_wise_distributed_optimizer and use_layer_wise_param_layout:
             module_ddp_config.use_distributed_optimizer = True
             tag_params_for_buffer_routing([module])
             groups = pg.setup_process_groups_for_ddp(pg, config, module_ddp_config)
@@ -144,10 +161,12 @@ def wrap_megatron_mimo_model_distributed(
                         f"a 'config' attribute. Encoders must be MegatronModule subclasses."
                     )
 
-                # An encoder rank that gets no media in a step runs no encoder forward or backward,
-                # so the DDP hooks would not issue its overlapped param all-gather or grad reduce.
-                encoder_ddp_config = dataclasses.replace(
-                    ddp_config, overlap_grad_reduce=False, overlap_param_gather=False
+                # Uneven input participation can leave encoder replicas
+                # unsynchronized when communication is hook-driven.
+                encoder_ddp_config = (
+                    dataclasses.replace(ddp_config, overlap_grad_reduce=False, overlap_param_gather=False)
+                    if disable_encoder_overlap
+                    else ddp_config
                 )
                 wrapped = wrap_module(
                     submodule,

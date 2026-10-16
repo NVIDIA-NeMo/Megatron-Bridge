@@ -326,6 +326,7 @@ class TestPretrainMegatronMIMOSetup:
         from megatron.bridge.training.config import OptimizerConfig
 
         cfg.optimizer = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
+        cfg.optimizer.use_layer_wise_param_layout = False
         cfg.optimizer.finalize()
 
         global_state = Mock()
@@ -345,7 +346,9 @@ class TestPretrainMegatronMIMOSetup:
         start_time_tensor.item.return_value = global_state.start_time
 
         with (
-            patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)),
+            patch(
+                "megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)
+            ) as mock_build_model,
             patch(
                 "megatron.core.models.mimo.optimizer.get_mimo_optimizer",
                 return_value=mock_optimizer,
@@ -361,6 +364,7 @@ class TestPretrainMegatronMIMOSetup:
 
         mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
         optimizer_config = mock_get_mimo_optimizer.call_args.args[1]
+        assert mock_build_model.call_args.kwargs["use_layer_wise_param_layout"] is False
         assert type(optimizer_config).__module__ == "megatron.core.optimizer.optimizer_config"
         assert optimizer_config.use_distributed_optimizer is True
         assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False

@@ -169,9 +169,10 @@ class TestWrapMegatronMIMOModelDistributed:
         }
         pg_collections = {"language": MagicMock(), "images": MagicMock()}
 
-        wrap_megatron_mimo_model_distributed(
-            megatron_mimo_model, ddp_config, megatron_mimo_parallelism_config, grids, pg_collections
-        )
+        with pytest.warns(UserWarning, match="Disabling gradient-reduce and parameter-gather overlap"):
+            wrap_megatron_mimo_model_distributed(
+                megatron_mimo_model, ddp_config, megatron_mimo_parallelism_config, grids, pg_collections
+            )
 
         language_ddp_config, encoder_ddp_config = (call.kwargs["ddp_config"] for call in mock_ddp.call_args_list)
         assert language_ddp_config is ddp_config
@@ -180,6 +181,57 @@ class TestWrapMegatronMIMOModelDistributed:
         assert encoder_ddp_config.use_distributed_optimizer
         assert encoder_ddp_config is not ddp_config
         assert ddp_config.overlap_grad_reduce and ddp_config.overlap_param_gather
+
+    @patch("megatron.core.distributed.DistributedDataParallel")
+    @patch("torch.distributed.get_rank")
+    def test_encoder_ddp_reuses_config_when_overlap_is_disabled(self, mock_get_rank, mock_ddp):
+        """Already-synchronous encoder DDP does not clone or warn."""
+        mock_get_rank.return_value = 0
+        model = self._create_mock_megatron_mimo_model(has_language_model=True, modality_names=["images"])
+        ddp_config = DistributedDataParallelConfig(overlap_grad_reduce=False, overlap_param_gather=False)
+        parallelism = self._create_megatron_mimo_parallelism_config({"language": {"dp": 2}, "images": {"dp": 2}})
+        grids = {
+            "language": self._create_mock_grid(rank_offset=0, size=2),
+            "images": self._create_mock_grid(rank_offset=0, size=2),
+        }
+
+        with patch("megatron.bridge.models.megatron_mimo.megatron_mimo_ddp.warn_rank_0") as warn:
+            wrap_megatron_mimo_model_distributed(
+                model,
+                ddp_config,
+                parallelism,
+                grids,
+                {"language": MagicMock(), "images": MagicMock()},
+            )
+
+        warn.assert_not_called()
+        assert [call.kwargs["ddp_config"] for call in mock_ddp.call_args_list] == [ddp_config, ddp_config]
+
+    @patch("megatron.core.distributed.DistributedDataParallel")
+    @patch("torch.distributed.get_rank")
+    def test_encoder_overlap_warning_emitted_when_rank_zero_is_outside_encoder_grid(self, mock_get_rank, mock_ddp):
+        """Global rank zero warns even when the encoder starts at a nonzero rank."""
+        mock_get_rank.return_value = 0
+        model = self._create_mock_megatron_mimo_model(has_language_model=True, modality_names=["images"])
+        ddp_config = DistributedDataParallelConfig(overlap_grad_reduce=True, overlap_param_gather=True)
+        parallelism = self._create_megatron_mimo_parallelism_config(
+            {"language": {"dp": 2}, "images": {"dp": 2, "rank_offset": 2}}
+        )
+        grids = {
+            "language": self._create_mock_grid(rank_offset=0, size=2),
+            "images": self._create_mock_grid(rank_offset=2, size=2),
+        }
+
+        with pytest.warns(UserWarning, match="Disabling gradient-reduce and parameter-gather overlap"):
+            wrap_megatron_mimo_model_distributed(
+                model,
+                ddp_config,
+                parallelism,
+                grids,
+                {"language": MagicMock(), "images": None},
+            )
+
+        mock_ddp.assert_called_once()
 
     @pytest.mark.parametrize("module_name,rank", [("language", 0), ("images", 2)])
     @patch("megatron.core.optimizer.layer_wise_optimizer.tag_params_for_buffer_routing")
@@ -233,6 +285,45 @@ class TestWrapMegatronMIMOModelDistributed:
         assert component_config.overlap_param_gather == (module_name == "language")
         assert component_config.grad_reduce_in_fp32
         assert ddp_config.overlap_grad_reduce and ddp_config.overlap_param_gather
+
+    @patch("megatron.core.optimizer.layer_wise_optimizer.tag_params_for_buffer_routing")
+    @patch("megatron.core.optimizer.layer_wise_optimizer.LayerWiseDistributedOptimizer.compute_full_param_layout")
+    @patch("megatron.core.distributed.DistributedDataParallel")
+    @patch("torch.distributed.get_rank")
+    def test_compact_layer_wise_layout_keeps_default_ddp_buffers(self, mock_get_rank, mock_ddp, mock_layout, mock_tag):
+        """Compact LayerWise mode supplies no layout and leaves the DDP mode disabled."""
+        mock_get_rank.return_value = 0
+        model = self._create_mock_megatron_mimo_model(has_language_model=True, modality_names=["images"])
+        language_model = model.language_model
+        encoder = model.modality_submodules["images"]
+        ddp_config = DistributedDataParallelConfig(
+            use_distributed_optimizer=False, overlap_grad_reduce=False, overlap_param_gather=False
+        )
+        parallelism = self._create_megatron_mimo_parallelism_config({"language": {"dp": 2}, "images": {"dp": 2}})
+        grids = {
+            "language": self._create_mock_grid(rank_offset=0, size=2),
+            "images": self._create_mock_grid(rank_offset=0, size=2),
+        }
+        pg_collections = {"language": MagicMock(), "images": MagicMock()}
+
+        wrap_megatron_mimo_model_distributed(
+            model,
+            ddp_config,
+            parallelism,
+            grids,
+            pg_collections,
+            use_layer_wise_distributed_optimizer=True,
+            use_layer_wise_param_layout=False,
+        )
+
+        mock_tag.assert_not_called()
+        mock_layout.assert_not_called()
+        for pg in pg_collections.values():
+            pg.setup_process_groups_for_ddp.assert_not_called()
+        assert [call.kwargs["module"] for call in mock_ddp.call_args_list] == [language_model, encoder]
+        assert [call.kwargs["full_param_layout"] for call in mock_ddp.call_args_list] == [None, None]
+        assert [call.kwargs["ddp_config"] for call in mock_ddp.call_args_list] == [ddp_config, ddp_config]
+        assert not ddp_config.use_distributed_optimizer
 
     @patch("megatron.core.distributed.DistributedDataParallel")
     @patch("torch.distributed.get_rank")

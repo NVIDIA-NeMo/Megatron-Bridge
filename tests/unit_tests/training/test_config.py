@@ -4131,6 +4131,29 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_layer_wise_param_layout_is_serializable_and_overridable(self, tmp_path):
+        """The recipe override path preserves the LayerWise layout choice."""
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            assert full_cfg.optimizer.use_layer_wise_param_layout is True
+            assert full_cfg.to_dict()["optimizer"]["use_layer_wise_param_layout"] is True
+            process_config_with_overrides(
+                full_cfg,
+                cli_overrides=["optimizer.use_layer_wise_param_layout=false"],
+            )
+            assert full_cfg.optimizer.use_layer_wise_param_layout is False
+
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+            assert restored_cfg.optimizer.use_layer_wise_param_layout is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_recipe_environment_variables_round_trip_through_yaml(self, tmp_path):
         """Environment mappings should be preserved in saved recipe configs."""
         gpt_cfg = create_test_gpt_config()

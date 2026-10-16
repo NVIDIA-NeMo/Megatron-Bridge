@@ -22,4 +22,10 @@ for test_case in muon_on muon_off muon_inherited muon_alias muon_resume muon_has
         --master-addr=127.0.0.1 --master-port=29512 \
         "$DRIVER" --root "$MUON_TEST_OUTPUT" --case "$test_case"
 done
+uv run python -m torch.distributed.run --nnodes=1 --nproc_per_node=2 \
+    --master-addr=127.0.0.1 --master-port=29512 \
+    "$DRIVER" --root "$MUON_TEST_OUTPUT" --case muon_dp2_save
+uv run python -m torch.distributed.run --nnodes=1 --nproc_per_node=1 \
+    --master-addr=127.0.0.1 --master-port=29512 \
+    "$DRIVER" --root "$MUON_TEST_OUTPUT" --case muon_dp1_resume
 uv run python "$DRIVER" --root "$MUON_TEST_OUTPUT" --compare

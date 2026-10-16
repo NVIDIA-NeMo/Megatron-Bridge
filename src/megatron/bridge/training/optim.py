@@ -35,6 +35,7 @@ from megatron.bridge.training.config import (
     OptimizerConfigOverrideProviderContext,
     SchedulerConfig,
 )
+from megatron.bridge.training.utils.optimizer_utils import normalize_optimizer_config
 
 
 G_LOGGER = logging.getLogger(__name__)
@@ -60,6 +61,11 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
+    if not hasattr(optimizer_config, "provide"):
+        # setup_optimizer is also used by callers that construct Core's config
+        # directly, without ConfigContainer validation.
+        normalize_optimizer_config(optimizer_config)
+
     if optimizer_config_override_provider is None:
         optimizer_config_override_provider = OptimizerConfigOverrideProvider()
 

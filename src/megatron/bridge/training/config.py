@@ -134,6 +134,14 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    use_layer_wise_param_layout: bool = True
+    """Use the precomputed shard-aligned layout for the LayerWise optimizer.
+
+    Set to ``False`` to retain compact DDP buffers and use LayerWise's
+    variable-size parameter synchronization path. This setting has no effect unless
+    ``use_layer_wise_distributed_optimizer`` is enabled.
+    """
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -2359,9 +2367,10 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     if uses_layer_wise_optimizer(config.optimizer):
         if config.ddp.num_distributed_optimizer_instances != 1:
             raise ValueError("Layer-wise optimizers require num_distributed_optimizer_instances=1.")
-        # Both distributed implementations use reduce-scatter. Model setup must
-        # additionally pass layer-wise intent so Core chooses the correct layout.
-        config.ddp.use_distributed_optimizer = True
+        # This flag selects the ordinary DistributedOptimizer DDP layout. The
+        # model wrapper enables it only when a shard-aligned LayerWise layout is
+        # requested; compact LayerWise mode intentionally leaves it disabled.
+        config.ddp.use_distributed_optimizer = False
     elif ddp_setting or optimizer_setting:
         if ddp_setting != optimizer_setting:
             warn_rank_0(
