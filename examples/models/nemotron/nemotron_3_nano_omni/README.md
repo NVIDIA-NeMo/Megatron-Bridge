@@ -259,8 +259,8 @@ does not match the model configuration.
 | `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                               |
 | `dataset.task_encoder.temporal_video_resize_mode`  | N/A                                       | `"processor"`                        |
 | `model.temporal_patch_dim`                         | `1`                                       | `2`                                  |
-| `model.separate_video_embedder`                    | `True` (inherited; inactive at temporal size 1) | `True`                           |
-| `model.temporal_ckpt_compat`                       | `True` (inherited; inactive at temporal size 1) | `True`                           |
+| `model.separate_video_embedder`                    | `False`                                   | `True`                               |
+| `model.temporal_ckpt_compat`                       | `False`                                   | `True`                               |
 
 Note: `dataset.task_encoder.use_temporal_video_embedder` and
 `dataset.task_encoder.temporal_video_resize_mode` apply only to the Energon data
