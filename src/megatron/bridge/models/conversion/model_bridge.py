@@ -1875,7 +1875,7 @@ class MegatronModelBridge(
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrapped_model_list[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
         tied_mapping_registry = self.mapping_registry() if embeddings_are_tied else None
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
@@ -2118,12 +2118,27 @@ class MegatronModelBridge(
         model = unwrap_model(model)
         return model.config
 
-    def _share_embeddings_and_output_weights(
-        self,
-        model_config: TransformerConfig,
-    ) -> bool:
-        """Shared embedding setting."""
-        return getattr(model_config, "share_embeddings_and_output_weights", False)
+    def _share_embeddings_and_output_weights(self, model: MegatronModule) -> bool:
+        """Return whether the model ties its input embeddings and output layer.
+
+        Provider-built models carry the flag on ``model.config``. A builder-backed model's
+        ``config`` is only the nested ``TransformerConfig``, while the flag lives on the outer
+        model config, so fall back to the flag stored on the built language model, which owns
+        the output layer, and then on the model itself.
+
+        Args:
+            model: Unwrapped Megatron model chunk.
+
+        Returns:
+            True when the output layer reuses the input embedding weights.
+        """
+        model_config = getattr(model, "config", None)
+        if hasattr(model_config, "share_embeddings_and_output_weights"):
+            return model_config.share_embeddings_and_output_weights
+        for module in (getattr(model, "language_model", None), model):
+            if module is not None and hasattr(module, "share_embeddings_and_output_weights"):
+                return bool(module.share_embeddings_and_output_weights)
+        return False
 
     def _unwrap_name(self, name: str) -> str:
         """Unwrap name from DDP or other wrappers.
@@ -2168,7 +2183,7 @@ class MegatronModelBridge(
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
-        share_embeddings = self._share_embeddings_and_output_weights(model_config)
+        share_embeddings = self._share_embeddings_and_output_weights(unwrapped_model)
 
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
             is_first_pp_stage or is_last_pp_stage
@@ -2280,7 +2295,7 @@ class MegatronModelBridge(
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
         pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
@@ -2513,7 +2528,7 @@ class MegatronModelBridge(
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
         pp_rank = _get_pp_rank(megatron_model)
         pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
