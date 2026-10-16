@@ -16,7 +16,7 @@
 
 import math
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -227,6 +227,13 @@ def _resolve_preset_split(dataset_name: str, preset: _HFDatasetPreset, split: st
             raise ValueError(f"Dataset preset {dataset_name} only supports split(s): {supported}.")
         resolved_components.append(f"{resolved_base_split}{slice_separator}{slice_expression}")
     return "+".join(resolved_components)
+
+
+def as_hf_dataset_source(entry: "HFDatasetSourceConfig | Mapping[str, Any]") -> HFDatasetSourceConfig:
+    """Rebuild a source that an override round trip flattened into a mapping."""
+    if isinstance(entry, HFDatasetSourceConfig):
+        return entry
+    return HFDatasetSourceConfig(**dict(entry))
 
 
 def hf_dataset_supports_split(source: HFDatasetSourceConfig, split: str) -> bool:

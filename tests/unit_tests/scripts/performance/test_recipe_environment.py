@@ -74,7 +74,7 @@ from utils import utils
 
 @pytest.mark.parametrize(
     ("gpu", "ep_size", "expected_ranks", "expected_domain", "expected_mnnvl"),
-    [("h100", 32, 8, 8, 0), ("gb200", 32, 32, 72, 1), ("vr200", 64, 64, 72, 1)],
+    [("h100", 32, 8, 8, 0), ("gb200", 32, 32, 72, 1), ("vrnvl72", 64, 64, 72, 1)],
 )
 def test_target_topology_adapts_only_hybridep(gpu, ep_size, expected_ranks, expected_domain, expected_mnnvl):
     config = SimpleNamespace(
@@ -278,7 +278,7 @@ def test_flat_environment_preparation_defaults_missing_recipe_environment(model_
         comm_overlap=None,
     )
     args = SimpleNamespace(
-        gpu="vr200",
+        gpu="vrnvl72",
         moe_a2a_overlap=None,
         tensor_model_parallel_size=None,
         pipeline_model_parallel_size=None,
@@ -371,7 +371,7 @@ def test_exact_gpu_recipe_takes_precedence_over_canonical_fallback(monkeypatch):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("gpu", ["gb200", "gb300", "vr200"])
+@pytest.mark.parametrize("gpu", ["gb200", "gb300", "vrnvl72"])
 @pytest.mark.parametrize("precision", ["fp8_mx", "nvfp4"])
 @pytest.mark.parametrize("override", [None, 4, 8])
 def test_ultra_weak_scaling_resolves_hsdp_before_user_overrides(monkeypatch, gpu, precision, override):
@@ -599,7 +599,7 @@ def test_flat_hydra_ep_override_updates_hybridep_topology_environment(monkeypatc
         comm_overlap=None,
     )
     args = SimpleNamespace(
-        gpu="vr200",
+        gpu="vrnvl72",
         moe_a2a_overlap=None,
         tensor_model_parallel_size=None,
         pipeline_model_parallel_size=None,
@@ -738,7 +738,7 @@ def test_flat_deterministic_preserves_explicit_hydra_environment(monkeypatch):
     assert effective_recipe.env_vars["USER_SELECTED"] == "custom"
     assert "REMOVE_ME" not in effective_recipe.env_vars
     assert effective_recipe.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
-    assert effective_recipe.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+    assert effective_recipe.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
 
 
 def test_flat_environment_compatibility_preserves_explicit_hydra_values():
@@ -918,7 +918,7 @@ def test_flat_non_ncclep_backends_keep_hybridep_environment(dispatcher_backend):
     assert recipe.env_vars == original_env
 
 
-def test_vr200_argparse_overrides_keep_sm100_cuda_connection_count():
+def test_vrnvl72_argparse_overrides_keep_sm100_cuda_connection_count():
     from utils.overrides import _apply_flat_cli_environment_compatibility
 
     recipe = SimpleNamespace(
@@ -931,7 +931,7 @@ def test_vr200_argparse_overrides_keep_sm100_cuda_connection_count():
         ),
     )
     args = SimpleNamespace(
-        gpu="vr200",
+        gpu="vrnvl72",
         moe_a2a_overlap=None,
         tensor_model_parallel_size=2,
         pipeline_model_parallel_size=None,
@@ -1222,7 +1222,9 @@ def test_runner_applies_determinism_before_environment_export():
         "RECIPE_ENV": 1,
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
         "NCCL_ALGO": "Ring",
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+        "MAMBA_DETERMINISTIC": "1",
+        "CAUSAL_CONV1D_DETERMINISTIC": "1",
     }
 
 

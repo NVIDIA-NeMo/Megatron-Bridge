@@ -216,7 +216,7 @@ def gpt_oss_120b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
 
 def _build_gpt_oss_120b_gb300_fp8mx() -> ConfigContainer:
-    """Shared HybridEP MXFP8 base for the GPT-OSS 120B GB300 recipe and its VR200 alias."""
+    """Shared HybridEP MXFP8 base for the GPT-OSS 120B GB300 recipe and its VRNVL72 alias."""
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.moe_router_fusion = True

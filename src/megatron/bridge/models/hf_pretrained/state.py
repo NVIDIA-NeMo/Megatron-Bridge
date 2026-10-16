@@ -15,12 +15,15 @@
 import fnmatch
 import json
 import logging
+import os
+import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path, PureWindowsPath
 from typing import (
+    Any,
     Dict,
     Iterable,
     List,
@@ -78,6 +81,32 @@ def _resolve_output_shard_path(output_path: Path, filename: str) -> Path:
     except ValueError:
         raise ValueError(f"Shard filename {filename!r} escapes output directory {output_root}.") from None
     return output_file_path
+
+
+def _existing_safetensors_files(path: Path) -> set[str]:
+    """Find previous checkpoint files without taking ownership of symlink targets."""
+    if not path.is_dir():
+        return set()
+    files = {
+        entry.name
+        for entry in path.iterdir()
+        if re.fullmatch(r"model(?:-\d{5}-of-\d{5})?\.safetensors", entry.name)
+        and (entry.is_file() or entry.is_symlink())
+    }
+    index_file = path / "model.safetensors.index.json"
+    if index_file.is_file():
+        files.add(index_file.name)
+        try:
+            with index_file.open() as f:
+                index = json.load(f)
+        except json.JSONDecodeError:
+            return files
+        for key, filename in index["weight_map"].items():
+            filename = _validate_safetensors_shard_filename(filename, tensor_key=key, index_file=index_file)
+            # Unlink the named file, never a target outside the output directory.
+            if (path / filename).parent.resolve().is_relative_to(path):
+                files.add(filename)
+    return files
 
 
 def _contiguous_safetensors(tensors: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -464,6 +493,16 @@ class SafeTensorsStateSource(StateSource):
         self.key_prefix = key_prefix
         self.revision = revision
         self.hub_kwargs = dict(hub_kwargs or {})
+        # Small tensors (block/weight scales) are cached per source instance and
+        # safe_open handles are reused: export_hf_weights() re-quantizes every weight
+        # against its original HF scale and asks for the scales one key at a time, which
+        # otherwise re-opens the shard file per key on every refit (~150k opens for
+        # DeepSeek-V4-Pro). Both can be disabled through environment variables.
+        self._small_tensor_cache: Dict[str, torch.Tensor] = {}
+        self._open_handles: Dict[str, Any] = {}
+        self._cache_small = os.environ.get("MBRIDGE_STATE_CACHE_SMALL_TENSORS", "1") == "1"
+        self._reuse_handles = os.environ.get("MBRIDGE_STATE_REUSE_HANDLES", "1") == "1"
+        self._small_numel = int(os.environ.get("MBRIDGE_STATE_SMALL_TENSOR_NUMEL", str(16 * 1024 * 1024)))
         self._lazy_hub = key_prefix is not None or hub_kwargs is not None
         self._resolved_path_cache: Optional[Path] = None
         self._keys_cache: Optional[List[str]] = None
@@ -635,6 +674,28 @@ class SafeTensorsStateSource(StateSource):
         self._keys_cache = sorted(list(all_keys))
         return self._keys_cache
 
+    def _get_handle(self, file_path: Path):
+        """Return a safe_open handle for ``file_path``, reused across calls when enabled."""
+        from safetensors import safe_open
+
+        if not self._reuse_handles:
+            return safe_open(file_path, framework="pt", device="cpu")
+        key = str(file_path)
+        handle = self._open_handles.get(key)
+        if handle is None:
+            handle = safe_open(file_path, framework="pt", device="cpu")
+            self._open_handles[key] = handle
+        return handle
+
+    def _maybe_cache(self, key: str, tensor: torch.Tensor) -> None:
+        # Keep a private copy: callers may modify the tensors they get back in place.
+        if self._cache_small and tensor.numel() <= self._small_numel:
+            self._small_tensor_cache[key] = tensor.clone()
+
+    def _invalidate_handle(self, file_path: Path) -> None:
+        """Drop a reused handle so the next access re-reads the shard header (e.g. after a retry)."""
+        self._open_handles.pop(str(file_path), None)
+
     def load_tensors(self, keys_to_load: List[str]) -> Dict[str, torch.Tensor]:
         if not keys_to_load:
             return {}
@@ -647,6 +708,15 @@ class SafeTensorsStateSource(StateSource):
         loaded_tensors = {}
         remaining_keys = set(keys_to_load)
         key_to_filename_map = self.key_to_filename_map
+
+        if self._cache_small:
+            for key in list(remaining_keys):
+                cached = self._small_tensor_cache.get(key)
+                if cached is not None:
+                    loaded_tensors[key] = cached.clone()
+                    remaining_keys.discard(key)
+            if not remaining_keys:
+                return loaded_tensors
 
         max_retries = 3
 
@@ -672,12 +742,14 @@ class SafeTensorsStateSource(StateSource):
                 )
                 if file_path.exists():
                     for attempt in range(max_retries):
-                        with safe_open(file_path, framework="pt", device="cpu") as f:
+                        f = self._get_handle(file_path)
+                        if True:  # the handle may be shared across calls; do not close it here
                             file_keys = set(f.keys())
                             for key in keys_in_file:
                                 source_key = (self.key_prefix or "") + key
                                 if source_key in file_keys and key not in loaded_tensors:
                                     loaded_tensors[key] = f.get_tensor(source_key)
+                                    self._maybe_cache(key, loaded_tensors[key])
                                     remaining_keys.discard(key)
                         still_missing = [k for k in keys_in_file if k in remaining_keys]
                         if not still_missing:
@@ -687,6 +759,8 @@ class SafeTensorsStateSource(StateSource):
                                 f"Retry {attempt + 1}/{max_retries}: {len(still_missing)} keys "
                                 f"not found in {filename}, retrying after delay..."
                             )
+                            # the shard may be replaced meanwhile; do not retry on a stale header
+                            self._invalidate_handle(file_path)
                             time.sleep(1.0 * (attempt + 1))
 
         if remaining_keys and self.key_prefix is None:
@@ -762,7 +836,7 @@ class SafeTensorsStateSource(StateSource):
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
         ignored_source_key_suffixes: Iterable[str] | None = None,
-    ):
+    ) -> Set[str]:
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
         original sharding structure in a memory-efficient, streaming fashion.
@@ -793,6 +867,9 @@ class SafeTensorsStateSource(StateSource):
             ignored_source_key_suffixes: Source tensor key suffixes to omit from the expected
                 source sharding map when saving.
 
+        Returns:
+            Relative paths of safetensors artifacts written by this call.
+
         """
         if distributed_save:
             return self._save_generator_distributed(
@@ -813,7 +890,7 @@ class SafeTensorsStateSource(StateSource):
             # Other ranks must exhaust the generator to avoid hangs in collectives.
             for _ in generator:
                 pass
-            return
+            return set()
 
         # Rank 0 proceeds with saving.
         from safetensors.torch import save_file
@@ -832,7 +909,8 @@ class SafeTensorsStateSource(StateSource):
             buffered_tensors = dict(generator)
             if buffered_tensors:
                 save_file(_contiguous_safetensors(buffered_tensors), output_path / "model.safetensors")
-            return
+                return {"model.safetensors"}
+            return set()
 
         filename_to_keys_map = defaultdict(set)
         for key, filename in key_to_filename_map.items():
@@ -843,6 +921,7 @@ class SafeTensorsStateSource(StateSource):
         buffered_tensors = {}
         all_yielded_keys = set()
         all_saved_keys = set()
+        saved_filenames = set()
         total_saved_tensor_bytes = 0
 
         for name, tensor in generator:
@@ -877,6 +956,7 @@ class SafeTensorsStateSource(StateSource):
                 output_file_path = _resolve_output_shard_path(output_path, filename)
                 output_file_path.parent.mkdir(parents=True, exist_ok=True)
                 save_file(_contiguous_safetensors(tensors_to_save), output_file_path)
+                saved_filenames.add(filename)
                 total_saved_tensor_bytes += sum(
                     tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
                 )
@@ -913,6 +993,7 @@ class SafeTensorsStateSource(StateSource):
                     output_file_path = _resolve_output_shard_path(output_path, filename)
                     output_file_path.parent.mkdir(parents=True, exist_ok=True)
                     save_file(_contiguous_safetensors(tensors_to_save), output_file_path)
+                    saved_filenames.add(filename)
                     total_saved_tensor_bytes += sum(
                         tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
                     )
@@ -975,6 +1056,9 @@ class SafeTensorsStateSource(StateSource):
             if new_weight_map:
                 with open(output_index_file, "w") as f:
                     json.dump(new_index_data, f, indent=4)
+                saved_filenames.add("model.safetensors.index.json")
+
+        return saved_filenames
 
     @staticmethod
     @lru_cache(maxsize=None)
@@ -1006,7 +1090,7 @@ class SafeTensorsStateSource(StateSource):
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
         ignored_source_key_suffixes: Iterable[str] | None = None,
-    ):
+    ) -> Set[str]:
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
             world_size = torch.distributed.get_world_size()
@@ -1040,16 +1124,18 @@ class SafeTensorsStateSource(StateSource):
 
         # Fallback: no sharding map, single-file save
         if not key_to_filename_map:
+            saved_filenames = set()
             if is_saver_rank and saver_index == 0:
                 buffered_tensors = dict(generator)
                 if buffered_tensors:
                     save_file(_contiguous_safetensors(buffered_tensors), output_path / "model.safetensors")
+                    saved_filenames.add("model.safetensors")
             else:
                 for _ in generator:
                     pass
             if is_distributed:
                 torch.distributed.barrier()
-            return
+            return saved_filenames
 
         if is_saver_rank:
             all_filenames = sorted(set(key_to_filename_map.values()))
@@ -1273,6 +1359,8 @@ class SafeTensorsStateSource(StateSource):
                 output_index_file = output_path / "model.safetensors.index.json"
                 with open(output_index_file, "w") as f:
                     json.dump(new_index_data, f, indent=4)
+                saved_filenames_aggregated.add("model.safetensors.index.json")
 
         if is_distributed:
             torch.distributed.barrier()
+        return saved_filenames_aggregated if rank == 0 else set()

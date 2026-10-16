@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
+import fnmatch
 import html
 import importlib.util
 import re
@@ -180,7 +182,7 @@ items:
 def test_catalog_is_a_simple_model_directory(generator: ModuleType, catalog: dict[str, object]) -> None:
     page = generator.render_supported_models_page(catalog, REPO_ROOT, fern=False)
 
-    assert page.count('class="verification-model-link"') == len(catalog["models"]) - 2
+    assert page.count('class="verification-model-link"') == len(catalog["models"])
     assert "never combined into synthetic commands" in page
     assert 'href="deepseek/deepseek-v3.html#verified-deepseek-v3"' in page
     assert "NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong> <!-- pragma: allowlist secret -->" in page
@@ -320,48 +322,37 @@ def test_model_page_merge_preserves_intro_and_replaces_old_sections(generator: M
 
 
 @pytest.mark.parametrize("guide", ["nemotron3.5-super-vl", "nemotron3.5-super-vl-text-only"])
-def test_unpublished_nemotron_guides_remain_in_sources_without_public_links(
-    generator: ModuleType, catalog: dict[str, object], guide: str
-) -> None:
+def test_released_nemotron_guides_are_published(generator: ModuleType, catalog: dict[str, object], guide: str) -> None:
     index = (REPO_ROOT / "docs/models/nemotron/index.md").read_text(encoding="utf-8")
     fern_index = (REPO_ROOT / "docs/fern/versions/nightly/pages/models/nemotron/index.mdx").read_text(encoding="utf-8")
     nav = (REPO_ROOT / "docs/fern/versions/nightly.yml").read_text(encoding="utf-8")
 
-    assert guide not in index
-    assert guide not in fern_index
-    assert f"path: ./nightly/pages/models/nemotron/{guide}.mdx" not in nav
+    assert f"\n{guide}.md\n" in index
+    assert f"]({guide}.md)" in index
+    assert f"]({guide}.md)" in fern_index
+    assert f"path: ./nightly/pages/models/nemotron/{guide}.mdx" in nav
     assert (REPO_ROOT / f"docs/models/nemotron/{guide}.md").is_file()
     assert (REPO_ROOT / f"docs/fern/versions/nightly/pages/models/nemotron/{guide}.mdx").is_file()
     for fern in (False, True):
         page = generator.render_supported_models_page(catalog, REPO_ROOT, fern=fern)
-        assert guide not in page
-        assert "nemotron3-super" in page
-        assert "nemotron3-ultra" in page
-        assert f"**{len(catalog['models']) - 2} model cards**" in page
+        suffix = "" if fern else ".html"
+        assert f'href="nemotron/{guide}{suffix}#' in page
+        assert f"**{len(catalog['models'])} model cards**" in page
 
+    config = ast.parse((REPO_ROOT / "docs/conf.py").read_text(encoding="utf-8"))
+    excludes = next(
+        ast.literal_eval(node.value)
+        for node in config.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "exclude_patterns" for target in node.targets)
+    )
+    assert not any(fnmatch.fnmatch(f"models/nemotron/{guide}.md", pattern) for pattern in excludes)
 
-def test_unpublished_nemotron_redirects_target_the_nightly_catalog() -> None:
-    config = yaml.safe_load((REPO_ROOT / "docs/fern/docs.yml").read_text(encoding="utf-8"))
-    redirects = {redirect["source"]: redirect["destination"] for redirect in config["redirects"]}
-    paths = (
-        "supported-models/nemotron/nemotron-3-5-super-vl",
-        "supported-models/nemotron/nemotron-3-5-super-text-only",
-        "models/nemotron/nemotron3.5-super-vl.html",
-        "models/nemotron/nemotron3.5-super-vl-text-only.html",
-    )
-    for version in ("", "nightly/"):
-        for path in paths:
-            assert (
-                redirects[f"/nemo/megatron-bridge/{version}{path}"]
-                == "/nemo/megatron-bridge/nightly/supported-models/supported-models"
-            )
-    # The frozen default version lacks this landing page; nightly contains it.
-    nav = yaml.safe_load((REPO_ROOT / "docs/fern/versions/nightly.yml").read_text(encoding="utf-8"))
-    section = next(item for item in nav["navigation"] if item.get("section") == "Supported Models")
-    assert any(
-        item.get("page") == "Supported Models" and item.get("path") == "./nightly/pages/models/README.mdx"
-        for item in section["contents"]
-    )
+    fern_config = yaml.safe_load((REPO_ROOT / "docs/fern/docs.yml").read_text(encoding="utf-8"))
+    slug = "nemotron-3-5-super-text-only" if guide.endswith("text-only") else "nemotron-3-5-super-vl"
+    for redirect in fern_config.get("redirects", []):
+        assert not redirect["source"].endswith(f"/supported-models/nemotron/{slug}")
+        assert not redirect["source"].endswith(f"/models/nemotron/{guide}.html")
 
 
 def test_generated_outputs_and_navigation_are_current(generator: ModuleType, catalog: dict[str, object]) -> None:

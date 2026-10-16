@@ -80,6 +80,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
 )
 from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.transformers_compat import (
+    partial_rotary_factor_from_hf,
     rope_theta_from_hf,
 )
 from megatron.bridge.models.conversion.utils import (
@@ -89,7 +90,6 @@ from megatron.bridge.models.conversion.utils import (
     unwrap_model,
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
@@ -558,16 +558,18 @@ class MegatronModelBridge(
     # provider, such as one implementing MLA.
     PROVIDER_CLASS = None
 
-    # Builder-backed construction is rolling out incrementally by model family. Override this
-    # when the standard GPT model config cannot represent the model, and set it to None for
-    # families that have not yet migrated. The selected model config owns its nested
-    # transformer config class.
-    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
+    # Builder-backed construction is rolling out incrementally by model family, so it is opt-in.
+    # None means the family has not migrated: get_model_config() raises and the provider path
+    # stays the supported one. A family that has mapped its Hugging Face config for the builder
+    # path sets this to BridgeGPTModelConfig, or to a specialized config when the standard GPT
+    # model config cannot represent the model. Subclasses of a migrated bridge inherit the
+    # opt-in. The selected model config owns its nested transformer config class.
+    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = None
 
     # Conversion still uses the provider-backed construction path unless a model family has
     # explicitly migrated its conversion lifecycle to ModelBuilder. Keeping this separate
-    # from MODEL_CONFIG_CLASS preserves get_model_config() for legacy families without
-    # silently changing how their checkpoints are constructed.
+    # from MODEL_CONFIG_CLASS lets a family expose get_model_config() without silently
+    # changing how its checkpoints are constructed. Requires MODEL_CONFIG_CLASS to be set.
     USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
 
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
@@ -655,6 +657,14 @@ class MegatronModelBridge(
         ("mscale_all_dim", "yarn_mscale_all_dim"),
     ]
 
+    # Hugging Face YaRN defaults (transformers' _compute_yarn_parameters) for keys a
+    # checkpoint omits: (megatron_param, default)
+    YARN_HF_DEFAULTS = [
+        ("yarn_beta_fast", 32.0),
+        ("yarn_beta_slow", 1.0),
+        ("yarn_correction_range_round_to_int", True),
+    ]
+
     # MLA rope scaling field mapping: (hf_rope_scaling_key, megatron_mla_param)
     # These are applied for MLA models (DeepSeek, Kimi, etc.) which use MLATransformerConfig
     # Uses direct field names without yarn_ prefix (e.g., mscale, rotary_scaling_factor)
@@ -717,6 +727,12 @@ class MegatronModelBridge(
             else:
                 value = getattr(hf_config, hf_name, None)
                 has_value = hasattr(hf_config, hf_name)
+                if not has_value and hf_name == "partial_rotary_factor":
+                    # Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters.
+                    try:
+                        value, has_value = partial_rotary_factor_from_hf(hf_config), True
+                    except ValueError:
+                        pass
             if (
                 has_value
                 and megatron_name not in provider_kwargs
@@ -764,6 +780,10 @@ class MegatronModelBridge(
                         provider_kwargs[megatron_key] = value
                 if "truncate" in rope_scaling:
                     provider_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+                # Apply Hugging Face YaRN defaults for omitted keys. Megatron Core passes these
+                # fields to YarnRotaryEmbedding explicitly, so None would override its defaults.
+                for megatron_key, default in self.YARN_HF_DEFAULTS:
+                    provider_kwargs.setdefault(megatron_key, default)
         elif is_mla_provider:
             if rope_type not in (None, "default"):
                 logger.warning(
@@ -846,9 +866,9 @@ class MegatronModelBridge(
     def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> ModelConfig:
         """Convert a Hugging Face config directly to a builder-backed config.
 
-        GPT-style model families use ``BridgeGPTModelConfig`` by default.
-        A bridge may select a specialized config class or explicitly disable
-        this path by setting ``MODEL_CONFIG_CLASS`` to ``None``.
+        This path is opt-in per model family. ``MODEL_CONFIG_CLASS`` defaults to
+        ``None``; a migrated family sets it to ``BridgeGPTModelConfig`` or to a
+        specialized config class.
 
         Args:
             hf_config: Hugging Face architecture configuration.
@@ -857,14 +877,16 @@ class MegatronModelBridge(
             Serializable model configuration linked to its builder.
 
         Raises:
-            ModelConfigNotSupportedError: If the model family explicitly disables this path.
+            ModelConfigNotSupportedError: If the model family has not migrated to
+                builder-backed configs (``MODEL_CONFIG_CLASS`` is ``None``).
             ValueError: If mapped fields do not belong to either config dataclass.
         """
         model_config_class = self.MODEL_CONFIG_CLASS
         if model_config_class is None:
             raise ModelConfigNotSupportedError(
                 f"ModelConfig conversion is not implemented for {type(self).__name__}. "
-                "This model family sets MODEL_CONFIG_CLASS to None."
+                "This model family has not migrated to builder-backed configs "
+                "(MODEL_CONFIG_CLASS is None); use AutoBridge.to_megatron_provider() instead."
             )
 
         config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)

@@ -20,7 +20,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import PretrainedConfig
+from transformers import PretrainedConfig, Qwen2Config
 
 from megatron.bridge.models.conversion import model_bridge as model_bridge_module
 from megatron.bridge.models.conversion import modelopt_utils
@@ -41,6 +41,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import partial_rotary_factor_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -2001,3 +2002,81 @@ def test_kimi_conversion_tasks_forward_module_exclusions(monkeypatch, model_fami
         is tasks
     )
     assert source.get_all_keys is get_all_keys
+
+
+def _yarn_qwen2_config(rope_scaling):
+    return Qwen2Config(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=16384,
+        vocab_size=128,
+        rope_scaling=rope_scaling,
+    )
+
+
+def test_yarn_mapping_fills_hugging_face_defaults_for_omitted_keys():
+    """Omitted YaRN keys must not reach Megatron Core as None."""
+    config = _yarn_qwen2_config({"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 4096})
+
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
+
+    assert kwargs["position_embedding_type"] == "yarn"
+    assert kwargs["yarn_rotary_scaling_factor"] == 4.0
+    assert kwargs["yarn_original_max_position_embeddings"] == 4096
+    assert kwargs["yarn_beta_fast"] == 32.0
+    assert kwargs["yarn_beta_slow"] == 1.0
+    assert kwargs["yarn_correction_range_round_to_int"] is True
+
+
+def test_yarn_mapping_preserves_explicit_keys():
+    config = _yarn_qwen2_config(
+        {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 4096,
+            "beta_fast": 16.0,
+            "beta_slow": 2.0,
+            "truncate": False,
+        }
+    )
+
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
+
+    assert kwargs["yarn_beta_fast"] == 16.0
+    assert kwargs["yarn_beta_slow"] == 2.0
+    assert kwargs["yarn_correction_range_round_to_int"] is False
+
+
+def test_non_yarn_mapping_adds_no_yarn_defaults():
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(_yarn_qwen2_config(None))
+
+    assert "position_embedding_type" not in kwargs
+    assert not any(key.startswith("yarn_") for key in kwargs)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        SimpleNamespace(partial_rotary_factor=0.25, rope_parameters={"rope_theta": 10000.0}),
+        SimpleNamespace(rope_parameters={"rope_theta": 10000.0, "partial_rotary_factor": 0.25}),
+    ],
+)
+def test_partial_rotary_factor_from_hf_reads_attribute_or_rope_parameters(config):
+    assert partial_rotary_factor_from_hf(config) == 0.25
+
+
+def test_partial_rotary_factor_from_hf_raises_when_absent():
+    with pytest.raises(ValueError, match="partial_rotary_factor not found"):
+        partial_rotary_factor_from_hf(SimpleNamespace(rope_parameters={"rope_theta": 10000.0}))
+
+
+def test_mapping_reads_partial_rotary_factor_from_hf_config():
+    """Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters, not as an attribute."""
+    config = Qwen2Config(hidden_size=64, num_attention_heads=4, num_key_value_heads=2, partial_rotary_factor=0.5)
+
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
+
+    assert kwargs["rotary_percent"] == 0.5
