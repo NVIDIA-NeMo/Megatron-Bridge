@@ -1174,6 +1174,9 @@ class ConfigContainer(Container):
         ]
         if len(configured_parallelisms) > 0:
             raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
+        if self.model.expert_model_parallel_size > 1:
+            if self.model.num_moe_experts is None:
+                raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
         if self.model.virtual_pipeline_model_parallel_size is not None:
             raise ValueError("MFSDP V2 does not currently support multiple model chunks.")
         if self.dist.use_tp_pp_dp_mapping:

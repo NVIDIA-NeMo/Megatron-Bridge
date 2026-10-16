@@ -349,18 +349,10 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
-
-    _enable_deepseek_full_iteration(cfg)
-    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-
-    cfg.train.micro_batch_size = 1
-    cfg.train.global_batch_size = 64
-
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -377,7 +369,6 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
@@ -386,21 +377,23 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdp2_config() -> ConfigContainer:
+def deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdpv2_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron FSDP v2."""
     cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
     cfg.ddp.megatron_fsdp_version = 2
+
+    _enable_deepseek_full_iteration(cfg)
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 64
 
     # Need a fix
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     # delay_wgrad_compute is only valid alongside that overlap.
     cfg.comm_overlap.delay_wgrad_compute = False
 
-    # Recompute not needed.
-    # cfg.model.recompute_granularity = None
-    # cfg.model.recompute_modules = []
-    # cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
-
+    cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
     return cfg
 
 
