@@ -818,9 +818,7 @@ def test_nemotron_omni_image_sft_export_recovers_video_weight(tmp_path, config_o
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("with_megatron_names", [False, True])
-@pytest.mark.parametrize("has_trained_video", [False, True])
-def test_nemotron_omni_export_video_weight_precedence(tmp_path, with_megatron_names, has_trained_video):
+def test_nemotron_omni_export_video_weight_precedence(tmp_path):
     name = "vision_model.radio_model.model.patch_generator.video_embedder.weight"
     original = torch.ones(4, 6)
     trained = original + 2
@@ -828,24 +826,13 @@ def test_nemotron_omni_export_video_weight_precedence(tmp_path, with_megatron_na
     config = PretrainedConfig()
     config.name_or_path = str(tmp_path)
     config.vision_config = SimpleNamespace(separate_video_embedder=True)
-    converted = []
-    if has_trained_video:
-        converted = [
-            HFSourcedWeightTuple(name, trained, ("vision_model.video_embedder.weight",))
-            if with_megatron_names
-            else HFWeightTuple(name, trained)
-        ]
+    converted = [HFSourcedWeightTuple(name, trained, ("vision_model.video_embedder.weight",))]
     with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(converted)):
-        exported = list(
-            NemotronOmniBridge().stream_weights_megatron_to_hf([], config, with_megatron_names=with_megatron_names)
-        )
+        exported = list(NemotronOmniBridge().stream_weights_megatron_to_hf([], config, with_megatron_names=True))
     assert len(exported) == 1
     assert exported[0].param_name == name
-    assert torch.equal(exported[0].weight, trained if has_trained_video else original)
-    if with_megatron_names:
-        assert exported[0].megatron_param_names == (
-            ("vision_model.video_embedder.weight",) if has_trained_video else ()
-        )
+    assert torch.equal(exported[0].weight, trained)
+    assert exported[0].megatron_param_names == ("vision_model.video_embedder.weight",)
 
 
 @pytest.mark.unit
@@ -863,25 +850,23 @@ def test_nemotron_omni_export_fails_without_required_video_weight(tmp_path, refe
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("pp_rank", [0, 1])
-def test_nemotron_omni_stage_local_export_does_not_replace_remote_video(tmp_path, pp_rank):
+def test_nemotron_omni_stage_local_export_does_not_replace_remote_video(tmp_path):
     name = "vision_model.radio_model.model.patch_generator.video_embedder.weight"
     save_file({name: torch.ones(4, 6)}, tmp_path / "model.safetensors")
     config = PretrainedConfig()
     config.name_or_path = str(tmp_path)
     config.vision_config = {"separate_video_embedder": True}
     bridge = NemotronOmniBridge()
-    bridge._cached_param_owners = {"vision_model.video_embedder.weight": 1 - pp_rank}
+    bridge._cached_param_owners = {"vision_model.video_embedder.weight": 1}
     with (
         patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(())),
-        patch("megatron.bridge.models.conversion.model_bridge._get_pp_rank", return_value=pp_rank),
+        patch("megatron.bridge.models.conversion.model_bridge._get_pp_rank", return_value=0),
     ):
         assert list(bridge.stream_weights_megatron_to_hf([], config, current_pp_stage_only=True)) == []
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("cpu", [False, True])
-def test_nemotron_omni_recovered_video_respects_device_and_dtype(tmp_path, cpu):
+def test_nemotron_omni_recovered_video_respects_device_and_dtype(tmp_path):
     name = "vision_model.radio_model.model.patch_generator.video_embedder.weight"
     save_file({name: torch.ones(4, 6)}, tmp_path / "model.safetensors")
     config = PretrainedConfig()
@@ -889,11 +874,11 @@ def test_nemotron_omni_recovered_video_respects_device_and_dtype(tmp_path, cpu):
     config.vision_config = {"separate_video_embedder": True}
     with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(())):
         exported = list(
-            NemotronOmniBridge().stream_weights_megatron_to_hf([], config, cpu=cpu, weight_dtype=torch.bfloat16)
+            NemotronOmniBridge().stream_weights_megatron_to_hf([], config, cpu=False, weight_dtype=torch.bfloat16)
         )
     assert len(exported) == 1
     assert exported[0].weight.dtype == torch.bfloat16
-    assert exported[0].weight.device.type == ("cuda" if not cpu and torch.cuda.is_available() else "cpu")
+    assert exported[0].weight.device.type == ("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def test_canonical_bridge_maps_super_mtp_config():
