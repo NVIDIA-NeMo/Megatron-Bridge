@@ -55,10 +55,22 @@ Configure validation frequency, duration, and evaluation-only modes.
 | `eval_iters` | `int` | `100` | Number of iterations for validation/test evaluation |
 | `eval_interval` | `Optional[int]` | `1000` | Interval between validation runs |
 | `skip_train` | `bool` | `False` | Skip training, only do evaluation and exit |
+| `eval_at_step_zero` | `bool` | `False` | Run one validation pass before the first training step when training starts at step 0 |
+| `multiple_validation_sets` | `bool` | `False` | Evaluate and log each validation dataset separately |
+| `validation_set_names` | `Optional[list[str]]` | `None` | Names used in per-set metric keys; requires `multiple_validation_sets` |
 
 **Note:** To control validation behavior:
 - Set `eval_iters` to `0` to disable validation entirely (both during and after training).
 - Set `eval_interval` to `None` to skip validation during training, but still run validation after training completes.
+- `eval_at_step_zero` gives a baseline loss for the initial or loaded weights. It runs on fresh runs and on `finetune` loads, but not when resuming mid-run.
+
+#### Multiple Validation Sets
+With `multiple_validation_sets=True`, each validation dataset runs the full `eval_iters` schedule and is logged under its own key, such as `lm loss validation-<name>` (`val/lm loss-<name>` in MLflow). The name is taken from `validation_set_names`, or the set index when no names are given. `evaluate_and_print_results` then returns a dict that maps each set name to its loss dict.
+
+- **Built-in GPT datasets.** Each prefix of the validation entry in `blend_per_split` becomes its own set. The blend weights are ignored.
+- **Custom dataset providers.** Return a list of validation datasets from the provider. Every rank must return the same number of sets.
+- **Resume.** Each set resumes from its own consumed-sample offset. If the number of sets changes between runs, the offsets reset to 0 with a warning.
+- **Not supported.** MegatronMIMO models, DPO, `full_validation`, and multiple test sets are rejected at config validation or dataloader build time.
 
 ### Memory Management
 Control GPU memory cleanup and garbage collection to prevent memory issues during training.
