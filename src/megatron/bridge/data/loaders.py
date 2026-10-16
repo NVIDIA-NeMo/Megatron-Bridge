@@ -413,14 +413,16 @@ def build_train_valid_test_data_loaders(
 
     # Global-batch packing pulls fixed sample counts inside collectives, so an exhausted
     # validation iterator would hang other ranks instead of ending evaluation early.
+    # With multiple_validation_sets every set runs the full eval schedule, so each needs the full count.
     if getattr(cfg.dataset, "enable_global_batch_packing", False) and valid_ds is not None:
         _, valid_samples_needed, _ = get_train_valid_test_num_samples(cfg)
-        if hasattr(valid_ds, "__len__") and len(valid_ds) < valid_samples_needed:
-            raise RuntimeError(
-                f"Global-batch packing needs at least {valid_samples_needed} validation samples "
-                f"(eval_iters x eval_global_batch_size over the run) but the validation dataset has {len(valid_ds)}. "
-                "Reduce validation.eval_iters / eval_interval or provide more validation data."
-            )
+        for ds in valid_ds if isinstance(valid_ds, list) else [valid_ds]:
+            if hasattr(ds, "__len__") and len(ds) < valid_samples_needed:
+                raise RuntimeError(
+                    f"Global-batch packing needs at least {valid_samples_needed} validation samples "
+                    f"(eval_iters x eval_global_batch_size over the run) but the validation dataset has {len(ds)}. "
+                    "Reduce validation.eval_iters / eval_interval or provide more validation data."
+                )
 
     exit_signal = cfg.train.exit_signal
 

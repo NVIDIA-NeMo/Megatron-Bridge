@@ -537,3 +537,81 @@ def test_multiple_test_datasets_rejected():
             build_train_valid_test_datasets_provider=get_dataset_provider(provider),
             dp_group=object(),
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("second_set_size", [4, 3])
+@mock.patch("torch.distributed.broadcast")
+@mock.patch("torch.distributed.get_world_size", return_value=1)
+@mock.patch("torch.distributed.get_rank", return_value=0)
+def test_global_batch_packing_size_check_applies_per_validation_set(
+    _mock_rank, _mock_world_size, _mock_broadcast, second_set_size
+):
+    """The global-batch-packing size check compares each validation set, not the list of sets."""
+
+    class RangeDataset:
+        def __init__(self, size):
+            self.samples = [{"sample_id": torch.tensor(index)} for index in range(size)]
+
+        def __len__(self):
+            return len(self.samples)
+
+        def __getitem__(self, index):
+            return self.samples[index]
+
+    @dataclass
+    class PackedMultiValDatasetProvider(DatasetProvider):
+        enable_global_batch_packing: bool = True
+
+        def build_datasets(self, context: DatasetBuildContext):
+            return RangeDataset(context.train_samples), [RangeDataset(4), RangeDataset(second_set_size)], None
+
+    provider = PackedMultiValDatasetProvider(dataloader_type="single", num_workers=0, persistent_workers=False)
+    provider.finalize()
+
+    # train_iters=1 with eval_interval=1 budgets 2 passes x eval_iters 1 x global batch 2 = 4 samples per set.
+    cfg = SimpleNamespace(
+        model=object(),
+        dataset=provider,
+        train=SimpleNamespace(
+            train_samples=4,
+            train_iters=1,
+            global_batch_size=2,
+            micro_batch_size=1,
+            num_epochs=None,
+            exit_signal=None,
+            exit_signal_handler_for_dataloader=False,
+        ),
+        validation=SimpleNamespace(
+            eval_interval=1,
+            eval_iters=1,
+            eval_global_batch_size=None,
+            eval_micro_batch_size=None,
+            skip_train=False,
+            eval_at_step_zero=False,
+            multiple_validation_sets=True,
+            validation_set_names=None,
+        ),
+    )
+
+    real_torch_tensor = torch.tensor
+
+    def tensor_on_cpu(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_torch_tensor(*args, **kwargs)
+
+    def build():
+        with mock.patch("megatron.bridge.data.loaders.torch.tensor", side_effect=tensor_on_cpu):
+            return build_train_valid_test_data_loaders(
+                cfg=cfg,
+                train_state=TrainState(),
+                build_train_valid_test_datasets_provider=get_dataset_provider(provider),
+                dp_group=object(),
+            )
+
+    if second_set_size < 4:
+        with pytest.raises(RuntimeError, match=f"validation dataset has {second_set_size}"):
+            build()
+    else:
+        _, valid_dataloader, _ = build()
+        assert isinstance(valid_dataloader, list) and len(valid_dataloader) == 2
