@@ -53,11 +53,16 @@ By default, `use_layer_wise_param_layout=True` builds shard-aligned DDP buffers
 for the LayerWise optimizer. Set it to `False` to retain compact DDP buffers and
 use LayerWise's variable-size parameter synchronization path. This reduces
 layout padding while preserving the configured parameter-gather behavior.
+Existing Kimi recipes keep the compact layout and parameter-gather overlap
+disabled until their MoE and pipeline-parallel configurations are validated
+with the shard-aligned layout; other recipes can opt in independently.
 
 Resuming Muon training restores Muon optimizer state. When changing optimization
 algorithms between runs, load model weights with fresh optimizer state using
 `checkpoint.load_optim=False` or the appropriate finetuning configuration;
 Bridge does not convert Adam moments into Muon optimizer state.
+Checkpoints created before distributed-optimizer metadata was recorded retain
+the historical model-space sharding fallback when that metadata key is absent.
 
 ## SchedulerConfig
 

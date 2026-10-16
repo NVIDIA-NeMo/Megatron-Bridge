@@ -203,17 +203,19 @@ class TestKimiK25VLSftConfig:
         assert cfg.model.pipeline_model_parallel_layout == _get_kimi_k25_vl_pipeline_layout(4, 1)
 
     def test_sft_config_ddp_settings_for_muon(self):
-        """DDP settings respect Muon's constraints (no dist optimizer, no param overlap)."""
+        """The existing Kimi-VL recipe retains compact, non-overlapped LayerWise Muon."""
         cfg = kimi_k25_vl_sft_config()
 
         assert cfg.ddp.use_distributed_optimizer is False
         assert cfg.ddp.overlap_param_gather is False
+        assert cfg.comm_overlap.overlap_param_gather is False
         assert cfg.ddp.overlap_grad_reduce is True
         assert cfg.ddp.grad_reduce_in_fp32 is True
         assert cfg.ddp.check_for_nan_in_grad is True
         assert cfg.ddp.use_megatron_fsdp is False
         assert cfg.ddp.average_in_collective is True
         assert cfg.ddp.data_parallel_sharding_strategy == "no_shard"
+        assert cfg.optimizer.use_layer_wise_param_layout is False
 
     def test_sft_config_dataset_configuration(self):
         """Dataset uses sequence length 4096 and the model's HF processor path."""
