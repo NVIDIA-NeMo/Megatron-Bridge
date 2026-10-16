@@ -16,6 +16,7 @@
 
 from contextlib import AbstractContextManager, nullcontext
 from importlib import import_module
+from inspect import Parameter, signature
 from typing import Any
 
 
@@ -56,8 +57,10 @@ def gtp_checkpoint_load_context(module: Any, *, gtp_enabled: bool) -> AbstractCo
     return nullcontext()
 
 
-def save_tokenizer_assets(tokenizer: Any, tokenizer_config: Any, checkpoint_name: str) -> None:
-    """Delegate tokenizer asset saving, failing explicitly on unsupported MCore."""
+def save_tokenizer_assets(
+    tokenizer: Any, tokenizer_config: Any, checkpoint_name: str, *, raise_on_error: bool = False
+) -> None:
+    """Delegate tokenizer saving without weakening a request for strict error propagation."""
     checkpointing = import_module("megatron.training.checkpointing")
     save_assets = getattr(checkpointing, "save_tokenizer_assets", None)
     if save_assets is None:
@@ -65,4 +68,15 @@ def save_tokenizer_assets(tokenizer: Any, tokenizer_config: Any, checkpoint_name
             "This MCore revision does not support saving tokenizer assets. "
             "Set checkpoint.save_tokenizer_assets=False or use MCore with save_tokenizer_assets support."
         )
-    save_assets(tokenizer, tokenizer_config, checkpoint_name)
+    kwargs = {}
+    if raise_on_error:
+        parameters = signature(save_assets).parameters
+        if "raise_on_error" not in parameters and not any(
+            parameter.kind == Parameter.VAR_KEYWORD for parameter in parameters.values()
+        ):
+            raise RuntimeError(
+                "Strict tokenizer asset saving requires an MCore revision whose "
+                "save_tokenizer_assets supports raise_on_error=True."
+            )
+        kwargs["raise_on_error"] = True
+    save_assets(tokenizer, tokenizer_config, checkpoint_name, **kwargs)

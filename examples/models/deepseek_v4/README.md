@@ -147,12 +147,32 @@ performance references, not substitutes for the library recipes.
 ### GB300 Pro performance reproduction and debugging proxy
 
 These benchmark recipes reproduce the configuration of the supplied full and
-proxy MCore logs. They target the `dsv4` MCore revision
-`d211e50e888fcb8640ddc9923e98940800afcfd3` and require a compatible container
-with its Transformer Engine, HybridEP/MoK, fused mHC, cuDNN DSA, and Muon
-implementations. They are not qualified against the default main-branch
-MCore pin. GPU execution and performance reproduction in Bridge remain
-unverified; matching configuration alone does not establish throughput parity.
+proxy MCore logs. The earlier 50-step GB300 runs used the private `dsv4` revision
+`d211e50e888fcb8640ddc9923e98940800afcfd3` and its compatible kernel container.
+They completed with finite reported losses and gradient norms and no skipped or
+NaN iterations; this is execution evidence, not convergence or numerical parity.
+
+The public-development validation target is MCore
+`159e66cd2491b1bf4fdb0fa0895dd58f4dd9e4ed`, GitHub's immutable merge revision of
+[PR #5722](https://github.com/NVIDIA/Megatron-LM/pull/5722) into `dev`
+`c0d3b03f584d07eb1ae94c576604cef4637c1be6`, with
+`nvcr.io/nvidian/nemo:nightly-2026-10-16`. The PR head alone predates necessary
+DSv4 fixes; use the merge revision when reproducing this target. Validation on
+this runtime is pending. It requires compatible Transformer Engine, HybridEP/MoK,
+fused mHC, cuDNN DSA, and emerging-optimizers implementations. The default
+main-branch MCore pin is not qualified for these recipes.
+
+Public `dev` also requires DSA metric initialization before attention graph
+capture and metric reduction/clearing during training. Bridge uses those APIs
+when available and retains compatibility with the earlier private revision.
+The recipes explicitly set MCore's `is_hybrid_model=True`, matching native MCore
+argument processing. This corrects hybrid output-weight initialization scaling
+and layer accounting; earlier Bridge runs inherited the non-hybrid default, so
+their initial weights are not reproduced by the updated recipes.
+The merge revision includes the batched grouped output projection, but does not
+include MCore [#5893](https://github.com/NVIDIA/Megatron-LM/pull/5893), which avoids
+TE parameter-gradient clones. Therefore the earlier runtime's memory and timing
+results are not guarantees for this public-development target.
 
 | Recipe | GPUs | Main logical blocks | TP / CP / EP | PP / VPP | GBS / MBS |
 |--------|------|---------------------|--------------|----------|-----------|

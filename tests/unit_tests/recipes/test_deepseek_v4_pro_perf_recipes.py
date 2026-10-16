@@ -67,6 +67,7 @@ def test_pro_log_model_and_batch_contract(
     model = cfg.model
 
     assert model.num_layers == 2 * logical_layers
+    assert model.is_hybrid_model is True
     assert model.mtp_num_layers == 1
     assert model.mtp_hybrid_override_pattern == "WE"
     assert model.hidden_size == 7168
@@ -215,7 +216,7 @@ def test_pro_recipes_reject_unsupported_mcore(recipe_factory: Callable[[], Confi
         pytest.skip("Installed MCore declares the DSv4 development capabilities.")
     with pytest.raises(
         RuntimeError,
-        match="d211e50e888fcb8640ddc9923e98940800afcfd3",  # pragma: allowlist secret
+        match="require development MCore",
     ):
         recipe_factory()
 
@@ -250,6 +251,7 @@ def test_development_compression_ratios_cover_attention_moe_and_mtp() -> None:
     )
     model = config_type()
     configure_dsv4_dev_model(model)
+    assert model.is_hybrid_model is True
     assert model.csa_compress_ratios == [128, 0, 128, 0, 4, 0, 128, 0, 0, 0]
     assert model.o_groups == 16
     assert model.o_lora_rank == 1024

@@ -1,13 +1,26 @@
+import importlib.util
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, create_autospec, patch
 
 import pytest
 
-from megatron.bridge.training.utils import mcore_checkpointing as compat
-
 
 pytestmark = pytest.mark.unit
+
+
+def _load_checkpointing_compat():
+    # The adapter only uses the standard library. Exercise it without importing
+    # Bridge's model registry or requiring the GPU runtime in the test process.
+    helper_path = Path(__file__).resolve().parents[3] / "src/megatron/bridge/training/utils/mcore_checkpointing.py"
+    spec = importlib.util.spec_from_file_location("_bridge_mcore_checkpointing_test", helper_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+compat = _load_checkpointing_compat()
 
 
 @pytest.mark.parametrize("gtp_enabled", [False, True])
@@ -86,3 +99,42 @@ def test_missing_tokenizer_save_support_is_explicit():
         pytest.raises(RuntimeError, match="checkpoint.save_tokenizer_assets=False"),
     ):
         compat.save_tokenizer_assets(object(), object(), "checkpoint")
+
+
+def test_strict_tokenizer_save_forwards_error_policy():
+    def save_assets(tokenizer, config, checkpoint_path, *, raise_on_error=False):
+        pass
+
+    save = create_autospec(save_assets)
+    tokenizer, config = object(), object()
+    with patch.object(compat, "import_module", return_value=SimpleNamespace(save_tokenizer_assets=save)):
+        compat.save_tokenizer_assets(tokenizer, config, "checkpoint", raise_on_error=True)
+    save.assert_called_once_with(tokenizer, config, "checkpoint", raise_on_error=True)
+
+
+@pytest.mark.parametrize("raise_on_error", [False, True])
+def test_legacy_tokenizer_save_does_not_silently_discard_strict_policy(raise_on_error):
+    def save_assets(tokenizer, config, checkpoint_path):
+        pass
+
+    save = create_autospec(save_assets)
+    tokenizer, config = object(), object()
+    with patch.object(compat, "import_module", return_value=SimpleNamespace(save_tokenizer_assets=save)):
+        if raise_on_error:
+            with pytest.raises(RuntimeError, match="supports raise_on_error=True"):
+                compat.save_tokenizer_assets(tokenizer, config, "checkpoint", raise_on_error=True)
+            save.assert_not_called()
+        else:
+            compat.save_tokenizer_assets(tokenizer, config, "checkpoint")
+            save.assert_called_once_with(tokenizer, config, "checkpoint")
+
+
+def test_strict_tokenizer_save_errors_propagate():
+    error = OSError("tokenizer write failed")
+    save = Mock(side_effect=error)
+    with (
+        patch.object(compat, "import_module", return_value=SimpleNamespace(save_tokenizer_assets=save)),
+        pytest.raises(OSError) as caught,
+    ):
+        compat.save_tokenizer_assets(object(), object(), "checkpoint", raise_on_error=True)
+    assert caught.value is error

@@ -59,6 +59,7 @@ from megatron.bridge.training.checkpointing import (
     maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.dsa_metrics import initialize_dsa_metrics
 from megatron.bridge.training.gtp import (
     classify_gtp_remat_chains,
     configure_gtp_remat,
@@ -415,6 +416,7 @@ def setup(
     start_memory_history_recording(cfg.profiling)
 
     model = _build_distributed_model(cfg, pg_collection)
+    initialize_dsa_metrics(model, cfg.model, pg_collection)
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers

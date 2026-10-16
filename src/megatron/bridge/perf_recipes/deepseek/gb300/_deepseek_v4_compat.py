@@ -31,6 +31,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeek
 
 
 _MCORE_CAPABILITIES = (
+    "is_hybrid_model",
     "moe_megakernel_backend",
     "moe_megakernel_backend_config",
     "moe_hybridep_routing_map_mode",
@@ -68,8 +69,9 @@ def configure_dsv4_dev_model(model: DeepSeekV4HybridModelProvider) -> None:
     missing = sorted(set(_MCORE_CAPABILITIES) - declared_fields)
     if missing:
         raise RuntimeError(
-            "The DSv4 GB300 performance recipes require the development MCore dsv4 "
-            "revision d211e50e888fcb8640ddc9923e98940800afcfd3 and its kernel container. "
+            "The DSv4 GB300 performance recipes require development MCore with "
+            "DSv4 THD, MoK, and mHC attention-graph support and compatible kernels. "
+            "See examples/models/deepseek_v4/README.md for runtime revisions. "
             f"The installed MCore is missing configuration fields: {', '.join(missing)}."
         )
 
@@ -86,8 +88,11 @@ def configure_dsv4_dev_model(model: DeepSeekV4HybridModelProvider) -> None:
     else:
         raise RuntimeError("The installed MCore does not declare the DSv4 mHC configuration fields.")
 
+    # Match MCore's argument-to-config mapping for a hybrid layer pattern. This
+    # controls hybrid layer counting, initialization, and hash-MoE validation.
+    model.is_hybrid_model = True
     model.hybrid_stack_spec = dsv4_dev_hybrid_stack_spec
-    # The development pin predates the mainline names output_projection_groups,
+    # Development MCore uses different names from main's output_projection_groups,
     # output_projection_lora_rank, and moe_num_hash_layers. Assign its
     # declared fields so these settings survive dataclass serialization.
     model.o_groups = 16

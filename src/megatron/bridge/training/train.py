@@ -74,6 +74,7 @@ from megatron.bridge.training.checkpointing import (
     CheckpointSaveContext,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.dsa_metrics import reset_dsa_metrics
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.global_batch_packing import (
@@ -912,6 +913,9 @@ def train_step(
     packed_num_microbatches = None
     rerun_data_iterator = data_iterator
     while rerun_state_machine.should_run_forward_backward(rerun_data_iterator):
+        # Discard warmup/evaluation values and prior rerun attempts without rebinding
+        # the tracker storage retained by attention CUDA graphs.
+        reset_dsa_metrics(model_config)
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()

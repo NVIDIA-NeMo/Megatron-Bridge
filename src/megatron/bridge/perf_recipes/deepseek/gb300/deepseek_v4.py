@@ -66,7 +66,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Match the 61-block + MTP, 256-GPU development-MCore Pro benchmark.
 
-    Requires the MCore ``dsv4`` revision documented in the DeepSeek V4 example.
+    Requires development MCore and compatible kernels documented in the example.
     Uses forced load balancing and fixed synthetic THD packs for performance
     correlation, not convergence validation. No Hugging Face download is needed.
     """
@@ -192,7 +192,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         weight_decay=0.1,
         clip_grad=1.0,
     )
-    # The pinned MCore routes "muon" through its emerging-optimizer factory.
+    # Development MCore routes "muon" through its emerging-optimizer factory.
     cfg.optimizer.optimizer = "muon"
     cfg.optimizer.use_distributed_optimizer = False
     cfg.optimizer.use_layer_wise_distributed_optimizer = True
