@@ -770,6 +770,41 @@ class TestGatingTorchPath:
         assert logits.dtype == torch.float32
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")),
+    ],
+)
+@pytest.mark.parametrize("router_dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("with_bias", [False, True])
+@pytest.mark.parametrize("backward_autocast", [False, True])
+def test_router_dtype_survives_autocast(device, router_dtype, with_bias, backward_autocast):
+    generator = torch.Generator(device=device).manual_seed(29)
+    inp = torch.randn(17, 12, device=device, generator=generator).bfloat16().requires_grad_(True)
+    weight = torch.randn(4, 12, device=device, generator=generator, requires_grad=True)
+    bias = torch.randn(4, device=device, generator=generator, requires_grad=True) if with_bias else None
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        actual = beam_router_gating_linear(inp, weight, bias, router_dtype)
+    assert actual.dtype == router_dtype
+    with torch.autocast(device_type=device, enabled=False):
+        expected = torch.nn.functional.linear(
+            inp.to(router_dtype), weight.to(router_dtype), bias.to(router_dtype) if bias is not None else None
+        )
+    torch.testing.assert_close(actual, expected)
+    grad = torch.randn(actual.shape, device=device, dtype=router_dtype, generator=generator)
+    params = (inp, weight, bias) if with_bias else (inp, weight)
+    with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=backward_autocast):
+        actual_grads = torch.autograd.grad(actual, params, grad)
+    with torch.autocast(device_type=device, enabled=False):
+        expected_grads = torch.autograd.grad(expected, params, grad)
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        assert actual_grad.dtype == expected_grad.dtype
+        torch.testing.assert_close(actual_grad, expected_grad)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.parametrize(
     "router_dtype,weight_dtype",

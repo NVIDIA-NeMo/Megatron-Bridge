@@ -609,10 +609,13 @@ class _BeamRouterGatingLinear(torch.autograd.Function):
             if weight.dtype != inp.dtype:
                 gemm_weight, gemm_inp = weight.to(router_dtype), inp.to(router_dtype)
             output = te_general_gemm(gemm_weight, gemm_inp, router_dtype, layout="TN", bias=gemm_bias)[0]
-        elif bias is None:
-            output = torch.mm(inp.to(router_dtype), weight.to(router_dtype).t())
         else:
-            output = torch.addmm(bias.to(router_dtype), inp.to(router_dtype), weight.to(router_dtype).t())
+            # The explicit router dtype must survive an enclosing model autocast context.
+            with torch.autocast(device_type=inp.device.type, enabled=False):
+                if bias is None:
+                    output = torch.mm(inp.to(router_dtype), weight.to(router_dtype).t())
+                else:
+                    output = torch.addmm(bias.to(router_dtype), inp.to(router_dtype), weight.to(router_dtype).t())
         return output.view(*inp_shape[:-1], -1)
 
     @staticmethod
@@ -634,8 +637,9 @@ class _BeamRouterGatingLinear(torch.autograd.Function):
             grad_input = grad_input[0].to(ctx.input_dtype)
             grad_weight = grad_weight[0].to(ctx.weight_dtype)
         else:
-            grad_input = torch.mm(grad_output, weight.to(ctx.router_dtype)).to(ctx.input_dtype)
-            grad_weight = torch.mm(grad_output.t(), inp.to(ctx.router_dtype)).to(ctx.weight_dtype)
+            with torch.autocast(device_type=inp.device.type, enabled=False):
+                grad_input = torch.mm(grad_output, weight.to(ctx.router_dtype)).to(ctx.input_dtype)
+                grad_weight = torch.mm(grad_output.t(), inp.to(ctx.router_dtype)).to(ctx.weight_dtype)
 
         grad_bias = grad_output.sum(dim=0).to(ctx.weight_dtype) if bias is not None else None
         return grad_input.view(*inp_shape), grad_weight, grad_bias, None
