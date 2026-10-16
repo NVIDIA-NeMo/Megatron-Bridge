@@ -98,7 +98,7 @@ def test_hf_vision_rope_dtype_conversion_matches_version_contract(dtype):
         expected = rotary(inputs, positions)
         rotary.to(dtype=dtype)
         actual = rotary(inputs, positions)
-        if transformers.__version__ in ("5.18.0", "5.19.0"):
+        if transformers.__version__ in ("5.18.0", "5.19.0", "5.20.0"):
             # These releases include #49164's geometry fix and remain unpatched.
             # Accept native buffer rounding, rather than requiring the 5.17
             # workaround's FP32-per-forward precision after explicit casts.
