@@ -90,7 +90,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("nemotron-3.5-lightning", "pretrain_fsdp", "GB200", "fp8_mx"): (8192, 384, 8),
     ("nemotron-3.5-lightning", "sft", "H100"): (4096, 128, 16),
     ("nemotron-3.5-lightning", "sft", "GB200"): (4096, 128, 8),
-    ("nemotron-3.5-lightning", "sft_long_context", "H100"): (32768, 128, 16),
+    ("nemotron-3.5-lightning", "sft_long_context", "H100"): (32768, 128, 32),
     ("nemotron-3.5-lightning", "sft_long_context", "GB200"): (32768, 128, 8),
     ("nemotron-3.5-lightning", "peft", "H100"): (4096, 128, 8),
     ("nemotron-3.5-lightning", "peft", "GB200"): (4096, 128, 8),
