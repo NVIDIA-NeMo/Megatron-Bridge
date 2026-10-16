@@ -53,6 +53,10 @@ _MODEL_COLLATE_SPECS = {
     "MuseGlimmerProcessor": _ModelCollateSpec(
         "megatron.bridge.models.muse_glimmer.data.collate_fn", "muse_glimmer_collate_fn"
     ),
+    # Muse Spark Open shares Muse Glimmer's chat markers and THW-grid image inputs.
+    "MuseSparkProcessor": _ModelCollateSpec(
+        "megatron.bridge.models.muse_glimmer.data.collate_fn", "muse_glimmer_collate_fn"
+    ),
     "deepseek-v4": _ModelCollateSpec(
         "megatron.bridge.models.deepseek.data.collate_fn",
         "deepseek_v4_collate_fn",

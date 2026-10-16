@@ -835,6 +835,49 @@ def test_nemotron_35_super_vl_export_preserves_shared_mtp_serialization():
 
     assert "num_nextn_predict_layers" not in hf_config
     assert hf_config["llm_config"]["num_nextn_predict_layers"] == 1
+    assert hf_config["text_config"]["num_nextn_predict_layers"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("version", ["5.17.0", "5.19.0"])
+def test_super_vl_remote_config_remains_supported(version):
+    config = _mock_nemotron_35_super_vl_hf_config()
+    with patch("transformers.__version__", version):
+        provider = Nemotron35SuperVLBridge().provider_bridge(SimpleNamespace(config=config))
+    assert provider.mtp_num_layers == 2
+    assert provider.hybrid_layer_pattern == "ME*E"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("version", ["5.18.0", "5.19.0", "5.20.0"])
+def test_super_vl_native_config_preserves_language_and_image_settings(version):
+    config = _mock_nemotron_35_super_vl_hf_config()
+    config.text_config = config.llm_config
+    del config.llm_config
+    config.image_token_id = 123
+    del config.img_context_token_id
+    with patch("transformers.__version__", version):
+        provider = Nemotron35SuperVLBridge().provider_bridge(SimpleNamespace(config=config))
+    assert provider.hybrid_layer_pattern == "ME*E"
+    assert provider.mtp_num_layers == 2
+    assert provider.image_token_index == 123
+    assert provider.has_sound is False
+
+
+@pytest.mark.unit
+def test_super_vl_native_config_requires_verified_transformers_version():
+    config = _mock_nemotron_35_super_vl_hf_config()
+    config.text_config = config.llm_config
+    del config.llm_config
+    with patch("transformers.__version__", "5.17.0"):
+        with pytest.raises(ValueError, match="trust_remote_code=True"):
+            Nemotron35SuperVLBridge().provider_bridge(SimpleNamespace(config=config))
+
+
+@pytest.mark.unit
+def test_super_vl_native_export_does_not_require_remote_modeling_file(tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps({"text_config": {"model_type": "nemotron_h"}}))
+    Nemotron35SuperVLBridge().postprocess_hf_export_artifacts(tmp_path)
 
 
 def test_nemotron_35_super_vl_rejects_unexpected_serialized_mtp_depth():

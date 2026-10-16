@@ -20,7 +20,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig
+from transformers import GenerationConfig, Glm4MoeConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -196,6 +196,26 @@ class TestGLM45Bridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_provider_bridge_reads_partial_rotary_factor_from_hf_config(self, mock_pretrained_355b):
+        """Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters, not as an attribute."""
+        mock_pretrained_355b.config = Glm4MoeConfig(
+            hidden_size=64,
+            intermediate_size=128,
+            moe_intermediate_size=32,
+            num_hidden_layers=2,
+            first_k_dense_replace=1,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=16,
+            n_routed_experts=4,
+            num_experts_per_tok=2,
+            partial_rotary_factor=0.5,
+        )
+
+        provider = GLM45Bridge().provider_bridge(mock_pretrained_355b)
+
+        assert provider.rotary_percent == 0.5
 
     def test_provider_bridge_maps_config_air_106b(self, mock_pretrained_air_106b):
         """Test provider bridge correctly maps config for GLM 4.5 Air 106B."""
