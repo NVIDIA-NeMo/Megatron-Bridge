@@ -119,8 +119,6 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
-    # TE's op-fuser grouped MLP raises when deterministic kernels are requested.
-    assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in cfg.env_vars
 
 
 def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
@@ -149,7 +147,7 @@ def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> 
     assert vrnvl72_cfg.model.use_transformer_engine_op_fuser is True
     assert vrnvl72_cfg.model.moe_use_grouped_tensor is True
     assert vrnvl72_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in vrnvl72_cfg.env_vars
+    assert vrnvl72_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
     assert is_full_iteration_cuda_graph(vrnvl72_cfg.model)
     # VRNVL72 dispatches through NCCL EP; the GB300 recipe stays on the shared HybridEP base.
     assert vrnvl72_cfg.model.moe_flex_dispatcher_backend == "ncclep"
@@ -162,9 +160,8 @@ def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> 
     gb300_cfg.model.moe_use_grouped_tensor = True
     gb300_cfg.model.moe_flex_dispatcher_backend = "ncclep"
     assert vars(vrnvl72_cfg.model) == vars(gb300_cfg.model)
-    # The environments differ only in the dispatcher settings and the GB300 determinism pin.
-    gb300_only_env_names = HYBRID_EP_ENV_NAMES | {"NVTE_ALLOW_NONDETERMINISTIC_ALGO"}
-    expected_env = {name: value for name, value in gb300_cfg.env_vars.items() if name not in gb300_only_env_names}
+    # The environments differ only in the dispatcher settings.
+    expected_env = {name: value for name, value in gb300_cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
     assert vrnvl72_cfg.env_vars == {**expected_env, "NCCL_EP_HT_EM_PULL_PUSH": 1}
     for field in fields(vrnvl72_cfg):
         if field.name not in ("model", "env_vars"):

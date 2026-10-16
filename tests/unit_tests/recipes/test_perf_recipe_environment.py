@@ -227,13 +227,10 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             if function_name.endswith("_deterministic_config"):
                 # Bit-exact recipes pin deterministic TE kernels.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
-            elif (
-                path.parent.name == "gb300" and path.stem == "deepseek_v3"
-            ) or "NCCL_EP_HT_EM_PULL_PUSH" in environment:
-                # The DeepSeek V3 GB300 recipes and the DeepSeek NCCL EP recipes on other GPUs do not pin
-                # NVTE_ALLOW_NONDETERMINISTIC_ALGO=0: the TE op-fuser grouped MLP that many of them run
-                # accumulates its quantized scale gradient with atomics, and TE raises when bit-exact
-                # execution is requested.
+            elif path.parent.name == "gb300" and path.stem == "deepseek_v3":
+                # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale
+                # gradient is accumulated with atomics; TE raises when bit-exact execution is requested,
+                # so these recipes must not pin NVTE_ALLOW_NONDETERMINISTIC_ALGO=0.
                 assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in environment
             else:
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
@@ -260,7 +257,10 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
         (
             "deepseek/gb200/deepseek_v3.py",
             "deepseek_v3_pretrain_256gpu_gb200_bf16_config",
-            {"NCCL_EP_HT_EM_PULL_PUSH": 1},
+            {
+                "NCCL_EP_HT_EM_PULL_PUSH": 1,
+                "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+            },
         ),
         (
             "llama/h100/llama3.py",
