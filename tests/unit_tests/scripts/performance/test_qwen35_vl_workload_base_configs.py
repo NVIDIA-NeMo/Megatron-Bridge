@@ -367,19 +367,17 @@ def test_qwen35_vl_122b_gb300_keeps_cuda_graphs_disabled(monkeypatch: pytest.Mon
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
     ],
 )
 def test_qwen35_vl_397b_hybridep_domain_matches_expert_parallel_size(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The VRNVL72 397B recipes inherit EP from GB300 but restate the HybridEP env inline.
+    """The GB300 397B recipes state the HybridEP env inline, next to their EP size.
 
     HybridEP asserts that the EP group size is divisible by
     ``NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN``, and the launcher only re-derives
     that env when a CLI override changes EP, so the two must stay in sync here.
+    The VRNVL72 397B recipes run NCCL EP and carry no HybridEP env.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
@@ -465,11 +463,11 @@ def test_qwen35_vl_35b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pyte
     assert config.model.use_grouped_gemm_for_shared_expert is True
     assert config.model.moe_shared_expert_glu_interleave_size == 32
 
-    assert config.model.moe_flex_dispatcher_backend == "hybridep"
-    assert config.model.moe_permute_fusion_into_hybridep is False
-    assert config.model.moe_hybridep_num_sms_preprocessing == 16
+    assert config.model.moe_flex_dispatcher_backend == "ncclep"
+    assert config.model.moe_use_grouped_tensor is True
     assert config.model.overlap_dispatch_backward_with_experts_wgrad is True
-    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == config.model.expert_model_parallel_size
+    assert config.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert not any(name.startswith(("NUM_OF_HYBRID_EP_", "NUM_OF_TOKENS_PER_CHUNK_")) for name in config.env_vars)
 
     assert config.model.cuda_graph_impl == "transformer_engine"
     assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
@@ -499,7 +497,8 @@ def test_qwen35_vl_397b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pyt
     _assert_cutedsl_grouped_mlp(config)
     assert config.model.recompute_granularity == "selective"
     assert config.model.recompute_modules == ["gdn_norm_out"]
-    assert config.model.moe_permute_fusion_into_hybridep is False
+    assert config.model.moe_flex_dispatcher_backend == "ncclep"
+    assert config.model.moe_use_grouped_tensor is True
     assert getattr(config.model, "use_grouped_gemm_for_shared_expert", False) is False
     assert getattr(config.model, "overlap_dispatch_backward_with_experts_wgrad", False) is False
 
@@ -507,9 +506,8 @@ def test_qwen35_vl_397b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pyt
     assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
     _assert_vision_graph_covers_one_microbatch(config)
 
-    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-    assert config.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 128
-    assert config.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 128
+    assert config.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert not any(name.startswith(("NUM_OF_HYBRID_EP_", "NUM_OF_TOKENS_PER_CHUNK_")) for name in config.env_vars)
     assert config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
     assert config.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
     assert "NVTE_NORM_FWD_USE_CUDNN" not in config.env_vars

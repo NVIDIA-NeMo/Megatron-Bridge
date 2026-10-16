@@ -13,6 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for Qwen3.5-VL."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen_vl.common import ConfigContainer, _select_gdn_kernel_backend
 from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
@@ -29,8 +30,12 @@ from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× VRNVL72, BF16 (alias of GB300)."""
+    """Qwen3.5-VL 35B-A3B pretrain: 8× VRNVL72, BF16, NCCL EP (alias of GB300)."""
     cfg = _build_qwen35_vl_35b_a3b_gb300_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # The GB300 base selects the cuDNN GDN kernel. On VRNVL72 it was measured only with MXFP8 (against FLA
     # at 35B), so this precision keeps FLA until it is measured too.
     _select_gdn_kernel_backend(cfg, "fla")
@@ -45,11 +50,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -58,8 +60,12 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× VRNVL72, FP8-CS (alias of GB300)."""
+    """Qwen3.5-VL 35B-A3B pretrain: 8× VRNVL72, FP8-CS, NCCL EP (alias of GB300)."""
     cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # The GB300 base selects the cuDNN GDN kernel. On VRNVL72 it was measured only with MXFP8 (against FLA
     # at 35B), so this precision keeps FLA until it is measured too.
     _select_gdn_kernel_backend(cfg, "fla")
@@ -74,11 +80,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -87,16 +90,19 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× VRNVL72, MXFP8, EP=4, HybridEP.
+    """Qwen3.5-VL 35B-A3B pretrain: 8× VRNVL72, MXFP8, EP=4, NCCL EP.
 
     Starts from the GB300 MXFP8 recipe (CuTe DSL fused grouped MLP, cuDNN GDN, per-layer CUDA graphs, forced load
     balancing) and applies EP 4, MBS 4 and the kernel settings of the measured VRNVL72 runs, at GBS 1024.
     """
     cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
 
-    # EP 4 and MBS 4 as in the measured VRNVL72 runs: each expert-parallel group is one 4-GPU node
-    # (NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN below must equal EP). GBS 1024 gives 32 microbatches
-    # per step on 8 GPUs.
+    # EP 4 and MBS 4 as in the measured VRNVL72 runs: each expert-parallel group is one 4-GPU node.
+    # GBS 1024 gives 32 microbatches per step on 8 GPUs.
     cfg.model.expert_model_parallel_size = 4
     cfg.train.micro_batch_size = 4
     cfg.train.global_batch_size = 1024
@@ -113,12 +119,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     cfg.model.use_grouped_gemm_for_shared_expert = True
     cfg.model.moe_shared_expert_glu_interleave_size = 32
 
-    # HybridEP: permute outside the dispatcher (already the default; stated explicitly because fusing
-    # the permute into HybridEP measured slower on VRNVL72), 16 SMs for preprocessing as in the measured
-    # runs, and overlap the dispatch backward with the expert weight-gradient GEMMs. Megatron-Core does
-    # not allow this overlap together with EP A2A overlap or delay_wgrad_compute.
-    cfg.model.moe_permute_fusion_into_hybridep = False
-    cfg.model.moe_hybridep_num_sms_preprocessing = 16
+    # Overlap the dispatch backward with the expert weight-gradient GEMMs, as in the measured runs.
+    # Megatron-Core does not allow this overlap together with EP A2A overlap or delay_wgrad_compute.
     cfg.model.overlap_dispatch_backward_with_experts_wgrad = True
 
     # Vision-encoder CUDA graph. The cap is the number of vision patches per microbatch: a longer
@@ -146,11 +148,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system: one rank per GPU of the EP 4 group.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
@@ -165,8 +164,12 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
 
 def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config() -> ConfigContainer:
-    """Qwen3.5-VL 122B-A10B pretrain: 32× VRNVL72, BF16 (alias of GB300)."""
+    """Qwen3.5-VL 122B-A10B pretrain: 32× VRNVL72, BF16, NCCL EP (alias of GB300)."""
     cfg = qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -178,11 +181,8 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -191,8 +191,12 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config() -> ConfigContainer:
 
 
 def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
-    """Qwen3.5-VL 122B-A10B pretrain: 32× VRNVL72, FP8-CS (alias of GB300)."""
+    """Qwen3.5-VL 122B-A10B pretrain: 32× VRNVL72, FP8-CS, NCCL EP (alias of GB300)."""
     cfg = qwen35_vl_122b_a10b_pretrain_32gpu_gb300_fp8cs_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -204,11 +208,8 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config() -> ConfigContainer
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -217,8 +218,12 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config() -> ConfigContainer
 
 
 def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """Qwen3.5-VL 122B-A10B pretrain: 32× VRNVL72, FP8-MX (alias of GB300)."""
+    """Qwen3.5-VL 122B-A10B pretrain: 32× VRNVL72, FP8-MX, NCCL EP (alias of GB300)."""
     cfg = qwen35_vl_122b_a10b_pretrain_32gpu_gb300_fp8mx_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -230,11 +235,8 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config() -> ConfigContainer
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -243,8 +245,12 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config() -> ConfigContainer
 
 
 def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
-    """Qwen3.5-VL 397B-A17B pretrain: 64× VRNVL72, BF16 (alias of GB300)."""
+    """Qwen3.5-VL 397B-A17B pretrain: 64× VRNVL72, BF16, NCCL EP (alias of GB300)."""
     cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # The GB300 base selects the cuDNN GDN kernel. On VRNVL72 it was measured only with MXFP8 (against FLA
     # at 35B), so this precision keeps FLA until it is measured too.
     _select_gdn_kernel_backend(cfg, "fla")
@@ -259,11 +265,8 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -272,8 +275,12 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
 
 
 def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
-    """Qwen3.5-VL 397B-A17B pretrain: 64× VRNVL72, FP8-CS (alias of GB300)."""
+    """Qwen3.5-VL 397B-A17B pretrain: 64× VRNVL72, FP8-CS, NCCL EP (alias of GB300)."""
     cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # The GB300 base selects the cuDNN GDN kernel. On VRNVL72 it was measured only with MXFP8 (against FLA
     # at 35B), so this precision keeps FLA until it is measured too.
     _select_gdn_kernel_backend(cfg, "fla")
@@ -288,11 +295,8 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config() -> ConfigContainer
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -301,12 +305,16 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config() -> ConfigContainer
 
 
 def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """Qwen3.5-VL 397B-A17B pretrain: 64× VRNVL72, MXFP8, EP=32, HybridEP.
+    """Qwen3.5-VL 397B-A17B pretrain: 64× VRNVL72, MXFP8, EP=32, NCCL EP.
 
     Starts from the GB300 MXFP8 recipe (cuDNN GDN, per-layer CUDA graphs, forced load balancing) and adds the
     CuTe DSL fused grouped MLP and the settings of the measured VRNVL72 run.
     """
     cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
 
     # MBS 1, as in the GB300 base; the vision cap below is set for it.
     cfg.train.micro_batch_size = 1
@@ -329,10 +337,6 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["gdn_norm_out"]
 
-    # HybridEP: permute outside the dispatcher. This is already the default; it is stated explicitly
-    # because fusing the permute into HybridEP measured slower on VRNVL72.
-    cfg.model.moe_permute_fusion_into_hybridep = False
-
     # Vision-encoder CUDA graph with the cap for MBS 1: each 256x256 mock image reaches the encoder as
     # 784 patches (see the 35B recipe above). Set the cap to MBS x images per sample x patches per image
     # whenever one of them changes. As in the 35B recipe, the graphed encoder runs without the 2D rotary
@@ -352,14 +356,8 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
-        # HybridEP dispatch and preprocessing chunks of the measured run (HybridEP's default is 64).
-        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 128,
-        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 128,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,

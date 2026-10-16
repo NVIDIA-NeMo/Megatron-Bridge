@@ -21,7 +21,6 @@ from inspect import signature
 import pytest
 import torch
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config,
@@ -100,13 +99,15 @@ _GB300_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
 )
-# GB200 and GB300 perf recipes covered by nemo-ci dispatch through NCCL EP (no HybridEP topology in their
-# environment).
+# The GB200, GB300 and VRNVL72 BF16 and MXFP8 perf recipes dispatch through NCCL EP (no HybridEP topology in
+# their environment).
 _NCCLEP_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config,
 )
 _GB_FSDP_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
@@ -658,16 +659,17 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
     vrnvl72_factory: Callable[[], ConfigContainer],
     gb300_factory: Callable[[], ConfigContainer],
 ) -> None:
-    """VRNVL72 Nemotron 3.5 recipes match their GB300 baselines up to the GB300 NCCL EP overlay.
+    """VRNVL72 Nemotron 3.5 recipes match their GB300 baselines apart from the launch environment.
 
-    The GB300 recipes default to NCCL EP (dispatcher backend, device-side expert counts and the
-    NCCL EP process setting); the VRNVL72 aliases keep the shared HybridEP base. The VRNVL72 BF16
-    recipe also offloads expert activations. Everything else must be identical.
+    Both platforms dispatch through NCCL EP with device-side expert counts. The VRNVL72 BF16 recipe
+    also offloads expert activations. Everything else must be identical.
     """
     vrnvl72_cfg = vrnvl72_factory()
     gb300_cfg = gb300_factory()
-    assert vrnvl72_cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert vrnvl72_cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert gb300_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert vrnvl72_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert vrnvl72_cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
 
     if vrnvl72_factory is nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config:
         assert vrnvl72_cfg.model.fine_grained_activation_offloading is True
@@ -677,8 +679,6 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
         vrnvl72_cfg.model.fine_grained_activation_offloading = gb300_cfg.model.fine_grained_activation_offloading
         vrnvl72_cfg.model.offload_modules = gb300_cfg.model.offload_modules
 
-    _enable_ncclep(vrnvl72_cfg)
-    vrnvl72_cfg.model.moe_use_grouped_tensor = True
     vrnvl72_cfg.env_vars = gb300_cfg.env_vars
     assert vrnvl72_cfg == gb300_cfg
 

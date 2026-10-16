@@ -13,6 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     ConfigContainer,
@@ -31,8 +32,12 @@ from megatron.bridge.perf_recipes.gpt_oss.gb300.gpt_oss import (
 
 
 def gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
-    """GPT-OSS 20B pretrain: 8× VRNVL72, NVFP4 (alias of GB300)."""
+    """GPT-OSS 20B pretrain: 8× VRNVL72, NVFP4, NCCL EP (alias of GB300)."""
     cfg = gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -43,11 +48,8 @@ def gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 1,
         "NCCL_CTA_POLICY": 1,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -109,7 +111,7 @@ def gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
 
 def gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
-    """GPT-OSS 20B pretrain: 64× VRNVL72, NVFP4."""
+    """GPT-OSS 20B pretrain: 64× VRNVL72, NVFP4, NCCL EP."""
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = _gpt_oss_20b_nvfp4_precision()
 
@@ -124,6 +126,10 @@ def gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _apply_gpt_oss_20b_common_configs(cfg)
     _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg)
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
 
     cfg.model.cuda_graph_warmup_steps = 1
     cfg.optimizer.lr = 0.0006
@@ -141,11 +147,8 @@ def gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 1,
         "NCCL_CTA_POLICY": 1,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -180,8 +183,12 @@ def gpt_oss_120b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
 
 
 def gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× VRNVL72, FP8-MX (alias of GB300)."""
+    """GPT-OSS 120B pretrain: 64× VRNVL72, FP8-MX, NCCL EP (alias of GB300)."""
     cfg = _build_gpt_oss_120b_gb300_fp8mx()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -193,11 +200,8 @@ def gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,

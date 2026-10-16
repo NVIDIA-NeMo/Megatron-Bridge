@@ -121,7 +121,8 @@ def test_proxy_preserves_parent_except_depth_and_layout(precision: str) -> None:
     assert proxy.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert proxy.comm_overlap.delay_wgrad_compute is True
     assert proxy.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert model.moe_flex_dispatcher_backend == "hybridep"
+    assert model.moe_flex_dispatcher_backend == "ncclep"
+    assert proxy.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert model.mtp_num_layers == 1
     assert model.recompute_modules == []
 

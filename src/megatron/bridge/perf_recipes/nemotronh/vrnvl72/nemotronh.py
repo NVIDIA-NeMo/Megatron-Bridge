@@ -13,6 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for Nemotron 3 and 3.5."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
@@ -33,8 +34,12 @@ from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
 
 
 def nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× VRNVL72, BF16 (alias of GB300)."""
+    """Nemotron 3 Nano pretrain: 8× VRNVL72, BF16, NCCL EP (alias of GB300)."""
     cfg = _build_nemotron_3_nano_gb300_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -46,11 +51,8 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -62,8 +64,12 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× VRNVL72, FP8-MX (alias of GB300)."""
+    """Nemotron 3 Nano pretrain: 8× VRNVL72, FP8-MX, NCCL EP (alias of GB300)."""
     cfg = _build_nemotron_3_nano_gb300_mxfp8()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.mixed_precision.fp8_dot_product_attention = True
@@ -78,11 +84,8 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -96,8 +99,12 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
 
 def nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× VRNVL72, NVFP4 (alias of GB300)."""
+    """Nemotron 3 Nano pretrain: 8× VRNVL72, NVFP4, NCCL EP (alias of GB300)."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -109,11 +116,8 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -127,8 +131,12 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× VRNVL72, BF16 (alias of GB300)."""
+    """Nemotron 3 Super pretrain: 64× VRNVL72, BF16, NCCL EP (alias of GB300)."""
     cfg = _build_nemotron_3_super_gb300_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -140,11 +148,8 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -153,8 +158,12 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× VRNVL72, MXFP8 with full-iteration CUDA graph."""
+    """Nemotron 3 Super pretrain: 64× VRNVL72, MXFP8 with full-iteration CUDA graph, NCCL EP."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.model.expert_model_parallel_size = 8
 
@@ -169,11 +178,8 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -184,8 +190,12 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× VRNVL72, NVFP4 with full-iteration CUDA graph."""
+    """Nemotron 3 Super pretrain: 64× VRNVL72, NVFP4 with full-iteration CUDA graph, NCCL EP."""
     cfg = _build_nemotron_3_super_gb300_nvfp4()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.expert_model_parallel_size = 16
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -199,11 +209,8 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -294,8 +301,12 @@ def nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config(*, num_gpus: int = 256
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× VRNVL72, BF16 (alias of GB300)."""
+    """Nemotron 3.5 Lightning pretrain: 8× VRNVL72, BF16, NCCL EP (alias of GB300)."""
     cfg = _build_nemotron_3_5_lightning_gb300_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Offload MoE expert activations to host memory: the current Rubin base image ships a Transformer
     # Engine without TE PR #3273, whose fused cross entropy holds an extra fp32 gradient per loss head.
     # Revert this offload once the Rubin image picks up TE PR #3273:
@@ -311,10 +322,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContaine
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -325,11 +334,12 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContaine
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× VRNVL72, MXFP8 with full-iteration CUDA graph."""
+    """Nemotron 3.5 Lightning pretrain: 8× VRNVL72, MXFP8 with full-iteration CUDA graph, NCCL EP."""
     cfg = _build_nemotron_3_5_lightning_gb300_mxfp8()
     cfg.model.recompute_modules = []
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
+    _enable_ncclep(cfg)
     _enable_nemotron_3_5_lightning_full_iteration(cfg)
 
     # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
@@ -340,10 +350,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContain
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
