@@ -76,7 +76,7 @@ class MuseSparkModel(HybridModel):
 
     def _build_perception(self) -> None:
         # Keep imports lazy: config conversion and ordinary Bridge imports do
-        # not require a Transformers build that includes Muse Spark Open.
+        # not require Transformers 5.20 or later.
         try:
             from transformers.models.muse_spark.configuration_muse_spark import MuseSparkConfig
             from transformers.models.muse_spark.modeling_muse_spark import (
@@ -86,7 +86,7 @@ class MuseSparkModel(HybridModel):
             )
         except ImportError as error:
             raise ImportError(
-                "Muse Spark Open model construction requires a Transformers build that provides transformers.models.muse_spark."
+                "Muse Spark Open model construction requires Transformers 5.20 or later (transformers.models.muse_spark)."
             ) from error
 
         hf_config = MuseSparkConfig.from_dict(self.model_config.hf_config)

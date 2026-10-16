@@ -5,7 +5,7 @@ Muse-Spark-Open-816B-A42B is a sparse mixture-of-experts vision-and-audio-langua
 Hugging Face vision tower, vision adapter and projection, and audio tower run directly, and the
 text decoder is a native Megatron-Core `HybridModel` with 62 alternating attention and latent-MoE
 blocks (256 experts, top-8 routing). A text-only mode converts the language model and its separate
-LM head alone. Native Hugging Face execution of the checkpoint needs a Transformers build that includes Muse Spark Open.
+LM head alone. Native Hugging Face execution of the checkpoint needs Transformers 5.20 or later.
 The [model README](../../../src/megatron/bridge/models/muse_spark_open/README.md) describes the
 implementation, the text-only mode, and the supported parallelism.
 
