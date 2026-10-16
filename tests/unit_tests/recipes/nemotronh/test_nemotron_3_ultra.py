@@ -21,6 +21,7 @@ import megatron.bridge.recipes as recipes
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config,
+    nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config,
     nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config,
     nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config,
     nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config,
@@ -211,6 +212,32 @@ def test_vrnvl72_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "recipe_factory",
+    [
+        nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config,
+        nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config,
+        nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config,
+        nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config,
+    ],
+    ids=["gb300_fp8mx", "gb300_nvfp4", "vrnvl72_fp8mx", "vrnvl72_nvfp4"],
+)
+def test_gtp_perf_recipes_use_symmetric_memory_collectives(recipe_factory) -> None:
+    """Ultra GTP recipes run the GTP wgrad reduce-scatter and DDP collectives on NCCL symmetric memory."""
+    cfg = recipe_factory()
+
+    assert cfg.ddp.use_megatron_fsdp is False
+    assert cfg.model.expert_tensor_parallel_num_weight_shards == cfg.model.expert_tensor_parallel_size
+    assert cfg.dist.gtp_remat_nccl_ub is True
+    assert cfg.dist.gtp_remat_reduce_scatter_with_fp32_accumulation is True
+    assert cfg.ddp.nccl_ub is True
+    assert cfg.ddp.disable_symmetric_registration is False
+    assert cfg.ddp.reduce_scatter_with_fp32_accumulation is False
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.env_vars["NCCL_NVLS_ENABLE"] == 1
 
 
 @pytest.mark.unit

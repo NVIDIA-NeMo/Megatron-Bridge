@@ -31,6 +31,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     nemotron_3_nano_pretrain_config,
     nemotron_3_super_pretrain_config,
     nemotron_3_ultra_pretrain_config,
+    set_up_symm_mem_collectives,
 )
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
@@ -258,6 +259,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) 
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
 
+    set_up_symm_mem_collectives(cfg)
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -271,7 +274,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) 
         "PYTORCH_CUDA_ALLOC_CONF": ("expandable_segments:True,graph_capture_record_stream_reuse:True"),
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
+        # NVLS backs the symmetric GTP wgrad reduce-scatter enabled by set_up_symm_mem_collectives.
+        "NCCL_NVLS_ENABLE": 1,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
@@ -359,6 +363,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config(*, num_gpus: int = 256) 
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
 
+    set_up_symm_mem_collectives(cfg)
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -372,7 +378,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config(*, num_gpus: int = 256) 
         "PYTORCH_CUDA_ALLOC_CONF": ("expandable_segments:True,graph_capture_record_stream_reuse:True"),
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
+        # NVLS backs the symmetric GTP wgrad reduce-scatter enabled by set_up_symm_mem_collectives.
+        "NCCL_NVLS_ENABLE": 1,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.

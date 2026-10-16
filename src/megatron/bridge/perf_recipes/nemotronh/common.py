@@ -223,6 +223,38 @@ def _apply_nemotron_3_ultra_gtp(cfg: ConfigContainer) -> None:
     cfg.ddp.outer_dp_sharding_strategy = "no_shard"
 
 
+def set_up_symm_mem_collectives(cfg: ConfigContainer) -> None:
+    """Toggle NCCL symmetric-memory collectives for GTP and DDP communication.
+
+    GTP: the wgrad reduce-scatter send buffers on the dense GTP group are window-registered, so
+    NCCL can run its symmetric (NVLS multimem) reduce-scatter, which accumulates in FP32 in-switch.
+
+    DDP: the param/grad buffers are allocated from an NCCL memory pool window-registered on the
+    data-parallel groups, so the grad reduce-scatter and the MXFP8 param all-gather (which reuses
+    the grad buffer) run zero-copy on registered memory.
+
+    NVLS itself is gated by ``NCCL_NVLS_ENABLE``, which the calling recipe sets in its inline
+    ``env_vars``.
+    """
+    # GTP. Routed experts are not GTP-sharded (expert weight shards == ETP), so there is no
+    # expert GTP group to register.
+    cfg.dist.gtp_remat_nccl_ub = True
+    # Only GTP groups without a registered pool use this path; registered groups always take the
+    # symmetric reduce-scatter.
+    cfg.dist.gtp_remat_reduce_scatter_with_fp32_accumulation = True
+
+    # DDP
+    cfg.ddp.nccl_ub = True
+    # GTP pools always register symmetric windows; Megatron-LM rejects GTP NCCL UB combined with
+    # local (non-symmetric) registration.
+    cfg.ddp.disable_symmetric_registration = False
+    # The FP32-accumulation variant replaces the grad reduce-scatter with an all-to-all into
+    # unregistered scratch memory, which bypasses the registered grad buffer.
+    cfg.ddp.reduce_scatter_with_fp32_accumulation = False
+    # NCCL symmetric registration does not support averaging in the collective (GTP also requires this).
+    cfg.ddp.average_in_collective = False
+
+
 def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> None:
     """Apply Megatron-FSDP (HSDP) settings for Nemotron 3 Ultra on GB300.
 
