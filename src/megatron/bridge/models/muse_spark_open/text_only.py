@@ -103,7 +103,7 @@ def select_text_pretrained(hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausa
 
 
 def export_text_artifacts(path: Path) -> None:
-    """Install the small HF head adapter that the Transformers text-only class needs."""
+    """Install the text-only causal LM class that Transformers does not provide."""
     filename = "muse_spark_open_transformers_patch.py"
     source = Path(__file__).parent / "modeling_muse_spark_open" / filename
     shutil.copyfile(source, path / filename)
