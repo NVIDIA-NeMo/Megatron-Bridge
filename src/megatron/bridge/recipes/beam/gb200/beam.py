@@ -34,7 +34,7 @@ TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist
 def beam_pretrain_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigContainer:
     """Return a Beam pretrain config for 64 GB200 GPUs in one NVLink domain.
 
-    Uses TP=2, PP=1, CP=1, EP=64, ETP=1 and HybridEP. BF16 model
+    Uses TP=4, PP=1, CP=1, EP=64, ETP=1 and HybridEP. BF16 model
     computation retains FP32 gradients, master parameters and Adam moments.
     Expert routing follows the released model, including its fixed expert biases.
 
@@ -54,7 +54,7 @@ def beam_pretrain_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigC
         cfg.tokenizer.tokenizer_model = hf_path
     cfg.model = bridge.get_model_config()
 
-    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None

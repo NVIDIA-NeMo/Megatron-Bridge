@@ -631,6 +631,11 @@ class BeamTopKRouter(TopKRouter):
     router reproduces HF's fp32 expert selection.
     """
 
+    def __init__(self, config, *args, **kwargs):
+        super().__init__(config, *args, **kwargs)
+        # Fixed checkpoint biases still affect routing, but need no token-count collective.
+        self.frozen_expert_bias = self.enable_expert_bias and config.moe_router_bias_update_rate == 0.0
+
     def reset_parameters(self):
         """Initialize like ``Router.reset_parameters``, casting to fp32 instead of ``params_dtype``."""
         if not self.config.moe_router_fp32_params:

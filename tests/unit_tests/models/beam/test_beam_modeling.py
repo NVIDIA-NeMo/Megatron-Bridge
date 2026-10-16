@@ -585,6 +585,69 @@ class TestRouterParameters:
         assert wrapped.module.weight.dtype == wrapped.module.bias.dtype == torch.float32
 
 
+@pytest.mark.unit
+class TestExpertBiasUpdates:
+    @pytest.fixture(autouse=True)
+    def _cpu_buffers(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+
+    @staticmethod
+    def _router(rate):
+        return _cpu_router(
+            _router_config(
+                moe_router_enable_expert_bias=True,
+                moe_router_bias_update_rate=rate,
+                moe_router_score_function="sigmoid",
+                moe_router_load_balancing_type="none",
+            )
+        )
+
+    def test_fixed_bias_preserves_routing_without_update_collective(self):
+        from megatron.core.distributed.finalize_model_grads import _update_router_expert_bias
+
+        router = self._router(0.0)
+        router.expert_bias.copy_(torch.tensor([0.2, -0.1, 0.3, -0.2]))
+        logits = torch.zeros(3, 4, requires_grad=True)
+        probs, routing = router.routing(logits)
+        expected_routing = torch.tensor([[True, False, True, False]]).expand(3, -1)
+        torch.testing.assert_close(routing, expected_routing)
+        before = router.expert_bias.clone()
+        with mock.patch("torch.distributed.all_reduce", side_effect=AssertionError("Fixed bias needs no collective")):
+            _update_router_expert_bias([router], router.config, tp_dp_cp_group=object())
+        torch.testing.assert_close(router.expert_bias, before, rtol=0, atol=0)
+        after_probs, after_routing = router.routing(logits)
+        torch.testing.assert_close(after_probs, probs, rtol=0, atol=0)
+        torch.testing.assert_close(after_routing, routing)
+
+    def test_nonzero_rate_keeps_native_collective_and_update(self):
+        from megatron.core.distributed.finalize_model_grads import _update_router_expert_bias
+
+        router = self._router(0.1)
+        router.local_tokens_per_expert.copy_(torch.tensor([0, 2, 4, 2]))
+        group = object()
+        with mock.patch("torch.distributed.all_reduce") as reduce:
+            _update_router_expert_bias([router], router.config, tp_dp_cp_group=group)
+        reduce.assert_called_once()
+        assert reduce.call_args.kwargs["group"] is group
+        torch.testing.assert_close(router.expert_bias, torch.tensor([0.1, 0.0, -0.1, 0.0]))
+
+    @pytest.mark.parametrize("rate", [0.0, 0.1])
+    def test_checkpoint_retains_bias_and_reconstructs_update_behavior(self, rate):
+        router = self._router(rate)
+        router.expert_bias.copy_(torch.tensor([0.2, -0.1, 0.3, -0.2]))
+        state = router.state_dict()
+        assert "expert_bias" in state
+        assert "local_tokens_per_expert" not in state
+        restored = self._router(rate)
+        restored.load_state_dict(state, strict=True)
+        torch.testing.assert_close(restored.expert_bias, router.expert_bias, rtol=0, atol=0)
+        assert restored.frozen_expert_bias is (rate == 0.0)
+
+    def test_disabled_bias_keeps_normal_construction(self):
+        router = _cpu_router(_router_config(moe_router_enable_expert_bias=False))
+        assert router.expert_bias is None and not router.frozen_expert_bias
+
+
 class TestGatingTorchPath:
     """Force the torch GEMM path even when TE is installed."""
 

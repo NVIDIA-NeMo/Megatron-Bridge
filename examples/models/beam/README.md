@@ -170,7 +170,7 @@ validation and performance measurements are pending.
 
 | Recipe | GPUs | TP / PP / CP / EP / ETP | Sequence length | GBS / MBS |
 | --- | --- | --- | --- | --- |
-| `beam_pretrain_64gpu_gb200_bf16_config` | 64 | 2 / 1 / 1 / 64 / 1 | 4096 | 256 / 1 |
+| `beam_pretrain_64gpu_gb200_bf16_config` | 64 | 4 / 1 / 1 / 64 / 1 | 4096 | 256 / 1 |
 | `beam_sft_64gpu_gb200_bf16_config` | 64 | 8 / 1 / 1 / 64 / 1 | 8192 | 8 / 1 |
 | `beam_peft_32gpu_gb200_bf16_config` | 32 | 4 / 1 / 1 / 32 / 1 | 8192 | 8 / 1 |
 
