@@ -27,6 +27,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 
 
 def _build_deepseek_v3_gb300_bf16() -> ConfigContainer:
@@ -212,13 +213,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config() -> ConfigCont
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
-        # ---- Determinism (same values as apply_determinism_overrides) ----
-        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
-        "NCCL_ALGO": "Ring",
-        "NCCL_EP_HT_EM_AG_SCAN_MODE": "1",
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
-        "MAMBA_DETERMINISTIC": "1",
-        "CAUSAL_CONV1D_DETERMINISTIC": "1",
+        **DETERMINISM_ENV_VARS,
         # ---- Others ----
         # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -397,9 +392,6 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.ddp.outer_dp_sharding_strategy = "optim"
     cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.num_distributed_optimizer_instances = 4
-
-    cfg.optimizer.lr = 3e-7
-    cfg.optimizer.min_lr = 1e-7
 
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
