@@ -367,17 +367,18 @@ def test_qwen35_vl_122b_gb300_keeps_cuda_graphs_disabled(monkeypatch: pytest.Mon
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
     ],
 )
 def test_qwen35_vl_397b_hybridep_domain_matches_expert_parallel_size(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The GB300 397B recipes state the HybridEP env inline, next to their EP size.
+    """The GB300 397B recipes and the VRNVL72 FP8-CS alias state the HybridEP env inline.
 
     HybridEP asserts that the EP group size is divisible by
     ``NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN``, and the launcher only re-derives
     that env when a CLI override changes EP, so the two must stay in sync here.
-    The VRNVL72 397B recipes run NCCL EP and carry no HybridEP env.
+    The VRNVL72 397B BF16 and MXFP8 recipes run NCCL EP and carry no HybridEP env.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 

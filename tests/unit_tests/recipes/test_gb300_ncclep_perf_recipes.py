@@ -57,14 +57,12 @@ _GB300_NCCLEP_RECIPES = (
 )
 
 # VRNVL72 MoE recipes on NCCL EP. The Nemotron 3 Ultra aliases share the GB300 NCCL EP builders; the rest
-# switch their GB300 HybridEP base, a GB300 HybridEP recipe, or their own HybridEP setup to NCCL EP.
+# switch their GB300 HybridEP base or recipe, or their own HybridEP setup, to NCCL EP.
 _VRNVL72_NCCLEP_RECIPES = (
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_bf16_config"),
-    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_fp8cs_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config"),
-    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8cs_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
@@ -72,14 +70,7 @@ _VRNVL72_NCCLEP_RECIPES = (
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v4", "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config"),
-    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config"),
-    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config"),
     ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config"),
-    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_bf16_config"),
-    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"),
@@ -94,21 +85,30 @@ _VRNVL72_NCCLEP_RECIPES = (
     ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
-    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
-    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config"),
-    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config"),
-    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config"),
-    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config"),
 )
 
-# VRNVL72 MoE recipes left off NCCL EP: GPT-OSS 20B MXFP8 runs EP=1, so it has no expert-parallel traffic,
-# and GPT-OSS 120B BF16 uses alltoall, like the GB300 recipe it aliases.
+# VRNVL72 MoE recipes that stay off NCCL EP: GPT-OSS 20B, Kimi K2, Nemotron 3 Nano, the FP8-CS recipes and
+# Qwen3.5-VL 122B stay on HybridEP, and GPT-OSS 120B BF16 uses alltoall, like the GB300 recipe it aliases.
 _VRNVL72_NON_NCCLEP_RECIPES = (
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_fp8cs_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8cs_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config"),
     ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config"),
     ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_bf16_config"),
+    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_bf16_config"),
+    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config"),
 )
 
 
