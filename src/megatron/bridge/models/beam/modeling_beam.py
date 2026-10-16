@@ -47,6 +47,7 @@ from megatron.core.ssm.mlp_layer import MLPLayer
 from megatron.core.tensor_parallel import ColumnParallelLinear
 from megatron.core.tensor_parallel.layers import set_tensor_model_parallel_attributes
 from megatron.core.transformer.attention import SelfAttention
+from megatron.core.transformer.enums import CudaGraphModule
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.module import MegatronModule, mark_keep_in_fp32
 from megatron.core.transformer.moe import moe_utils
@@ -331,6 +332,7 @@ class BeamTEDotProductAttention(_BeamSSMaxCoreAttentionMixin, TEDotProductAttent
 # ---------------------------------------------------------------------------
 
 
+@jit_fuser
 def apply_output_gate(x: torch.Tensor, gate: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
     """Gate ``x`` with ``sigmoid(gate [+ bias per head])``.
 
@@ -380,6 +382,10 @@ class AttentionOutputGateBias(MegatronModule):
         """Initialize the bias to zero."""
         torch.nn.init.zeros_(self.bias)
 
+    def forward(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+        """Apply the gate after this module's parameter-gather hooks have run."""
+        return apply_output_gate(x, gate, self.bias)
+
     def sharded_state_dict(
         self,
         prefix: str = "",
@@ -415,11 +421,10 @@ class BeamSelfAttention(SelfAttention):
                 tp_group=self.pg_collection.tp,
             )
 
-    @jit_fuser
     def _apply_output_gate(self, x, gate):
-        # Fused like Megatron-Core's Attention._apply_output_gate, so the gate rounds identically.
-        bias = self.output_gate_bias.bias if self.output_gate_bias is not None else None
-        return apply_output_gate(x, gate, bias)
+        if self.output_gate_bias is not None:
+            return self.output_gate_bias(x, gate)
+        return apply_output_gate(x, gate)
 
     def forward_pre_attn_and_core_attn(self, *args, **kwargs):
         """Reject dynamic-batching inference on SSMax layers: it bypasses core attention."""
@@ -523,6 +528,22 @@ class BeamTransformerLayerMixin:
             raise ValueError("Enabled post-layer norms require a normalization module in the spec.")
         return norm(config=self.config, hidden_size=self.config.hidden_size, eps=self.config.layernorm_epsilon)
 
+    def _get_submodules_under_cudagraphs(self):
+        """Include captured sandwich norms in parameter-gather hooks during graph replay."""
+        submodules = super()._get_submodules_under_cudagraphs()
+        scopes = self.config.cuda_graph_modules
+        if not scopes:
+            # Whole-layer capture already includes every child module.
+            return submodules
+        if CudaGraphModule.attn in scopes and self.post_self_attn_layernorm is not None:
+            submodules.append(self.post_self_attn_layernorm)
+        if self.post_mlp_layernorm is not None and (
+            (not self.is_moe_layer and CudaGraphModule.mlp in scopes)
+            or (self.is_moe_layer and CudaGraphModule.moe in scopes)
+        ):
+            submodules.append(self.post_mlp_layernorm)
+        return submodules
+
     def _beam_bda(self, training: bool, fused: bool, *, is_attention: bool):
         """Same call contract as ``get_bias_dropout_add``: returns ``f(x_with_bias, residual, prob)``."""
         norm = self.post_self_attn_layernorm if is_attention else self.post_mlp_layernorm
@@ -565,9 +586,10 @@ class BeamMoETransformerLayer(BeamTransformerLayerMixin, MoETransformerLayer):
 class _BeamRouterGatingLinear(torch.autograd.Function):
     """``RouterGatingLinearFunction`` for routers whose weight dtype differs from the input dtype.
 
-    Two changes to Megatron-Core's version: cuBLASLt requires both GEMM operands in
-    ``router_dtype`` (fp32 router weights meet bf16 activations; saved activations keep their
-    input dtype), and the TE GEMM reads raw storage and ignores strides, so an expanded
+    FP32/FP64 routers use Torch GEMMs, matching HF's math policy: TE forces TF32
+    for FP32 operands, which can change expert selection. GEMM operands are cast to
+    ``router_dtype`` while saved activations retain their input dtype. Lower-precision
+    TE GEMMs read raw storage and ignore strides, so an expanded
     (stride-0) ``grad_output`` such as ``logits.sum().backward()`` produces is made contiguous.
     """
 
@@ -581,7 +603,7 @@ class _BeamRouterGatingLinear(torch.autograd.Function):
         inp = inp.view(-1, inp_shape[-1])
 
         te_general_gemm = moe_utils.te_general_gemm
-        if te_general_gemm is not None and router_dtype != torch.float64:
+        if te_general_gemm is not None and router_dtype not in (torch.float32, torch.float64):
             gemm_bias = bias.to(router_dtype) if bias is not None else None
             gemm_weight, gemm_inp = weight, inp
             if weight.dtype != inp.dtype:
@@ -602,7 +624,7 @@ class _BeamRouterGatingLinear(torch.autograd.Function):
         grad_output = grad_output.contiguous().view(-1, grad_shape[-1])
 
         te_general_gemm = moe_utils.te_general_gemm
-        if te_general_gemm is not None and ctx.router_dtype != torch.float64:
+        if te_general_gemm is not None and ctx.router_dtype not in (torch.float32, torch.float64):
             grad_input = te_general_gemm(
                 weight.to(ctx.router_dtype), grad_output, ctx.router_dtype, layout="NN", grad=True
             )
