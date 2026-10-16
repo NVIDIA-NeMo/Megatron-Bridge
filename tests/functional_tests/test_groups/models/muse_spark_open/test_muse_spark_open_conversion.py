@@ -56,7 +56,6 @@ _TEXT_CONFIG = {
     "sliding_window": 64,
     "num_local_experts": 4,
     "num_experts_per_tok": 2,
-    "num_shared_experts": 0,
     "moe_hidden_size": 32,
     "moe_intermediate_size": 64,
     "bos_token_id": 1,
@@ -77,6 +76,8 @@ _AUDIO_CONFIG = {
     "hidden_sizes": [16, 32],
     "depths": [1, 1],
     "num_hidden_layers": 2,
+    # The audio encoder's output is scattered onto the text embeddings.
+    "out_hidden_size": _TEXT_CONFIG["hidden_size"],
 }
 
 
@@ -156,3 +157,36 @@ def test_muse_spark_conversion_roundtrip(muse_spark_toy_model_path: str, tp: int
     assert verification is not None, "Round trip did not report its weight verification"
     matched, compared = map(int, verification.groups())
     assert matched == compared == source_tensors
+
+
+def test_text_only_export_class_matches_full_model_logits(muse_spark_toy_model_path: str, tmp_path: Path) -> None:
+    """The exported text-only causal LM reproduces the full model's text logits, also through its auto_map."""
+    from transformers import AutoModelForCausalLM
+    from transformers.models import muse_spark
+
+    from megatron.bridge.models.muse_spark_open.modeling_muse_spark_open.muse_spark_open_transformers_patch import (
+        MuseSparkForCausalLM,
+    )
+    from megatron.bridge.models.muse_spark_open.text_only import export_text_artifacts
+
+    full = muse_spark.MuseSparkForConditionalGeneration.from_pretrained(
+        muse_spark_toy_model_path, dtype=torch.float32
+    ).eval()
+    text = MuseSparkForCausalLM(full.config.text_config).to(torch.float32).eval()
+    state = {f"model.{key}": value for key, value in full.model.language_model.state_dict().items()}
+    state["lm_head.weight"] = full.lm_head.weight
+    text.load_state_dict(state, strict=True)
+
+    input_ids = torch.randint(3, 900, (2, 12), generator=torch.Generator().manual_seed(0))
+    with torch.no_grad():
+        expected = full(input_ids=input_ids).logits
+        torch.testing.assert_close(text(input_ids=input_ids).logits, expected, rtol=0, atol=1e-6)
+
+    export_dir = tmp_path / "text_export"
+    text.config.architectures = ["MuseSparkForCausalLM"]
+    text.save_pretrained(export_dir)
+    export_text_artifacts(export_dir)
+    reloaded = AutoModelForCausalLM.from_pretrained(export_dir, trust_remote_code=True, dtype=torch.float32).eval()
+    assert type(reloaded).__name__ == "MuseSparkForCausalLM"
+    with torch.no_grad():
+        torch.testing.assert_close(reloaded(input_ids=input_ids).logits, expected, rtol=0, atol=1e-6)

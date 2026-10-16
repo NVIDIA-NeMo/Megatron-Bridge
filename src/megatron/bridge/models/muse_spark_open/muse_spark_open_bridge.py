@@ -110,7 +110,7 @@ class MuseSparkBridge(MegatronModelBridge):
         rope_thetas = text["layer_rope_theta"]
         if any(len(text[key]) != num_layers for key in ("layer_types", "layer_rope_theta", "mlp_layer_types")):
             raise ValueError("All decoder schedules must match num_hidden_layers.")
-        if set(text["mlp_layer_types"]) != {"sparse"} or text["num_shared_experts"]:
+        if set(text["mlp_layer_types"]) != {"sparse"} or text.get("num_shared_experts", 0):
             raise ValueError("The initial Muse Spark Open bridge supports all-sparse layers with no shared experts.")
         if set(layer_types) - {"sliding_attention", "full_attention"}:
             raise ValueError("Unsupported attention layer type.")
@@ -274,7 +274,7 @@ class MuseSparkBridge(MegatronModelBridge):
 
 
 @MegatronModelBridge.register_bridge(
-    source="MuseSparkForCausalLM", target=MuseSparkModel, model_type="musespark1x_omni_text"
+    source="MuseSparkForCausalLM", target=MuseSparkModel, model_type="muse_spark_text"
 )
 class MuseSparkTextBridge(MuseSparkBridge):
     """Use the same Hybrid decoder and mappings for the standalone language model."""
