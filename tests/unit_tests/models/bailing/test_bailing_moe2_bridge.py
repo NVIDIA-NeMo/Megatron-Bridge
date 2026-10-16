@@ -5,10 +5,21 @@ from types import SimpleNamespace
 import pytest
 
 from megatron.bridge.models.bailing.bailing_moe2_bridge import BailingMoeV2Bridge
+from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
+from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2Attention
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_attention_rope_dim_reads_partial_rotary_factor() -> None:
+    """Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters, not as an attribute."""
+    config = BailingMoeV2Config(
+        hidden_size=64, num_attention_heads=4, num_key_value_heads=2, head_dim=16, partial_rotary_factor=0.5
+    )
+
+    assert BailingMoeV2Attention(config, layer_idx=0).rope_dim == 8
 
 
 def test_mtp_mappings_resolve_live_mcore_parameter_names() -> None:

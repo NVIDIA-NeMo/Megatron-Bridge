@@ -28,6 +28,14 @@ if (
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
+from megatron.bridge.models.beam import (
+    BeamBridge,
+    BeamModelBuilder,
+    BeamModelConfig,
+    BeamModelProvider,
+    BeamQKVGateMapping,
+    BeamTransformerConfig,
+)
 from megatron.bridge.models.bert import (
     BertModelProvider,
 )
@@ -149,6 +157,12 @@ from megatron.bridge.models.muse_glimmer import (
     MuseGlimmerModel,
     MuseGlimmerModelBuilder,
     MuseGlimmerModelConfig,
+)
+from megatron.bridge.models.muse_spark_open import (
+    MuseSparkBridge,
+    MuseSparkModel,
+    MuseSparkModelBuilder,
+    MuseSparkModelConfig,
 )
 from megatron.bridge.models.nemotron_omni import (
     Nemotron35SuperVLBridge,
@@ -274,6 +288,10 @@ __all__ = [
     "MuseGlimmerModel",
     "MuseGlimmerModelBuilder",
     "MuseGlimmerModelConfig",
+    "MuseSparkBridge",
+    "MuseSparkModel",
+    "MuseSparkModelBuilder",
+    "MuseSparkModelConfig",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",
@@ -287,6 +305,13 @@ __all__ = [
     "Qwen2AudioBridge",
     "Qwen2AudioModel",
     "Qwen2AudioModelProvider",
+    # Beam (Reflection AI) models
+    "BeamBridge",
+    "BeamModelBuilder",
+    "BeamModelProvider",
+    "BeamModelConfig",
+    "BeamQKVGateMapping",
+    "BeamTransformerConfig",
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",

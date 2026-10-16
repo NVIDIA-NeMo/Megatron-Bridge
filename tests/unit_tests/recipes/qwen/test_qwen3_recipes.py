@@ -6,9 +6,9 @@ import pytest
 from transformers import Qwen3Config
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import DPODatasetConfig, GPTSFTDatasetConfig
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
-from megatron.bridge.recipes.qwen.h100 import qwen3
+from megatron.bridge.recipes.qwen.h100 import qwen3, qwen3_moe
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -109,3 +109,31 @@ def test_yarn_128k_recipe_uses_disjoint_train_and_validation_slices(monkeypatch)
     assert config.dataset.hf_dataset.path_or_dataset == config.dataset.hf_validation_dataset.path_or_dataset
     assert config.dataset.hf_dataset.subset == config.dataset.hf_validation_dataset.subset == "math"
     assert config.dataset.hf_dataset.load_kwargs == config.dataset.hf_validation_dataset.load_kwargs
+
+
+class _ProviderBridge(_FakeBridge):
+    @staticmethod
+    def from_hf_pretrained(hf_path, **kwargs):
+        return _ProviderBridge()
+
+    def to_megatron_provider(self, load_weights=False):
+        assert load_weights is False, "DPO recipes start from --pretrained_checkpoint, not HF weights"
+        return _FakeModelConfig()
+
+
+def test_qwen3_30b_a3b_dpo_config_applies_the_dpo_contract(monkeypatch):
+    monkeypatch.setattr(qwen3_moe, "AutoBridge", _ProviderBridge)
+
+    cfg = qwen3_moe.qwen3_30b_a3b_dpo_8gpu_h100_bf16_config()
+
+    assert isinstance(cfg.dataset, DPODatasetConfig)
+    assert cfg.dataset.seq_length == cfg.model.seq_length
+    assert cfg.dataset.ref_artifact is None  # every run must point at its scored artifact
+    assert cfg.dpo is not None
+
+    # What ConfigContainer.validate enforces for any DPO dataset.
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.train.global_batch_size % 2 == 0  # row-denominated: one pair == two rows
+    assert cfg.train.micro_batch_size % 2 == 0
