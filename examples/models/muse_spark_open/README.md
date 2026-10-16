@@ -49,6 +49,4 @@ filesystem that every node can read (`dataset.hf_output_root`).
 ## Verification status
 
 See the [model verification card](../../model_verification_cards/muse-spark-open-816b-a42b/card.yaml)
-for the commands and recorded results of checkpoint conversion, forward comparison, generation,
-training, and SFT export. The items run on a local copy of the checkpoint are marked verified with
-the caveat that its public Hugging Face revision is not yet pinned.
+for the commands and recorded results on the pinned public Hugging Face revision.
