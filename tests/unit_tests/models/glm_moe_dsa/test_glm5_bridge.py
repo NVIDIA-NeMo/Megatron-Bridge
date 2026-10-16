@@ -17,14 +17,60 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 from transformers import GlmMoeDsaConfig
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_glm53_config_loads_through_shared_bridge() -> None:
+    """GLM-5.3 architecture settings resolve through the existing GLM bridge."""
+    config = GlmMoeDsaConfig(
+        architectures=["GlmMoeDsaForCausalLM"],
+        num_hidden_layers=78,
+        hidden_size=6144,
+        num_attention_heads=64,
+        n_routed_experts=256,
+        num_experts_per_tok=8,
+        first_k_dense_replace=3,
+        q_lora_rank=2048,
+        kv_lora_rank=512,
+        qk_head_dim=256,
+        qk_nope_head_dim=192,
+        qk_rope_head_dim=64,
+        v_head_dim=256,
+        rope_parameters={"rope_theta": 8_000_000, "rope_type": "default"},
+        index_topk_freq=4,
+        index_skip_topk_offset=3,
+        indexer_rope_interleave=True,
+        num_nextn_predict_layers=1,
+    )
+    auto_bridge = AutoBridge.from_hf_config(config)
+    provider = auto_bridge.to_megatron_provider(load_weights=False)
+
+    assert isinstance(auto_bridge._model_bridge, GLM5Bridge)
+    assert provider.num_layers == 156
+    assert provider.hidden_size == 6144
+    assert provider.num_attention_heads == 64
+    assert provider.num_moe_experts == 256
+    assert provider.moe_router_topk == 8
+    assert provider.q_lora_rank == 2048
+    assert provider.kv_lora_rank == 512
+    assert provider.qk_head_dim == 192
+    assert provider.qk_pos_emb_head_dim == 64
+    assert provider.v_head_dim == 256
+    assert provider.rotary_base == 8_000_000
+    assert provider.dsa_indexer_topk_freq == 4
+    assert provider.dsa_indexer_skip_topk_offset == 3
+    assert provider.moe_layer_freq == [0, 0] * 3 + [0, 1] * 75
+    assert provider.mtp_num_layers is None
+
 
 _DSA_INDEXER_SUFFIXES = {
     "linear_wq_b.weight": "wq_b.weight",
@@ -80,7 +126,7 @@ def test_hf_config_ignores_upstream_num_experts_default() -> None:
 
     provider_kwargs = GLM5Bridge().hf_config_to_provider_kwargs(hf_config)
 
-    assert hf_config.num_experts == 256
+    assert getattr(hf_config, "num_experts", None) in (None, 256)
     assert provider_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
 
 
@@ -103,11 +149,57 @@ def test_num_experts_workaround_is_config_shape_specific(hf_config: SimpleNamesp
 
 def test_megatron_config_export_keeps_generic_moe_aliases() -> None:
     """GLM-5 keeps the generic reverse mappings rather than establishing a special default."""
-    mapped_config = GLM5Bridge.megatron_to_hf_config(SimpleNamespace(num_moe_experts=8))
+    mapped_config = GLM5Bridge.megatron_to_hf_config(
+        SimpleNamespace(
+            num_moe_experts=8, hybrid_layer_pattern="D-DE", dsa_indexer_topk_freq=1, dsa_indexer_skip_topk_offset=0
+        )
+    )
 
     assert mapped_config["num_experts"] == 8
     assert mapped_config["num_local_experts"] == 8
     assert mapped_config["n_routed_experts"] == 8
+
+
+def test_megatron_config_export_does_not_emit_training_seq_length_as_max_position_embeddings() -> None:
+    """``seq_length`` is the fine-tuning context, not the model's context capability; leave it to the reference."""
+    mapped_config = GLM5Bridge.megatron_to_hf_config(
+        SimpleNamespace(
+            num_moe_experts=8,
+            num_layers=4,
+            seq_length=8192,
+            hybrid_layer_pattern="D-DE",
+            dsa_indexer_topk_freq=1,
+            dsa_indexer_skip_topk_offset=0,
+        )
+    )
+
+    assert "max_position_embeddings" not in mapped_config
+    assert mapped_config["num_experts"] == 8
+    assert mapped_config["num_hidden_layers"] == 2
+    assert mapped_config["first_k_dense_replace"] == 1
+
+
+def test_megatron_config_export_reference_supplies_max_position_embeddings() -> None:
+    """With a reference config, the exported value must be the reference one (1048576 for GLM-5.2), not seq_length."""
+    from megatron.bridge.models.conversion.utils import conform_config_to_reference
+
+    mapped_config = GLM5Bridge.megatron_to_hf_config(
+        SimpleNamespace(
+            num_moe_experts=256,
+            num_layers=156,
+            seq_length=8192,
+            hybrid_layer_pattern="D-" * 3 + "DE" * 75,
+            dsa_indexer_topk_freq=4,
+            dsa_indexer_skip_topk_offset=3,
+        )
+    )
+    assert mapped_config["num_hidden_layers"] == 78
+    assert mapped_config["index_topk_freq"] == 4
+    assert mapped_config["index_skip_topk_offset"] == 3
+    reference = {"max_position_embeddings": 1048576, "n_routed_experts": 256}
+    conformed = conform_config_to_reference(mapped_config, reference)
+
+    assert conformed["max_position_embeddings"] == 1048576
 
 
 @pytest.mark.parametrize(
@@ -141,6 +233,14 @@ def test_provider_bridge_maps_dsa_architecture_from_hf_config(
     assert provider.dsa_indexer_use_sparse_loss is True
 
 
+def test_provider_bridge_keeps_pretrained_router_bias_fixed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retain pretrained expert bias without updating it during fine-tuning."""
+    provider = _provider_from_hf_config(monkeypatch)
+
+    assert provider.moe_router_enable_expert_bias is True
+    assert provider.moe_router_bias_update_rate == 0
+
+
 def test_provider_bridge_uses_hybridep_dispatcher(monkeypatch: pytest.MonkeyPatch) -> None:
     """GLM-5 avoids the affected grouped all-to-all transport path."""
     provider = _provider_from_hf_config(monkeypatch)
@@ -155,62 +255,62 @@ def test_mapping_registry_includes_grouped_and_local_expert_fc2_paths(glm5_bridg
     """GLM-5 MoE export supports both packed and local-expert down-projection names."""
     mappings = _mapping_by_megatron_param(glm5_bridge)
 
-    grouped_mapping = mappings["decoder.layers.*.mlp.experts.linear_fc2.weight*"]
+    grouped_mapping = mappings["decoder.layers.3.mlp.experts.linear_fc2.weight*"]
     assert isinstance(grouped_mapping, AutoMapping)
-    assert grouped_mapping.hf_param == "model.layers.*.mlp.experts.*.down_proj.weight"
+    assert grouped_mapping.hf_param == "model.layers.1.mlp.experts.*.down_proj.weight"
 
-    local_expert_mapping = mappings["decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight"]
+    local_expert_mapping = mappings["decoder.layers.3.mlp.experts.local_experts.*.linear_fc2.weight"]
     assert isinstance(local_expert_mapping, AutoMapping)
-    assert local_expert_mapping.hf_param == "model.layers.*.mlp.experts.*.down_proj.weight"
+    assert local_expert_mapping.hf_param == "model.layers.1.mlp.experts.*.down_proj.weight"
 
     registry = glm5_bridge.mapping_registry()
-    grouped_lookup = registry.megatron_to_hf_lookup("decoder.layers.2.mlp.experts.linear_fc2.weight3")
+    grouped_lookup = registry.megatron_to_hf_lookup("decoder.layers.5.mlp.experts.linear_fc2.weight3")
     assert grouped_lookup is not None
     assert grouped_lookup.hf_param == "model.layers.2.mlp.experts.3.down_proj.weight"
 
     local_expert_lookup = registry.megatron_to_hf_lookup(
-        "decoder.layers.2.mlp.experts.local_experts.3.linear_fc2.weight"
+        "decoder.layers.5.mlp.experts.local_experts.3.linear_fc2.weight"
     )
     assert local_expert_lookup is not None
     assert local_expert_lookup.hf_param == "model.layers.2.mlp.experts.3.down_proj.weight"
 
 
-@pytest.mark.parametrize("layer_prefix", ["transformer_layer", "mtp_model_layer"])
+@pytest.mark.parametrize("layer_prefix", ["mtp_model_layer.layers"])
 def test_mapping_registry_includes_mtp_moe_mappings(glm5_bridge: GLM5Bridge, layer_prefix: str) -> None:
     """Each GLM-5 MTP block mirrors the decoder MoE mappings for both layer replicas."""
     mappings = _mapping_by_megatron_param(glm5_bridge)
 
-    router_mapping = mappings[f"mtp.layers.0.{layer_prefix}.mlp.router.expert_bias"]
+    router_mapping = mappings[f"mtp.layers.0.{layer_prefix}.1.mlp.router.expert_bias"]
     assert isinstance(router_mapping, AutoMapping)
     assert router_mapping.hf_param == "model.layers.4.mlp.gate.e_score_correction_bias"
 
-    expert_fc1_mapping = mappings[f"mtp.layers.0.{layer_prefix}.mlp.experts.local_experts.*.linear_fc1.weight"]
+    expert_fc1_mapping = mappings[f"mtp.layers.0.{layer_prefix}.1.mlp.experts.local_experts.*.linear_fc1.weight"]
     assert isinstance(expert_fc1_mapping, GatedMLPMapping)
     assert expert_fc1_mapping.hf_param == {
         "gate": "model.layers.4.mlp.experts.*.gate_proj.weight",
         "up": "model.layers.4.mlp.experts.*.up_proj.weight",
     }
 
-    expert_fc2_mapping = mappings[f"mtp.layers.0.{layer_prefix}.mlp.experts.local_experts.*.linear_fc2.weight"]
+    expert_fc2_mapping = mappings[f"mtp.layers.0.{layer_prefix}.1.mlp.experts.local_experts.*.linear_fc2.weight"]
     assert isinstance(expert_fc2_mapping, AutoMapping)
     assert expert_fc2_mapping.hf_param == "model.layers.4.mlp.experts.*.down_proj.weight"
 
     registry = glm5_bridge.mapping_registry()
     expert_fc2_lookup = registry.megatron_to_hf_lookup(
-        f"mtp.layers.0.{layer_prefix}.mlp.experts.local_experts.7.linear_fc2.weight"
+        f"mtp.layers.0.{layer_prefix}.1.mlp.experts.local_experts.7.linear_fc2.weight"
     )
     assert expert_fc2_lookup is not None
     assert expert_fc2_lookup.hf_param == "model.layers.4.mlp.experts.7.down_proj.weight"
 
 
-@pytest.mark.parametrize("layer_prefix", ["transformer_layer", "mtp_model_layer"])
+@pytest.mark.parametrize("layer_prefix", ["mtp_model_layer.layers"])
 def test_mapping_registry_includes_mtp_attention_and_dense_mlp_mappings(
     glm5_bridge: GLM5Bridge, layer_prefix: str
 ) -> None:
     """MTP attention and dense MLP mappings point at the appended HF layer index."""
     mappings = _mapping_by_megatron_param(glm5_bridge)
 
-    qkv_mapping = mappings[f"mtp.layers.0.{layer_prefix}.self_attention.linear_qkv.weight"]
+    qkv_mapping = mappings[f"mtp.layers.0.{layer_prefix}.0.self_attention.linear_qkv.weight"]
     assert isinstance(qkv_mapping, QKVMapping)
     assert qkv_mapping.hf_param == {
         "q": "model.layers.4.self_attn.q_proj.weight",
@@ -218,7 +318,7 @@ def test_mapping_registry_includes_mtp_attention_and_dense_mlp_mappings(
         "v": "model.layers.4.self_attn.v_proj.weight",
     }
 
-    mlp_mapping = mappings[f"mtp.layers.0.{layer_prefix}.mlp.linear_fc1.weight"]
+    mlp_mapping = mappings[f"mtp.layers.0.{layer_prefix}.1.mlp.linear_fc1.weight"]
     assert isinstance(mlp_mapping, GatedMLPMapping)
     assert mlp_mapping.hf_param == {
         "gate": "model.layers.4.mlp.gate_proj.weight",
@@ -232,23 +332,23 @@ def test_mapping_registry_includes_dsa_indexer_mappings(glm5_bridge: GLM5Bridge)
     registry = glm5_bridge.mapping_registry()
 
     for megatron_suffix, hf_suffix in _DSA_INDEXER_SUFFIXES.items():
-        megatron_param = f"decoder.layers.*.self_attention.core_attention.indexer.{megatron_suffix}"
+        megatron_param = f"decoder.layers.4.self_attention.core_attention.indexer.{megatron_suffix}"
         mapping = mappings[megatron_param]
         assert isinstance(mapping, AutoMapping)
-        assert mapping.hf_param == f"model.layers.*.self_attn.indexer.{hf_suffix}"
+        assert mapping.hf_param == f"model.layers.2.self_attn.indexer.{hf_suffix}"
 
         resolved_mapping = registry.megatron_to_hf_lookup(megatron_param.replace("*", "2"))
         assert resolved_mapping is not None
         assert resolved_mapping.hf_param == f"model.layers.2.self_attn.indexer.{hf_suffix}"
 
 
-@pytest.mark.parametrize("layer_prefix", ["transformer_layer", "mtp_model_layer"])
+@pytest.mark.parametrize("layer_prefix", ["mtp_model_layer.layers"])
 def test_mapping_registry_includes_mtp_dsa_indexer_mappings(glm5_bridge: GLM5Bridge, layer_prefix: str) -> None:
     """A full GLM-5.2 MTP layer maps every DSA indexer tensor."""
     mappings = _mapping_by_megatron_param(glm5_bridge)
 
     for megatron_suffix, hf_suffix in _DSA_INDEXER_SUFFIXES.items():
-        megatron_param = f"mtp.layers.0.{layer_prefix}.self_attention.core_attention.indexer.{megatron_suffix}"
+        megatron_param = f"mtp.layers.0.{layer_prefix}.0.self_attention.core_attention.indexer.{megatron_suffix}"
         mapping = mappings[megatron_param]
         assert isinstance(mapping, AutoMapping)
         assert mapping.hf_param == f"model.layers.4.self_attn.indexer.{hf_suffix}"
@@ -282,3 +382,57 @@ def test_mapping_registry_omits_mtp_mappings_without_nextn_layers(
     )
 
     assert all(not mapping.megatron_param.startswith("mtp.") for mapping in bridge.mapping_registry())
+
+
+def test_fp8_checkpoint_weight_is_dequantized_with_its_block_scale() -> None:
+    """GLM-5 import applies the checkpoint's FP8 inverse scale before BF16 conversion."""
+    weight_name = "model.layers.0.self_attn.q_a_proj.weight"
+    weight = torch.tensor([[1.0, -2.0], [4.0, -8.0]], dtype=torch.float8_e4m3fn)
+    scale_inv = torch.tensor([[0.25]], dtype=torch.float32)
+
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(
+        weight_name,
+        {weight_name: weight, weight_name + "_scale_inv": scale_inv},
+    )
+
+    assert converted.dtype == torch.bfloat16
+    torch.testing.assert_close(converted, weight.to(torch.bfloat16) * scale_inv.to(torch.bfloat16))
+
+
+def test_compound_fp8_checkpoint_weights_use_their_own_scales() -> None:
+    """Compound mappings dequantize each source tensor with its matching scale."""
+    names = {"gate": "gate.weight", "up": "up.weight"}
+    state_dict = {
+        "gate.weight": torch.tensor([[2.0]], dtype=torch.float8_e4m3fn),
+        "gate.weight_scale_inv": torch.tensor([[0.5]], dtype=torch.float32),
+        "up.weight": torch.tensor([[4.0]], dtype=torch.float8_e4m3fn),
+        "up.weight_scale_inv": torch.tensor([[0.25]], dtype=torch.float32),
+    }
+
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(names, state_dict)
+
+    torch.testing.assert_close(converted["gate"], torch.tensor([[1.0]], dtype=torch.bfloat16))
+    torch.testing.assert_close(converted["up"], torch.tensor([[1.0]], dtype=torch.bfloat16))
+
+
+@pytest.mark.parametrize(
+    "weight_name",
+    [
+        "model.layers.0.self_attn.indexer.wq_b.weight",
+        "model.layers.0.self_attn.kv_a_proj_with_mqa.weight",
+        "model.layers.1.mlp.experts.0.down_proj.weight",
+    ],
+)
+def test_glm53_fp8_import_uses_separate_128_by_128_block_scales(weight_name: str) -> None:
+    """Exercise multiple published-format blocks, including a partial final block."""
+    weight = torch.ones((192, 256), dtype=torch.float32).to(torch.float8_e4m3fn)
+    scales = torch.tensor([[0.25, 0.5], [1.0, 2.0]], dtype=torch.float32)
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(
+        weight_name, {weight_name: weight, weight_name + "_scale_inv": scales}
+    )
+    expected = torch.empty((192, 256), dtype=torch.bfloat16)
+    expected[:128, :128] = 0.25
+    expected[:128, 128:] = 0.5
+    expected[128:, :128] = 1.0
+    expected[128:, 128:] = 2.0
+    torch.testing.assert_close(converted, expected, rtol=0, atol=0)

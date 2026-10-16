@@ -31,12 +31,22 @@ logger = logging.getLogger(__name__)
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+COMMON_SCRIPT_DIR = SCRIPT_DIR.parent / "common"
+if str(COMMON_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
+from container_runtime import (  # noqa: E402
+    add_container_runtime_args,
+    apply_container_runtime,
+    validate_container_runtime,
+)
 from recipe_metadata import (  # noqa: E402
     BenchmarkRecipeMetadata,
     selected_benchmark_recipe,
     validate_selected_benchmark_recipe,
 )
+from slurm_parameters import add_slurm_parameter_args  # noqa: E402
+from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval, wait_for_slurm_job  # noqa: E402
 
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
@@ -63,6 +73,8 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
 """,
     )
     execution = parser.add_argument_group("Execution")
+    add_container_runtime_args(execution)
+    add_slurm_parameter_args(execution)
     execution.add_argument("--nodes", type=int, default=1, help="Number of nodes.")
     execution.add_argument(
         "--gpus-per-node",
@@ -75,13 +87,6 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
-    execution.add_argument(
-        "--additional-slurm-params",
-        "--additional_slurm_params",
-        type=_parse_additional_slurm_params,
-        default={},
-        help="Additional sbatch parameters as semicolon-separated KEY=VALUE pairs.",
-    )
     execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",
@@ -121,7 +126,7 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         dest="peak_mem_clk",
         help=(
             "Lock the GPU memory clock to a fixed frequency in MHz once per node. "
-            "Defaults to 4752 for VR200 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
+            "Defaults to 4752 for VRNVL72 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
         ),
     )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
@@ -135,7 +140,13 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument(
         "--wait",
         action="store_true",
-        help="Wait for the Slurm experiment to finish and stream its logs.",
+        help="Wait for the Slurm experiment to finish; logs remain in the experiment directory.",
+    )
+    execution.add_argument(
+        "--poll-interval",
+        type=slurm_poll_interval,
+        default=MIN_POLL_INTERVAL,
+        help="Seconds between Slurm status checks when waiting (minimum/default: 60).",
     )
     return parser
 
@@ -168,17 +179,6 @@ def _parse_mounts(values: list[str]) -> list[str]:
         if mount not in mounts:
             mounts.append(mount)
     return mounts
-
-
-def _parse_additional_slurm_params(value: str) -> dict[str, str]:
-    """Parse semicolon-separated Slurm executor parameters."""
-    parameters: dict[str, str] = {}
-    for item in value.split(";"):
-        key, separator, parameter_value = item.partition("=")
-        if not separator or not key or not parameter_value:
-            raise argparse.ArgumentTypeError("--additional-slurm-params expects semicolon-separated KEY=VALUE pairs.")
-        parameters[key] = parameter_value
-    return parameters
 
 
 def _validate_args(
@@ -218,12 +218,12 @@ def _resolve_peak_mem_clk(
     requested_peak_mem_clk: int | None,
     benchmark_metadata: BenchmarkRecipeMetadata | None,
 ) -> int | None:
-    """Resolve the explicit memory clock or the VR200 benchmark default."""
+    """Resolve the explicit memory clock or the VRNVL72 benchmark default."""
     if requested_peak_mem_clk == -1:
         return None
     if requested_peak_mem_clk is not None:
         return requested_peak_mem_clk
-    if benchmark_metadata is not None and benchmark_metadata.hardware == "vr200":
+    if benchmark_metadata is not None and benchmark_metadata.hardware == "vrnvl72":
         return 4752
     return None
 
@@ -273,6 +273,7 @@ def _build_executor(
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
         time=args.time,
+        poll_estimated_start_time=False,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
         packager=run.Packager(),
@@ -307,6 +308,7 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
+    validate_container_runtime(args)
     benchmark_metadata = selected_benchmark_recipe(training_args)
     if benchmark_metadata is not None:
         validate_selected_benchmark_recipe(training_args, benchmark_metadata)
@@ -334,13 +336,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
+    task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
 
-    with run.Experiment(experiment_name) as experiment:
+    with run.Experiment(experiment_name, skip_status_at_exit=True) as experiment:
         experiment.add(task, executor=executor, name="training")
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=not args.wait, tail_logs=args.wait)
+        experiment.run(detach=True, tail_logs=False)
+        if args.wait:
+            wait_for_slurm_job(experiment, poll_interval=args.poll_interval)
 
 
 if __name__ == "__main__":

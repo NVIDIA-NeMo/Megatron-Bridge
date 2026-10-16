@@ -24,7 +24,7 @@ from typing import Callable, Optional
 import torch
 import torch.distributed
 import torch.nn.functional as F
-from megatron.core import parallel_state, tensor_parallel
+from megatron.core import parallel_state, tensor_parallel, tuning
 from megatron.core.datasets.utils import compile_helpers
 from megatron.core.fusions.fused_bias_dropout import bias_dropout_add_fused_train
 from megatron.core.fusions.fused_bias_gelu import bias_gelu
@@ -43,6 +43,7 @@ from megatron.core.utils import (
     get_te_version,
     is_te_min_version,
     is_torch_min_version,
+    set_default_log_ranks,
 )
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -125,6 +126,12 @@ def initialize_megatron(
     # init rerun global state
     init_rerun_state(rerun_state_machine_config)
 
+    # Pin Triton autotune configs before any kernel runs, as Megatron-Core's training initializer does under
+    # --deterministic-mode. Timed autotuning can pick different tilings between ranks and runs, which changes the
+    # floating-point reduction order. Runs without deterministic_mode keep Triton's timed autotuning.
+    if getattr(model_config, "deterministic_mode", False):
+        tuning.install(deterministic=True)
+
     # torch.distributed initialization
     result = torch_dist_init(
         model_config=model_config,
@@ -189,6 +196,9 @@ def torch_dist_init(
         An optional callable to finish MPU initialization if skip_mpu_initialization
         or lazy_mpu_init is True, otherwise None.
     """
+
+    # Reset process-wide logging selection when initializing another training run.
+    set_default_log_ranks({0})
 
     def finish_mpu_init() -> ProcessGroupCollection:
         # Pytorch distributed.
@@ -574,6 +584,7 @@ def _create_dist_train_pgs(
     language_model_config = copy(model_config)
     language_model_config.world_size = model_config.dist_train.language_world_size
     language_model_config.rank_offset = model_config.dist_train.vision_world_size
+    set_default_log_ranks({0, language_model_config.rank_offset})
     vision_pg_collection = _create_pg_collection(
         vision_model_config,
         num_distributed_optimizer_instances,
@@ -814,6 +825,12 @@ def _initialize_distributed(
                 _optional_kwargs["min_dynamic_context_parallel_size"] = model_config.min_dynamic_context_parallel_size
             if "hybrid_context_parallel" in _init_mp_params:
                 _optional_kwargs["hybrid_context_parallel"] = model_config.hybrid_context_parallel
+            for parameter, attribute in (
+                ("gtp_remat_size", "gtp_weight_remat_size"),
+                ("expert_gtp_remat_size", "expert_gtp_weight_remat_size"),
+            ):
+                if parameter in _init_mp_params:
+                    _optional_kwargs[parameter] = getattr(model_config, attribute, 1)
 
             parallel_state.initialize_model_parallel(
                 tensor_model_parallel_size=model_config.tensor_model_parallel_size,
@@ -825,8 +842,6 @@ def _initialize_distributed(
                 expert_model_parallel_size=model_config.expert_model_parallel_size,
                 num_distributed_optimizer_instances=num_distributed_optimizer_instances,
                 expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
-                gtp_remat_size=model_config.gtp_weight_remat_size,
-                expert_gtp_remat_size=model_config.expert_gtp_weight_remat_size,
                 distributed_timeout_minutes=dist_config.distributed_timeout_minutes,
                 nccl_communicator_config_path=dist_config.nccl_communicator_config_path,
                 order="tp-cp-ep-dp-pp" if not dist_config.use_tp_pp_dp_mapping else "tp-cp-ep-pp-dp",

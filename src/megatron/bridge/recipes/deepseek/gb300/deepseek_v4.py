@@ -33,12 +33,7 @@ DEEPSEEK_V4_PRO_HF_PATH = "deepseek-ai/DeepSeek-V4-Pro"
 
 
 def deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
-    """Return the DeepSeek-V4-Pro GB300 pre-training base config.
-
-    DeepSeek-V4 still requires a compatible Megatron-Core development commit;
-    the Megatron-Core commit pinned by Megatron Bridge ``main`` is not a
-    supported runtime for this recipe.
-    """
+    """Return the DeepSeek-V4-Pro GB300 pre-training base config."""
     cfg = _pretrain_common()
     cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_PRO_HF_PATH, trust_remote_code=True).to_megatron_provider(
         load_weights=False
@@ -63,7 +58,7 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.dsa_indexer_loss_coeff = 0.0
@@ -141,7 +136,7 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.dsa_indexer_loss_coeff = 0.0

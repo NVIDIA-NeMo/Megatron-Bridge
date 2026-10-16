@@ -137,17 +137,17 @@ from megatron.bridge.perf_recipes.llama.r100.llama3 import (
     llama3_8b_pretrain_8gpu_r100_fp8mx_config,
     llama3_8b_pretrain_8gpu_r100_nvfp4_config,
 )
-from megatron.bridge.perf_recipes.llama.vr200.llama3 import (
-    llama3_8b_pretrain_8gpu_vr200_bf16_config,
-    llama3_8b_pretrain_8gpu_vr200_fp8cs_config,
-    llama3_8b_pretrain_8gpu_vr200_fp8mx_config,
-    llama3_8b_pretrain_8gpu_vr200_nvfp4_config,
-    llama3_70b_pretrain_64gpu_vr200_bf16_config,
-    llama3_70b_pretrain_64gpu_vr200_fp8mx_config,
-    llama3_70b_pretrain_64gpu_vr200_nvfp4_config,
+from megatron.bridge.perf_recipes.llama.vrnvl72.llama3 import (
+    llama3_8b_pretrain_8gpu_vrnvl72_bf16_config,
+    llama3_8b_pretrain_8gpu_vrnvl72_fp8cs_config,
+    llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
+    llama3_70b_pretrain_64gpu_vrnvl72_bf16_config,
+    llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config,
+    llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config,
 )
-from megatron.bridge.perf_recipes.llama.vr200.llama31 import (
-    llama31_405b_pretrain_256gpu_vr200_bf16_config,
-    llama31_405b_pretrain_256gpu_vr200_fp8mx_config,
-    llama31_405b_pretrain_256gpu_vr200_nvfp4_config,
+from megatron.bridge.perf_recipes.llama.vrnvl72.llama31 import (
+    llama31_405b_pretrain_256gpu_vrnvl72_bf16_config,
+    llama31_405b_pretrain_256gpu_vrnvl72_fp8mx_config,
+    llama31_405b_pretrain_256gpu_vrnvl72_nvfp4_config,
 )

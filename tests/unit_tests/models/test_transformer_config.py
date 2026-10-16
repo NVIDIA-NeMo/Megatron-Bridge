@@ -15,12 +15,14 @@
 """Unit tests for megatron.bridge.models.transformer_config."""
 
 import json
+from dataclasses import fields
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 import torch
 
+from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.transformer_config import (
     _HYBRIDEP_PADDING_FIELDS,
     HeterogeneousTransformerConfig,
@@ -72,9 +74,16 @@ class TestEnableSafeHybridepDispatch:
             cuda_graph_impl="none",
         )
 
-        _enable_safe_hybridep_dispatch(cfg)
+        _enable_safe_hybridep_dispatch(cfg, uses_thd=True)
 
         assert cfg.moe_hybridep_pad_variable_tokens is True
+
+    def test_bshd_preserves_disabled_padding(self):
+        cfg, padding_field = _make_hybridep_config()
+
+        _enable_safe_hybridep_dispatch(cfg, uses_thd=False)
+
+        assert getattr(cfg, padding_field) is False
 
     def test_cuda_graph_config_does_not_require_padding_field(self):
         cfg = SimpleNamespace(
@@ -83,7 +92,7 @@ class TestEnableSafeHybridepDispatch:
             cuda_graph_impl="full_iteration",
         )
 
-        _enable_safe_hybridep_dispatch(cfg)
+        _enable_safe_hybridep_dispatch(cfg, uses_thd=True)
 
 
 # ---------------------------------------------------------------------------
@@ -267,14 +276,14 @@ class TestTransformerConfigFinalize:
             cfg.finalize()
         assert cfg.expert_tensor_parallel_size is None
 
-    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
-        """HybridEP must safely handle different token counts on each EP rank."""
+    def test_hybridep_finalization_preserves_uneven_dispatch_padding(self):
+        """Generic model finalization must not infer the recipe tensor layout."""
         cfg, padding_field = _make_hybridep_config()
 
         with patch(_FINALIZE_PATCH):
             cfg.finalize()
 
-        assert getattr(cfg, padding_field) is True
+        assert getattr(cfg, padding_field) is False
 
     def test_non_hybridep_finalization_preserves_uneven_dispatch_padding(self):
         """Other flex backends must retain their configured padding behavior."""
@@ -324,13 +333,50 @@ class TestMLATransformerConfigFinalize:
             cfg.finalize()
         assert cfg.expert_tensor_parallel_size == 1
 
-    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
+    def test_hybridep_finalization_preserves_uneven_dispatch_padding(self):
         cfg, padding_field = _make_hybridep_config(MLATransformerConfig)
 
         with patch(_MLA_FINALIZE_PATCH):
             cfg.finalize()
 
-        assert getattr(cfg, padding_field) is True
+        assert getattr(cfg, padding_field) is False
+
+
+# ---------------------------------------------------------------------------
+# MLATransformerConfig.multi_latent_attention
+# ---------------------------------------------------------------------------
+
+
+class TestMLATransformerConfigMultiLatentAttention:
+    """Tests for the multi_latent_attention default on MLATransformerConfig."""
+
+    def _make_mla(self, **kwargs) -> MLATransformerConfig:
+        defaults = dict(
+            num_layers=2,
+            hidden_size=256,
+            ffn_hidden_size=512,
+            num_attention_heads=8,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+        )
+        defaults.update(kwargs)
+        return MLATransformerConfig(**defaults)
+
+    def test_mla_config_and_provider_default_to_multi_latent_attention(self):
+        assert MLATransformerConfig.__dataclass_fields__["multi_latent_attention"].default is True
+        assert MLAModelProvider.__dataclass_fields__["multi_latent_attention"].default is True
+        assert self._make_mla().multi_latent_attention is True
+
+    def test_selective_mla_up_proj_recompute_is_accepted(self):
+        cfg = self._make_mla(recompute_granularity="selective", recompute_modules=["mla_up_proj"])
+
+        cfg.finalize()
+
+        assert cfg.recompute_modules == ["mla_up_proj"]
+
+    def test_explicit_non_mla_value_and_plain_config_are_unchanged(self):
+        assert self._make_mla(multi_latent_attention=False).multi_latent_attention is False
+        assert TransformerConfig.__dataclass_fields__["multi_latent_attention"].default is False
 
 
 # ---------------------------------------------------------------------------
@@ -389,13 +435,13 @@ class TestHeterogeneousTransformerConfigFinalize:
             cfg.finalize()
         assert cfg.sequence_parallel is True
 
-    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
+    def test_hybridep_finalization_preserves_uneven_dispatch_padding(self):
         cfg, padding_field = _make_hybridep_config(HeterogeneousTransformerConfig)
 
         with patch(_HETERO_FINALIZE_PATCH):
             cfg.finalize()
 
-        assert getattr(cfg, padding_field) is True
+        assert getattr(cfg, padding_field) is False
 
     def test_pipeline_dtype_propagated_from_params_dtype_when_pp_gt1(self):
         cfg = self._make_valid_hetero(
@@ -418,3 +464,51 @@ class TestHeterogeneousTransformerConfigFinalize:
         cfg.finalize()
 
         assert cfg.pipeline_dtype is torch.float16
+
+
+# ---------------------------------------------------------------------------
+# YaRN fields
+# ---------------------------------------------------------------------------
+
+_YARN_FIELDS = (
+    "yarn_rotary_scaling_factor",
+    "yarn_original_max_position_embeddings",
+    "yarn_beta_fast",
+    "yarn_beta_slow",
+    "yarn_mscale",
+    "yarn_mscale_all_dim",
+    "yarn_correction_range_round_to_int",
+)
+
+
+class TestTransformerConfigYarnFields:
+    def test_yarn_fields_default_to_none(self):
+        cfg = _make_config()
+
+        for field_name in _YARN_FIELDS:
+            assert getattr(cfg, field_name) is None, field_name
+
+    def test_gpt_provider_inherits_yarn_fields(self):
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+        provider_fields = {field.name for field in fields(GPTModelProvider)}
+        assert set(_YARN_FIELDS) <= provider_fields
+        for field_name in _YARN_FIELDS:
+            assert field_name not in GPTModelProvider.__dict__.get("__annotations__", {}), field_name
+
+    def test_attention_concentration_factor_ignores_unset_yarn(self):
+        """MCore attention must not treat a None-valued YaRN field as YaRN scaling."""
+        import megatron.core.transformer.attention as attention_module
+
+        cfg = _make_config()
+
+        assert attention_module._yarn_get_concentration_factor_from_config(cfg) == 1.0
+
+    def test_attention_concentration_factor_uses_yarn_scaling(self):
+        import megatron.core.models.common.embeddings.yarn_rotary_pos_embedding as yarn_module
+        import megatron.core.transformer.attention as attention_module
+
+        cfg = _make_config(yarn_rotary_scaling_factor=4.0, yarn_mscale=1.0, yarn_mscale_all_dim=1.0)
+
+        expected = yarn_module._yarn_get_concentration_factor(4.0, 1.0, 1.0)
+        assert attention_module._yarn_get_concentration_factor_from_config(cfg) == expected

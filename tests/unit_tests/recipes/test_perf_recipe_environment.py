@@ -23,6 +23,7 @@ import pytest
 
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
@@ -46,22 +47,26 @@ _DEEPSEEK_NON_BASELINE_ENV_NAMES = {
     "QUANTIZATION_TYPE_DEBUG",
     "TORCHINDUCTOR_WORKER_START",
 }
-_DEEPSEEK_WITHOUT_HYBRID_EP_RECIPES = {
-    ("b200", "deepseek_v3_pretrain_256gpu_b200_fp8mx_config"),
-    ("b200", "deepseek_v3_pretrain_256gpu_b200_nvfp4_config"),
-}
-_VR200_CUDNN_LAYERNORM_RECIPES = {
-    "deepseek_v3_pretrain_128gpu_vr200_fp8mx_config",
-    "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
-    "gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config",
-    "gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config",
-    "gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config",
-    "kimi_k2_pretrain_256gpu_vr200_fp8mx_config",
-    "llama3_70b_pretrain_64gpu_vr200_bf16_config",
-    "nemotron_3_nano_pretrain_8gpu_vr200_bf16_config",
-    "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
-    "nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config",
-    "nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config",
+_VRNVL72_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config",
+    "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
+    "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config",
+    "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config",
+    "gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config",
+    "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "llama3_70b_pretrain_64gpu_vrnvl72_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config",
+    "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config",
+    "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config",
+    "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config",
 }
 
 
@@ -100,8 +105,11 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
     common_expansions = 0
     for key, value in zip(mapping.keys, mapping.values):
         if key is None:
-            assert isinstance(value, ast.Name) and value.id == "COMMON_PERF_ENV_VARS"
-            common_expansions += 1
+            assert isinstance(value, ast.Name) and value.id in {"COMMON_PERF_ENV_VARS", "DETERMINISM_ENV_VARS"}
+            if value.id == "COMMON_PERF_ENV_VARS":
+                common_expansions += 1
+            else:
+                result.update(DETERMINISM_ENV_VARS)
             continue
         if isinstance(value, ast.Name):
             assert value.id in local_constants
@@ -125,9 +133,10 @@ def test_common_environment_defaults_are_small_and_universal():
     assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
 
 
-def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults():
+def test_benchmark_common_disables_checkpoint_io_and_forces_moe_load_balancing():
     cfg = SimpleNamespace(
         train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        validation=SimpleNamespace(eval_iters=1, eval_interval=1),
         tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
         checkpoint=SimpleNamespace(save="checkpoint", load="checkpoint"),
         logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
@@ -141,6 +150,8 @@ def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults()
             cuda_graph_impl=None,
             cuda_graph_scope=[],
             moe_flex_dispatcher_backend=None,
+            num_moe_experts=8,
+            moe_router_force_load_balancing=False,
         ),
         mixed_precision=SimpleNamespace(grad_reduce_in_fp32=True),
     )
@@ -149,9 +160,16 @@ def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults()
 
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 100
+    assert cfg.validation.eval_iters == 1
+    assert cfg.validation.eval_interval == 1
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
     assert cfg.checkpoint.save is None
     assert cfg.checkpoint.load is None
+    assert cfg.model.moe_router_force_load_balancing is True
+
+    cfg.model.moe_router_force_load_balancing = False
+    _benchmark_common(cfg)
+    assert cfg.model.moe_router_force_load_balancing is True
 
 
 def test_every_flat_recipe_builder_declares_its_environment_inline():
@@ -184,9 +202,9 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
 
         cudnn_names = {"NVTE_NORM_BWD_USE_CUDNN", "NVTE_NORM_FWD_USE_CUDNN"}
         assert environment.keys().isdisjoint(cudnn_names) or environment.keys() >= cudnn_names
-        if path.parent.name == "vr200":
+        if path.parent.name == "vrnvl72":
             assert environment["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-            uses_cudnn_layernorm = function_name in _VR200_CUDNN_LAYERNORM_RECIPES
+            uses_cudnn_layernorm = function_name in _VRNVL72_CUDNN_LAYERNORM_RECIPES
             assert (environment.keys() >= cudnn_names) == uses_cudnn_layernorm
             if uses_cudnn_layernorm:
                 assert all(environment[name] == 1 for name in cudnn_names)
@@ -195,7 +213,7 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
         assert not hybrid_ep_names or hybrid_ep_names == _HYBRID_EP_ENV_NAMES
         if hybrid_ep_names:
             gpu = path.parent.name
-            nvlink_domain_size = 72 if gpu in {"gb200", "gb300", "vr200"} else 8
+            nvlink_domain_size = 72 if gpu in {"gb200", "gb300", "vrnvl72"} else 8
             assert environment["NVLINK_DOMAIN_SIZE"] == nvlink_domain_size
             assert environment["USE_MNNVL"] == int(nvlink_domain_size == 72)
             assert environment["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] <= nvlink_domain_size
@@ -206,10 +224,18 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
             assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
             assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
-            assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
-
-            recipe_id = (path.parent.name, function_name)
-            if recipe_id in _DEEPSEEK_WITHOUT_HYBRID_EP_RECIPES:
+            if function_name.endswith("_deterministic_config"):
+                # Bit-exact recipes pin deterministic TE kernels.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
+            elif path.parent.name == "gb300" and path.stem == "deepseek_v3":
+                # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale
+                # gradient is accumulated with atomics; TE raises when bit-exact execution is requested,
+                # so these recipes must not pin NVTE_ALLOW_NONDETERMINISTIC_ALGO=0.
+                assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in environment
+            else:
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+            if "NCCL_EP_HT_EM_PULL_PUSH" in environment:
+                # NCCL EP recipes drop the HybridEP tuning that nothing reads on that backend.
                 assert not hybrid_ep_names
             else:
                 assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
@@ -258,3 +284,19 @@ def test_representative_recipe_specific_environment_is_visible(relative_path, fu
     environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
 
     assert environment.items() >= expected.items()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "function_name"),
+    [
+        ("deepseek/gb200/deepseek_v3.py", "deepseek_v3_pretrain_256gpu_gb200_bf16_config"),
+        ("deepseek/gb300/deepseek_v3.py", "deepseek_v3_pretrain_256gpu_gb300_bf16_config"),
+        ("qwen/gb200/qwen3_moe.py", "qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config"),
+        ("qwen/gb300/qwen3_moe.py", "qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config"),
+    ],
+)
+def test_te_layer_graph_pipeline_recipes_keep_only_cpp_errors(relative_path, function_name):
+    """TE layer-graph capture with PP>1 floods stderr with PyTorch 2.14 C++ deprecation warnings."""
+    environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
+
+    assert environment["TORCH_CPP_LOG_LEVEL"] == "ERROR"

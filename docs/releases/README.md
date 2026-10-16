@@ -1,6 +1,6 @@
 # Releases
 
-This directory contains release information, version history, and known issues for Megatron Bridge.
+This directory contains release information, version history, and links to release-specific known issues for Megatron Bridge.
 
 ## Release Documentation
 
@@ -10,7 +10,7 @@ This directory contains release information, version history, and known issues f
 | **[Cherrypick Policy](cherrypick-policy.md)** | Rules for what may land on release branches during code-freeze and absolute freeze | Cherry-picking or reviewing during a release window |
 | **[Software Versions](software-versions.md)** | Current software versions and dependencies | Checking compatibility, planning upgrades |
 | **[Changelog](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases)** | Detailed release history and changes | Understanding what changed in each release |
-| **[Known Issues](known-issues.md)** | Known bugs, limitations, and workarounds | Troubleshooting issues, planning workarounds |
+| **[Known Issues](known-issues.md)** | Pointer to release-specific issues in GitHub release notes | Troubleshooting issues, planning workarounds |
 
 ## Quick Navigation
 
@@ -23,13 +23,13 @@ This directory contains release information, version history, and known issues f
 → Read [Changelog](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases) for detailed release notes
 
 **🐛 Find known issues**
-→ Check [Known Issues](known-issues.md) for bugs and workarounds
+→ Follow [Known Issues](known-issues.md) to the version-specific GitHub release notes
 
 **🔄 Plan an upgrade**
-→ Review [Changelog](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases) and [Known Issues](known-issues.md) before upgrading
+→ Review the [GitHub release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases), including the **Known Issues** section for your version
 
 **🔍 Troubleshoot a problem**
-→ Check [Known Issues](known-issues.md) for reported issues and solutions
+→ Check the **Known Issues** section in the [GitHub release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases)
 
 **🍒 Cherry-pick during a release**
 → See [Cherrypick Policy](cherrypick-policy.md) for what is allowed on release branches during code-freeze and absolute freeze
@@ -57,7 +57,7 @@ The [Changelog](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases) include
 
 ### Known Issues
 
-The [Known Issues](known-issues.md) document covers:
+The [GitHub release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases) include release-specific:
 
 - Known bugs and their status
 - Limitations and constraints
@@ -75,7 +75,7 @@ To stay informed about releases:
 
 1. **Check Software Versions** - Review [Software Versions](software-versions.md) regularly
 2. **Read Changelog** - Review [Changelog](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases) for each release
-3. **Monitor Known Issues** - Check [Known Issues](known-issues.md) for updates
+3. **Monitor Known Issues** - Revisit the GitHub release notes for your version for updates
 4. **Follow Release Notes** - Review release announcements for important changes
 
 ---

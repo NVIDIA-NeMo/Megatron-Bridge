@@ -33,6 +33,7 @@ from megatron.bridge.data.datasets.utils import (
     _make_indexed_dataset_compatibility,
     _OnlineSampleMapping,
     _response_value_formater,
+    build_index_files,
     build_index_from_memdata,
     handle_index,
     safe_map,
@@ -234,6 +235,17 @@ class TestDataUtils:
             index_fn = _index_fn("data.jsonl", f"msc://default{temp_dir}/index_mapping_dir")
             assert index_fn == f"msc://default{temp_dir}/index_mapping_dir/data.jsonl.idx"
 
+            # Test case 7: object-store DATA file with a local index_mapping_dir. The scheme must
+            # not survive into the local path — an embedded "://" makes the writer and the parent
+            # mkdir normalize differently, so the sidecar rename fails with ENOENT.
+            index_fn = _index_fn("msc://bucket/prefix/data.jsonl", "mapping_dir")
+            assert index_fn == "mapping_dir/msc/bucket/prefix/data.jsonl.idx"
+            assert "://" not in index_fn
+
+            # Test case 8: same for the other object-store schemes.
+            assert _index_fn("gs://bucket/data.jsonl", "mapping_dir") == "mapping_dir/gs/bucket/data.jsonl.idx"
+            assert _index_fn("s3://bucket/data.jsonl", "mapping_dir") == "mapping_dir/s3/bucket/data.jsonl.idx"
+
     def test_jsonl_memmap_dataset(self):
         jsonl_example = '{"input": "John von Neumann Von Neumann made fundamental contributions ... Q: What did the math of artificial viscosity do?", "output": "smoothed the shock transition without sacrificing basic physics"}\n'
 
@@ -309,6 +321,24 @@ class TestDataUtils:
 
             assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.npy")
             assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.info")
+
+    def test_build_index_files_raises_when_a_file_fails(self):
+        jsonl_example = '{"input": "a", "output": "b"}\n'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            good_fn = f"{temp_dir}/good.jsonl"
+            missing_fn = f"{temp_dir}/missing.jsonl"
+            with open(good_fn, "w") as f:
+                f.write(jsonl_example)
+
+            # safe_map yields None for the failed file, build_index_files must surface that
+            # as an error naming the file instead of tripping over sum([1, None]).
+            with pytest.raises(RuntimeError, match=r"1 of 2 data files") as exc_info:
+                build_index_files([good_fn, missing_fn], 10, workers=1, build_index_fn=build_index_from_memdata)
+
+            assert missing_fn in str(exc_info.value)
+            assert good_fn not in str(exc_info.value)
+            assert os.path.exists(f"{good_fn}.idx.npy")
 
 
 class TestSafeMap:

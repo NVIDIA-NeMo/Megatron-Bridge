@@ -150,28 +150,36 @@ def ministral3_collate_fn(
                         torch.isin(labels, skipped_tokens.to(device=labels.device)), IGNORE_INDEX
                     )
                 shifted_loss_mask = torch.cat([loss_mask[1:], loss_mask.new_zeros(1)])
-                sequence_rows.append(
-                    {
-                        "input_ids": input_ids,
-                        "attention_mask": attention_mask,
-                        "position_ids": position_ids,
-                        "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
-                        "loss_mask": shifted_loss_mask,
-                    }
-                )
+                sequence_row = {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "position_ids": position_ids,
+                    "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
+                    "loss_mask": shifted_loss_mask,
+                }
+                mm_token_type_ids = sample_batch.get("mm_token_type_ids")
+                if isinstance(mm_token_type_ids, torch.Tensor):
+                    sequence_row["mm_token_type_ids"] = mm_token_type_ids[0]
+                sequence_rows.append(sequence_row)
                 for key in PASSTHROUGH_VISUAL_KEYS:
+                    if key == "mm_token_type_ids":
+                        continue
                     value = sample_batch.get(key)
                     if isinstance(value, torch.Tensor):
                         visual_values[key].append(value)
 
+        has_mm_token_type_ids = any("mm_token_type_ids" in row for row in sequence_rows)
         packed_batch = build_mcore_thd_sequence_batch_from_rows(
             sequence_rows,
             sequence_length=sequence_length,
             pad_token_id=int(getattr(getattr(processor, "tokenizer", None), "pad_token_id", 0) or 0),
             ignore_index=IGNORE_INDEX,
             pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+            sequence_tensor_pad_values={"mm_token_type_ids": 0} if has_mm_token_type_ids else None,
         )
         visual_kwargs = {key: torch.cat(values, dim=0) for key, values in visual_values.items() if values}
+        if has_mm_token_type_ids:
+            visual_kwargs["mm_token_type_ids"] = packed_batch.pop("mm_token_type_ids")
         packed_batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
         return packed_batch
 
@@ -276,9 +284,9 @@ def ministral3_collate_fn(
 
     visual_kwargs = {}
     for key in PASSTHROUGH_VISUAL_KEYS:
-        if key in batch:
+        if key != "mm_token_type_ids" and key in batch:
             visual_kwargs[key] = batch.pop(key)
-    batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+    has_mm_token_type_ids = isinstance(batch.get("mm_token_type_ids"), torch.Tensor)
     prepare_sequence_batch(
         batch,
         sequence_length=sequence_length,
@@ -287,6 +295,10 @@ def ministral3_collate_fn(
         enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         ignore_index=IGNORE_INDEX,
+        sequence_tensor_pad_values={"mm_token_type_ids": 0} if has_mm_token_type_ids else None,
     )
+    if has_mm_token_type_ids:
+        visual_kwargs["mm_token_type_ids"] = batch.pop("mm_token_type_ids")
+    batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
 
     return batch

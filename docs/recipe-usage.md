@@ -5,7 +5,7 @@ This guide will cover the next steps to make use of a training recipe, including
 
 ## Overview
 
-- **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron-H (Mamba-based).
+- **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron 3/3.5 (Mamba-based).
 - **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point.
 - **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md).
 - **Customization**: You can override any part of the recipe (Python, YAML, CLI) to adapt to your data, scale, and objectives.
@@ -25,7 +25,7 @@ Training mode follows the recipe and dataset type:
 | PEFT / LoRA / DoRA | Same as SFT, plus `cfg.peft` | `finetune()` | `checkpoint.pretrained_checkpoint` is required for the frozen base model; `checkpoint.load` resumes adapter training |
 | VLM SFT or PEFT | `DirectHFSFTDatasetConfig` with a Hugging Face source, including its JSON loader, or Energon | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
 
-For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for local JSONL data. Do not use `data_path` for SFT/PEFT JSONL roots.
+For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for a local JSONL split directory or `per_split_data_source_manifest_path` for MLM-style JSONL blends. Do not use `data_path` for SFT/PEFT JSONL sources.
 
 ## Overriding configuration
 
@@ -325,6 +325,8 @@ Environment variables are serialized with the rest of the recipe and can be adde
 Flat performance and hardware-specific model recipes keep their baseline environment values static and visible. The performance entry points preserve legacy coupling for NCCL user buffers and explicit TP, CP, PP, EP, and MoE A2A argparse overrides. Broader feature changes, such as a different CUDA graph mode or dispatcher backend, should include the corresponding explicit `env_vars` override. Explicit `env_vars` overrides remain final.
 
 Every flat performance recipe builder assigns `cfg.env_vars` directly before returning its config. `COMMON_PERF_ENV_VARS` contains only `TORCH_NCCL_HIGH_PRIORITY=1`, the one value shared by every workload; all GPU-, topology-, precision-, CUDA graph-, and model-specific values are written inline with comments in the owning recipe. This is intentionally verbose so a recipe user can see the exact benchmark environment without following a decorator or global derivation rules.
+
+Deterministic recipes additionally spread `DETERMINISM_ENV_VARS` (from `megatron.bridge.recipes.utils.environment_utils`), a third shared constant, next to the two common-default ones, holding the process settings required for bit-exact reproducibility, such as `CUBLAS_WORKSPACE_CONFIG` and `NCCL_ALGO`. It is the only other constant a recipe may spread, and it is spread after `apply_determinism_overrides` because the recipe reassigns `cfg.env_vars`.
 
 Hardware recipe builders follow the same explicit pattern. `COMMON_RECIPE_ENV_VARS` contains only the seven settings that are identical across every supported recipe; each of the 245 supported builders assigns `cfg.env_vars` directly before returning and writes any HybridEP or model-specific additions inline. There is no recipe decorator or generic launcher-side environment recomposition. Because the compatibility catalog currently reuses H100 builders on other targets, the recipe entry point adapts HybridEP topology after overrides and preserves legacy coupling for an explicit argparse `--nccl_ub`; explicit `env_vars` remain final. The nemo-ci executors under `scripts/performance` do not provide fallback values for recipe-owned process settings.
 

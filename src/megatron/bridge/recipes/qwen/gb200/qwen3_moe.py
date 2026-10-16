@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GB200 functional recipes for Qwen3 MoE models."""
+"""GB200 recipes for Qwen3 MoE models."""
 
 from __future__ import annotations
 
@@ -25,13 +25,13 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
 
 
-def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config() -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Return a checkpointable Qwen3-30B-A3B MXFP8 pretraining config for eight GB200 GPUs.
 
     The Blackwell topology, compute precision, dispatcher, overlap, kernels,
     batch sizes, and environment follow the corresponding flat performance
-    recipe. Functional verification keeps natural routing and safety checks
-    enabled and runs 100 optimizer steps with MXFP8 parameter all-gather.
+    recipe. The recipe keeps natural routing and safety checks enabled and runs
+    100 optimizer steps with MXFP8 parameter all-gather.
     """
     cfg = qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config()
 
@@ -49,6 +49,13 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config() -> ConfigContain
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 4
 
+    # The TE op fuser is not stable with dynamic natural-routing shapes. Recompute
+    # only MoE activations to retain MBS=4 without sacrificing EP overlap.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = ["moe_act"]
+
     # HybridEP and Blackwell overlap settings from the performance recipe.
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -57,8 +64,12 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config() -> ConfigContain
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.high_priority_a2a_comm_stream = True
-    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.offload_modules = []
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=True,
@@ -66,7 +77,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config() -> ConfigContain
         delay_wgrad_compute=True,
     )
 
-    # Scoped graphs remain compatible with the functional safety contract.
+    # Keep dynamic expert work outside the graph for convergence runs.
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
     cfg.rng.te_rng_tracker = True
@@ -84,7 +95,8 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config() -> ConfigContain
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
@@ -97,4 +109,4 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config() -> ConfigContain
     return cfg
 
 
-__all__ = ["qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config"]
+__all__ = ["qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"]

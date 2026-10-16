@@ -17,11 +17,12 @@
 import torch
 
 
-def _get_feat_extract_output_lengths(input_lengths: torch.Tensor) -> torch.Tensor:
+def _get_feat_extract_output_lengths(input_lengths: torch.Tensor, n_window: int = 50) -> torch.Tensor:
     """Compute Qwen3-Omni thinker audio token lengths from feature lengths."""
-    input_lengths_leave = input_lengths % 100
+    chunk_len = n_window * 2
+    input_lengths_leave = input_lengths % chunk_len
     feat_lengths = (input_lengths_leave - 1) // 2 + 1
-    output_lengths = ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // 100) * 13
+    output_lengths = ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // chunk_len) * 13
     return output_lengths
 
 
@@ -38,7 +39,8 @@ def get_llm_pos_ids_for_vision(
     llm_grid_w = grid_ws[vision_idx] // spatial_merge_size
     h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(len(t_index), -1, llm_grid_w).flatten()
     w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(len(t_index), llm_grid_h, -1).flatten()
-    t_index = t_index.view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten().long()
+    # Video time coordinates can be fractional; preserve them to match HF.
+    t_index = t_index.view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten().float()
     return torch.stack([t_index, h_index, w_index]) + start_idx
 
 

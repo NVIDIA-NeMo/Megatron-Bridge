@@ -29,9 +29,17 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
 from megatron.bridge.training.config import ConfigContainer
 
 
-def nemotron_3_super_pretrain_config() -> ConfigContainer:
+def nemotron_3_super_pretrain_config(
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
+) -> ConfigContainer:
     """Return the convergence-oriented 64-H100 Nemotron 3 Super pretraining config."""
-    return _nemotron_3_super_pretrain_64gpu_h100_bf16_config()
+    return _nemotron_3_super_pretrain_64gpu_h100_bf16_config(
+        hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
 
 
 __all__ = [

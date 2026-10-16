@@ -79,11 +79,21 @@ unverified.
 Add `pretrain_fsdp` as an optional hardware-scoped item when a first-class
 Megatron FSDP performance recipe exists for the exact model variant. Record
 the FSDP result under `pretrain_fsdp.<hardware>`. Keep it separate from
-checkpoint-resume and tuned non-FSDP `pretrain_performance` results. Do not
+checkpoint-resume and non-FSDP `pretrain_performance` results. Do not
 embed a baseline, control, computed delta, or relative speedup under another
 item; agents can derive valid comparisons from the standalone commands,
 resolved recipes, and raw metrics. The FSDP item does not claim checkpoint
 save/load unless a separate functional item records that evidence.
+
+Add `pretrain_performance_hsdp` as an optional hardware-scoped item when a
+tuned Hybrid FSDP (HSDP) performance recipe exists for the exact model
+variant. Use it instead of `pretrain_fsdp` when the recipe shards dense and
+expert parameters under different strategies, which the single
+`enabled_features.megatron_fsdp` scalar cannot express. Record the result
+under `pretrain_performance_hsdp.<hardware>` and mirror it in
+`verification_index.performance_hsdp`. Keep it separate from
+`pretrain_performance`: an HSDP recipe usually runs a different convergence
+contract, so the two are not commensurable.
 
 When the same hardware has multiple first-class FSDP runs with different
 precisions or convergence contracts, use one aggregate hardware container and
@@ -141,16 +151,27 @@ the public command. It must not override micro batch size. Record raw point
 metrics only; derive aggregate throughput and scaling efficiency when reading
 the card rather than storing comparison payloads.
 
-A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
-performance recipe exists for that hardware. Its item status states whether
-the card's benchmark run has been verified; an `unverified` leaf still records
-the existence of the recipe. If the card has no concrete performance leaf,
+A concrete `pretrain_performance.<hardware>` leaf means a canonical performance
+recipe exists for that hardware, including one explicitly marked **early,
+unoptimized**. Its item status states whether the card's benchmark run has been
+verified; an `unverified` leaf still records the existence of the recipe.
+Existence or functional verification alone does not justify a tuned/optimized
+claim: require workload-appropriate measured performance and preserve any
+early, unoptimized label in both the summary and the affected item's
+`expected_result` so generated pages display it. The library-pretraining
+readiness targets below are not benchmark-recipe acceptance thresholds.
+If the card has no concrete performance leaf,
 start `summary` with this exact disclaimer before the functional-support
 summary:
 
 ```text
-Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results.
+Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
 ```
+
+This wording describes the evidence recorded by the card, not whether the
+model has ever been tuned elsewhere. The validator continues to accept the
+older untuned-model wording on existing cards for backward compatibility, but
+new and updated cards must use the wording above.
 
 Omit `pretrain_performance` entirely when no canonical recipe exists; do not
 add an `all` terminal placeholder. Routine timing and throughput metrics in
@@ -362,6 +383,13 @@ Never record or reproduce:
 - tokens, token-loading commands, private URLs, or private registry references;
 - environment-specific launcher overlays.
 
+Literal chat delimiters (`<|im_start|>`, `<|im_end|>`, `<think>`, and
+`</think>`) are prompt or output data, not placeholders or storage paths.
+Loopback IP literals (IPv4 `127.0.0.0/8` and IPv6 `::1`) may identify a
+single-node inference coordinator; they do not identify private infrastructure.
+These narrow exceptions do not exempt text enclosed by chat delimiters, other
+IP addresses, URLs, runtime orchestration flags, or caller-supplied deny terms.
+
 Keep private run notes outside the tracked repository and public PR text. If a
 private codename cannot be recognized generically, pass it to the validator via
 `--deny-term` or an untracked file through `--denylist "$PRIVATE_DENYLIST"`.
@@ -403,6 +431,19 @@ hardware. It may vary across models or be tuned for throughput:
 - MoE transport/dispatcher backend such as all-to-all, DeepEP, or HybridEP,
   provided routing, capacity, token dropping, and auxiliary losses are
   unchanged.
+
+For the final verification-card recipe, no recompute and selective recompute
+on cheap supported modules are both appropriate starting choices. Choose by
+measured memory headroom and steady-state performance; selective recompute
+does not require a no-recompute OOM first. Full recompute is acceptable
+temporarily for diagnostic bring-up, but can severely reduce throughput.
+Retain it only when target-scale measurements show lighter choices still fail
+to fit, or matched runs show better end-to-end throughput with full recompute,
+for example through larger MBS or lower TP. Keep the workload, GBS, and
+convergence settings fixed; validate recipe-owned MBS/layout changes in the
+recipe rather than overriding batch size in the card. Record memory evidence,
+boundaries/layouts tested, and steady-state performance in the recipe's
+supporting record; keep public card metrics standalone as required below.
 
 Treat micro batch size and gradient-accumulation layout as execution
 fingerprints. They may be tuned while global batch size, global batch
@@ -483,7 +524,7 @@ Freeze the following workload profiles:
 
 | Field | Pretrain | Full SFT | PEFT |
 | --- | --- | --- | --- |
-| Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
+| Start / trainable set | MoE: exact immutable imported Megatron checkpoint, full model; dense: random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
 | Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
 | Sequence / GBS | `4096 / 1024` | `8192 / 8` | `8192 / 8` |
 | Reference MBS | `1` | `1` | `1` |
@@ -493,6 +534,25 @@ Freeze the following workload profiles:
 | Horizon | 100 steps, 40 warmup steps, cosine decay through step 100, saves at steps 50 and 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final checkpoint at step 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final adapter checkpoint at step 100 |
 | RNG | Model and dataset seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` |
 | Gradient path | BF16 gradient reduction; precision-aware optimizer enabled | FP32 gradient reduction; precision-aware optimizer disabled | FP32 gradient reduction; precision-aware optimizer disabled |
+
+For MoE pretraining, keep pretrained-checkpoint selection out of the reusable
+recipe. The resolved recipe must leave `checkpoint.pretrained_checkpoint`
+unset; the model-verification-card command must pass exactly one
+`--pretrained_checkpoint` pointing to the card's immutable imported Megatron
+checkpoint. This is a weight-only warm start, not a full-state resume, so the
+uninterrupted reference command must still keep `checkpoint.load=null` and must
+not use `--load_dir`. Starting from trained router weights makes natural expert
+traffic, load imbalance, memory use, and reported TFLOP/s more representative
+than random router initialization.
+
+Apply the same launch-time checkpoint rule to any MoE
+`pretrain_performance` item that claims natural-routing throughput. A
+benchmark-only forced-balance recipe may omit the checkpoint because its router
+traffic is synthetic by construction; state that distinction explicitly.
+Never add a checkpoint path to a library or performance recipe merely to make a
+card pass. Historical verified random-initialization evidence may remain on its
+exact recorded command, but do not rewrite it as checkpoint-backed evidence;
+adopt this contract when that item is rerun.
 
 Derive `pad_seq_to_mult` for both SFT and PEFT from the resolved execution
 topology:
@@ -672,6 +732,10 @@ result. Private executor configuration stays outside the card.
   required verification evidence. Specify positive node and GPU counts and run
   synchronously; do not use `--detach` or a dry-run flag in a verified command.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
+  For every MoE reference that measures natural-routing behavior, pass the
+  immutable imported checkpoint with `--pretrained_checkpoint` in the card
+  command while leaving the selected recipe's pretrained checkpoint unset.
+  Do not use `--load_dir` for this weight-only initialization.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
   suitable support-verification run when it crosses the peak learning rate and
@@ -704,7 +768,9 @@ result. Private executor configuration stays outside the card.
   the reference evidence.
 - **Performance (when present):** Use the exact canonical public performance
   recipe. Keep its bounded mock-data run separate from the real-data functional
-  run and state public hardware plus thresholds.
+  run and state public hardware plus thresholds. A natural-routing MoE
+  performance command must warm-start through the card's
+  `--pretrained_checkpoint`; a forced-balance benchmark may omit it.
 
 Before adding checkpoint overrides, inspect the selected recipe and its
 inherited checkpoint defaults. Keep only values that change the effective
@@ -763,6 +829,18 @@ verified, record this metric as `null` alongside its other training metrics.
 Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
 leaves, including every verified precision variant.
+
+For a new **pretraining library recipe** used by a card's `pretrain` item,
+apply the [performance-readiness guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes):
+for BF16, aim for roughly 200 model TFLOP/s/GPU on H100 or 400 on GB200 using
+steady-state metrics from the intended library workload. SFT, PEFT, and
+long-context SFT are excluded. A `pretrain_performance` benchmark result does
+not satisfy this library-recipe requirement. For other hardware/precisions,
+use a workload-matched measured target as described in that guidance.
+If performance is severely below the target, withhold the library recipe or
+mark it **early, unoptimized** in the recipe, card summary, affected `pretrain`
+item's `expected_result`, and PR, with its measured performance and limits.
+Functional verification alone does not establish that a recipe is optimized.
 
 Record raw metrics for each run only. Do not store comparison payloads,
 throughput or memory deltas, speedups, or prose ranking one performance run
@@ -824,6 +902,27 @@ Then parse the YAML, run relevant targeted tests, run
 `uv run pre-commit run --all-files`, and inspect the complete diff. Do not mark
 an item verified merely to make validation pass.
 
+### 9. Regenerate the catalog docs
+
+The model verification catalog docs are generated from the cards. After the
+validator passes, and again after any later card edit, regenerate them, confirm
+they are current, and run the consistency test from CI's unit-test job:
+
+```bash
+uv run python scripts/docs/generate_model_verification_catalog.py
+uv run python scripts/docs/generate_model_verification_catalog.py --check
+uv run python -m pytest tests/unit_tests/doc_consistency/test_model_verification_catalog.py
+```
+
+Commit every file the generator rewrites together with the card change:
+`docs/_static/model-verification/catalog-v1.json`, the model guide under
+`docs/models/<family>/`, and its Fern mirror under
+`docs/fern/versions/nightly/pages/models/<family>/`. Inventory and overall
+status changes also rewrite `docs/models/README.md` and its Fern `README.mdx`.
+Neither the validator nor pre-commit detects stale generated files; CI does.
+A new card also needs a canonical guide under `docs/models/<family>/` and an
+entry in the generator's `MODEL_PAGE_PATHS` table.
+
 ## Completion checklist
 
 - Keep all twelve core inventory items and use only the four statuses. Include
@@ -835,7 +934,7 @@ an item verified merely to make validation pass.
 - Include `pretrain_weak_scaling` only after at least two proportional-GBS
   points complete on the same public hardware, recipe, precision, sequence
   length, step count, and GPUs-per-node layout; otherwise omit it.
-- Start the summary with the exact untuned performance disclaimer unless at
+- Start the summary with the exact no-canonical-performance-result disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
 - Put the verified workload precision on every direct item or hardware leaf;
@@ -879,6 +978,11 @@ an item verified merely to make validation pass.
   plus actual generated-token count under an explicit maximum bound in a
   two-command ordered list.
 - Keep resume as one direct continuation from the pretrain checkpoint.
+- Keep MoE pretrain recipes checkpoint-agnostic, and put the immutable imported
+  weight-only `--pretrained_checkpoint` in every card command that measures
+  natural-routing pretrain or performance behavior.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.
+- Regenerate the catalog docs after the final card edit, pass `--check` and the
+  catalog consistency test, and commit the regenerated files with the card.
 - Confirm the card, commit, and PR contain no private runtime information.

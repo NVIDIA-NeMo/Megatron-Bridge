@@ -41,6 +41,14 @@ def _add_no_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_sequence_length(*, longest_prompt_tokens: int, num_new_tokens: int, max_seq_length: int) -> None:
+    required = longest_prompt_tokens + num_new_tokens
+    if required > max_seq_length:
+        raise ValueError(
+            f"Longest prompt plus generation needs {required} tokens, but --max_seq_length is {max_seq_length}."
+        )
+
+
 class _AsyncLLM:
     is_primary_rank = True
 
@@ -80,6 +88,7 @@ def async_text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch):
         "load_bridge_model": lambda **kwargs: kwargs,
         "load_prompts": lambda *args: list(args),
         "resolve_hf_model_path": lambda *args: args[0],
+        "validate_sequence_length": _validate_sequence_length,
     }
     stubs = {
         "megatron.core.inference.apis": _module(
@@ -113,6 +122,37 @@ def async_text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch):
         yield module
     finally:
         sys.modules.pop(spec.name, None)
+
+
+@pytest.mark.unit
+def test_generate_rejects_request_exceeding_max_sequence_length(
+    async_text_generation_entrypoint: types.ModuleType,
+) -> None:
+    args = types.SimpleNamespace(
+        max_seq_length=4,
+        max_new_tokens=3,
+        max_batch_size=None,
+        tp=1,
+        block_size_tokens=8,
+        kv_cache_buffer_size_gb=1.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+        coordinator_host=None,
+        coordinator_port=None,
+    )
+    tokenizer = types.SimpleNamespace(tokenize=lambda prompt: [1, 2, 3])
+
+    with pytest.raises(ValueError, match=r"needs 6 tokens.*--max_seq_length is 4"):
+        asyncio.run(
+            async_text_generation_entrypoint._generate(
+                args,
+                model=object(),
+                tokenizer=tokenizer,
+                prompts=["prompt"],
+                sampling_params=object(),
+            )
+        )
 
 
 @pytest.mark.unit

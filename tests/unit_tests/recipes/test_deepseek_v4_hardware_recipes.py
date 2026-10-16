@@ -54,7 +54,7 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_flash_base_recipe_enables_precision_independent_fusions() -> None:
     cfg = flash_bf16_base_config()
 
-    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
     assert getattr(cfg.model, "moe_mlp_glu_interleave_size", None) is None
     assert cfg.model.use_transformer_engine_op_fuser is False
@@ -78,6 +78,7 @@ def test_flash_base_recipe_ports_flash_fusions() -> None:
     assert cfg.model.attention_backend == "auto"
     assert cfg.model.moe_router_fusion is True
     assert cfg.train.manual_gc_interval == 5
+    assert "mhc" not in cfg.model.recompute_modules
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
     assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
@@ -106,7 +107,11 @@ def test_mxfp8_recipes_keep_training_precision_contract(
 def test_flash_mxfp8_recipe_uses_activation_offload_to_fit() -> None:
     cfg = flash_fp8_config()
 
-    assert cfg.model.recompute_modules == ["moe_act", "mhc", "mla_up_proj"]
+    assert cfg.model.dsa_kernel_backend == "cudnn"
+    assert cfg.model.dsa_indexer_loss_coeff == 0.0
+    assert cfg.model.dsa_indexer_use_sparse_loss is False
+    assert cfg.model.recompute_modules == ["moe_act", "mla_up_proj"]
+    assert "mhc" not in cfg.model.recompute_modules
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
     assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
@@ -120,7 +125,7 @@ def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
-    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.model.moe_token_dispatcher_type == "flex"
@@ -133,10 +138,11 @@ def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     assert cfg.model.moe_grouped_gemm is True
     assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]
+    assert cfg.model.recompute_modules == ["moe", "mla_up_proj", "layernorm"]
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.calculate_per_token_loss is True
+    assert "mhc" not in cfg.model.recompute_modules
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
     assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
@@ -200,7 +206,7 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
-    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.quant_recipe is not None
     assert cfg.model.moe_router_padding_for_fp8 is True
     assert cfg.mixed_precision.fp8_param_gather is True
@@ -222,9 +228,12 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.virtual_pipeline_model_parallel_size == 4
     assert cfg.model.expert_model_parallel_size == 16
-    assert cfg.model.pipeline_model_parallel_layout == (
-        "Et*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*2|t*2|t*2|t*2|t*2mL"
-    )
+    layout = cfg.model.pipeline_model_parallel_layout
+    assert [stage.count("decoder") for stage in layout] == [6] * 11 + [4] * 5
+    assert layout[0][0] == "embedding"
+    assert layout[-1][-2:] == ["mtp", "loss"]
+    assert [len(stage) for stage in cfg.model.hybrid_layer_pattern.split("|")] == [6] * 11 + [4] * 5
+    assert cfg.model.num_layers == 86
     assert cfg.model.recompute_modules == ["mhc", "mla_up_proj"]
     assert cfg.model.fine_grained_activation_offloading is False
     assert cfg.model.offload_modules is None

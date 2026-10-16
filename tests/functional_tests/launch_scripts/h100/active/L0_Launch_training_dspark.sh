@@ -16,10 +16,12 @@
 #!/bin/bash
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
+
 export CUDA_VISIBLE_DEVICES="0,1"
 
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run \
-  --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode \
+  --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode \
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/test_groups/training/test_dspark_loss_dp.py
 

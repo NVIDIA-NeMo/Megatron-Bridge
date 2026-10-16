@@ -42,6 +42,7 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.quantization.utils import get_quant_config_or_none
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
@@ -58,6 +59,14 @@ except ImportError:
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
+
+
+def _finalize_model_quantization(model: torch.nn.Module) -> None:
+    """Finalize module quantization against paths in the assembled model."""
+    for name, module in model.named_modules():
+        if hasattr(module, "finish_init"):
+            quant_config = get_quant_config_or_none(name, module.config.quant_recipe)
+            module.finish_init(quant_config)
 
 
 def _apply_mixed_precision_wrapper(
@@ -194,7 +203,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
         data_parallel_random_init: bool = False,
-        use_cpu_initialization: None | bool = False,
+        use_cpu_initialization: bool | None = None,
         init_model_with_meta_device: bool | None = None,
         pre_wrap_hook: Union[
             Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -222,7 +231,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
             wrap_with_ddp: Whether to wrap model with DDP.
             data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
-            use_cpu_initialization: Initialize model on CPU.
+            use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
             init_model_with_meta_device: Initialize model on meta device.
             pre_wrap_hook: A single callable or list of callables to modify the model before it's wrapped.
                 If provided, this will override all hooks registered via `register_pre_wrap_hook`.
@@ -316,10 +325,18 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             seed_kwargs: Additional arguments for `model_parallel_cuda_manual_seed`.
             **model_parallel_kwargs: Additional arguments for `parallel_state.initialize_model_parallel`.
         """
+        # Resolve public weight-shard counts before reading the derived GTP axes
+        # used to construct process groups and configure GTP kernels.
+        self.finalize()
         if not torch.distributed.is_initialized():
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
+        from megatron.bridge.training.gtp import configure_gtp_remat
+
+        configure_gtp_remat(self)
+        model_parallel_kwargs.setdefault("gtp_remat_size", getattr(self, "gtp_weight_remat_size", 1))
+        model_parallel_kwargs.setdefault("expert_gtp_remat_size", getattr(self, "expert_gtp_weight_remat_size", 1))
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=getattr(self, "tensor_model_parallel_size", 1),
             pipeline_model_parallel_size=getattr(self, "pipeline_model_parallel_size", 1),
@@ -509,7 +526,7 @@ class GetModelKwargs(TypedDict, total=False):
         use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
         wrap_with_ddp: Whether to wrap model with DDP.
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
-        use_cpu_initialization: Initialize model on CPU.
+        use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
         init_model_with_meta_device: Initialize model on meta device.
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
@@ -539,24 +556,34 @@ class GetModelKwargs(TypedDict, total=False):
 
 
 class ModelParallelKwargs(TypedDict, total=False):
-    """Model-parallel override kwargs.
+    """Model-parallel and checkpoint inference override kwargs.
 
     Attributes map to `TransformerConfig`/provider fields that control parallelism.
     Only provided values are applied as overrides.
     """
 
     tensor_model_parallel_size: int
+    tensor_parallel_num_weight_shards: int
     pipeline_model_parallel_size: int
     num_layers_in_first_pipeline_stage: int | None
     num_layers_in_last_pipeline_stage: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
+    expert_tensor_parallel_num_weight_shards: int
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None
     pipeline_model_parallel_layout: list[list[str]] | None
     pipeline_dtype: torch.dtype
+    moe_expert_capacity_factor: float | None
+    moe_expert_rank_capacity_factor: float | None
+    moe_paged_stash: bool
+    moe_ncclep_zero_copy: bool
+    moe_pad_expert_input_to_capacity: bool
+    moe_router_force_load_balancing: bool
+    moe_router_force_biased: float | None
+    moe_hybridep_pad_uneven_dispatch_inputs: bool
 
 
 def get_model(
@@ -570,7 +597,7 @@ def get_model(
     use_torch_fsdp2: bool = False,
     wrap_with_ddp: bool = True,
     data_parallel_random_init: bool = False,
-    use_cpu_initialization: None | bool = False,
+    use_cpu_initialization: bool | None = None,
     init_model_with_meta_device: bool | None = None,
     pre_wrap_hook: Union[
         Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -580,6 +607,7 @@ def get_model(
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     *,
     pg_collection: ProcessGroupCollection,
+    use_layer_wise_distributed_optimizer: bool = False,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -602,10 +630,11 @@ def get_model(
         bf16: Enable BF16 mixed precision training. If None, uses model config
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
+        use_layer_wise_distributed_optimizer: Build shard-aligned DDP layouts for layer-wise optimizers.
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
-        use_cpu_initialization: Whether to initialize model on CPU to save GPU memory
+        use_cpu_initialization: Override CPU initialization. None preserves the provider setting
         init_model_with_meta_device: Whether to initialize the model on the meta device
         pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
             and returns a modified list, or `None` to clear the hook. If a list is provided,
@@ -643,7 +672,8 @@ def get_model(
             if hasattr(model_provider, field_name):
                 setattr(model_provider, field_name, selected_dtype)
 
-    model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
+    if use_cpu_initialization is not None:
+        model_provider.use_cpu_initialization = use_cpu_initialization
     if init_model_with_meta_device:
         model_provider.init_model_with_meta_device = True
         with torch.device("meta"):
@@ -666,6 +696,9 @@ def get_model(
             _model = pre_wrap_hook(model)
             if _model is not None:
                 model = _model
+
+    for model_module in model:
+        _finalize_model_quantization(model_module)
 
     # Set tensor model parallel attributes if not set
     # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
@@ -702,6 +735,7 @@ def get_model(
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
             pg_collection=pg_collection,
         )
 

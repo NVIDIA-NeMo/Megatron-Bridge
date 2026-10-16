@@ -27,8 +27,12 @@ def test_unwrap_model_uses_fsdp_wrapper_types(monkeypatch):
         pass
 
     monkeypatch.setattr(
-        "megatron.bridge.training.fsdp_compat.MEGATRON_FSDP_TYPES",
-        (FSDPV1, FSDPV2),
+        "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallelV1",
+        FSDPV1,
+    )
+    monkeypatch.setattr(
+        "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallelV2",
+        FSDPV2,
     )
 
     module = torch.nn.Linear(1, 1)

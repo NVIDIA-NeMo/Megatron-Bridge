@@ -56,7 +56,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         Basic usage with lazy loading:
         >>> from mbridge.pretrained import PreTrainedCausalLM
         >>> # Create instance - no model loading happens yet
-        >>> model = PreTrainedCausalLM.from_pretrained("meta-llama/Llama-2-7b-chat-hf")
+        >>> model = PreTrainedCausalLM.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
         >>> # Components are loaded on first access
         >>> config = model.config  # Loads config
         >>> tokenizer = model.tokenizer  # Loads tokenizer
@@ -70,7 +70,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         >>> from mbridge.pretrained import PreTrainedCausalLM
         >>> # Type-safe access to Llama-specific features
         >>> llama_model: PreTrainedCausalLM[LlamaForCausalLM] = PreTrainedCausalLM.from_pretrained(
-        ...     "meta-llama/Llama-2-7b-chat-hf",
+        ...     "meta-llama/Llama-3.1-8B-Instruct",
         ...     torch_dtype=torch.float16,
         ...     device="cuda"
         ... )
@@ -147,13 +147,22 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.torch_dtype = torch_dtype
         self.trust_remote_code = trust_remote_code
+        self._text_only = False
         super().__init__(**kwargs)
         # Store the original source path for custom modeling file preservation
         if model_name_or_path and trust_remote_code:
             self._original_source_path = model_name_or_path
 
+    def _get_auto_model_class(self) -> type:
+        """Select the HF loader without changing shared lazy-loading behavior."""
+        return AutoModelForCausalLM
+
     def _load_model(self) -> CausalLMType:
         """Load the model."""
+        if self._text_only:
+            # A filtered checkpoint view is for conversion, not HF's automatic
+            # loading of the original multimodal repository and prefixed keys.
+            raise NotImplementedError("Use the Megatron text model or load its standalone HF export for inference.")
         if self.model_name_or_path is None:
             raise ValueError("model_name_or_path must be provided to load model")
 
@@ -167,7 +176,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         if config is not None:
             model_kwargs["config"] = config
 
-        model = AutoModelForCausalLM.from_pretrained(self.model_name_or_path, **model_kwargs)
+        model = self._get_auto_model_class().from_pretrained(self.model_name_or_path, **model_kwargs)
         model = model.to(self.device)
 
         generation_config = getattr(self, "_generation_config", None)

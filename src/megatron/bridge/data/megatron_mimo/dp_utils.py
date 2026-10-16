@@ -172,22 +172,29 @@ def get_megatron_mimo_dp_info(
 def get_megatron_mimo_sampling_info(
     megatron_mimo_cfg: "MegatronMIMOParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
+    *,
+    scalable_dp: bool = False,
 ) -> Tuple[int, int, bool]:
     """Get sampler DP rank, size, and data-loading flag for MegatronMIMO.
 
-    In heterogeneous MegatronMIMO, modules may have different DP sizes.  The data
-    loader must give every data-loading rank the **same global micro-batch**
-    so that :func:`slice_batch_for_megatron_mimo` (called in the forward step) can
-    sub-shard it consistently with the :class:`BridgeCommunicator` fan-in /
-    fan-out routing.
+    In heterogeneous MegatronMIMO, modules may have different DP sizes.
 
-    This function therefore returns ``dp_size=1, dp_rank=0`` for all ranks,
-    disabling DP sharding at the sampler level.  Per-module DP sharding is
-    deferred to :func:`slice_batch_for_megatron_mimo`.
+    **Default (full-batch reads).** Returns ``dp_size=1, dp_rank=0`` for all ranks, so the data
+    loader gives every data-loading rank the **same global micro-batch**; per-module DP sharding
+    is deferred to :func:`slice_batch_for_megatron_mimo` in the forward step, consistent with the
+    :class:`BridgeCommunicator` fan-in / fan-out routing.
+
+    **Scalable data parallelism (``scalable_dp=True``).** Returns this rank's **module-local**
+    ``(dp_rank, dp_size)``, from which the caller derives its canonical groups and builds the
+    read-sharded loader (see
+    :func:`megatron.bridge.data.megatron_mimo.canonical_sampler.build_canonical_group_batch_sampler`);
+    the forward step does **not** slice again. Each rank then processes its natural, unbalanced
+    ``1/dp`` shard: this is the read-sharding win on its own, with no cross-rank exchange.
 
     Args:
         megatron_mimo_cfg: MegatronMIMO parallelism configuration.
         grids: Module name to HyperCommGrid mapping.
+        scalable_dp: When ``True``, shard reads at the sampler (module-local DP).
 
     Returns:
         Tuple of (sampler_dp_rank, sampler_dp_size, needs_data).
@@ -197,9 +204,24 @@ def get_megatron_mimo_sampling_info(
         return 0, 1, False
 
     needs_data = _needs_data_for_module(my_grid, my_module)
-    # All data-loading ranks use the same sampler settings so they load
-    # identical global micro-batches.  Module-local DP slicing happens later
-    # in forward_step via slice_batch_for_megatron_mimo.
+    if scalable_dp:
+        module_parallelism = megatron_mimo_cfg.module_parallelisms[my_module]
+        if module_parallelism.expert_tensor_parallel_size != 1:
+            raise NotImplementedError(
+                "MegatronMIMO scalable_dp currently requires expert_tensor_parallel_size=1. "
+                "Sharding sampler reads across the module DP group with ETP > 1 is an "
+                "unvalidated combination, so it is conservatively rejected."
+            )
+        # Disjoint reads: each rank's sampler emits only its module-local DP shard.
+        dp_pg = my_grid.get_pg(["dp"])
+        if dp_pg.size() != module_parallelism.data_parallel_size:
+            raise RuntimeError(
+                f"MegatronMIMO scalable_dp expected module {my_module!r} data-parallel size "
+                f"{module_parallelism.data_parallel_size}, but its base DP group has size {dp_pg.size()}."
+            )
+        return dp_pg.rank(), dp_pg.size(), needs_data
+    # All data-loading ranks use the same sampler settings so they load identical global
+    # micro-batches; module-local DP slicing happens later in forward_step.
     return 0, 1, needs_data
 
 
@@ -210,11 +232,13 @@ def slice_batch_for_megatron_mimo(
 ) -> Dict[str, Any]:
     """Slice a global micro-batch for this rank's module-local DP shard.
 
-    All data-loading ranks receive the same global micro-batch (the sampler
-    uses ``dp_size=1``).  This function contiguously slices it so that each
-    module-local DP replica processes the correct subset.  The slicing is
-    contiguous to match the :class:`BridgeCommunicator`'s batch-dimension
-    split / concatenate logic for fan-out and fan-in routing.
+    In the default (non-scalable) mode all data-loading ranks receive the same
+    global micro-batch (the sampler uses ``dp_size=1``) and this function
+    contiguously slices it so that each module-local DP replica processes the
+    correct subset.  The slicing is contiguous to match the
+    :class:`BridgeCommunicator`'s batch-dimension split / concatenate logic for
+    fan-out and fan-in routing.  With ``megatron_mimo_scalable_dp`` the loader
+    already delivers the shard and ``forward_step`` skips this call.
 
     Handles nested dicts (e.g. ``modality_inputs``) by recursing.
 
@@ -278,3 +302,34 @@ def slice_batch_for_megatron_mimo(
             sliced[key] = value
 
     return sliced
+
+
+def real_token_lengths(input_ids: torch.Tensor, *, attention_mask: "torch.Tensor | None") -> torch.Tensor:
+    """Per-sample real (non-pad) token length for a ``[B, S]`` batch.
+
+    The length comes only from ``attention_mask`` (1 = real, 0 = pad), the padding mask the
+    tokenizer ships with the batch. Comparing ``input_ids`` against ``pad_token_id`` is not used:
+    tokenizers without a dedicated pad token alias ``pad_token = eos_token``, so a value-based
+    check would also drop genuine EOS tokens. ``loss_mask`` is not used either: it is a
+    supervision mask (prompt tokens are zero) and would under-count the real length.
+
+    Args:
+        input_ids: Padded token ids ``[B, S]``.
+        attention_mask: ``[B, S]`` padding mask matching ``input_ids``.
+
+    Returns:
+        An ``int64`` tensor of shape ``[B]`` with each sample's real length.
+
+    Raises:
+        ValueError: If ``attention_mask`` is missing or does not match ``input_ids``.
+    """
+    if not (
+        isinstance(attention_mask, torch.Tensor)
+        and attention_mask.dim() == 2
+        and attention_mask.shape == input_ids.shape
+    ):
+        raise ValueError(
+            "real_token_lengths requires a [B, S] attention_mask matching input_ids; "
+            f"got {None if attention_mask is None else tuple(attention_mask.shape)} for input_ids {tuple(input_ids.shape)}."
+        )
+    return attention_mask.to(torch.bool).sum(dim=1).to(torch.long)

@@ -895,6 +895,54 @@ class TestCanonicalLoRAMegatronLayers:
 class TestCanonicalLoRAHelperClasses:
     """Test helper classes for CanonicalLoRA."""
 
+    def test_partial_canonical_qkv_forward_and_sharded_state(self):
+        """A selected Q adapter should leave omitted K/V slices unchanged and unsaved."""
+
+        class ShardedLinear(nn.Linear):
+            def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+                return {f"{prefix}weight": self.weight}
+
+        base_layer = nn.Linear(4, 8, bias=False)
+        nn.init.zeros_(base_layer.weight)
+        base_layer.config = SimpleNamespace(kv_channels=2, num_attention_heads=2, num_query_groups=1)
+        adapter_q = ShardedLinear(4, 4, bias=False)
+        nn.init.eye_(adapter_q.weight)
+        wrapper = LoRALinearSplitQKV(
+            base_layer,
+            ModuleDict({"adapter_q": adapter_q, "adapter_k": None, "adapter_v": None}),
+        )
+
+        x = torch.arange(4, dtype=torch.float32).reshape(1, 1, 4)
+        output, bias = wrapper(x)
+
+        assert bias is None
+        torch.testing.assert_close(
+            output,
+            torch.cat([x, torch.zeros(1, 1, 4)], dim=-1),
+        )
+        assert set(wrapper.adapter.sharded_state_dict(prefix="adapter.")) == {"adapter.adapter_q.weight"}
+
+    def test_partial_canonical_fc1_forward(self):
+        """A selected up adapter should leave the omitted gate slice unchanged."""
+
+        base_layer = nn.Linear(4, 8, bias=False)
+        nn.init.zeros_(base_layer.weight)
+        adapter_up = nn.Linear(4, 4, bias=False)
+        nn.init.eye_(adapter_up.weight)
+        wrapper = LoRALinearSplitFC1UpGate(
+            base_layer,
+            ModuleDict({"adapter_up": adapter_up, "adapter_gate": None}),
+        )
+
+        x = torch.arange(4, dtype=torch.float32).reshape(1, 1, 4)
+        output, bias = wrapper(x)
+
+        assert bias is None
+        torch.testing.assert_close(
+            output,
+            torch.cat([torch.zeros(1, 1, 4), x], dim=-1),
+        )
+
     def test_module_dict_sharded_state_dict(self):
         """Test ModuleDict's sharded_state_dict method."""
 

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.inference import config as mcore_inference_config
 
 from megatron.bridge.inference.vlm.qwenvl_inference_wrapper import QwenVLInferenceWrapper
 
@@ -39,6 +40,10 @@ class TestQwenVLInferenceWrapper:
             return wrapper
 
     def test_multimodal_prompt_config_uses_qwen_visual_tokens(self):
+        if not hasattr(mcore_inference_config, "MultimodalPromptConfig"):
+            assert not hasattr(QwenVLInferenceWrapper, "multimodal_prompt_config")
+            return
+
         prompt_config = QwenVLInferenceWrapper.multimodal_prompt_config
 
         assert prompt_config.image_spec.model_token == "<|image_pad|>"

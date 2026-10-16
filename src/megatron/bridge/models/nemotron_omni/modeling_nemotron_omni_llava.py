@@ -17,8 +17,8 @@ import warnings
 import torch
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 class NemotronOmniLlavaModel(NemotronVLModel):
@@ -34,7 +34,7 @@ class NemotronOmniLlavaModel(NemotronVLModel):
 
     def __init__(
         self,
-        config: NemotronVLModelProvider | None = None,
+        config: HybridModelProvider | None = None,
         *,
         llava_model: LLaVAModel | None = None,
         pre_process: bool | None = True,

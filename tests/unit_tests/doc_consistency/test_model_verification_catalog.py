@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
+import fnmatch
 import html
 import importlib.util
+import re
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -23,6 +27,11 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GENERATOR_PATH = REPO_ROOT / "scripts/docs/generate_model_verification_catalog.py"
+RECIPE_METADATA_PATH = REPO_ROOT / "scripts/training/recipe_metadata.py"
+# Items whose commands intentionally launch benchmark recipes.
+BENCHMARK_ITEMS = frozenset(
+    {"pretrain_performance", "pretrain_performance_hsdp", "pretrain_fsdp", "pretrain_weak_scaling"}
+)
 
 
 def _load_generator() -> ModuleType:
@@ -62,9 +71,10 @@ def test_catalog_discovers_every_card_without_a_model_list(catalog: dict[str, ob
 @pytest.mark.parametrize(
     ("slug", "command_fragment"),
     [
+        ("bagel", "bagel_7b_pretrain_32gpu_h100_bf16_config"),
         (
             "glm5-2",
-            "glm52_pretrain_416gpu_h100_bf16_config",
+            "glm52_pretrain_192gpu_gb200_bf16_config",
         ),
         (
             "qwen3.8-27b",
@@ -193,7 +203,7 @@ def test_sphinx_model_page_renders_focused_combinations(generator: ModuleType, c
             "megatron_to_hf_gpu",
         },
         "pretrain": {"pretrain", "pretrain_fsdp", "pretrain_weak_scaling"},
-        "benchmark": {"pretrain_performance"},
+        "benchmark": {"pretrain_performance", "pretrain_performance_hsdp"},
         "sft": {"sft"},
         "lora": {"peft"},
         "long-context": {"sft_long_context"},
@@ -234,6 +244,28 @@ def test_sphinx_model_page_renders_focused_combinations(generator: ModuleType, c
         assert html.escape(entry["expected_result"]) in page
 
 
+@pytest.mark.parametrize("fern", [False, True])
+def test_hsdp_performance_renders_as_a_separate_benchmark(
+    generator: ModuleType, catalog: dict[str, object], fern: bool
+) -> None:
+    model = _models(catalog)["deepseek-v3"]
+    page = generator.render_model_section([model], fern=fern)
+    benchmark_entries = [
+        entry
+        for entry in model["entries"]
+        if entry["workflow"] in {"pretrain_performance", "pretrain_performance_hsdp"}
+    ]
+
+    assert {entry["workflow"] for entry in benchmark_entries} == {"pretrain_performance", "pretrain_performance_hsdp"}
+    assert "Benchmark · HSDP · GB300" in page
+    for entry in benchmark_entries:
+        assert page.count(f'id="{entry["entry_id"]}"') == 1
+        button = next(line for line in page.splitlines() if f'data-entry="{entry["entry_id"]}"' in line)
+        assert 'data-capability="benchmark"' in button
+        for command in entry["commands"]:
+            assert html.escape(command) in page
+
+
 def test_full_verification_records_are_removed_from_every_model_page(
     generator: ModuleType, catalog: dict[str, object]
 ) -> None:
@@ -268,8 +300,11 @@ def test_models_map_to_canonical_guides(generator: ModuleType, catalog: dict[str
     assert len(set(paths.values())) == len(models)
     assert paths["gpt-oss-20b"] == "models/gpt_oss/gpt-oss-20b.md"
     assert paths["gpt-oss-120b"] == "models/gpt_oss/gpt-oss-120b.md"
+    assert paths["muse-glimmer-30b"] == "models/muse_glimmer/muse-glimmer.md"
     assert paths["nemotron-3-nano-4b"] == "models/nemotron/nemotron3-nano-4b.md"
     assert paths["nemotron-3-super-120b-a12b"] == "models/nemotron/nemotron3-super.md"
+    assert paths["nemotron-3.5-super-vl-120b-a12b"] == "models/nemotron/nemotron3.5-super-vl.md"
+    assert paths["nemotron-3.5-super-vl-120b-a12b-text-only"] == "models/nemotron/nemotron3.5-super-vl-text-only.md"
     assert paths["nemotron-3-ultra-550b-a55b"] == "models/nemotron/nemotron3-ultra.md"
     assert paths["qwen3.8-27b"] == "models/qwen/qwen3.8-27b.md"
 
@@ -284,6 +319,40 @@ def test_model_page_merge_preserves_intro_and_replaces_old_sections(generator: M
     assert "Details." not in merged
     assert generator._merge_model_page(merged, section) == merged
     assert generator._merge_model_page(original, section, title="New title").startswith("# New title\n\n")
+
+
+@pytest.mark.parametrize("guide", ["nemotron3.5-super-vl", "nemotron3.5-super-vl-text-only"])
+def test_released_nemotron_guides_are_published(generator: ModuleType, catalog: dict[str, object], guide: str) -> None:
+    index = (REPO_ROOT / "docs/models/nemotron/index.md").read_text(encoding="utf-8")
+    fern_index = (REPO_ROOT / "docs/fern/versions/nightly/pages/models/nemotron/index.mdx").read_text(encoding="utf-8")
+    nav = (REPO_ROOT / "docs/fern/versions/nightly.yml").read_text(encoding="utf-8")
+
+    assert f"\n{guide}.md\n" in index
+    assert f"]({guide}.md)" in index
+    assert f"]({guide}.md)" in fern_index
+    assert f"path: ./nightly/pages/models/nemotron/{guide}.mdx" in nav
+    assert (REPO_ROOT / f"docs/models/nemotron/{guide}.md").is_file()
+    assert (REPO_ROOT / f"docs/fern/versions/nightly/pages/models/nemotron/{guide}.mdx").is_file()
+    for fern in (False, True):
+        page = generator.render_supported_models_page(catalog, REPO_ROOT, fern=fern)
+        suffix = "" if fern else ".html"
+        assert f'href="nemotron/{guide}{suffix}#' in page
+        assert f"**{len(catalog['models'])} model cards**" in page
+
+    config = ast.parse((REPO_ROOT / "docs/conf.py").read_text(encoding="utf-8"))
+    excludes = next(
+        ast.literal_eval(node.value)
+        for node in config.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "exclude_patterns" for target in node.targets)
+    )
+    assert not any(fnmatch.fnmatch(f"models/nemotron/{guide}.md", pattern) for pattern in excludes)
+
+    fern_config = yaml.safe_load((REPO_ROOT / "docs/fern/docs.yml").read_text(encoding="utf-8"))
+    slug = "nemotron-3-5-super-text-only" if guide.endswith("text-only") else "nemotron-3-5-super-vl"
+    for redirect in fern_config.get("redirects", []):
+        assert not redirect["source"].endswith(f"/supported-models/nemotron/{slug}")
+        assert not redirect["source"].endswith(f"/models/nemotron/{guide}.html")
 
 
 def test_generated_outputs_and_navigation_are_current(generator: ModuleType, catalog: dict[str, object]) -> None:
@@ -336,3 +405,104 @@ def test_normalized_commands_equal_card_scalars(catalog: dict[str, object]) -> N
             if source_commands is None:
                 source_commands = []
             assert entry["commands"] == [command.strip() for command in source_commands]
+
+
+@pytest.mark.parametrize("fern", [False, True])
+def test_generated_comments_match_output_format(generator: ModuleType, catalog: dict[str, object], fern: bool) -> None:
+    directory = generator.render_supported_models_page(catalog, REPO_ROOT, fern=fern)
+    section = generator.render_model_section([_models(catalog)["qwen3-30b-a3b"]], fern=fern)
+    if fern:
+        assert directory.startswith(generator.FERN_GENERATED_NOTICE)
+        assert "{/* pragma: allowlist secret */\n        }" in directory
+        assert section.startswith(generator.FERN_MODEL_SECTION_START)
+        assert section.rstrip().endswith(generator.FERN_MODEL_SECTION_END)
+        assert "<!--" not in directory + section
+    else:
+        assert directory.startswith(generator.GENERATED_NOTICE)
+        assert "<!-- pragma: allowlist secret -->" in directory
+        assert section.startswith(generator.MODEL_SECTION_START)
+        assert section.rstrip().endswith(generator.MODEL_SECTION_END)
+        assert "{/*" not in directory + section
+
+
+@pytest.mark.parametrize("fern", [False, True])
+def test_commands_and_paragraphs_match_output_format(
+    generator: ModuleType, catalog: dict[str, object], fern: bool
+) -> None:
+    command = 'echo "${MODEL}" && printf "{a,b}\\n"\necho done'
+    expected_result = "First line.\nSecond line with <value>.\n"
+    entry = dict(_models(catalog)["qwen3-30b-a3b"]["entries"][0])
+    entry.update(commands=[command], expected_result=expected_result)
+    page = "\n".join(generator._model_combination_detail(entry, heading_level=4, fern=fern))
+    escaped_command = html.escape(command)
+    if fern:
+        escaped_command = escaped_command.replace("{", "&#123;").replace("}", "&#125;")
+        assert "<p>First line. Second line with &lt;value&gt;.</p>" in page
+        assert "\n</p>" not in page
+    else:
+        assert f"<p>{html.escape(expected_result)}</p>" in page
+    assert f'<code class="language-bash">{escaped_command}</code>' in page
+    assert html.unescape(escaped_command) == command
+
+
+def test_all_fern_model_outputs_use_mdx_markers(generator: ModuleType, catalog: dict[str, object]) -> None:
+    outputs = generator.expected_outputs(REPO_ROOT, catalog)
+    fern_pages = {path: page for path, page in outputs.items() if path.suffix == ".mdx"}
+    assert len(fern_pages) == len(catalog["models"]) + 1
+    for path, page in fern_pages.items():
+        if path.name == "README.mdx":
+            assert page.startswith(generator.FERN_GENERATED_NOTICE)
+        else:
+            assert page.count(generator.FERN_MODEL_SECTION_START) == 1
+            assert page.count(generator.FERN_MODEL_SECTION_END) == 1
+        assert "<!--" not in page
+        assert "\n</p>" not in page
+    for path, page in outputs.items():
+        if path.suffix == ".md":
+            assert "{/*" not in page
+
+
+def _load_recipe_metadata() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("model_verification_recipe_metadata", RECIPE_METADATA_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {RECIPE_METADATA_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
+def _command_strings(node: object) -> list[str]:
+    if isinstance(node, dict):
+        commands = []
+        for key, value in node.items():
+            if key in {"command", "commands"} and isinstance(value, str):
+                commands.append(value)
+            elif key in {"command", "commands"} and isinstance(value, list):
+                commands.extend(item for item in value if isinstance(item, str))
+                commands.extend(_command_strings([item for item in value if not isinstance(item, str)]))
+            else:
+                commands.extend(_command_strings(value))
+        return commands
+    if isinstance(node, list):
+        return [command for item in node for command in _command_strings(item)]
+    return []
+
+
+def test_non_benchmark_card_commands_do_not_launch_benchmark_recipes() -> None:
+    recipe_metadata = _load_recipe_metadata()
+    offenders = []
+    for card_path in sorted(REPO_ROOT.glob("examples/model_verification_cards/*/card.yaml")):
+        card = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+        for item_name, item in (card.get("items") or {}).items():
+            if item_name in BENCHMARK_ITEMS:
+                continue
+            for command in _command_strings(item):
+                for recipe_name in re.findall(r"--recipe[=\s]+(\S+)", command):
+                    if recipe_metadata.resolved_benchmark_recipe_metadata(recipe_name) is not None:
+                        offenders.append(f"{card_path.parent.name}/{item_name}: {recipe_name}")
+
+    assert offenders == []

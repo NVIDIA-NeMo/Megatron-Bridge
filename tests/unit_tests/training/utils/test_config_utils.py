@@ -25,10 +25,48 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
+from transformers import PreTrainedConfig
 
 from megatron.bridge.models.common import Serializable
-from megatron.bridge.training.utils.config_utils import _ConfigContainerBase, create_ddp_config
+from megatron.bridge.training.utils.config_utils import (
+    _ConfigContainerBase,
+    _materialize_gtp_weight_shards,
+    apply_run_config_backward_compat,
+    create_ddp_config,
+)
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_gtp_weight_shards_survive_init_false_sanitization(nested):
+    model = {
+        "_target_": "megatron.bridge.models.gpt_provider.GPTModelProvider",
+        "tensor_model_parallel_size": 2,
+        "expert_tensor_parallel_size": 1,
+        "tensor_parallel_num_weight_shards": None,
+        "expert_tensor_parallel_num_weight_shards": None,
+        "gtp_weight_remat_size": 2,
+        "expert_gtp_weight_remat_size": 4,
+    }
+    config = {"model": {"transformer": model} if nested else model}
+    restored = apply_run_config_backward_compat(config)["model"]
+    if nested:
+        restored = restored["transformer"]
+    assert restored["tensor_parallel_num_weight_shards"] == 4
+    assert restored["expert_tensor_parallel_num_weight_shards"] == 4
+    assert "gtp_weight_remat_size" not in restored
+    assert "expert_gtp_weight_remat_size" not in restored
+    assert model["tensor_parallel_num_weight_shards"] is None
+
+
+def test_gtp_weight_shards_preserve_explicit_counts_and_handle_aliases():
+    model = {"tensor_model_parallel_size": 2, "tensor_parallel_num_weight_shards": 8, "gtp_weight_remat_size": 2}
+    config = {"models": [model, model]}
+    config["self"] = config
+    normalized = _materialize_gtp_weight_shards(config)
+    assert normalized["models"][0]["tensor_parallel_num_weight_shards"] == 8
+    assert normalized["models"][0] is normalized["models"][1]
+    assert normalized["self"] is normalized
 
 
 # Test functions for callable testing
@@ -773,6 +811,24 @@ class TestConfigContainer_EdgeCases:
 
         assert result["optional_field"] is None
         assert result["required_field"] == "required"
+
+    def test_dataclass_pretrained_config_reads_raw_fields(self):
+        """Dataclass config serialization must not invoke guarded dynamic access."""
+
+        @dataclass
+        class HeterogeneousConfig(PreTrainedConfig):
+            num_key_value_heads: int = 8
+
+            def __getattribute__(self, name):
+                if name == "num_key_value_heads":
+                    raise RuntimeError("read this value from the per-layer config")
+                return super().__getattribute__(name)
+
+        config = HeterogeneousConfig()
+
+        serialized = _ConfigContainerBase._convert_pretrained_config_to_dict(config, include_target=True)
+
+        assert serialized["num_key_value_heads"] == 8
 
     def test_config_with_complex_nested_types(self):
         """Test ConfigContainer with complex nested types."""

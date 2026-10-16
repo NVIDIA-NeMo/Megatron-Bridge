@@ -20,6 +20,7 @@ non-NVFP4 (FP8 current-scaling) siblings keep it enabled.
 """
 
 import pytest
+from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
 from megatron.bridge.perf_recipes.qwen import (
     qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config,
@@ -30,14 +31,18 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
-    qwen3_30b_a3b_pretrain_8gpu_vr200_nvfp4_config,
+    qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config,
     qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config,
     qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config,
     qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config,
     qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_fp8cs_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
@@ -47,8 +52,30 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
+
+
+@pytest.mark.parametrize(
+    ("recipe_func", "expected_data_parallel_size", "expected_hybridep_domain_size"),
+    [
+        (qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config, 8, 8),
+        (qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config, 8, 8),
+        (qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config, 8, 8),
+        (qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config, 8, 8),
+        (qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config, 32, 32),
+        (qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config, 32, 32),
+        (qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config, 32, 32),
+        (qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config, 32, 32),
+    ],
+)
+def test_qwen3_235b_64gpu_blackwell_topology_is_valid(
+    recipe_func, expected_data_parallel_size, expected_hybridep_domain_size
+):
+    cfg = recipe_func()
+
+    assert data_parallel_size(num_gpus=64, topology=topology_from_config(cfg.model)) == expected_data_parallel_size
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_hybridep_domain_size
 
 
 @pytest.mark.parametrize(
@@ -58,7 +85,7 @@ from megatron.bridge.perf_recipes.qwen import (
         qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
         qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_config,
         qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_config,
-        qwen3_30b_a3b_pretrain_8gpu_vr200_nvfp4_config,
+        qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config,
         qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config,
         qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
         qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config,
@@ -67,7 +94,7 @@ from megatron.bridge.perf_recipes.qwen import (
         qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
         qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config,
         qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config,
-        qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config,
+        qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config,
     ],
 )
 def test_nvfp4_disables_tp_comm_overlap(nvfp4_config_fn):

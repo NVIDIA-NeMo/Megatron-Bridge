@@ -116,6 +116,7 @@ class _FakeMoonlightModelProvider:
         self.pipeline_model_parallel_layout = None
         self.moe_token_dispatcher_type = "alltoall"
         self.moe_enable_deepep = False
+        self.moe_hybridep_pad_uneven_dispatch_inputs = False
         self.moe_shared_expert_overlap = True
         self.overlap_moe_expert_parallel_comm = False
         self.delay_wgrad_compute = False
@@ -328,6 +329,27 @@ def _assert_finetuning_optimizer_contract(cfg, *, precision_aware: bool):
     assert cfg.ddp.grad_reduce_in_fp32 is reduce_in_fp32
 
 
+def test_moonlight_16b_pretrain_deterministic_applies_determinism(monkeypatch: pytest.MonkeyPatch):
+    """The deterministic wrapper keeps the 16-GPU layout and sets the determinism env."""
+    from megatron.bridge.recipes.moonlight import h100 as moonlight_h100
+    from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
+
+    base_fn = moonlight_h100.moonlight_16b_pretrain_16gpu_h100_bf16_config
+    deterministic_fn = moonlight_h100.moonlight_16b_pretrain_16gpu_h100_bf16_deterministic_config
+    patch_recipe_module_global(monkeypatch, base_fn, "AutoBridge", _FakeBridge)
+
+    base = base_fn()
+    cfg = deterministic_fn()
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size == 8
+    assert cfg.train.global_batch_size == base.train.global_batch_size
+    for key, value in DETERMINISM_ENV_VARS.items():
+        assert cfg.env_vars[key] == value
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+
+
 def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyPatch):
     """Test the exact 16-GPU pretrain convergence contract."""
     from megatron.bridge.recipes.moonlight import moonlight_16b_pretrain_config
@@ -527,6 +549,39 @@ def test_moonlight_pipeline_layout_tracks_supported_runner_override(monkeypatch:
 
     assert cfg.data_parallel_size == 8
     assert cfg.model.pipeline_model_parallel_layout == _get_moonlight_pipeline_layout(2, 1)
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
+
+
+_MOONLIGHT_16B_NUM_LAYERS = 27
+
+
+def _supported_moonlight_pp_vp_layouts():
+    """Return every (pp, vp, layout) the Moonlight-16B layout helper supports."""
+    from megatron.bridge.recipes.moonlight.h100.moonlight_16b import _get_moonlight_pipeline_layout
+
+    supported = []
+    for pp in range(1, 17):
+        for vp in range(1, 9):
+            try:
+                layout = _get_moonlight_pipeline_layout(pp, vp)
+            except ValueError:
+                continue
+            if layout is not None:
+                supported.append((pp, vp, layout))
+    return supported
+
+
+def test_moonlight_pipeline_layouts_match_model_depth():
+    """Every supported Moonlight-16B pipeline layout must pass MCore layout validation."""
+    from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+
+    supported = _supported_moonlight_pp_vp_layouts()
+    assert supported
+
+    for pp, vp, layout in supported:
+        parsed = PipelineParallelLayerLayout(layout, pipeline_model_parallel_size=pp)
+        assert parsed.virtual_pipeline_model_parallel_size == vp, (pp, vp)
+        parsed.validate_layer_layout(num_layers=_MOONLIGHT_16B_NUM_LAYERS, mtp_num_layers=None)
 
 
 def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):

@@ -74,6 +74,8 @@ class ModuleDict(nn.ModuleDict):
         """
         sharded_state_dict = {}
         for key, layer in self.items():
+            if layer is None:
+                continue
             sharded_state_dict.update(layer.sharded_state_dict(f"{prefix}{key}.", sharded_offsets, metadata))
         return sharded_state_dict
 
@@ -147,9 +149,33 @@ class LoRALinearSplitQKV(AdapterWrapper):
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         if not self._adapter_enabled:
             return linear_output, bias
-        query = self.adapter_forward(self.adapter.adapter_q, layernorm_output, *args, **kwargs)
-        key = self.adapter_forward(self.adapter.adapter_k, layernorm_output, *args, **kwargs)
-        value = self.adapter_forward(self.adapter.adapter_v, layernorm_output, *args, **kwargs)
+        query = (
+            self.adapter_forward(self.adapter.adapter_q, layernorm_output, *args, **kwargs)
+            if self.adapter.adapter_q is not None
+            else None
+        )
+        key = (
+            self.adapter_forward(self.adapter.adapter_k, layernorm_output, *args, **kwargs)
+            if self.adapter.adapter_k is not None
+            else None
+        )
+        value = (
+            self.adapter_forward(self.adapter.adapter_v, layernorm_output, *args, **kwargs)
+            if self.adapter.adapter_v is not None
+            else None
+        )
+
+        if key is None and value is None:
+            kv_size = (linear_output.size(-1) - query.size(-1)) // 2
+            key = value = layernorm_output.new_zeros(*layernorm_output.shape[:-1], kv_size)
+        elif key is None:
+            key = torch.zeros_like(value)
+        elif value is None:
+            value = torch.zeros_like(key)
+
+        if query is None:
+            query_size = linear_output.size(-1) - 2 * key.size(-1)
+            query = layernorm_output.new_zeros(*layernorm_output.shape[:-1], query_size)
 
         adapter_output = self._interleave_qkv(query, key, value)
 
@@ -170,8 +196,20 @@ class LoRALinearSplitFC1UpGate(AdapterWrapper):
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         if not self._adapter_enabled:
             return linear_output, bias
-        adapter_output_gate = self.adapter_forward(self.adapter.adapter_gate, layernorm_output, *args, **kwargs)
-        adapter_output_up = self.adapter_forward(self.adapter.adapter_up, layernorm_output, *args, **kwargs)
+        adapter_output_gate = (
+            self.adapter_forward(self.adapter.adapter_gate, layernorm_output, *args, **kwargs)
+            if self.adapter.adapter_gate is not None
+            else None
+        )
+        adapter_output_up = (
+            self.adapter_forward(self.adapter.adapter_up, layernorm_output, *args, **kwargs)
+            if self.adapter.adapter_up is not None
+            else None
+        )
+        if adapter_output_gate is None:
+            adapter_output_gate = torch.zeros_like(adapter_output_up)
+        if adapter_output_up is None:
+            adapter_output_up = torch.zeros_like(adapter_output_gate)
         adapter_output = torch.cat([adapter_output_gate, adapter_output_up], dim=-1)
         return linear_output + adapter_output, bias
 
@@ -371,6 +409,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                     is_expert=is_expert,
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                    replicate_adapter=attrs.replicate_adapter,
                 )
 
             if name == "linear_fc1" and _should_treat_linear_fc1_as_unfused(full_name):

@@ -171,7 +171,7 @@ class TestQwen35VLBridgeProviderBridge:
         provider = bridge.provider_bridge(mock_pretrained)
         assert provider.layernorm_zero_centered_gamma is True
         assert provider.attention_output_gate is True
-        assert provider.experimental_attention_variant == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gdn"
         assert provider.linear_attention_freq == 4
 
     def test_provider_bridge_gdn_params(self, bridge, mock_pretrained):
@@ -514,7 +514,7 @@ class TestQwen35VLMoEBridgeProviderBridge:
 
     def test_provider_bridge_hybrid_architecture(self, bridge, mock_pretrained):
         provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.experimental_attention_variant == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gdn"
         assert provider.linear_attention_freq == 4
         assert provider.layernorm_zero_centered_gamma is True
 

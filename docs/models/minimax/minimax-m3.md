@@ -2,6 +2,20 @@
 
 [MiniMax-M3](https://huggingface.co/MiniMaxAI/MiniMax-M3) is a natively multimodal sparse MoE model from MiniMaxAI (428B total, ~23B active parameters). `MiniMaxM3Bridge` converts the vision tower, both multimodal projector stages, and sparse-MoE text backbone into a `MiniMaxM3VLModel`.
 
+## Transformers vision RoPE compatibility
+
+Bridge applies its full partial-3D vision RoPE correction only on Transformers
+5.17.0. Transformers 5.18+ includes the geometry fix from
+[HF PR #49164](https://github.com/huggingface/transformers/pull/49164), so Bridge
+leaves those versions unpatched.
+
+The native 5.18/5.19 implementation stores inverse frequencies in buffers.
+Explicit `.half()` or `.bfloat16()` casts can round these buffers, producing
+different results from the earlier FP32-per-forward calculation. Bridge accepts
+this precision difference and does not promise bitwise equality across these
+versions after dtype conversion. The three-axis geometry and partial rotation
+remain required and tested.
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations

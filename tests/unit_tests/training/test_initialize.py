@@ -28,6 +28,7 @@ from megatron.bridge.training.config import DistributedInitConfig
 from megatron.bridge.training.initialize import (
     _initialize_tp_communicators,
     _setup_flight_recorder_env,
+    initialize_megatron,
     set_jit_fusion_options,
 )
 
@@ -532,3 +533,62 @@ class TestSetupFlightRecorderEnv:
         _setup_flight_recorder_env(cfg)
         captured = capsys.readouterr()
         assert "Flight recorder env vars:" not in captured.out
+
+
+@pytest.mark.parametrize("lazy", [False, True])
+def test_torch_dist_init_resets_default_logging_ranks(lazy):
+    from types import SimpleNamespace
+
+    from megatron.core._rank_utils import get_default_log_ranks, set_default_log_ranks
+
+    from megatron.bridge.training.initialize import torch_dist_init
+
+    original = get_default_log_ranks()
+    try:
+        set_default_log_ranks({0, 4})
+        with (
+            patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()),
+            patch("megatron.bridge.training.initialize._set_random_seed"),
+            patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.initialize.parallel_state"),
+        ):
+            model = SimpleNamespace(
+                num_moe_experts=None, cuda_graph_impl="none", tp_comm_overlap=False, tensor_model_parallel_size=1
+            )
+            result = torch_dist_init(model, SimpleNamespace(lazy_mpu_init=lazy), Mock(), 1, 1, None, None, False)
+            assert get_default_log_ranks() == (0,)
+            if lazy:
+                result()
+                assert get_default_log_ranks() == (0,)
+    finally:
+        set_default_log_ranks(original)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("deterministic_mode", [True, False])
+def test_initialize_megatron_pins_triton_autotune_only_in_deterministic_mode(deterministic_mode: bool) -> None:
+    """Timed Triton autotuning is pinned before any kernel runs, only when deterministic_mode is on."""
+    cfg = Mock()
+    cfg.model.deterministic_mode = deterministic_mode
+    cfg.inprocess_restart = None
+    cfg.profiling = None
+
+    with (
+        patch("megatron.bridge.training.initialize.init_num_microbatches_calculator"),
+        patch("megatron.bridge.training.initialize.init_rerun_state"),
+        patch("megatron.bridge.training.initialize.torch_dist_init", return_value=None) as torch_dist_init,
+        patch("megatron.bridge.training.initialize.tuning") as tuning,
+        patch("megatron.bridge.training.initialize.torch.distributed.is_initialized", return_value=False),
+    ):
+        calls = Mock()
+        calls.attach_mock(tuning, "tuning")
+        calls.attach_mock(torch_dist_init, "torch_dist_init")
+        initialize_megatron(cfg, allow_no_cuda=True)
+
+    called = [name for name, _, _ in calls.mock_calls]
+    if deterministic_mode:
+        tuning.install.assert_called_once_with(deterministic=True)
+        assert called.index("tuning.install") < called.index("torch_dist_init")
+    else:
+        tuning.install.assert_not_called()
+    torch_dist_init.assert_called_once()

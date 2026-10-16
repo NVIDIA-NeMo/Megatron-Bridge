@@ -98,6 +98,31 @@ def _infer_attn_pattern(layer_types: list[str]) -> tuple[int, int] | list[str]:
     return (len(layer_types), 0)
 
 
+def _attention_config_value(
+    hf_config: Any,
+    layer_type: str,
+    field_name: str,
+    default: Any,
+    *,
+    legacy_field_name: str | None = None,
+) -> Any:
+    """Read an attention field from a concrete HF layer config when available."""
+    layer_types = getattr(hf_config, "layer_types", None)
+    per_layer_config = getattr(hf_config, "per_layer_config", None)
+    if isinstance(layer_types, (list, tuple)) and per_layer_config is not None:
+        try:
+            layer_index = layer_types.index(layer_type)
+        except ValueError:
+            pass
+        else:
+            return getattr(per_layer_config[layer_index], field_name, default)
+
+    # Transformers 5.15 rejects direct reads of fields that vary by layer.
+    # Older configs instead serialize separate flat local/global field names.
+    fallback_name = legacy_field_name or field_name
+    return getattr(hf_config, "__dict__", {}).get(fallback_name, default)
+
+
 def _layer_types_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> list[str]:
     """Reconstruct the Hugging Face per-layer attention pattern."""
     if isinstance(provider, Gemma4DenseProvider):
@@ -181,6 +206,11 @@ class Gemma4Bridge(MegatronModelBridge):
     """
 
     _CONDITIONAL_MOE_FIELDS = frozenset({"num_moe_experts", "moe_router_topk", "moe_ffn_hidden_size"})
+    CONFIG_MAPPING = [
+        mapping
+        for mapping in MegatronModelBridge.CONFIG_MAPPING
+        if mapping[0] not in {"head_dim", "num_key_value_heads"}
+    ]
 
     def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
         if megatron_name in self._CONDITIONAL_MOE_FIELDS:
@@ -213,11 +243,18 @@ class Gemma4Bridge(MegatronModelBridge):
         sliding_rope = rope_params.get("sliding_attention", {})
         full_rope = rope_params.get("full_attention", {})
         num_attention_heads = hf_config.num_attention_heads
-        num_query_groups = hf_config.num_key_value_heads
-        num_global_query_groups = getattr(
+        num_query_groups = _attention_config_value(
             hf_config,
-            "num_global_key_value_heads",
+            "sliding_attention",
+            "num_key_value_heads",
+            getattr(hf_config, "__dict__", {}).get("num_key_value_heads", 4),
+        )
+        num_global_query_groups = _attention_config_value(
+            hf_config,
+            "full_attention",
+            "num_key_value_heads",
             num_query_groups,
+            legacy_field_name="num_global_key_value_heads",
         )
 
         self._dense_num_attention_heads = num_attention_heads
@@ -236,8 +273,14 @@ class Gemma4Bridge(MegatronModelBridge):
             ffn_hidden_size=hf_config.intermediate_size,
             num_attention_heads=num_attention_heads,
             num_query_groups=num_query_groups,
-            kv_channels=getattr(hf_config, "head_dim", 256),
-            global_kv_channels=getattr(hf_config, "global_head_dim", 512),
+            kv_channels=_attention_config_value(hf_config, "sliding_attention", "head_dim", 256),
+            global_kv_channels=_attention_config_value(
+                hf_config,
+                "full_attention",
+                "head_dim",
+                512,
+                legacy_field_name="global_head_dim",
+            ),
             num_global_query_groups=num_global_query_groups,
             seq_length=hf_config.max_position_embeddings,
             vocab_size=hf_config.vocab_size,
@@ -260,6 +303,12 @@ class Gemma4Bridge(MegatronModelBridge):
     def _build_moe_provider(self, hf_config) -> Gemma4ModelProvider:
         """Build a Gemma4ModelProvider from HF config (MoE path)."""
         provider_kwargs = self.hf_config_to_provider_kwargs(hf_config)
+        provider_kwargs["num_query_groups"] = _attention_config_value(
+            hf_config,
+            "sliding_attention",
+            "num_key_value_heads",
+            getattr(hf_config, "__dict__", {}).get("num_key_value_heads", 4),
+        )
         provider = Gemma4ModelProvider(**provider_kwargs)
 
         provider.window_size = getattr(hf_config, "sliding_window", 1024)
@@ -268,13 +317,25 @@ class Gemma4Bridge(MegatronModelBridge):
             rope_theta_from_hf(hf_config),
         )
 
-        head_dim = getattr(hf_config, "head_dim", 256)
+        head_dim = _attention_config_value(hf_config, "sliding_attention", "head_dim", 256)
         provider.softmax_scale = 1.0
         provider.kv_channels = head_dim
         provider.qk_layernorm = True
 
-        provider.global_head_dim = getattr(hf_config, "global_head_dim", 512)
-        provider.num_global_key_value_heads = getattr(hf_config, "num_global_key_value_heads", 2)
+        provider.global_head_dim = _attention_config_value(
+            hf_config,
+            "full_attention",
+            "head_dim",
+            512,
+            legacy_field_name="global_head_dim",
+        )
+        provider.num_global_key_value_heads = _attention_config_value(
+            hf_config,
+            "full_attention",
+            "num_key_value_heads",
+            2,
+            legacy_field_name="num_global_key_value_heads",
+        )
         provider.attention_k_eq_v = getattr(hf_config, "attention_k_eq_v", False)
 
         rope_params = getattr(hf_config, "rope_parameters", {})
@@ -320,12 +381,14 @@ class Gemma4Bridge(MegatronModelBridge):
                 "enable_moe_block": is_moe,
                 "final_logit_softcapping": provider.final_logit_softcapping,
                 "global_head_dim": (provider.global_head_dim if is_moe else provider.global_kv_channels),
+                "head_dim": provider.kv_channels,
                 "hidden_size_per_layer_input": getattr(provider, "per_layer_embed_dim", 0),
                 "layer_types": _layer_types_from_provider(provider),
                 "num_kv_shared_layers": getattr(provider, "num_kv_shared_layers", 0),
                 "num_global_key_value_heads": (
                     provider.num_global_key_value_heads if is_moe else provider.num_global_query_groups
                 ),
+                "num_key_value_heads": provider.num_query_groups,
                 "rope_parameters": _rope_parameters_from_provider(provider),
                 "sliding_window": mcore_to_hf_window_size(window_size),
                 "use_double_wide_mlp": getattr(provider, "use_double_wide_mlp", False),
@@ -406,16 +469,23 @@ class Gemma4Bridge(MegatronModelBridge):
                     text_config, "num_attention_heads", getattr(self, "_dense_num_attention_heads", 8)
                 )
                 kv_head_dim = q_weight.shape[0] // num_q_heads
-                num_kv_heads = getattr(text_config, "num_key_value_heads", getattr(self, "_dense_num_query_groups", 2))
+                num_kv_heads = _attention_config_value(
+                    text_config,
+                    "sliding_attention",
+                    "num_key_value_heads",
+                    getattr(self, "_dense_num_query_groups", 2),
+                )
                 layer_match = re.search(r"layers\.(\d+)\.", q_name)
                 layer_types = getattr(text_config, "layer_types", None)
                 if layer_match and layer_types:
                     layer_idx = int(layer_match.group(1))
                     if layer_idx < len(layer_types) and layer_types[layer_idx] == "full_attention":
-                        num_global_kv_heads = getattr(
+                        num_global_kv_heads = _attention_config_value(
                             text_config,
-                            "num_global_key_value_heads",
+                            "full_attention",
+                            "num_key_value_heads",
                             getattr(self, "_dense_num_global_query_groups", None),
+                            legacy_field_name="num_global_key_value_heads",
                         )
                         if num_global_kv_heads is not None:
                             num_kv_heads = num_global_kv_heads
