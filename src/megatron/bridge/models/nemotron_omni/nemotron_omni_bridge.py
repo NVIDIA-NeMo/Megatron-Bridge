@@ -41,7 +41,9 @@ from dataclasses import fields
 from pathlib import Path
 
 import torch
+import transformers
 from megatron.core.activations import squared_relu
+from packaging.version import Version
 from safetensors.torch import save_file
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -175,6 +177,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
     # Provider translation
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _hf_language_config(hf_config):
+        return getattr(hf_config, "llm_config", None)
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniModelProvider:  # type: ignore[override]
         """Create a NemotronOmniModelProvider from the HF Omni config.
 
@@ -183,7 +189,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         ``sound_config`` is the Hugging Face checkpoint's sound capability.
         """
         hf_config = hf_pretrained.config
-        llm_config = hf_config.llm_config
+        llm_config = self._hf_language_config(hf_config)
 
         provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
 
@@ -328,7 +334,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             mappings.append(copied)
 
         hf_config = getattr(self, "hf_config", None)
-        llm_config = getattr(hf_config, "llm_config", None)
+        llm_config = self._hf_language_config(hf_config)
 
         language_bridge = NemotronHBridge()
         language_bridge.hf_config = llm_config
@@ -462,6 +468,21 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
 
+    @staticmethod
+    def _hf_language_config(hf_config):
+        # Remote-code checkpoints retain llm_config, including on older HF
+        # versions. Do not force those customers onto the native implementation.
+        legacy_config = getattr(hf_config, "llm_config", None)
+        if legacy_config is not None:
+            return legacy_config
+        text_config = getattr(hf_config, "text_config", None)
+        if text_config is not None and Version(transformers.__version__) < Version("5.18.0"):
+            raise ValueError(
+                "Native Nemotron 3.5 Super VL conversion requires Transformers >=5.18.0; "
+                "use trust_remote_code=True with the original checkpoint on older versions."
+            )
+        return text_config
+
     @classmethod
     def _validate_shared_mtp_config(cls, llm_config) -> None:
         """Validate the serialized shared block before choosing training depths."""
@@ -478,7 +499,7 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         recipes explicitly set two training prediction depths, independently
         of this checkpoint representation.
         """
-        config = copy.deepcopy(hf_pretrained.config.llm_config)
+        config = copy.deepcopy(self._hf_language_config(hf_pretrained.config))
         self._validate_shared_mtp_config(config)
         config.architectures = ["NemotronHForCausalLM"]
         if hasattr(config, "auto_map"):
@@ -521,7 +542,12 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         return text
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
-        """Require the direct Transformers entrypoint used by Super VL exports."""
+        """Require remote code only for exports that actually reference it."""
+        config_path = path / "config.json"
+        if config_path.is_file():
+            config = json.loads(config_path.read_text())
+            if "text_config" in config and not config.get("auto_map"):
+                return
         modeling_path = path / "modeling_nemotron_h_omni.py"
         if not modeling_path.is_file():
             raise FileNotFoundError(f"Nemotron 3.5 Super VL export is missing required artifact: {modeling_path}")
@@ -535,8 +561,11 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         # Super-VL serializes one shared MTP block in HF. Megatron training applies
         # that block at two prediction depths, with the attention+MoE parameters
         # shared across both applications.
-        self._validate_shared_mtp_config(hf_config.llm_config)
+        self._validate_shared_mtp_config(self._hf_language_config(hf_config))
         provider.mtp_num_layers = self._MCORE_MTP_PREDICTION_DEPTHS
+
+        if getattr(hf_config, "image_token_id", None) is not None:
+            provider.image_token_index = hf_config.image_token_id
 
         provider.temporal_patch_dim = temporal_patch_dim
         provider.separate_video_embedder = temporal_patch_dim > 1
@@ -559,6 +588,10 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         hf_config = super().megatron_to_hf_config(provider)
         hf_config.pop("num_nextn_predict_layers", None)
         hf_config["llm_config"] = {"num_nextn_predict_layers": cls._HF_SHARED_MTP_BLOCKS}
+        # Config synthesis retains only keys present in the reference schema.
+        # Supply both spellings so native and remote-code exports preserve the
+        # same shared-block count without requiring an HF dependency upgrade.
+        hf_config["text_config"] = {"num_nextn_predict_layers": cls._HF_SHARED_MTP_BLOCKS}
         return hf_config
 
     def postprocess_hf_export_weights(self, path: Path) -> None:
