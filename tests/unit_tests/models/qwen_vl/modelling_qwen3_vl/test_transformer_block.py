@@ -104,10 +104,16 @@ def transformer_config():
 class TestQwen3VLTransformerBlock:
     """Test suite for Qwen3VL TransformerBlock."""
 
+    _original_env: dict[str, str | None] = {}
+
     @classmethod
     def setup_class(cls):
         """Setup distributed process group."""
         if not dist.is_initialized():
+            cls._original_env = {
+                key: os.environ.get(key) for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE")
+            }
+
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29501"
             os.environ["RANK"] = "0"
@@ -130,6 +136,11 @@ class TestQwen3VLTransformerBlock:
         """Teardown distributed process group."""
         if dist.is_initialized():
             dist.destroy_process_group()
+        for key, value in cls._original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     def _setup_parallel_state(self):
         """Setup Megatron parallel state."""
