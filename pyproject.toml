@@ -291,15 +291,9 @@ Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Bridge"
 # -vv will also display tests with durration = 0.00s
 addopts = "--verbose --pyargs --durations=0 --strict-markers"  # always add these arguments to pytest
 testpaths = ["tests"]
-# directories to ignore when discovering tests
+# directory basenames to ignore at any depth when discovering tests; the top-level non-test directories
+# (scripts, examples, ...) are ignored by path in the root conftest.py, so tests/unit_tests/scripts etc. are collected
 norecursedirs = [
-    "src",
-    "external",
-    "examples",
-    "docs",
-    "scripts",
-    "tools",
-    "tutorials",
     "*.egg",
     ".*",
     "_darcs",
