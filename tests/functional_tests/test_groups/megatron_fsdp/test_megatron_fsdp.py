@@ -401,10 +401,6 @@ class TestMegatronFSDP:
     Test end to end training with Megatron FSDP and fsdp_dtensor checkpoint functionality.
     """
 
-    @pytest.fixture(scope="class", autouse=True)
-    def ensure_test_data(self) -> None:
-        """These tests use mock data and NullTokenizer, so no downloaded assets are needed."""
-
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_pretrain_basic(self):
         """
