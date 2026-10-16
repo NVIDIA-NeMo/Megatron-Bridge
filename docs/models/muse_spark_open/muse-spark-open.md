@@ -78,10 +78,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="muse-spark-open-816b-a42b-sft-gb200" aria-controls="muse-spark-open-816b-a42b-sft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="muse-spark-open-816b-a42b-sft-gb200" aria-controls="muse-spark-open-816b-a42b-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -247,45 +247,51 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="muse-spark-open-816b-a42b-sft-gb200" class="verification-model-detail" data-entry-detail="muse-spark-open-816b-a42b-sft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-16</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.428229</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.7338403</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>4,195.300 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>178.800 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>650.887 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe muse_spark_open_sft_192gpu_gb200_bf16_config --mode sft --pretrained_checkpoint work/model-verification/muse-spark-open-816b-a42b/gpu-megatron --max_steps 85 tokenizer.chat_template_path=work/templates/muse_spark_open_chat_template_pinned_date.jinja dataset.hf_output_root=work/data/tulu3/muse-spark-open-100k-4k checkpoint.save=null checkpoint.load=null checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-spark-open-816b-a42b/sft-resolved.yaml</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Not yet verified on the pinned public revision. The 192-GPU recipe must complete one 85-step epoch over the 100K Tulu 3 conversations packed to 4K with finite loss, no skipped or NaN iterations, and all five metrics.
+        <p>Observed on the pinned public revision with 192 GB200 GPUs at TP4/PP3/EP64/ETP1 with sequence parallelism (pipeline stages of 21, 22, and 19 decoder blocks; 16 data-parallel replicas running 8 microbatches each per step): the command warm-starts every language-model parameter from the imported checkpoint with no activation recompute and the distributed optimizer with FP32 gradient reduction at peak LR 5e-6; the perception towers stay frozen because the data is text only. MoE tokens are dispatched with HybridEP (flex dispatcher, 32 SMs): each EP64 group is one pipeline stage&#x27;s 64 contiguous ranks on 16 nodes in one NVL72 NVLink domain, and the recipe sets NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=64, NVLINK_DOMAIN_SIZE=72, and USE_MNNVL=1. Data is the first 100,000 conversations of the revision-pinned Tulu 3 SFT mixture, rendered with the model chat template whose current-date default is fixed to 2026-10-04 and offline-packed to 4,096 tokens with pad_seq_to_mult 4: 10,951 packs of 9.1 conversations on average, 90 conversations (0.09%) truncated at 4,092 tokens. Every micro-batch is padded to the full 4,096 tokens (pad_to_max_length), and padding carries no loss. GBS 128 for 85 steps is one epoch over 10,880 distinct packs (max_train_samples leaves the other 71 packs unused), with 10 warmup steps and cosine decay to 0 at step 85, model seed 5678, and data seed 1234. All 85 optimizer-step rows are present exactly once with finite loss and gradient norm and zero skipped or NaN iterations. Loss moves from 1.428229 to 0.7338403 (minimum 0.6910 at step 42) and averages 0.7870 over steps 51-85; gradient norms of 67.8 at step 1 and 108.0 at step 15 are clipped at 1.0. Steps 76-85 average 4,195.30 ms, 178.80 model TFLOP/s/GPU, and 650.887 token slots/s/GPU. Peak allocated memory per pipeline stage is 156.2, 142.5, and 108.8 GiB. The post-setup config persists; no checkpoint is saved. Not comparable with other cards: this deviates from the qwen3_30b_a3b_convergence_v2 SFT/PEFT contract (Tulu 3 train[:10000], 8,192-token packs, GBS 8, 100 steps), so it is support verification rather than cross-model convergence evidence. The mixture is stored grouped by source, so train[:100000] is 90.0% FLAN v2, 7.1% OASST1, 2.6% No Robots, and 0.2% hard-coded prompts.
 </p>
       </section>
     </article>
