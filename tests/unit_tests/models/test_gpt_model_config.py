@@ -217,10 +217,12 @@ def test_unmigrated_bridge_keeps_provider_without_warning() -> None:
         vocab_size=256,
     )
 
-    assert Qwen2Bridge.MODEL_CONFIG_CLASS is None
+    class UnmigratedQwen2Bridge(Qwen2Bridge):
+        MODEL_CONFIG_CLASS = None
+
     with warnings.catch_warnings():
         warnings.simplefilter("error", FutureWarning)
-        provider = Qwen2Bridge().provider_bridge(Mock(config=hf_config))
+        provider = UnmigratedQwen2Bridge().provider_bridge(Mock(config=hf_config))
 
     assert provider.position_embedding_type == "rope"
     assert provider.add_qkv_bias is True

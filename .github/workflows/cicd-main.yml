@@ -1384,3 +1384,44 @@ jobs:
           path: |
             .coverage
           include-hidden-files: true
+
+  notify-nightly-failure:
+    name: Notify scheduled CI failure
+    runs-on: ubuntu-latest
+    environment: main
+    needs:
+      - ephemeral-runner-routing
+      - pre-flight
+      - configure
+      - lint-check
+      - cicd-wait-in-queue
+      - cicd-compute-build-matrix
+      - cicd-container-build
+      - cicd-import-check
+      - cicd-unit-tests-core
+      - cicd-unit-tests-diffusion
+      - generate-test-matrix
+      - cicd-functional-tests-l0
+      - cicd-functional-tests-l1
+      - cicd-functional-tests-l2
+      - cicd-functional-tests-flaky
+      - generate-gb200-test-matrix
+      - cicd-functional-tests-gb200-l0
+      - cicd-functional-tests-gb200-l1
+      - cicd-functional-tests-gb200-l2
+      - cicd-functional-tests-gb200-flaky
+      - Nemo_CICD_Test
+      - Coverage
+    permissions: {}
+    # Keep setup failures visible even when downstream jobs are skipped.
+    if: >-
+      ${{ always() && !cancelled() && failure() &&
+          github.repository == 'NVIDIA-NeMo/Megatron-Bridge' &&
+          github.event_name == 'schedule' &&
+          github.ref_name == github.event.repository.default_branch }}
+    steps:
+      - name: Notify CI alerts channel
+        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/notify-ci-failure@631c404d00a9e60afc591cd071d35d2e18f82fc6
+        with:
+          needs-json: ${{ toJSON(needs) }}
+          webhook: ${{ secrets.SLACK_WEBHOOK }}
