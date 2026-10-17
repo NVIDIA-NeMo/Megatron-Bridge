@@ -22,6 +22,7 @@ import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
+    ParamKey,
     get_megatron_optimizer,
     get_mup_config_overrides,
 )
@@ -83,6 +84,25 @@ def setup_optimizer(
             G_LOGGER.info(
                 f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
+            )
+
+    # The LoRA+ helper emits these two overrides. MCore scales their peak and
+    # minimum rates, but uses one shared initial rate during warmup.
+    if config_overrides and scheduler_config.lr_warmup_init != 0:
+        lora_a = config_overrides.get(ParamKey(name="*.linear_in.weight"))
+        lora_b = config_overrides.get(ParamKey(name="*.linear_out.weight"))
+        if (
+            lora_a is not None
+            and lora_b is not None
+            and (
+                lora_a.get("max_lr", optimizer_config.lr) != lora_b.get("max_lr", optimizer_config.lr)
+                or lora_a.get("min_lr", optimizer_config.min_lr) != lora_b.get("min_lr", optimizer_config.min_lr)
+            )
+        ):
+            raise ValueError(
+                "LoRA+ with different A/B learning rates requires SchedulerConfig.lr_warmup_init=0. "
+                "A nonzero warmup initial learning rate breaks the LoRA+ ratio. "
+                "Set lr_warmup_init=0 or lora_plus_ratio=1."
             )
 
     if hasattr(optimizer_config, "provide"):

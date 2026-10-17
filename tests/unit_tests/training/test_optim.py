@@ -23,7 +23,7 @@ import torch
 from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKey
 
 from megatron.bridge.peft.lora import get_lora_plus_config_overrides
-from megatron.bridge.training.config import SchedulerConfig
+from megatron.bridge.training.config import OptimizerConfigOverrideProvider, SchedulerConfig
 from megatron.bridge.training.optim import (
     hybrid_optimizer_state_loading,
     memory_efficient_fp32_optimizer_state_loading,
@@ -1031,3 +1031,95 @@ class TestGetLoraPlusConfigOverrides:
         name_keys = [k for k in overrides if getattr(k, "name", None) and not getattr(k, "attr", None)]
         names = {k.name for k in name_keys}
         assert {"*.linear_in.weight", "*.linear_out.weight"}.issubset(names)
+
+
+@pytest.mark.unit
+class TestLoraPlusWarmupValidation:
+    """Reject unsupported warmup through the existing optimizer provider API."""
+
+    def _setup(self, overrides, *, initial_lr, config=None):
+        from megatron.bridge.training.optim import setup_optimizer
+
+        class Overrides(OptimizerConfigOverrideProvider):
+            def build_config_overrides(self, context):
+                return overrides(context.optimizer_config)
+
+        if config is None:
+            config = OptimizerConfig(optimizer="adam", lr=3e-4, min_lr=3e-5)
+        with (
+            patch("megatron.bridge.training.optim.get_model_config", return_value=SimpleNamespace(use_mup=False)),
+            patch("megatron.bridge.training.optim.get_megatron_optimizer") as build,
+            patch("megatron.bridge.training.optim.get_megatron_muon_optimizer") as build_muon,
+            patch("megatron.bridge.training.optim._get_scheduler") as schedule,
+        ):
+            try:
+                setup_optimizer(
+                    config,
+                    SchedulerConfig(lr_warmup_init=initial_lr),
+                    [MagicMock()],
+                    optimizer_config_override_provider=Overrides(),
+                )
+            except ValueError:
+                build.assert_not_called()
+                build_muon.assert_not_called()
+                schedule.assert_not_called()
+                raise
+            build.assert_called_once()
+            schedule.assert_called_once()
+
+    @pytest.mark.parametrize("ratio", [0.5, 16.0])
+    @pytest.mark.parametrize("initial_lr", [3e-5, 1e-11])
+    @pytest.mark.parametrize("min_lr", [None, 3e-5])
+    def test_rejects_nonzero_initial_rate_before_optimizer(self, ratio, initial_lr, min_lr):
+        config = OptimizerConfig(optimizer="adam", lr=3e-4, min_lr=min_lr)
+        with pytest.raises(ValueError, match=r"LoRA\+.*lr_warmup_init=0"):
+            self._setup(lambda cfg: get_lora_plus_config_overrides(cfg, ratio), initial_lr=initial_lr, config=config)
+
+    @pytest.mark.parametrize("optimizer_kind", ["muon", "soap", "custom"])
+    def test_rejects_before_alternate_optimizer_construction(self, optimizer_kind):
+        class CustomConfig(OptimizerConfig):
+            def provide(self, **kwargs):
+                pytest.fail("Optimizer provider must not run for unsupported LoRA+ warmup")
+
+        config_type = CustomConfig if optimizer_kind == "custom" else OptimizerConfig
+        config = config_type(optimizer="adam" if optimizer_kind == "custom" else optimizer_kind, lr=3e-4)
+        with pytest.raises(ValueError, match=r"LoRA\+.*lr_warmup_init=0"):
+            self._setup(lambda cfg: get_lora_plus_config_overrides(cfg, 16.0), initial_lr=3e-5, config=config)
+
+    @pytest.mark.parametrize("ratio,initial_lr", [(1.0, 3e-5), (1.0, 0.0), (16.0, 0.0), (0.5, 0.0)])
+    def test_supported_combinations_reach_optimizer(self, ratio, initial_lr):
+        self._setup(lambda cfg: get_lora_plus_config_overrides(cfg, ratio), initial_lr=initial_lr)
+
+    @pytest.mark.parametrize("bound", ["max_lr", "min_lr"])
+    @pytest.mark.parametrize("omitted_group", ["in", "out"])
+    def test_equal_effective_bounds_with_partial_overrides(self, bound, omitted_group):
+        overrides = {
+            ParamKey(name="*.linear_in.weight"): ParamGroupOverride(max_lr=3e-4, min_lr=3e-5),
+            ParamKey(name="*.linear_out.weight"): ParamGroupOverride(max_lr=3e-4, min_lr=3e-5),
+        }
+        del overrides[ParamKey(name=f"*.linear_{omitted_group}.weight")][bound]
+        self._setup(lambda cfg: overrides, initial_lr=3e-5)
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            None,
+            {},
+            {ParamKey(name="*.other.weight"): ParamGroupOverride(max_lr=0.1)},
+            {ParamKey(name="*.linear_out.weight"): ParamGroupOverride(max_lr=0.1)},
+            {
+                ParamKey(name="*.linear_in.weight", attr="custom"): ParamGroupOverride(max_lr=0.01),
+                ParamKey(name="*.linear_out.weight", attr="custom"): ParamGroupOverride(max_lr=0.1),
+            },
+        ],
+    )
+    def test_unrelated_overrides_are_not_rejected(self, overrides):
+        self._setup(lambda cfg: overrides, initial_lr=3e-5)
+
+    def test_distinct_minimum_rates_are_rejected(self):
+        overrides = {
+            ParamKey(name="*.linear_in.weight"): ParamGroupOverride(max_lr=3e-4, min_lr=3e-5),
+            ParamKey(name="*.linear_out.weight"): ParamGroupOverride(max_lr=3e-4, min_lr=1e-5),
+        }
+        with pytest.raises(ValueError, match=r"LoRA\+.*lr_warmup_init=0"):
+            self._setup(lambda cfg: overrides, initial_lr=3e-5)
