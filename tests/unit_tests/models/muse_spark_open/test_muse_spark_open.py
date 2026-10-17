@@ -86,7 +86,6 @@ def hf_config():
         sliding_window=16,
         num_local_experts=4,
         num_experts_per_tok=2,
-        num_shared_experts=0,
         moe_hidden_size=16,
         moe_intermediate_size=32,
         hidden_act="silu",

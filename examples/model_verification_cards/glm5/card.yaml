@@ -161,33 +161,30 @@ items:
         logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/sft-gb200-glm-remaining-20261007-175000/launch-config.yaml
         dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5/hybrid/hf-4e6698ba8e85059d749020e3c4d2123719f23926
         dataset.hf_output_root=work/data/glm5/sft-glm-remaining-20261007-175000
-      last_verified: 2026-10-07
-      expected_result: Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS
-        8/1 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape
-        causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients
-        were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup
-        configuration. Strictly reloaded the step-100 checkpoint with raise_all and completed a further training
-        step. Metrics cover the original 100 steps only.
+      last_verified: 2026-10-15
+      expected_result: 'Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1,
+        TP1/PP6/EP32 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing, warm-started from the pinned
+        Hugging Face checkpoint. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations, and
+        the step-100 checkpoint and post-setup configuration were saved.'
       metrics:
-        initial_loss: 1.456939
-        final_loss: 0.3063886
-        last_10_steps_step_time_ms_avg: 6468.4
-        last_10_steps_model_tflops_per_gpu_avg: 14.18
-        last_10_steps_tokens_per_second_per_gpu_avg: 52.769361
+        initial_loss: 1.473073
+        final_loss: 0.6933057
+        last_10_steps_step_time_ms_avg: 6157.27
+        last_10_steps_model_tflops_per_gpu_avg: 14.74
+        last_10_steps_tokens_per_second_per_gpu_avg: 55.435824
       enabled_features:
         sequence_packing: offline
-      bridge_commit: 49c103c714f3d62d7609f27a46e42dc14e95afa6  # pragma: allowlist secret
+      bridge_commit: e2f2496cbb89e3c881fd54b1568d2689d91df764  # pragma: allowlist secret
   sft_export_inference:
     GB200:
       status: verified
       precision: bf16
       depends_on: sft
-      last_verified: 2026-10-07
-      expected_result: 'Exported the verified corrected packed-CP SFT step-100 checkpoint to BF16 Hugging Face format
-        on 48 GB200 GPUs, including all 59870 tensors and the 791 MTP tensors. All 16 native Transformers TP ranks
-        strictly reloaded the export on 16 GB200 GPUs without CPU or disk offload. Greedy inference generated 16
-        tokens with a maximum of 16; completion: "Deterministic tests are important because they provide consistent
-        and reliable results, allowing for easier"'
+      last_verified: 2026-10-15
+      expected_result: 'Exported the GLM-5 SFT step-100 checkpoint to BF16 Hugging Face format on 48 GB200 GPUs, including all 59870
+        tensors and the 791 MTP tensors. All 16 native Transformers TP ranks strictly reloaded the export on 16 GB200
+        GPUs. Greedy inference generated 16 tokens with a maximum of 16; completion: "Deterministic tests matter
+        because they provide consistent and reliable results, allowing for easier identification"'
       commands:
       - ./scripts/conversion/convert.sh export --executor slurm --nodes 12 --gpus-per-node 4 --device gpu --hf-model
         zai-org/GLM-5 --megatron-path work/model-verification/glm5/hybrid/sft-gb200-glm-remaining-20261007-175000/checkpoints/iter_0000100
@@ -197,7 +194,7 @@ items:
       - ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4 --task hf-inference --hf-model work/model-verification/glm5/hybrid/sft-hf-export-glm-remaining-20261007-175000
         --prompt 'Write one concise sentence explaining why deterministic tests matter:' --chat-template --disable-thinking
         --max-new-tokens 16 --dtype bfloat16 --tp-plan auto --require-gpu-only
-      bridge_commit: 49c103c714f3d62d7609f27a46e42dc14e95afa6  # pragma: allowlist secret
+      bridge_commit: e2f2496cbb89e3c881fd54b1568d2689d91df764  # pragma: allowlist secret
   sft_long_context:
     GB200:
       status: verified
@@ -234,22 +231,20 @@ items:
         logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/peft-fixedwidth-gb200-glm-remaining-20261007-175000/launch-config.yaml
         dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5/hybrid/hf-4e6698ba8e85059d749020e3c4d2123719f23926
         dataset.hf_output_root=work/data/glm5/peft-fixedwidth-glm-remaining-20261007-175000
-      last_verified: 2026-10-07
-      expected_result: Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000],
-        2K offline packing, GBS/MBS 32/1, MTP1 and natural routing. All LM/MTP losses and gradients were finite
-        with zero skipped or NaN iterations. Saved adapter, optimizer, scheduler and RNG state, strictly reloaded
-        the step-100 adapters with raise_all, and completed step 101 at zero LR. All 790 saved adapter tensors matched
-        the reloaded checkpoint exactly; only the five configured MLA projection targets were adapted. Metrics cover
-        training steps 1-100 only.
+      last_verified: 2026-10-15
+      expected_result: 'Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing,
+        GBS/MBS 32/1, TP1/PP6/EP32, MTP1, all-to-all expert dispatch and natural routing, warm-started from the pinned
+        Hugging Face checkpoint. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations, and
+        the step-100 adapter checkpoint with optimizer and RNG state was saved.'
       metrics:
-        initial_loss: 1.544981
-        final_loss: 0.941183
-        last_10_steps_step_time_ms_avg: 7883.89
-        last_10_steps_model_tflops_per_gpu_avg: 11.71
-        last_10_steps_tokens_per_second_per_gpu_avg: 43.29504
+        initial_loss: 1.545165
+        final_loss: 0.9403105
+        last_10_steps_step_time_ms_avg: 5760.54
+        last_10_steps_model_tflops_per_gpu_avg: 15.72
+        last_10_steps_tokens_per_second_per_gpu_avg: 59.253704
       enabled_features:
         sequence_packing: offline
-      bridge_commit: a860b62ff21c9bdceb7f285d97d41acc790fe4d8  # pragma: allowlist secret
+      bridge_commit: e2f2496cbb89e3c881fd54b1568d2689d91df764  # pragma: allowlist secret
   checkpoint_resume:
     GB200:
       status: verified

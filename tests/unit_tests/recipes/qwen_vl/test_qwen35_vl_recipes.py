@@ -22,6 +22,7 @@
 
 import importlib
 import inspect
+from dataclasses import fields
 from types import SimpleNamespace
 from typing import Callable
 
@@ -798,19 +799,24 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         _assert_basic_config(cfg)
         assert cfg.model.seq_length == 131072
         assert cfg.model.bias_activation_fusion is True
-        assert cfg.model.tensor_model_parallel_size == 2
+        assert cfg.model.tensor_model_parallel_size == 1
         assert cfg.model.pipeline_model_parallel_size == 1
         assert cfg.model.pipeline_dtype is None
         assert cfg.model.virtual_pipeline_model_parallel_size is None
         assert cfg.model.context_parallel_size == 8
-        assert cfg.model.expert_model_parallel_size == 16
+        assert cfg.model.expert_model_parallel_size == 8
         assert cfg.model.expert_tensor_parallel_size == 1
-        assert cfg.model.sequence_parallel is True
+        assert cfg.model.sequence_parallel is False
         assert cfg.model.moe_token_dispatcher_type == "flex"
         assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 32
         assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
-        assert cfg.model.gdn_pre_gated_delta_rule_fusion is False
+        assert cfg.model.gdn_kernel_backend == "transformer_engine"
+        assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
+        assert cfg.model.gdn_gated_output_norm_fusion is False
+        assert cfg.model.apply_rope_fusion is False
+        assert cfg.model.cuda_graph_impl == "none"
+        assert cfg.model.moe_router_force_load_balancing is False
         assert cfg.model.cross_entropy_fusion_impl == "te"
         assert cfg.model.recompute_granularity == "selective"
         assert cfg.model.recompute_modules == ["gdn_norm_out", "moe"]
@@ -831,9 +837,10 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert isinstance(cfg.dataset, EnergonDatasetConfig)
         assert cfg.dataset.path is None  # Caller supplies prepared CLEVR2 shards.
         assert cfg.dataset.micro_batch_size == 1
-        assert cfg.dataset.num_workers == 1
-        assert cfg.dataset.shuffle_buffer_size == 2
-        assert cfg.dataset.packing_buffer_size == 8
+        assert cfg.dataset.num_workers == 2
+        assert cfg.dataset.num_val_workers == 1
+        assert cfg.dataset.shuffle_buffer_size == 16
+        assert cfg.dataset.packing_buffer_size == 16
         assert cfg.dataset.dataset_kwargs == {"image_decode_spec": "pilrgb"}
         encoder = cfg.dataset.task_encoder
         assert isinstance(encoder, QwenVLEnergonTaskEncoderConfig)
@@ -845,13 +852,39 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert encoder.max_visual_tokens == 2048
         assert cfg.mixed_precision.grad_reduce_in_fp32 is True
         assert cfg.ddp.grad_reduce_in_fp32 is True
+        assert cfg.ddp.overlap_grad_reduce is False
+        assert cfg.ddp.overlap_param_gather is False
+        assert cfg.optimizer.overlap_param_gather is False
+        assert cfg.comm_overlap.overlap_grad_reduce is False
+        assert cfg.comm_overlap.overlap_param_gather is False
+        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
         assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
-        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
+        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
 
     assert bf16_cfg.mixed_precision.fp8 is None
+    assert bf16_cfg.mixed_precision.fp8_param_gather is False
+    assert bf16_cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
+    assert bf16_cfg.checkpoint.load_main_params_from_ckpt is False
+    assert bf16_cfg.model.moe_single_grouped_weight is False
     assert fp8mx_cfg.mixed_precision.fp8_recipe == "mxfp8"
-    assert fp8mx_cfg.mixed_precision.fp8_param_gather is False
-    assert fp8mx_cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
+    assert fp8mx_cfg.mixed_precision.fp8_param_gather is True
+    assert fp8mx_cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
+    assert fp8mx_cfg.checkpoint.load_main_params_from_ckpt is True
+    assert fp8mx_cfg.checkpoint.load_optim is False
+    assert fp8mx_cfg.checkpoint.load_rng is False
+
+    assert bf16_cfg.model.use_transformer_engine_op_fuser is False
+    assert bf16_cfg.model.moe_use_grouped_tensor is False
+    assert bf16_cfg.model.moe_mlp_glu_interleave_size is None
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in bf16_cfg.env_vars
+    assert fp8mx_cfg.model.use_transformer_engine_op_fuser is True
+    assert fp8mx_cfg.model.moe_use_grouped_tensor is True
+    assert fp8mx_cfg.model.moe_mlp_glu_interleave_size == 32
+    assert fp8mx_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert fp8mx_cfg.env_vars["CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL"] == 1
+    assert fp8mx_cfg.model.moe_single_grouped_weight is True
+    assert fp8mx_cfg.model.moe_single_grouped_bias is False
+    assert fp8mx_cfg.env_vars["NVTE_GROUPED_LINEAR_SINGLE_PARAM"] == 1
 
 
 def test_qwen35_vl_35b_a3b_fsdp_sft_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -1679,9 +1712,32 @@ def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_fun
     config.dataset.path = "prepared-clevr2-energon"
     config.dataset.validate()
     config.validate()
+    config.comm_overlap.finalize()
+    config.comm_overlap.setup(config.model, config.optimizer, config.ddp)
     assert config.dataset.pad_to_max_length is True  # Derived for HybridEP.
+    assert {
+        "gdn_kernel_backend",
+        "gdn_pre_gated_delta_rule_fusion",
+        "gdn_gated_output_norm_fusion",
+    } <= {field.name for field in fields(config.model)}
+    assert config.model.gdn_kernel_backend == "transformer_engine"
+    assert config.ddp.overlap_grad_reduce is False
+    assert config.ddp.overlap_param_gather is False
+    assert config.optimizer.overlap_param_gather is False
+    assert config.optimizer.overlap_param_gather_with_optimizer_step is False
+    assert config.comm_overlap.overlap_grad_reduce is False
+    assert config.comm_overlap.overlap_param_gather is False
+    assert config.comm_overlap.overlap_param_gather_with_optimizer_step is False
+    assert config.model.overlap_moe_expert_parallel_comm is False
+    assert config.model.delay_wgrad_compute is False
 
-    assert config.train.global_batch_size % (2 * config.train.micro_batch_size) == 0
+    data_parallel_size = 32 // (
+        config.model.tensor_model_parallel_size
+        * config.model.pipeline_model_parallel_size
+        * config.model.context_parallel_size
+    )
+    assert data_parallel_size == 4
+    assert config.train.global_batch_size % (data_parallel_size * config.train.micro_batch_size) == 0
     config.dataset.enable_in_batch_packing = True
     with pytest.raises(ValueError, match="mutually exclusive"):
         config.dataset.validate()

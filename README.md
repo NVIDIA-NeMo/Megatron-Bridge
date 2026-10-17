@@ -11,11 +11,16 @@
 </div>
 
 ## 📣 News
-- [10/15/2026] [**Muse-Spark-Open-816B-A42B**](examples/models/muse_spark_open/README.md) is now supported! Megatron Bridge adds checkpoint conversion, inference, and GB200 training recipes for the 816B-total / 42B-active vision-and-audio-language MoE model: pretraining, full SFT, long-context SFT at 32K and 64K with context parallelism, LoRA, and image-text SFT and LoRA, with HybridEP MoE dispatch. See the [examples README](examples/models/muse_spark_open/README.md) and the [verification card](examples/model_verification_cards/muse-spark-open-816b-a42b/card.yaml) for details.
+
+- [10/16/2026] [**Reflection AI Beam-1.0-501B-A23B**](https://huggingface.co/reflection/Beam-1.0-501B-A23B) is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, inference, and BF16 H200 recipes for pretraining, SFT, long-context SFT, and LoRA PEFT. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/beam/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/beam/card.yaml) for verified configurations and current limitations.
+
+- [10/15/2026] [**NVIDIA Nemotron 3.5 Super VL**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120b-a12b-base-BF16) is released! Megatron Bridge supports the 120B-A12B vision-language model with HF↔Megatron checkpoint conversion, image inference, and pretraining, SFT, and LoRA recipes, plus text-only conversion and training workflows. See the [model documentation](docs/models/nemotron/nemotron3.5-super-vl.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b/card.yaml) for supported workflows, verified configurations, and current limitations.
+
+- [10/15/2026] [**Muse-Spark-Open-816B-A42B**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/muse_spark_open/README.md) is now supported! Megatron Bridge adds checkpoint conversion, inference, and GB200 training recipes for the 816B-total / 42B-active vision-and-audio-language MoE model: pretraining, full SFT, long-context SFT at 32K and 64K with context parallelism, LoRA, and image-text SFT and LoRA, with HybridEP MoE dispatch. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/muse_spark_open/README.md) and the [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/muse-spark-open-816b-a42b/card.yaml) for details.
 
 - [08/19/2026] **Megatron Bridge 0.6.0 released!** Highlights include GLM-5.2 with cuDNN fused DSA for 128K THD-packed context-parallel training, new LLM/VLM/diffusion models, more reliable VLM data and sequence packing, improved checkpoint and LoRA workflows, unified training and conversion launchers, and refreshed performance recipes. Huge thanks to our community contributors! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.6.0).
 
-- [08/11/2026] **NVIDIA Nemotron 3.5 Lightning is released!** Read the technical blog [here](https://developer.nvidia.com/blog/nvidia-nemotron-3-5-lightning-delivers-fast-accurate-specialized-task-execution-for-long-running-agents/). See the [Nemotron 3.5 Lightning README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_5_lightning/README.md) for details.
+- [08/11/2026] [**NVIDIA Nemotron 3.5 Lightning**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16) is released! Read the technical blog [here](https://developer.nvidia.com/blog/nvidia-nemotron-3-5-lightning-delivers-fast-accurate-specialized-task-execution-for-long-running-agents/). See the [Nemotron 3.5 Lightning README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_5_lightning/README.md) for details.
 
 - [07/31/2026] **[K-EXAONE-2](https://huggingface.co/LGAI-EXAONE/K-EXAONE-2.0-750B-A37B) is now supported**! Day-0 support for LG AI Research's K-EXAONE-2 (750B-A37B MoE) is now available on the [k-exaone-2 branch](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/k-exaone-2). Users can convert checkpoints, run inference, fine-tune with SFT or PEFT (LoRA), and use the NVFP4 inference-optimized checkpoint released alongside the model. See the branch documentation for setup instructions and examples.
 
@@ -227,6 +232,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 |----------------|--------------------|
 | [**BAGEL**](docs/models/bagel/bagel.md) | BAGEL-7B-MoT (requires the tested MCore `dev` revision and `bagel` extra) |
 | [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
+| [**Beam**](docs/models/beam/beam.md) | Beam-1.0-501B-A23B |
 | [**BERT**](docs/models/bert/index.md) | Megatron-Style BERT (`MegatronBertForMaskedLM`) |
 | [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V3, DeepSeek V4 / V4 Flash |
 | [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |

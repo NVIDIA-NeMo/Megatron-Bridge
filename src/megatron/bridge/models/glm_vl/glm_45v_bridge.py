@@ -25,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.conversion.transformers_compat import partial_rotary_factor_from_hf, rope_theta_from_hf
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -51,7 +51,7 @@ class GLM45VBridge(MegatronModelBridge):
             kv_channels=text_config.head_dim,
             hidden_size=text_config.hidden_size,
             rotary_base=rope_theta_from_hf(text_config),
-            rotary_percent=text_config.partial_rotary_factor,
+            rotary_percent=partial_rotary_factor_from_hf(text_config),
             init_method_std=text_config.initializer_range,
             ffn_hidden_size=text_config.intermediate_size,
             seq_length=text_config.max_position_embeddings,

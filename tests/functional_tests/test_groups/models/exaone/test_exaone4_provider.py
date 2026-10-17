@@ -52,9 +52,6 @@ def make_expected_exaone4_1p2b_provider():
         rope_scaling=True,
         rope_scaling_factor=16.0,
     )
-    provider.rope_scaling_low_freq_factor = 1.0
-    provider.rope_scaling_high_freq_factor = 4.0
-    provider.rope_scaling_original_max_position_embeddings = 8192
     return provider
 
 

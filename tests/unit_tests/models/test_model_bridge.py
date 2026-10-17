@@ -38,6 +38,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import partial_rotary_factor_from_hf
 
 
 class DummyBridge(MegatronModelBridge):
@@ -484,11 +485,15 @@ def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     assert [task.global_param_name for task in export_tasks] == [first_name, last_name]
 
 
-def _setup_tied_output_bridge(monkeypatch, *, share_embeddings_and_output_weights, global_param_names=None):
+def _setup_tied_output_bridge(
+    monkeypatch, *, share_embeddings_and_output_weights, global_param_names=None, flag_on_model=False
+):
     """Build a minimal single-rank bridge whose model has both an output weight and bias.
 
     Returns ``(bridge, model, hf_pretrained)`` with every distributed/Megatron helper
     stubbed out so the task-construction paths can be exercised without a process group.
+    With ``flag_on_model``, the tie flag lives on the model instead of ``model.config``,
+    as for builder-backed models whose ``config`` is the nested ``TransformerConfig``.
     """
 
     class TiedOutputBridge(DummyBridge):
@@ -503,10 +508,11 @@ def _setup_tied_output_bridge(monkeypatch, *, share_embeddings_and_output_weight
             super().__init__()
             self.source = SimpleNamespace(get_all_keys=lambda: {"lm_head.weight", "lm_head.bias"})
 
+    tie_flag = {"share_embeddings_and_output_weights": share_embeddings_and_output_weights}
     model_config = SimpleNamespace(
         num_moe_experts=0,
         pipeline_model_parallel_size=1,
-        share_embeddings_and_output_weights=share_embeddings_and_output_weights,
+        **({} if flag_on_model else tie_flag),
     )
     parameters = {
         "output_layer.weight": torch.ones(2, 2),
@@ -515,6 +521,7 @@ def _setup_tied_output_bridge(monkeypatch, *, share_embeddings_and_output_weight
     model = SimpleNamespace(
         config=model_config,
         named_parameters=lambda: iter(parameters.items()),
+        **(tie_flag if flag_on_model else {}),
     )
     hf_pretrained = SimpleNamespace(config=SimpleNamespace(), state=State())
     bridge = TiedOutputBridge()
@@ -551,6 +558,47 @@ def test_build_conversion_tasks_keeps_output_bias_when_embeddings_are_tied(monke
     assert len(tasks) == 1
     assert tasks[0] is not None
     assert tasks[0].global_param_name == "output_layer.bias"
+
+
+@pytest.mark.parametrize("share_embeddings_and_output_weights", [True, False])
+def test_build_conversion_tasks_reads_tie_flag_from_builder_model(monkeypatch, share_embeddings_and_output_weights):
+    """A builder-backed model's config lacks the tie flag; the flag on the built model decides."""
+    bridge, model, hf_pretrained = _setup_tied_output_bridge(
+        monkeypatch,
+        share_embeddings_and_output_weights=share_embeddings_and_output_weights,
+        flag_on_model=True,
+    )
+
+    tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
+
+    expected = ["output_layer.weight", "output_layer.bias"]
+    if share_embeddings_and_output_weights:
+        expected = ["output_layer.bias"]
+    assert [task.global_param_name for task in tasks] == expected
+
+
+@pytest.mark.parametrize(
+    ("config", "model_flag", "language_model_flag", "expected"),
+    [
+        # Provider-built models: the config flag wins, even over a wrapper attribute.
+        (SimpleNamespace(share_embeddings_and_output_weights=True), False, None, True),
+        (SimpleNamespace(share_embeddings_and_output_weights=False), True, None, False),
+        # Builder-backed models: the nested TransformerConfig has no tie flag.
+        (SimpleNamespace(), True, None, True),
+        (SimpleNamespace(), False, None, False),
+        # A wrapper defers to the language model that owns the output layer.
+        (SimpleNamespace(), False, True, True),
+        (SimpleNamespace(), None, None, False),
+    ],
+)
+def test_share_embeddings_and_output_weights_resolution(config, model_flag, language_model_flag, expected):
+    model = SimpleNamespace(config=config)
+    if model_flag is not None:
+        model.share_embeddings_and_output_weights = model_flag
+    if language_model_flag is not None:
+        model.language_model = SimpleNamespace(share_embeddings_and_output_weights=language_model_flag)
+
+    assert DummyBridge()._share_embeddings_and_output_weights(model) is expected
 
 
 def test_build_conversion_tasks_keeps_output_weight_when_embeddings_are_untied(monkeypatch):
@@ -1744,3 +1792,28 @@ def test_non_yarn_mapping_adds_no_yarn_defaults():
 
     assert "position_embedding_type" not in kwargs
     assert not any(key.startswith("yarn_") for key in kwargs)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        SimpleNamespace(partial_rotary_factor=0.25, rope_parameters={"rope_theta": 10000.0}),
+        SimpleNamespace(rope_parameters={"rope_theta": 10000.0, "partial_rotary_factor": 0.25}),
+    ],
+)
+def test_partial_rotary_factor_from_hf_reads_attribute_or_rope_parameters(config):
+    assert partial_rotary_factor_from_hf(config) == 0.25
+
+
+def test_partial_rotary_factor_from_hf_raises_when_absent():
+    with pytest.raises(ValueError, match="partial_rotary_factor not found"):
+        partial_rotary_factor_from_hf(SimpleNamespace(rope_parameters={"rope_theta": 10000.0}))
+
+
+def test_mapping_reads_partial_rotary_factor_from_hf_config():
+    """Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters, not as an attribute."""
+    config = Qwen2Config(hidden_size=64, num_attention_heads=4, num_key_value_heads=2, partial_rotary_factor=0.5)
+
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
+
+    assert kwargs["rotary_percent"] == 0.5
