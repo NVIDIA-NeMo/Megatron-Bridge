@@ -2634,10 +2634,14 @@ class PackedPerExpertLinear(nn.Module):
         init_method: Optional[Callable] = None,
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
+        pg_collection: ProcessGroupCollection | None = None,
     ):
         super().__init__()
         if not hasattr(torch, "_grouped_mm"):
             raise RuntimeError("PackedPerExpertLinear requires torch._grouped_mm (torch >= 2.9).")
+        # Needed by ``sharded_state_dict`` to place this rank's expert shard on
+        # the EP axis. Discovered from the owning adapter's collection.
+        self.pg_collection = pg_collection
         self.num_local_experts = num_local_experts
         self.in_features = in_features
         self.out_features = out_features
@@ -2670,7 +2674,16 @@ class PackedPerExpertLinear(nn.Module):
         key = f"{prefix}weight"
         return {
             key: _make_grouped_expert_sharded_tensor(
-                self.weight.data, key, tp_axis=None, sharded_offsets=sharded_offsets
+                # The Parameter itself, NOT ``.data``: Megatron maps optimizer
+                # state to model shards by ``id(sharded_tensor.data)`` (see
+                # dist_checkpointing/optimizer.py: get_param_id_to_sharded_param_map).
+                # ``.data`` allocates a fresh Tensor object, so the identity
+                # never matches and the weight is silently dropped from the map.
+                self.weight,
+                key,
+                tp_axis=None,
+                sharded_offsets=sharded_offsets,
+                pg_collection=self.pg_collection,
             )
         }
 
@@ -2742,7 +2755,12 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
         model_parallel_config.perform_initialization = True
         self.config = model_parallel_config
 
-        self.pg_collection = _get_pg_collection(pg_collection, model_parallel_config, required_pgs=["ep"])
+        # ``sharded_state_dict`` of the per-expert side also needs expt_tp / expt_dp.
+        self.pg_collection = _get_pg_collection(
+            pg_collection,
+            model_parallel_config,
+            required_pgs=["tp", "ep", "expt_tp", "expt_dp"],
+        )
         self.ep_group = _get_process_group(self.pg_collection, "ep")
 
         # ``input_is_parallel`` selects fc1 (column-parallel base) vs fc2
@@ -2770,6 +2788,7 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
                 init_method=row_init,
                 device=params_device,
                 dtype=params_dtype,
+                pg_collection=self.pg_collection,
             )
         else:
             # Per-expert A (intermediate → rank); shared B (rank → hidden).
@@ -2780,6 +2799,7 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
                 init_method=column_init,
                 device=params_device,
                 dtype=params_dtype,
+                pg_collection=self.pg_collection,
             )
             self.linear_out = RowParallelLinear(
                 dim,
