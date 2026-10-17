@@ -615,31 +615,44 @@ class Qwen35Bridge(MegatronModelBridge):
             f"{megatron_prefix}mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
             f"{megatron_prefix}mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
             f"{megatron_prefix}mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
-            f"{megatron_prefix}mtp.layers.0.mtp_model_layer.mlp.linear_fc1.layer_norm_weight": "mtp.layers.0.post_attention_layernorm.weight",
-            f"{megatron_prefix}mtp.layers.0.mtp_model_layer.mlp.linear_fc2.weight": "mtp.layers.0.mlp.down_proj.weight",
-            f"{megatron_prefix}mtp.layers.0.mtp_model_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
-            f"{megatron_prefix}mtp.layers.0.mtp_model_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
-            f"{megatron_prefix}mtp.layers.0.mtp_model_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
-            f"{megatron_prefix}mtp.layers.0.mtp_model_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
         }
         for megatron_param, hf_param in mtp_param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
-        mapping_list.extend(
-            [
-                QKVMapping(
-                    megatron_param=f"{megatron_prefix}mtp.layers.*.mtp_model_layer.self_attention.linear_qkv.weight",
-                    q="mtp.layers.*.self_attn.q_proj.weight",
-                    k="mtp.layers.*.self_attn.k_proj.weight",
-                    v="mtp.layers.*.self_attn.v_proj.weight",
-                ),
-                GatedMLPMapping(
-                    megatron_param=f"{megatron_prefix}mtp.layers.0.mtp_model_layer.mlp.linear_fc1.weight",
-                    gate="mtp.layers.0.mlp.gate_proj.weight",
-                    up="mtp.layers.0.mlp.up_proj.weight",
-                ),
-            ]
-        )
+        # Megatron-Core has exposed the MTP transformer sub-layer as both
+        # ``mtp_model_layer`` and ``transformer_layer`` depending on version, so
+        # register every sub-layer mapping under both spellings, as the MoE bridge
+        # does. Missing one leaves the MTP tensors unmapped, and the HF shard that
+        # holds them (with lm_head.weight on Qwen3.x-27B) is never written.
+        for mtp_layer_attr in ("mtp_model_layer", "transformer_layer"):
+            layer0 = f"{megatron_prefix}mtp.layers.0.{mtp_layer_attr}"
+            layer = f"{megatron_prefix}mtp.layers.*.{mtp_layer_attr}"
+            sublayer_param_mappings = {
+                f"{layer0}.mlp.linear_fc1.layer_norm_weight": "mtp.layers.0.post_attention_layernorm.weight",
+                f"{layer0}.mlp.linear_fc2.weight": "mtp.layers.0.mlp.down_proj.weight",
+                f"{layer0}.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
+                f"{layer0}.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
+                f"{layer0}.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
+                f"{layer0}.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
+            }
+            for megatron_param, hf_param in sublayer_param_mappings.items():
+                mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+            mapping_list.extend(
+                [
+                    QKVMapping(
+                        megatron_param=f"{layer}.self_attention.linear_qkv.weight",
+                        q="mtp.layers.*.self_attn.q_proj.weight",
+                        k="mtp.layers.*.self_attn.k_proj.weight",
+                        v="mtp.layers.*.self_attn.v_proj.weight",
+                    ),
+                    GatedMLPMapping(
+                        megatron_param=f"{layer0}.mlp.linear_fc1.weight",
+                        gate="mtp.layers.0.mlp.gate_proj.weight",
+                        up="mtp.layers.0.mlp.up_proj.weight",
+                    ),
+                ]
+            )
 
         return mapping_list
 
