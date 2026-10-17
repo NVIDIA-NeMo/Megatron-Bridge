@@ -309,31 +309,35 @@ def test_muse_spark_pretrain_recipe_contract() -> None:
     _assert_hybridep(cfg, ep=32, pad_uneven=False)
 
 
-def test_muse_spark_long_context_sft_packs_32k_with_cp2() -> None:
+def test_muse_spark_long_context_sft_packs_32k_with_cp4() -> None:
     cfg = muse_spark_open_sft_192gpu_gb200_bf16_long_context_config()
 
     assert cfg.model.seq_length == 32768
     assert cfg.dataset.seq_length == 32768
-    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.context_parallel_size == 4
     # Transformer Engine rejects P2P context parallelism for sliding-window layers.
     assert cfg.model.cp_comm_type == "a2a"
     assert cfg.model.sequence_parallel is True
     assert cfg.dataset.enable_offline_packing is True
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 32768
-    # lcm(2 * CP, TP * CP) = lcm(4, 8)
-    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 8
-    assert cfg.dataset.offline_packing_specs.max_single_sequence_length == 32768 - 8
+    # lcm(2 * CP, TP * CP) = lcm(8, 16)
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 16
+    assert cfg.dataset.offline_packing_specs.max_single_sequence_length == 32768 - 16
+    # With context parallelism, fixed-width packs stalled in the first step, so the packs keep their natural widths.
+    assert not (cfg.dataset.dataset_kwargs or {}).get("pad_to_max_length", False)
     assert cfg.dataset.hf_dataset.split == "train[:10000]"
-    # TP4/PP6/CP2/EP32 with full activation recompute: six stages of 9, 11, 11, 11, 11, and 9 decoder blocks.
+    # TP4/PP6/CP4/EP32: six stages of 9, 11, 11, 11, 11, and 9 decoder blocks; backward recomputes only the MoE layers.
     assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.model.pipeline_model_parallel_size == 6
     assert _stage_blocks(cfg) == [9, 11, 11, 11, 11, 9]
-    assert cfg.model.expert_model_parallel_size == 32
-    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe"]
+    _assert_hybridep(cfg, ep=32, pad_uneven=True)
     data_parallel = 192 // (
         cfg.model.tensor_model_parallel_size * cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size
     )
-    assert data_parallel == 4
+    # Two replicas run four microbatches each per step.
+    assert data_parallel == 2
     assert cfg.train.global_batch_size == 8
     assert cfg.train.global_batch_size % data_parallel == 0
     assert cfg.train.train_iters == 20
@@ -473,7 +477,6 @@ _HYBRIDEP_RECIPES = [name for name in muse_spark_recipes.__all__ if name not in 
     "recipe_name",
     [
         "muse_spark_open_pretrain_256gpu_gb200_bf16_config",
-        "muse_spark_open_sft_192gpu_gb200_bf16_long_context_config",
         "muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config",
     ],
 )
@@ -497,7 +500,14 @@ def test_muse_spark_recipes_keep_each_hybridep_group_in_one_nvlink_domain(recipe
     assert cfg.model.recompute_granularity != "full"
 
 
-@pytest.mark.parametrize("recipe_name", [*_HYBRIDEP_RECIPES, "muse_spark_open_pretrain_192gpu_gb200_bf16_config"])
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        *_HYBRIDEP_RECIPES,
+        "muse_spark_open_pretrain_192gpu_gb200_bf16_config",
+        "muse_spark_open_sft_192gpu_gb200_bf16_long_context_config",
+    ],
+)
 def test_muse_spark_recipes_enable_megatron_core_fusions(recipe_name: str) -> None:
     cfg = getattr(muse_spark_recipes, recipe_name)()
 

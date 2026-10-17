@@ -18,9 +18,10 @@ The 4K and 8K SFT, LoRA, and image-text recipes shard the 256 routed experts wit
 one EP64 group is one pipeline stage's 64 contiguous ranks, which fill one NVL72 NVLink domain (16 nodes of 4 GPUs), so
 the 192-GPU EP64 recipes run three pipeline stages and the 256-GPU one four. Allocate nodes in 16-node segments, one
 per NVL72 rack. The 16-GPU image-text LoRA recipe keeps EP16 inside one NVLink domain. The pretraining and the 32K and
-64K SFT recipes keep EP32 with full activation recompute: pretraining runs TP1 with six pipeline stages and HybridEP on
+64K SFT recipes keep EP32: pretraining runs TP1 with six pipeline stages, HybridEP, and full activation recompute on
 192 GPUs, where that layout is faster than EP64 without recompute, and eight stages with the all-to-all dispatcher on
-256 GPUs; the long-context recipes run TP4/PP6 with context parallelism and the all-to-all dispatcher.
+256 GPUs; the 32K recipe runs TP4/PP6/CP4 with HybridEP and recomputes only the MoE layers, and the 64K recipe runs
+TP4/PP6/CP4 with the all-to-all dispatcher and full activation recompute.
 
 Each recipe is self-contained: it sets every model, data, and training option it relies on, even where that
 repeats another recipe.
@@ -440,9 +441,11 @@ def muse_spark_open_sft_256gpu_gb200_bf16_config() -> ConfigContainer:
 def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContainer:
     """Return a 20-step packed 32K Tulu 3 full SFT config with context parallelism on 192 GB200 GPUs.
 
-    TP4/PP6/CP2/EP32 with sequence parallelism leaves four data-parallel replicas.
-    Context parallelism uses A2A because Transformer Engine rejects P2P for the
-    sliding-window layers. Packing aligns each sequence to lcm(2*CP, TP*CP) = 8.
+    TP4/PP6/CP4/EP32 with sequence parallelism leaves two data-parallel replicas,
+    each running four microbatches per step, which keeps the six-stage pipeline
+    busier than CP2 with two microbatches. Context parallelism uses A2A because
+    Transformer Engine rejects P2P for the sliding-window layers. Packing aligns
+    each sequence to lcm(2*CP, TP*CP) = 16. Backward recomputes only the MoE layers.
     """
     cfg = _sft_common()
 
@@ -456,7 +459,7 @@ def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContain
     cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (9, 11, 11, 11, 11, 9))
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.context_parallel_size = 2
+    cfg.model.context_parallel_size = 4
     cfg.model.cp_comm_type = "a2a"
     cfg.model.sequence_parallel = True
     # Text-only data never exercises the perception towers.
@@ -468,11 +471,28 @@ def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContain
     cfg.model.attention_backend = "auto"
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
-    cfg.model.recompute_granularity = "full"
-    cfg.model.recompute_method = "uniform"
-    cfg.model.recompute_num_layers = 1
+    # The model config leaves these Megatron-Core fusions and pipeline-output deallocation off; they shorten the step
+    # without changing the loss.
+    cfg.model.bias_activation_fusion = True
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.model.apply_rope_fusion = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.deallocate_pipeline_outputs = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    # HybridEP: each EP32 group is one pipeline stage's 32 contiguous ranks (8 nodes) in one NVL72 domain.
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_permute_fusion_into_hybridep = True
+    cfg.model.moe_shared_expert_overlap = False
+    # Packed sequences give EP ranks different token counts; HybridEP needs equal ones, so pad to the group max. The
+    # packs keep their natural widths: with context parallelism, fixed-width packs stalled in the first step.
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
 
-    cfg.dataset = default_tulu3_config(seq_length=32768, enable_offline_packing=True, pad_seq_to_mult=8)
+    cfg.dataset = default_tulu3_config(seq_length=32768, enable_offline_packing=True, pad_seq_to_mult=16)
     cfg.dataset.hf_dataset.split = "train[:10000]"
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _TULU3_REVISION}
     cfg.dataset.hf_output_root = "work/data/muse-spark-open/tulu3-full-sft-gb200-32k"
@@ -482,7 +502,7 @@ def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContain
     cfg.dataset.seed = 1234
     cfg.dataset.do_validation = False
     cfg.dataset.do_test = False
-    cfg.dataset.offline_packing_specs.max_single_sequence_length = 32768 - 8
+    cfg.dataset.offline_packing_specs.max_single_sequence_length = 32768 - 16
 
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = True
@@ -514,6 +534,9 @@ def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContain
     cfg.checkpoint.save_rng = False
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
     }
     return cfg
 

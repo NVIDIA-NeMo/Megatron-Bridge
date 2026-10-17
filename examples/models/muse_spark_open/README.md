@@ -17,8 +17,9 @@ warm-start from the imported checkpoint. The verification card gives the import 
 training commands for the pretraining, SFT, long-context SFT, and LoRA recipes. The 4K and 8K SFT,
 LoRA, and image-text recipes shard the 256 routed experts with EP64 and dispatch them with HybridEP,
 one NVL72 NVLink domain (16 nodes) per pipeline stage, without full activation recompute. The
-pretraining and the 32K and 64K SFT recipes keep EP32 with full activation recompute; on 192 GPUs
-that pretraining layout is faster than EP64 without recompute.
+pretraining and the 32K and 64K SFT recipes keep EP32; on 192 GPUs that pretraining layout, with
+full activation recompute, is faster than EP64 without recompute. The 32K SFT recipe dispatches with
+HybridEP and recomputes only the MoE layers; the 64K recipe keeps full activation recompute.
 
 | Recipe | Workload | Nodes | Layout |
 | --- | --- | ---: | --- |
@@ -26,7 +27,7 @@ that pretraining layout is faster than EP64 without recompute.
 | `muse_spark_open_pretrain_256gpu_gb200_bf16_config` | Text pretraining, eight pipeline stages | 64 | TP1/PP8/EP32 |
 | `muse_spark_open_sft_192gpu_gb200_bf16_config` | Full SFT, one epoch of 100K Tulu 3 conversations packed to 4K, GBS 128 | 48 | TP4/PP3/EP64 |
 | `muse_spark_open_sft_256gpu_gb200_bf16_config` | Full SFT on 10K Tulu 3 conversations packed to 8K, GBS 8 (the cross-model card contract) | 64 | TP4/PP4/CP2/EP64 |
-| `muse_spark_open_sft_192gpu_gb200_bf16_long_context_config` | Full SFT on packed 32K Tulu 3, GBS 8 | 48 | TP4/PP6/CP2/EP32 |
+| `muse_spark_open_sft_192gpu_gb200_bf16_long_context_config` | Full SFT on packed 32K Tulu 3, GBS 8 | 48 | TP4/PP6/CP4/EP32 |
 | `muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config` | Full SFT on packed 64K CoderForge agent trajectories, GBS 8 | 48 | TP4/PP6/CP4/EP32 |
 | `muse_spark_open_peft_64gpu_gb200_bf16_config` | LoRA on attention, every routed expert, and the latent MoE projections; one epoch of 100K Tulu 3 conversations packed to 4K, GBS 128 | 16 | TP4/PP1/EP64 |
 | `muse_spark_open_sft_192gpu_gb200_bf16_multimodal_config` | Full SFT on image-text CORD-v2, GBS 64 | 48 | TP4/PP3/EP64 |
@@ -37,10 +38,10 @@ tower. The recipes are short verification runs whose learning-rate decay ends at
 raise `scheduler.lr_decay_iters` together with the step count to train longer.
 
 HybridEP needs each expert-parallel group inside one NVL72 NVLink domain: every EP64 group is one
-pipeline stage's 64 contiguous ranks (16 nodes), the 192-GPU pretraining recipe's EP32 groups are
-one stage's 32 ranks (8 nodes), and the 4-node image-text LoRA recipe keeps EP16. The 256-GPU
-pretraining recipe and the 32K and 64K SFT recipes use the all-to-all dispatcher. On block-topology
-Slurm clusters, allocate the nodes in 16-node segments. Setting
+pipeline stage's 64 contiguous ranks (16 nodes), the EP32 groups of the 192-GPU pretraining and 32K
+SFT recipes are one stage's 32 ranks (8 nodes), and the 4-node image-text LoRA recipe keeps EP16.
+The 256-GPU pretraining recipe and the 64K SFT recipe use the all-to-all dispatcher. On
+block-topology Slurm clusters, allocate the nodes in 16-node segments. Setting
 `model.transformer.moe_token_dispatcher_type` to `alltoall` switches back to the all-to-all
 dispatcher.
 
