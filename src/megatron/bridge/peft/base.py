@@ -15,7 +15,7 @@
 import logging
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Optional, TypeVar, Union
 
 import torch
@@ -55,6 +55,18 @@ class PEFT(ABC):
 
     # Runtime state that should not be serialized in checkpoints
     params_to_save: set[str] = field(default_factory=set, init=False, repr=False)
+
+    def to_cfg_dict(self) -> dict[str, object]:
+        """Serialize constructor settings without transient adapter checkpoint state."""
+        from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+
+        config: dict[str, object] = {"_target_": f"{type(self).__module__}.{type(self).__qualname__}"}
+        for config_field in fields(self):
+            if config_field.init and not config_field.name.startswith("_"):
+                config[config_field.name] = _ConfigContainerBase._convert_value_to_dict(
+                    getattr(self, config_field.name)
+                )
+        return config
 
     @abstractmethod
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:

@@ -4235,6 +4235,43 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize("adapter_kind", ["lora", "dora", "vlm_lora"])
+    @pytest.mark.parametrize("runtime_params", [set(), {"decoder.layers.0.linear_qkv.adapter.linear_in.weight"}])
+    def test_peft_constructor_settings_round_trip_through_yaml(self, tmp_path, adapter_kind, runtime_params):
+        """Saved PEFT recipe configs reload without transient checkpoint-selection state."""
+        from megatron.bridge.peft.dora import DoRA
+        from megatron.bridge.peft.lora import LoRA, VLMLoRA
+
+        adapter_type = {"lora": LoRA, "dora": DoRA, "vlm_lora": VLMLoRA}[adapter_kind]
+        peft = adapter_type(dim=8, alpha=16, dropout=0.1, target_modules=["linear_qkv", "linear_proj"])
+        if adapter_kind == "vlm_lora":
+            peft.freeze_vision_model = False
+            peft.freeze_vision_projection = False
+        peft.params_to_save = runtime_params.copy()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=create_test_gpt_config()
+        )
+        full_cfg.peft = peft
+        config_path = tmp_path / "peft_recipe.yaml"
+        try:
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+            restored = restored_cfg.peft
+            assert type(restored) is adapter_type
+            assert restored.dim == 8 and restored.alpha == 16 and restored.dropout == 0.1
+            assert restored.target_modules == ["linear_qkv", "linear_proj"]
+            if adapter_kind == "vlm_lora":
+                assert restored.freeze_vision_model is False
+                assert restored.freeze_vision_projection is False
+                assert restored.freeze_language_model is True
+            assert restored.params_to_save == set()
+            assert peft.params_to_save == runtime_params
+            assert "params_to_save" not in config_path.read_text()
+            restored_cfg.to_yaml(str(config_path))
+            assert ConfigContainer.from_yaml(str(config_path)).peft.target_modules == peft.target_modules
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_hf_model_revision_round_trip_through_yaml(self, tmp_path):
         """Immutable Hugging Face model provenance should survive runtime config persistence."""
         revision = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
