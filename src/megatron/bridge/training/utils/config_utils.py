@@ -25,7 +25,10 @@ from megatron.training.config.utils import (
     _resolve_target_class,  # noqa: F401
 )
 from megatron.training.config.utils import (
-    sanitize_dataclass_config as _sanitize_dataclass_config,
+    sanitize_dataclass_config as _sanitize_dataclass_config,  # noqa: F401
+)
+from megatron.training.utils.checkpoint_utils import (
+    apply_run_config_backward_compat as _mcore_apply_run_config_backward_compat,
 )
 from transformers import PreTrainedConfig
 
@@ -204,18 +207,15 @@ def create_ddp_config(
 
 
 def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, Any]:
-    """Apply backward compatibility transformations to run config.
+    """Apply backward compatibility fixes to a run config dictionary.
 
-    This function handles dataclass config fields that should not be passed to
-    the constructor when loading older checkpoints. It automatically detects
-    init=False fields by inspecting the target class.
-
-    The entire config is sanitized recursively to handle init=False fields in any part of the configuration hierarchy.
+    Materializes GTP weight shard counts from runtime remat sizes before delegating
+    to the MCore implementation, which drops init=False fields.
 
     Args:
-        config_dict: The full run configuration dictionary.
+        config_dict: The run config dictionary loaded from a checkpoint.
 
     Returns:
         The config dictionary with backward compatibility fixes applied.
     """
-    return _sanitize_dataclass_config(_materialize_gtp_weight_shards(config_dict))
+    return _mcore_apply_run_config_backward_compat(_materialize_gtp_weight_shards(config_dict))

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 import posixpath
 import sys
@@ -23,6 +22,12 @@ from typing import Any, Optional
 import torch
 import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.training.utils.checkpoint_utils import (
+    CONFIG_FILE,
+    _sanitize_run_config_object,
+    get_checkpoint_run_config_filename,
+    join_paths,
+)
 
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
@@ -34,13 +39,16 @@ from megatron.bridge.utils.instantiate_utils import (
 )
 
 
+__all__ = [
+    "CONFIG_FILE",
+    "get_checkpoint_run_config_filename",
+    "join_paths",
+    "read_run_config",
+]
+
+
 TRAIN_STATE_FILE = "train_state.pt"
 TRACKER_PREFIX = "latest"
-CONFIG_FILE = "run_config.yaml"
-
-logger = logging.getLogger(__name__)
-_RUNTIME_ONLY_TARGETS = frozenset({"megatron.core.timers.Timers"})
-_RECIPE_CONFIG_TARGET = "megatron.core.quantization.quant_config.RecipeConfig"
 
 
 def file_exists(path: str) -> bool:
@@ -57,24 +65,6 @@ def file_exists(path: str) -> bool:
         return msc.os.path.exists(path)
     else:
         return os.path.exists(path)
-
-
-def join_paths(*paths: str) -> str:
-    """Join paths, using MultiStorageClient when needed"""
-    if not paths:
-        raise ValueError("Empty paths")
-
-    if MultiStorageClientFeature.is_enabled():
-        msc = MultiStorageClientFeature.import_package()
-        path_cls = msc.Path
-    else:
-        path_cls = Path
-
-    path = path_cls(paths[0])
-    for part in paths[1:]:
-        path = path / part
-
-    return str(path)
 
 
 def ensure_directory_exists(filename: str, check_parent: bool = True) -> None:
@@ -131,18 +121,6 @@ def get_checkpoint_train_state_filename(checkpoints_path: str, prefix: Optional[
         return join_paths(checkpoints_path, TRAIN_STATE_FILE)
     else:
         return join_paths(checkpoints_path, f"{prefix}_{TRAIN_STATE_FILE}")
-
-
-def get_checkpoint_run_config_filename(checkpoints_path: str) -> str:
-    """Get the filename for the run configuration file within a checkpoint directory.
-
-    Args:
-        checkpoints_path: Base directory where checkpoints are stored.
-
-    Returns:
-        The full path to the run configuration file (e.g., run_config.yaml).
-    """
-    return join_paths(checkpoints_path, CONFIG_FILE)
 
 
 def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
@@ -417,11 +395,22 @@ def _prepare_run_config(config_dict: Any) -> dict[str, Any]:
     return apply_run_config_backward_compat(config_dict)
 
 
-@lru_cache()
+def _load_run_config_yaml(run_config_filename: str) -> Any:
+    """Parse a run config YAML file, using MultiStorageClient when enabled."""
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        with msc.open(run_config_filename, "r") as f:
+            return yaml.safe_load(f)
+    with open(run_config_filename, "r") as f:
+        return yaml.safe_load(f)
+
+
 def read_run_config(run_config_filename: str) -> dict[str, Any]:
     """Read the run configuration from a YAML file (rank 0 only).
 
-    Reads the file on rank 0 and broadcasts the result to other ranks.
+    Reads the file on rank 0 and broadcasts the result to other ranks. Unlike the
+    Megatron-LM reader, this validates targets and applies Bridge-specific
+    compatibility fixes (e.g. GTP weight shards).
 
     Args:
         run_config_filename: Path to the run config YAML file.
@@ -437,14 +426,7 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
 
         if get_rank_safe() == 0:
             try:
-                if MultiStorageClientFeature.is_enabled():
-                    msc = MultiStorageClientFeature.import_package()
-                    with msc.open(run_config_filename, "r") as f:
-                        config_dict = yaml.safe_load(f)
-                else:
-                    with open(run_config_filename, "r") as f:
-                        config_dict = yaml.safe_load(f)
-                config_obj[0] = _prepare_run_config(config_dict)
+                config_obj[0] = _prepare_run_config(_load_run_config_yaml(run_config_filename))
             except Exception as e:
                 error_msg = f"ERROR: Unable to load config file {run_config_filename}: {e}"
                 sys.stderr.write(error_msg + "\n")
@@ -457,19 +439,13 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
             raise RuntimeError(config_obj[0]["msg"])
 
         return config_obj[0]
-    else:
-        try:
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                with msc.open(run_config_filename, "r") as f:
-                    config_dict = yaml.safe_load(f)
-            else:
-                with open(run_config_filename, "r") as f:
-                    config_dict = yaml.safe_load(f)
-        except Exception as e:
-            raise RuntimeError(f"Unable to load config file {run_config_filename}: {e}") from e
 
-        return _prepare_run_config(config_dict)
+    try:
+        config_dict = _load_run_config_yaml(run_config_filename)
+    except Exception as e:
+        raise RuntimeError(f"Unable to load config file {run_config_filename}: {e}") from e
+
+    return _prepare_run_config(config_dict)
 
 
 @lru_cache()
@@ -521,34 +497,3 @@ def read_train_state(train_state_filename: str) -> TrainState:
         return ts
     except Exception as e:
         raise RuntimeError(f"Unable to load train state file {train_state_filename}: {e}") from e
-
-
-def _sanitize_run_config_object(obj: Any) -> Any:
-    """Remove runtime-only objects from run config dictionaries.
-
-    Timers and other runtime constructs are serialized with `_target_` entries
-    that cannot be recreated without additional context (e.g., constructor
-    arguments provided at runtime). These objects are not required when loading
-    a checkpoint configuration, so we replace them with ``None`` to avoid
-    instantiation errors when the config is processed later.
-    """
-
-    if isinstance(obj, dict):
-        target = obj.get("_target_")
-        if isinstance(target, str) and target in _RUNTIME_ONLY_TARGETS:
-            return None
-        if (
-            target == _RECIPE_CONFIG_TARGET
-            and obj.get("_call_", True) is True
-            and set(obj).issubset({"_target_", "_call_"})
-        ):
-            logger.warning(
-                "Ignoring a legacy quantization recipe whose state was not preserved in run_config.yaml. "
-                "The checkpoint can still be loaded, but the original per-module quantization settings "
-                "must be supplied separately if they are needed."
-            )
-            return None
-        return {key: _sanitize_run_config_object(value) for key, value in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_run_config_object(item) for item in obj]
-    return obj
