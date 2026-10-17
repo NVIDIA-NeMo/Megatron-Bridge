@@ -93,6 +93,7 @@ def _run_setup(
             optimizer="adam",
             overlap_param_gather_with_optimizer_step=False,
             use_layer_wise_distributed_optimizer=False,
+            use_layer_wise_param_layout=True,
         ),
         optimizer_config_override_provider=None,
         peft=None,
