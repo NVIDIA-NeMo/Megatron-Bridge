@@ -310,7 +310,6 @@ def test_muse_spark_pretrain_recipe_contract() -> None:
 
 
 def test_muse_spark_long_context_sft_packs_32k_with_cp2() -> None:
-    reference = muse_spark_open_sft_192gpu_gb200_bf16_config()
     cfg = muse_spark_open_sft_192gpu_gb200_bf16_long_context_config()
 
     assert cfg.model.seq_length == 32768
@@ -325,16 +324,16 @@ def test_muse_spark_long_context_sft_packs_32k_with_cp2() -> None:
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 8
     assert cfg.dataset.offline_packing_specs.max_single_sequence_length == 32768 - 8
     assert cfg.dataset.hf_dataset.split == "train[:10000]"
-    for name in ("tensor_model_parallel_size", "pipeline_model_parallel_size", "hybrid_layer_pattern"):
-        assert getattr(cfg.model, name) == getattr(reference.model, name)
-    # 4K tokens per GPU: only whole-MoE selective recompute keeps the first stage within memory.
-    assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe"]
-    _assert_hybridep(cfg, ep=64, pad_uneven=True)
+    # TP4/PP6/CP2/EP32 with full activation recompute: six stages of 9, 11, 11, 11, 11, and 9 decoder blocks.
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert _stage_blocks(cfg) == [9, 11, 11, 11, 11, 9]
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.recompute_granularity == "full"
     data_parallel = 192 // (
         cfg.model.tensor_model_parallel_size * cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size
     )
-    assert data_parallel == 8
+    assert data_parallel == 4
     assert cfg.train.global_batch_size == 8
     assert cfg.train.global_batch_size % data_parallel == 0
     assert cfg.train.train_iters == 20
@@ -364,15 +363,14 @@ def test_muse_spark_coderforge_sft_packs_64k_with_cp4() -> None:
         "data_files": {"SWE_Rebench": "trajectories/SWE_Rebench-*.parquet"},
         "verification_mode": "no_checks",
     }
-    _assert_three_rack_stages(cfg)
-    # 4K tokens per GPU: only whole-MoE selective recompute keeps the first stage within memory.
-    assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe"]
-    _assert_hybridep(cfg, ep=64, pad_uneven=True)
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert _stage_blocks(cfg) == [9, 11, 11, 11, 11, 9]
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.recompute_granularity == "full"
     data_parallel = 192 // (
         cfg.model.tensor_model_parallel_size * cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size
     )
-    assert data_parallel == 4
+    assert data_parallel == 2
     assert cfg.train.global_batch_size % data_parallel == 0
     assert cfg.train.train_iters == 20
 
@@ -460,9 +458,31 @@ def test_muse_spark_recipe_uses_builder_model_config_api(monkeypatch: pytest.Mon
     assert cfg.model is not None
 
 
-# The pretraining recipes keep TP1/EP32 with full activation recompute and are checked on their own; every other
-# recipe runs HybridEP without full recompute and with the Megatron-Core fusions.
-_HYBRIDEP_RECIPES = [name for name in muse_spark_recipes.__all__ if "_pretrain_" not in name]
+# The pretraining and the 32K and 64K SFT recipes keep their EP32 layouts with full activation recompute and are
+# checked on their own; every other recipe runs HybridEP without full recompute, with the Megatron-Core fusions.
+_EP32_RECIPES = (
+    "muse_spark_open_pretrain_192gpu_gb200_bf16_config",
+    "muse_spark_open_pretrain_256gpu_gb200_bf16_config",
+    "muse_spark_open_sft_192gpu_gb200_bf16_long_context_config",
+    "muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config",
+)
+_HYBRIDEP_RECIPES = [name for name in muse_spark_recipes.__all__ if name not in _EP32_RECIPES]
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "muse_spark_open_pretrain_256gpu_gb200_bf16_config",
+        "muse_spark_open_sft_192gpu_gb200_bf16_long_context_config",
+        "muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config",
+    ],
+)
+def test_muse_spark_recipes_that_keep_alltoall(recipe_name: str) -> None:
+    cfg = getattr(muse_spark_recipes, recipe_name)()
+
+    # The bridge default (alltoall) applies; these recipes do not select flex dispatch.
+    assert getattr(cfg.model, "moe_token_dispatcher_type", "alltoall") == "alltoall"
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
 
 
 @pytest.mark.parametrize("recipe_name", _HYBRIDEP_RECIPES)
@@ -493,7 +513,7 @@ def test_muse_spark_recipes_enable_megatron_core_fusions(recipe_name: str) -> No
         assert getattr(cfg.model, name) is True, name
 
 
-@pytest.mark.parametrize("recipe_name", muse_spark_recipes.__all__)
+@pytest.mark.parametrize("recipe_name", _HYBRIDEP_RECIPES)
 def test_muse_spark_packed_recipes_use_fixed_width_packs(recipe_name: str) -> None:
     cfg = getattr(muse_spark_recipes, recipe_name)()
     if not getattr(cfg.dataset, "enable_offline_packing", False):

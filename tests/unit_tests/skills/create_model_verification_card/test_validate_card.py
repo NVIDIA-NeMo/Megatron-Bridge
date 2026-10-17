@@ -73,6 +73,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("muse-glimmer-30b", "pretrain_performance", "H100"): (4096, 192, 32),
     ("muse-spark-open-816b-a42b", "pretrain", "GB200"): (4096, 1024, 192),
     ("muse-spark-open-816b-a42b", "sft", "GB200"): (4096, 128, 192),
+    ("muse-spark-open-816b-a42b", "sft_long_context", "GB200"): (32768, 8, 192),
     ("muse-spark-open-816b-a42b", "peft", "GB200"): (4096, 128, 64),
     ("muse-spark-open-816b-a42b", "checkpoint_resume", "GB200"): (4096, 1024, 192),
     ("nemotron-3-nano-4b", "pretrain", "H100"): (4096, 1024, 8),

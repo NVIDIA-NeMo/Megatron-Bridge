@@ -85,10 +85,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="muse-spark-open-816b-a42b-sft-long-context-gb200" aria-controls="muse-spark-open-816b-a42b-sft-long-context-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="muse-spark-open-816b-a42b-sft-long-context-gb200" aria-controls="muse-spark-open-816b-a42b-sft-long-context-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -292,45 +292,51 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="muse-spark-open-816b-a42b-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="muse-spark-open-816b-a42b-sft-long-context-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-16</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.082231</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.8572639</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>5,614.890 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>69.230 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>243.163 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe muse_spark_open_sft_192gpu_gb200_bf16_long_context_config --mode sft --pretrained_checkpoint work/model-verification/muse-spark-open-816b-a42b/gpu-megatron --max_steps 20 tokenizer.chat_template_path=work/templates/muse_spark_open_chat_template_pinned_date.jinja dataset.hf_output_root=work/data/tulu3/muse-spark-open-full-sft-gb200-32k checkpoint.save=null checkpoint.load=null checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-spark-open-816b-a42b/sft-long-context-resolved.yaml</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Not yet verified on the pinned public revision. The 192-GPU recipe must complete the 20-step packed 32K Tulu 3 run with context parallelism with finite loss, no skipped or NaN iterations, and all five metrics.</p>
+        <p>Observed on the pinned public revision with 192 GB200 GPUs at TP4/PP6/CP2/EP32/ETP1 with sequence parallelism and all-to-all context parallelism (pipeline stages of 9, 11, 11, 11, 11, and 9 decoder blocks; four data-parallel replicas running two microbatches each per step): the command warm-starts every language-model parameter from the imported checkpoint with full activation recompute, the all-to-all MoE dispatcher, and the distributed optimizer with FP32 gradient reduction; the perception towers stay frozen because the data is text only. Data is the revision-pinned Tulu 3 SFT mixture train[:10000], rendered with the model chat template whose current-date default is fixed to 2026-10-04 and offline-packed to 32,768 tokens with pad_seq_to_mult 8 (2 x CP, and TP x CP for sequence parallelism): 143 packs averaging 69.9 sequences, none truncated, so 20 steps at GBS 8 make about 1.1 passes. The longest sequence has 8,688 tokens, so the run exercises packed context parallelism rather than attention across one 32K-token sequence. Peak LR is 1e-6 with 2 warmup steps and cosine decay to 0 at step 20; model seed 5678 and data seed 1234. All 20 optimizer-step rows are present exactly once with finite loss and gradient norm and zero skipped or NaN iterations. Loss moves from 1.082231 to 0.8572639 (minimum 0.8273457 at step 13); gradient norm is between 6.4 and 20.2 over steps 1-5, 118.6 at step 6, and between 1.5 and 3.5 from step 7 on, and is clipped at 1.0. Steps 11-20 average 5,614.89 ms, 69.23 model TFLOP/s/GPU, and 243.163 token slots/s/GPU. Peak allocated memory per pipeline stage is 98.4, 105.8, 107.8, 104.4, 107.2, and 89.4 GiB. The post-setup config persists; no checkpoint is saved.</p>
       </section>
     </article>
     <article id="muse-spark-open-816b-a42b-peft-gb200" class="verification-model-detail" data-entry-detail="muse-spark-open-816b-a42b-peft-gb200" tabindex="-1">

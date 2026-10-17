@@ -2762,24 +2762,36 @@
         },
         {
           "bridge_commit": "82740463320ca29a3cd042d2369c983c1ea9d5ef",
-          "command_topologies": [],
-          "commands": [],
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "48",
+              "recipe": "muse_spark_open_sft_192gpu_gb200_bf16_long_context_config",
+              "total_gpus": 192
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe muse_spark_open_sft_192gpu_gb200_bf16_long_context_config --mode sft --pretrained_checkpoint work/model-verification/muse-spark-open-816b-a42b/gpu-megatron --max_steps 20 tokenizer.chat_template_path=work/templates/muse_spark_open_chat_template_pinned_date.jinja dataset.hf_output_root=work/data/tulu3/muse-spark-open-full-sft-gb200-32k checkpoint.save=null checkpoint.load=null checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-spark-open-816b-a42b/sft-long-context-resolved.yaml"
+          ],
           "dimensions": {},
-          "enabled_features": {},
+          "enabled_features": {
+            "context_parallel_size": 2,
+            "sequence_packing": "offline"
+          },
           "entry_id": "muse-spark-open-816b-a42b-sft-long-context-gb200",
-          "expected_result": "Not yet verified on the pinned public revision. The 192-GPU recipe must complete the 20-step packed 32K Tulu 3 run with context parallelism with finite loss, no skipped or NaN iterations, and all five metrics.\n",
+          "expected_result": "Observed on the pinned public revision with 192 GB200 GPUs at TP4/PP6/CP2/EP32/ETP1 with sequence parallelism and all-to-all context parallelism (pipeline stages of 9, 11, 11, 11, 11, and 9 decoder blocks; four data-parallel replicas running two microbatches each per step): the command warm-starts every language-model parameter from the imported checkpoint with full activation recompute, the all-to-all MoE dispatcher, and the distributed optimizer with FP32 gradient reduction; the perception towers stay frozen because the data is text only. Data is the revision-pinned Tulu 3 SFT mixture train[:10000], rendered with the model chat template whose current-date default is fixed to 2026-10-04 and offline-packed to 32,768 tokens with pad_seq_to_mult 8 (2 x CP, and TP x CP for sequence parallelism): 143 packs averaging 69.9 sequences, none truncated, so 20 steps at GBS 8 make about 1.1 passes. The longest sequence has 8,688 tokens, so the run exercises packed context parallelism rather than attention across one 32K-token sequence. Peak LR is 1e-6 with 2 warmup steps and cosine decay to 0 at step 20; model seed 5678 and data seed 1234. All 20 optimizer-step rows are present exactly once with finite loss and gradient norm and zero skipped or NaN iterations. Loss moves from 1.082231 to 0.8572639 (minimum 0.8273457 at step 13); gradient norm is between 6.4 and 20.2 over steps 1-5, 118.6 at step 6, and between 1.5 and 3.5 from step 7 on, and is clipped at 1.0. Steps 11-20 average 5,614.89 ms, 69.23 model TFLOP/s/GPU, and 243.163 token slots/s/GPU. Peak allocated memory per pipeline stage is 98.4, 105.8, 107.8, 104.4, 107.2, and 89.4 GiB. The post-setup config persists; no checkpoint is saved.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-10-16",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.8572639,
+            "initial_loss": 1.082231,
+            "last_10_steps_model_tflops_per_gpu_avg": 69.23,
+            "last_10_steps_step_time_ms_avg": 5614.89,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 243.163
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft_long_context"
         },
@@ -2856,7 +2868,7 @@
       "min_transformers_version": "5.20.0",
       "slug": "muse-spark-open-816b-a42b",
       "source_card": "examples/model_verification_cards/muse-spark-open-816b-a42b/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This card covers the complete Muse-Spark-Open-816B-A42B vision-and-audio-language checkpoint at its public Hugging Face revision through the builder-backed Muse Spark Open model-config, model-builder, and model-bridge path: Hugging Face vision and audio encoders invoked directly, plus a native Megatron-Core HybridModel decoder with 62 alternating attention and latent-MoE blocks (124 Hybrid positions, 256 experts, top-8 routing). Verified: GPU import at TP4/EP16, distributed GPU export at a different layout (TP2/EP32) with an exhaustive tensor audit, Hugging Face and Megatron forward correlation at TP4/EP16, and deterministic image generation at TP4/EP32. On GB200 with HybridEP dispatch, the TP1/PP6/EP32 pretraining recipe with full activation recompute completes the bounded 100-step run with full-state saves on 192 GPUs and resumes from its step-50 checkpoint within the loss tolerance, and the EP64 recipes complete one 85-step epoch over 100K packed Tulu 3 conversations with full SFT on 192 GPUs and with LoRA on 64 GPUs; the other GB200 training items are not yet verified on the pinned revision. Context parallelism requires A2A or all-gather communication because Transformer Engine rejects P2P for the sliding-window attention layers. CPU conversion and cached generation are not exercised, and the SFT export has no maintained reload command.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This card covers the complete Muse-Spark-Open-816B-A42B vision-and-audio-language checkpoint at its public Hugging Face revision through the builder-backed Muse Spark Open model-config, model-builder, and model-bridge path: Hugging Face vision and audio encoders invoked directly, plus a native Megatron-Core HybridModel decoder with 62 alternating attention and latent-MoE blocks (124 Hybrid positions, 256 experts, top-8 routing). Verified: GPU import at TP4/EP16, distributed GPU export at a different layout (TP2/EP32) with an exhaustive tensor audit, Hugging Face and Megatron forward correlation at TP4/EP16, and deterministic image generation at TP4/EP32. On GB200 with HybridEP dispatch, the TP1/PP6/EP32 pretraining recipe with full activation recompute completes the bounded 100-step run with full-state saves on 192 GPUs and resumes from its step-50 checkpoint within the loss tolerance, and the EP64 recipes complete one 85-step epoch over 100K packed Tulu 3 conversations with full SFT on 192 GPUs and with LoRA on 64 GPUs. The 32K long-context SFT recipe (TP4/PP6/CP2/EP32 with full activation recompute and all-to-all dispatch) completes 20 packed steps on 192 GPUs. Context parallelism requires A2A or all-gather communication because Transformer Engine rejects P2P for the sliding-window attention layers. CPU conversion and cached generation are not exercised, and the SFT export has no maintained reload command.\n",
       "title": "muse_spark_open_816b_a42b"
     },
     {

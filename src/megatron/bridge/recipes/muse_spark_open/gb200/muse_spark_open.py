@@ -14,12 +14,13 @@
 
 """Bounded GB200 training recipes for Muse Spark Open.
 
-The SFT, LoRA, and image-text recipes shard the 256 routed experts with EP64 and dispatch them with HybridEP: one EP64
-group is one pipeline stage's 64 contiguous ranks, which fill one NVL72 NVLink domain (16 nodes of 4 GPUs), so the
-192-GPU recipes run three pipeline stages and the 256-GPU recipe four. Allocate nodes in 16-node segments, one per NVL72
-rack. The 16-GPU image-text LoRA recipe keeps EP16 inside one NVLink domain. The pretraining recipes keep TP1/EP32 with
-full activation recompute (six pipeline stages and HybridEP on 192 GPUs, eight stages and the all-to-all dispatcher on
-256 GPUs); on 192 GPUs that layout pretrains faster than EP64 without recompute.
+The 4K and 8K SFT, LoRA, and image-text recipes shard the 256 routed experts with EP64 and dispatch them with HybridEP:
+one EP64 group is one pipeline stage's 64 contiguous ranks, which fill one NVL72 NVLink domain (16 nodes of 4 GPUs), so
+the 192-GPU EP64 recipes run three pipeline stages and the 256-GPU one four. Allocate nodes in 16-node segments, one
+per NVL72 rack. The 16-GPU image-text LoRA recipe keeps EP16 inside one NVLink domain. The pretraining and the 32K and
+64K SFT recipes keep EP32 with full activation recompute: pretraining runs TP1 with six pipeline stages and HybridEP on
+192 GPUs, where that layout is faster than EP64 without recompute, and eight stages with the all-to-all dispatcher on
+256 GPUs; the long-context recipes run TP4/PP6 with context parallelism and the all-to-all dispatcher.
 
 Each recipe is self-contained: it sets every model, data, and training option it relies on, even where that
 repeats another recipe.
@@ -429,12 +430,9 @@ def muse_spark_open_sft_256gpu_gb200_bf16_config() -> ConfigContainer:
 def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContainer:
     """Return a 20-step packed 32K Tulu 3 full SFT config with context parallelism on 192 GB200 GPUs.
 
-    TP4/PP3/CP2/EP64 with sequence parallelism makes each pipeline stage one EP64
-    HybridEP group in one NVL72 domain and leaves eight data-parallel replicas.
+    TP4/PP6/CP2/EP32 with sequence parallelism leaves four data-parallel replicas.
     Context parallelism uses A2A because Transformer Engine rejects P2P for the
     sliding-window layers. Packing aligns each sequence to lcm(2*CP, TP*CP) = 8.
-    Each GPU holds 4K tokens, so the recipe recomputes the whole MoE layer to keep
-    the first stage within memory.
     """
     cfg = _sft_common()
 
@@ -442,11 +440,11 @@ def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContain
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     cfg.model.seq_length = 32768
     cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 3
+    cfg.model.pipeline_model_parallel_size = 6
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (21, 22, 19))
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (9, 11, 11, 11, 11, 9))
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.context_parallel_size = 2
     cfg.model.cp_comm_type = "a2a"
@@ -460,32 +458,11 @@ def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContain
     cfg.model.attention_backend = "auto"
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
-    # The model config leaves these Megatron-Core fusions and pipeline-output deallocation off; they shorten the step
-    # and lower peak memory without changing the loss.
-    cfg.model.bias_activation_fusion = True
-    cfg.model.gradient_accumulation_fusion = True
-    cfg.model.apply_rope_fusion = True
-    cfg.model.moe_router_fusion = True
-    cfg.model.deallocate_pipeline_outputs = True
-    # 4K tokens per GPU: recomputing the whole MoE layer keeps the first stage within memory, while moe_act with
-    # layernorm recompute does not.
-    cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe"]
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
-    # HybridEP: each EP64 group is one pipeline stage's 64 contiguous ranks (16 nodes) in one NVL72 domain.
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_flex_dispatcher_num_sms = 32
-    cfg.model.moe_permute_fusion_into_hybridep = True
-    cfg.model.moe_shared_expert_overlap = False
-    # Packed sequences give EP ranks different token counts; HybridEP needs equal ones, so pad to the group max.
-    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
 
     cfg.dataset = default_tulu3_config(seq_length=32768, enable_offline_packing=True, pad_seq_to_mult=8)
-    # Fixed-width packs give every rank the same token count, so the compiled fusions keep one shape instead of
-    # recompiling on one rank while the others wait for it at the next collective.
-    cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
     cfg.dataset.hf_dataset.split = "train[:10000]"
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _TULU3_REVISION}
     cfg.dataset.hf_output_root = "work/data/muse-spark-open/tulu3-full-sft-gb200-32k"
@@ -527,9 +504,6 @@ def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContain
     cfg.checkpoint.save_rng = False
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
     }
     return cfg
 
@@ -539,11 +513,9 @@ def muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config() -> ConfigConta
 
     SWE-Rebench trajectories are long single sequences (median about 46K tokens), so
     they exercise the 2,048-token sliding window and long-range full attention under
-    context parallelism, unlike packed short chat rows. TP4/PP3/CP4/EP64 with sequence
-    parallelism keeps 4K tokens per GPU, makes each pipeline stage one EP64 HybridEP
-    group in one NVL72 domain, and leaves four data-parallel replicas. As in the 32K
-    recipe, the whole MoE layer is recomputed to keep the first stage within memory.
-    Packing aligns each sequence to lcm(2*CP, TP*CP) = 16. Only the SWE-Rebench files are
+    context parallelism, unlike packed short chat rows. TP4/PP6/CP4/EP32 with sequence
+    parallelism keeps 4K tokens per GPU and leaves two data-parallel replicas. Packing
+    aligns each sequence to lcm(2*CP, TP*CP) = 16. Only the SWE-Rebench files are
     downloaded; the dataset metadata lists every split, so split completeness is not
     verified.
     """
@@ -553,11 +525,11 @@ def muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config() -> ConfigConta
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     cfg.model.seq_length = 65536
     cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 3
+    cfg.model.pipeline_model_parallel_size = 6
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (21, 22, 19))
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (9, 11, 11, 11, 11, 9))
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.context_parallel_size = 4
     cfg.model.cp_comm_type = "a2a"
@@ -571,32 +543,11 @@ def muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config() -> ConfigConta
     cfg.model.attention_backend = "auto"
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
-    # The model config leaves these Megatron-Core fusions and pipeline-output deallocation off; they shorten the step
-    # and lower peak memory without changing the loss.
-    cfg.model.bias_activation_fusion = True
-    cfg.model.gradient_accumulation_fusion = True
-    cfg.model.apply_rope_fusion = True
-    cfg.model.moe_router_fusion = True
-    cfg.model.deallocate_pipeline_outputs = True
-    # 4K tokens per GPU: recomputing the whole MoE layer keeps the first stage within memory, while moe_act with
-    # layernorm recompute does not.
-    cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe"]
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
-    # HybridEP: each EP64 group is one pipeline stage's 64 contiguous ranks (16 nodes) in one NVL72 domain.
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_flex_dispatcher_num_sms = 32
-    cfg.model.moe_permute_fusion_into_hybridep = True
-    cfg.model.moe_shared_expert_overlap = False
-    # Packed sequences give EP ranks different token counts; HybridEP needs equal ones, so pad to the group max.
-    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
 
     cfg.dataset = default_coderforge_config(seq_length=65536, enable_offline_packing=True, pad_seq_to_mult=16)
-    # Fixed-width packs give every rank the same token count, so the compiled fusions keep one shape instead of
-    # recompiling on one rank while the others wait for it at the next collective.
-    cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
     # 20 steps at GBS 8 consume 160 packs; slicing the split bounds offline tokenization.
     cfg.dataset.hf_dataset.split = "SWE_Rebench[:600]"
     cfg.dataset.hf_dataset.load_kwargs = {
@@ -639,9 +590,6 @@ def muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config() -> ConfigConta
     cfg.checkpoint.save_rng = False
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
     }
     return cfg
 
