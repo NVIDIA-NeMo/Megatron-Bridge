@@ -28,6 +28,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
+from megatron.bridge import telemetry
 from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
@@ -56,6 +57,7 @@ except ImportError:
     HAS_PAGED_STASHING = False
 
 
+@telemetry.traced(telemetry.EVALUATE, "megatron.evaluate")
 def evaluate(
     state: GlobalState,
     forward_step_func: ForwardStepCallable,
@@ -101,6 +103,14 @@ def evaluate(
             - collected_non_loss_data: Data collected by non_loss_data_func.
             - timelimit_hit: Boolean indicating if the time limit was reached.
     """
+    if telemetry.enabled(telemetry.EVALUATE):
+        telemetry.set_span_attributes(
+            telemetry.EVALUATE,
+            {
+                telemetry.ITERATION: state.train_state.step,
+                "megatron.evaluate.split": "test" if is_test else "validation",
+            },
+        )
     # Determine callback event names based on whether this is test or eval
     start_event = "on_test_start" if is_test else "on_eval_start"
     end_event = "on_test_end" if is_test else "on_eval_end"

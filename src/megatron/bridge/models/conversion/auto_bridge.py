@@ -42,6 +42,7 @@ from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
+from megatron.bridge import telemetry
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -702,6 +703,7 @@ class AutoBridge(Generic[MegatronModelT]):
         except Exception:
             return False
 
+    @telemetry.traced(telemetry.CONVERSION, "megatron.bridge.conversion.load_hf_weights")
     def load_hf_weights(
         self,
         model: list[MegatronModelT],
@@ -1025,6 +1027,7 @@ class AutoBridge(Generic[MegatronModelT]):
             **({"with_megatron_names": True} if with_megatron_names else {}),
         )
 
+    @telemetry.traced(telemetry.CONVERSION, "megatron.bridge.conversion.save_hf_adapter")
     def save_hf_adapter(
         self,
         model: list[MegatronModelT],
@@ -1159,6 +1162,7 @@ class AutoBridge(Generic[MegatronModelT]):
         if dist.is_initialized():
             dist.barrier()
 
+    @telemetry.traced(telemetry.CONVERSION, "megatron.bridge.conversion.save_hf_pretrained")
     def save_hf_pretrained(
         self,
         model: list[MegatronModelT],
@@ -1319,6 +1323,7 @@ class AutoBridge(Generic[MegatronModelT]):
             if weight_postprocessor is not None:
                 weight_postprocessor(model_bridge, Path(path))
 
+    @telemetry.traced(telemetry.CONVERSION, "megatron.bridge.conversion.save_hf_weights")
     def save_hf_weights(
         self,
         model: list[MegatronModelT],
@@ -1623,6 +1628,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return model if isinstance(model, list) else [model]
 
     @classmethod
+    @telemetry.traced(telemetry.CONVERSION, "megatron.bridge.conversion.import_ckpt")
     def import_ckpt(
         cls,
         hf_model_id: str | Path,
@@ -1707,6 +1713,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 low_memory_save=low_memory_save,
             )
 
+    @telemetry.traced(telemetry.CONVERSION, "megatron.bridge.conversion.export_ckpt")
     def export_ckpt(
         self,
         megatron_path: str | Path,
@@ -1773,6 +1780,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 strict=strict,
             )
 
+    @telemetry.traced(telemetry.CONVERSION, "megatron.bridge.conversion.export_adapter_ckpt")
     def export_adapter_ckpt(
         self,
         peft_checkpoint: str | Path,

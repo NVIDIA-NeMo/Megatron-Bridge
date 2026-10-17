@@ -26,6 +26,7 @@ uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage
   tests/functional_tests/test_groups/training/test_pretrain.py \
   tests/functional_tests/test_groups/training/test_pretrain_dist_train.py \
   tests/functional_tests/test_groups/training/test_pretrain_resume.py \
-  tests/functional_tests/test_groups/training/test_sample_based_training.py
+  tests/functional_tests/test_groups/training/test_sample_based_training.py \
+  tests/functional_tests/test_groups/training/test_telemetry.py
 
 coverage combine -q
