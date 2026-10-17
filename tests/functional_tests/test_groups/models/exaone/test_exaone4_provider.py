@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.exaone.exaone4.exaone4_bridge import Exaone4Bridge
 from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from tests.functional_tests.utils import compare_provider_configs
@@ -52,9 +53,8 @@ def make_expected_exaone4_1p2b_provider():
         rope_scaling=True,
         rope_scaling_factor=16.0,
     )
-    provider.rope_scaling_low_freq_factor = 1.0
-    provider.rope_scaling_high_freq_factor = 4.0
-    provider.rope_scaling_original_max_position_embeddings = 8192
+    # Megatron Core applies llama3 RoPE scaling with fixed low/high frequency factors and original
+    # context length, so the bridge maps only the scaling factor onto the provider.
     return provider
 
 
@@ -96,3 +96,12 @@ class TestExaone4ProviderMapping:
         predefined_provider.finalize()
 
         compare_provider_configs(converted_provider, predefined_provider, "exaone4-config-only")
+
+        # Export must still restore the full llama3 RoPE scaling config from the fixed Megatron Core values.
+        assert Exaone4Bridge.megatron_to_hf_config(converted_provider)["rope_scaling"] == {
+            "rope_type": "llama3",
+            "factor": 16.0,
+            "low_freq_factor": 1.0,
+            "high_freq_factor": 4.0,
+            "original_max_position_embeddings": 8192,
+        }
