@@ -201,30 +201,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-17</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.841344</dd>
+            <dd>1.841319</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.724736</dd>
+            <dd>1.72294</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>23,978.620 ms</dd>
+            <dd>19,401.120 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>254.050 TFLOP/s/GPU</dd>
+            <dd>310.870 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>911.034 tokens/s/GPU</dd>
+            <dd>1,125.983 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -240,7 +240,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Observed on the pinned public revision with 192 GB200 GPUs at TP1/PP6/EP32/ETP1 (pipeline stages of 9, 11, 11, 11, 11, and 9 decoder blocks; 32 data-parallel replicas running 32 microbatches each per step): the command warm-starts every language-model parameter from the imported checkpoint with natural expert routing, full activation recompute (uniform, one layer per recompute group), BF16 gradient reduction, and the distributed optimizer; the perception towers stay frozen because the data is text only. MoE tokens are dispatched with HybridEP (flex dispatcher, 32 SMs): each EP32 group is one pipeline stage&#x27;s 32 contiguous ranks on 8 nodes in one NVL72 NVLink domain, and the recipe sets NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=32, NVLINK_DOMAIN_SIZE=72, and USE_MNNVL=1. Data is the first 604,180 documents of RedPajama2 head_01 (750,001,072 tokens in the shared LLaMA SentencePiece tokenization), decoded and re-tokenized with the model tokenizer and an appended end-of-document token: 677,845,358 tokens, enough for 100 steps at GBS 1024 and sequence length 4096 without repetition. Deviations from the bounded pretraining contract for this warm-started model: the peak learning rate is 3e-5 (40 warmup steps, cosine decay to 3e-6 at step 100) instead of 3e-4 to 3e-5, and the precision-aware optimizer is disabled; the effective weight decay is 0.033. All 100 optimizer-step rows are present exactly once with finite loss and gradient norm and zero skipped or NaN iterations. Loss decreases from 1.841344 to 1.724736 (minimum 1.709827 at step 99) with no rise at the learning-rate peak (1.761883 at step 40); steps 11-100 stay between 1.7098 and 1.8046, and gradient-norm spikes (48.1 at step 46, 9.0 at step 24) are clipped at 1.0. Steps 91-100 average 23,978.62 ms, 254.05 model TFLOP/s/GPU, and 911.034 token slots/s/GPU. Peak allocated memory per pipeline stage is 97.2, 104.8, 104.8, 104.8, 104.8, and 93.3 GiB. Full model, optimizer, and RNG state, about 11.5 TB per checkpoint, is saved at steps 50 and 100; the step-50 checkpoint is checkpoint_resume&#x27;s starting point. The post-setup config persists.
+        <p>Observed on the pinned public revision with 192 GB200 GPUs at TP1/PP6/EP32/ETP1 (pipeline stages of 9, 11, 11, 11, 11, and 9 decoder blocks; 32 data-parallel replicas running 32 microbatches each per step): the command warm-starts every language-model parameter from the imported checkpoint with natural expert routing, full activation recompute (uniform, one layer per recompute group), the Megatron-Core bias-activation, gradient-accumulation, RoPE, and router fusions with pipeline-output deallocation, BF16 gradient reduction, and the distributed optimizer; the perception towers stay frozen because the data is text only. MoE tokens are dispatched with HybridEP (flex dispatcher, 32 SMs, permutation fused into the dispatch): each EP32 group is one pipeline stage&#x27;s 32 contiguous ranks on 8 nodes in one NVL72 NVLink domain, and the recipe sets NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=32, NVLINK_DOMAIN_SIZE=72, and USE_MNNVL=1. Data is the first 604,180 documents of RedPajama2 head_01 (750,001,072 tokens in the shared LLaMA SentencePiece tokenization), decoded and re-tokenized with the model tokenizer and an appended end-of-document token: 677,845,358 tokens, enough for 100 steps at GBS 1024 and sequence length 4096 without repetition. Deviations from the bounded pretraining contract for this warm-started model: the peak learning rate is 3e-5 (40 warmup steps, cosine decay to 3e-6 at step 100) instead of 3e-4 to 3e-5, and the precision-aware optimizer is disabled; the effective weight decay is 0.033. All 100 optimizer-step rows are present exactly once with finite loss and gradient norm and zero skipped or NaN iterations. Loss decreases from 1.841319 to 1.72294 (minimum 1.70796 at step 99) and is 1.780077 at the learning-rate peak (step 40); steps 11-100 stay between 1.7080 and 1.8118, and gradient-norm spikes (61.2 at step 17, 26.2 at step 7) are clipped at 1.0. Steps 91-100 average 19,401.12 ms, 310.87 model TFLOP/s/GPU, and 1125.983 token slots/s/GPU. Peak allocated memory per pipeline stage is 97.8, 105.4, 105.4, 105.4, 105.4, and 97.2 GiB. Full model, optimizer, and RNG state, about 11.5 TB per checkpoint, is saved at steps 50 and 100; the step-50 checkpoint is checkpoint_resume&#x27;s starting point. The post-setup config persists.
 </p>
       </section>
     </article>
