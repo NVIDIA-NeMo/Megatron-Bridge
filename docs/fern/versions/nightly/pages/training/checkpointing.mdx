@@ -44,6 +44,10 @@ Asynchronous saving allows training to continue while checkpoint data is persist
 |-----------|------|---------|-------------|
 | `async_save` | `bool` | `False` | Enable asynchronous checkpoint saving (requires `torch_dist` format) |
 
+### Save Coordination
+
+Synchronous saves through Megatron Core distributed checkpointing (the default `torch_dist` format) exchange save plans and write results across ranks. Megatron Bridge runs this exchange on a gloo process group that spans all ranks and is created on the first save. When the exchange runs on the default NCCL group instead, the coordinating rank keeps point-to-point buffers to every other rank for the rest of training: about 2.6 GiB on rank 0 of an 8-GPU H100 node. The gloo group is created only when `dist.use_gloo_process_groups` is `True` (the default). Otherwise, and for asynchronous saves, the exchange uses the default process group.
+
 ## Load Configuration
 
 | Parameter | Type | Default | Description |

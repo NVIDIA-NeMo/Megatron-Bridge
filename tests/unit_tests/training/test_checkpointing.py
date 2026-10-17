@@ -17,6 +17,7 @@ import os
 import pickle
 import tempfile
 from contextlib import ExitStack, contextmanager
+from datetime import timedelta
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ import numpy as np
 import pytest
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedTensor
+from megatron.core.dist_checkpointing.strategies.fully_parallel import FullyParallelSaveStrategyWrapper
 from megatron.core.dist_checkpointing.strategies.torch import (
     TorchDistLoadShardedStrategy,
     TorchDistSaveShardedStrategy,
@@ -48,11 +50,13 @@ from megatron.bridge.training.checkpointing import (
     _checkpoint_has_per_dp_rng_states,
     _clear_auto_bridge_cache,
     _CpuTorchDistSaveShardedStrategy,
+    _dcp_save_coordination_group,
     _extract_megatron_lm_args_from_state_dict,
     _generate_model_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
     _get_run_config_tp_pp,
+    _GlooCoordinatedTorchDistSaveShardedStrategy,
     _has_global_non_persistent_checkpoint,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
@@ -768,6 +772,7 @@ def save_checkpoint_fixtures():
     mock_cfg.logger.log_progress = False
     mock_cfg.dist = Mock()
     mock_cfg.dist.use_decentralized_pg = False
+    mock_cfg.dist.use_gloo_process_groups = False
     mock_cfg.ddp = Mock()
     mock_cfg.ddp.use_megatron_fsdp = False
 
@@ -1042,6 +1047,187 @@ class TestSaveCheckpoint:
             )
 
         assert finalize_devices == [3]
+
+    @pytest.mark.parametrize(
+        ("dist_cfg", "initialized", "world_size", "backend"),
+        [
+            (None, True, 8, "nccl"),
+            (SimpleNamespace(use_gloo_process_groups=False), True, 8, "nccl"),
+            (SimpleNamespace(use_gloo_process_groups=True), False, 8, "nccl"),
+            (SimpleNamespace(use_gloo_process_groups=True), True, 1, "nccl"),
+            (SimpleNamespace(use_gloo_process_groups=True), True, 8, "gloo"),
+        ],
+    )
+    def test_dcp_save_coordination_group_keeps_default_group(
+        self, monkeypatch, dist_cfg, initialized, world_size, backend
+    ):
+        """Runs without gloo process groups, other ranks, or an NCCL default group keep torch DCP on it."""
+        monkeypatch.setattr("megatron.bridge.training.checkpointing._DCP_SAVE_COORDINATION_GROUP", None)
+
+        with (
+            patch("torch.distributed.is_initialized", return_value=initialized),
+            patch("torch.distributed.get_world_size", return_value=world_size),
+            patch("torch.distributed.get_backend", return_value=backend),
+            patch("torch.distributed.new_group") as mock_new_group,
+        ):
+            assert _dcp_save_coordination_group(SimpleNamespace(dist=dist_cfg)) is None
+
+        mock_new_group.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("timeout_seconds_after_init", "expected_timeout"),
+        [(None, timedelta(minutes=7)), (3600, timedelta(seconds=3600))],
+    )
+    def test_dcp_save_coordination_group_is_created_once_per_default_group(
+        self, monkeypatch, timeout_seconds_after_init, expected_timeout
+    ):
+        """The gloo group is reused across saves, recreated with a new default group, and uses its timeout."""
+        if torch.distributed.is_initialized():
+            pytest.skip("Requires replacing the default process group")
+        monkeypatch.setattr("megatron.bridge.training.checkpointing._DCP_SAVE_COORDINATION_GROUP", None)
+        cfg = SimpleNamespace(
+            dist=SimpleNamespace(
+                use_gloo_process_groups=True,
+                distributed_timeout_minutes=7,
+                distributed_timeout_seconds_after_init=timeout_seconds_after_init,
+            )
+        )
+        gloo_groups = [Mock(), Mock()]
+
+        try:
+            with (
+                patch("torch.distributed.get_world_size", return_value=8),
+                patch("torch.distributed.get_backend", return_value="nccl"),
+                patch("torch.distributed.new_group", side_effect=gloo_groups) as mock_new_group,
+                patch("megatron.bridge.training.checkpointing.print_rank_0"),
+            ):
+                torch.distributed.group.WORLD = Mock()
+                assert _dcp_save_coordination_group(cfg) is gloo_groups[0]
+                assert _dcp_save_coordination_group(cfg) is gloo_groups[0]
+                torch.distributed.group.WORLD = Mock()
+                assert _dcp_save_coordination_group(cfg) is gloo_groups[1]
+        finally:
+            torch.distributed.group.WORLD = None
+
+        assert mock_new_group.call_count == 2
+        mock_new_group.assert_called_with(backend="gloo", timeout=expected_timeout, group_desc="dcp_save_coordination")
+
+    def test_gloo_coordinated_strategy_writes_the_mcore_checkpoint(self, tmp_path):
+        """Only the process group passed to torch DCP differs from MCore's synchronous save."""
+        if torch.distributed.is_initialized():
+            pytest.skip("Requires an isolated CPU process group")
+        torch.distributed.init_process_group("gloo", store=torch.distributed.HashStore(), rank=0, world_size=1)
+        expected = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+
+        def state_dict(tensor):
+            return {"weight": ShardedTensor.from_rank_offsets("weight", tensor)}
+
+        try:
+            gloo_group = torch.distributed.new_group(backend="gloo")
+            with patch("torch.distributed.checkpoint.save", wraps=torch.distributed.checkpoint.save) as mock_dcp_save:
+                TorchDistSaveShardedStrategy("torch_dist", 1, thread_count=2).save(
+                    state_dict(expected), tmp_path / "mcore"
+                )
+                _GlooCoordinatedTorchDistSaveShardedStrategy(
+                    "torch_dist", 1, process_group=gloo_group, thread_count=2
+                ).save(state_dict(expected), tmp_path / "gloo")
+            loaded = TorchDistLoadShardedStrategy().load(state_dict(torch.empty_like(expected)), tmp_path / "gloo")
+        finally:
+            torch.distributed.destroy_process_group()
+
+        mcore_call, gloo_call = mock_dcp_save.call_args_list
+        assert "process_group" not in mcore_call.kwargs
+        assert gloo_call.kwargs.pop("process_group") is gloo_group
+        assert gloo_call.kwargs.keys() == mcore_call.kwargs.keys()
+        assert gloo_call.args[0].keys() == mcore_call.args[0].keys()
+        for name in ("storage_writer", "planner"):
+            assert type(gloo_call.kwargs[name]) is type(mcore_call.kwargs[name])
+        assert gloo_call.kwargs["storage_writer"].thread_count == mcore_call.kwargs["storage_writer"].thread_count
+        for flag in ("flatten_state_dict", "flatten_sharded_tensors", "can_run_decentralized_global_plan"):
+            assert getattr(gloo_call.kwargs["planner"], flag) == getattr(mcore_call.kwargs["planner"], flag)
+        assert (
+            torch.distributed.checkpoint.FileSystemReader(tmp_path / "gloo").read_metadata().state_dict_metadata
+            == torch.distributed.checkpoint.FileSystemReader(tmp_path / "mcore").read_metadata().state_dict_metadata
+        )
+        torch.testing.assert_close(loaded["weight"], expected)
+
+    @pytest.mark.parametrize("fully_parallel_save", [False, True])
+    @pytest.mark.parametrize("async_save", [False, True])
+    def test_save_checkpoint_coordinates_sync_saves_on_gloo(
+        self, tmp_path, save_checkpoint_fixtures, async_save, fully_parallel_save
+    ):
+        """Synchronous torch_dist saves get the gloo-coordinated strategy; async saves keep MCore's."""
+
+        class _StopAfterStrategy(Exception):
+            pass
+
+        def capture_strategy(state_dict, checkpoint_dir, save_strategy, **kwargs):
+            captured.append(save_strategy)
+            raise _StopAfterStrategy
+
+        captured = []
+        state = save_checkpoint_fixtures["mock_state"]
+        state.cfg.checkpoint.save = str(tmp_path)
+        state.cfg.checkpoint.async_save = async_save
+        state.cfg.checkpoint.most_recent_k = -1
+        state.cfg.checkpoint.fully_parallel_save = fully_parallel_save
+        state.cfg.checkpoint.ckpt_assume_constant_structure = False
+        state.cfg.checkpoint.storage_writers_per_rank = 2
+        coordination_group = Mock()
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", side_effect=capture_strategy),
+            patch(
+                "megatron.bridge.training.checkpointing._dcp_save_coordination_group",
+                return_value=coordination_group,
+            ) as mock_coordination_group,
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={"model": {"weight": Mock()}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("torch.distributed.is_initialized", return_value=False),
+        ):
+            mock_rerun.return_value.state_dict.return_value = {}
+            with pytest.raises(_StopAfterStrategy):
+                save_checkpoint(
+                    state,
+                    save_checkpoint_fixtures["mock_model"],
+                    save_checkpoint_fixtures["mock_optimizer"],
+                    save_checkpoint_fixtures["mock_scheduler"],
+                    1000000,
+                    checkpointing_context={},
+                    pg_collection=pg_collection,
+                )
+
+        (save_strategy,) = captured
+        if fully_parallel_save:
+            assert isinstance(save_strategy, FullyParallelSaveStrategyWrapper)
+            save_strategy = save_strategy.base_strategy
+        assert save_strategy.thread_count == 2
+        if async_save:
+            mock_coordination_group.assert_not_called()
+            assert type(save_strategy) is TorchDistSaveShardedStrategy
+        else:
+            mock_coordination_group.assert_called_once_with(state.cfg)
+            assert isinstance(save_strategy, _GlooCoordinatedTorchDistSaveShardedStrategy)
+            assert save_strategy.process_group is coordination_group
 
     def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
         """The tracker-selected checkpoint must survive until its async replacement is durable."""
@@ -2006,6 +2192,7 @@ def load_checkpoint_fixtures():
     mock_cfg.checkpoint.non_persistent_save_interval = None
     mock_cfg.dist = Mock()
     mock_cfg.dist.use_decentralized_pg = False
+    mock_cfg.dist.use_gloo_process_groups = False
     mock_cfg.ddp = Mock()
     mock_cfg.ddp.use_megatron_fsdp = False
 
@@ -4243,6 +4430,7 @@ class TestMegatronLMCompatibility:
         mock_cfg.peft = None  # No PEFT for this test
         mock_cfg.dist = Mock()
         mock_cfg.dist.use_decentralized_pg = False
+        mock_cfg.dist.use_gloo_process_groups = False
 
         mock_state.cfg = mock_cfg
 
