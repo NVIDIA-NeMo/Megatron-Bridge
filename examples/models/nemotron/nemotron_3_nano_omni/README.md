@@ -266,6 +266,16 @@ Note: `dataset.task_encoder.use_temporal_video_embedder` and
 `dataset.task_encoder.temporal_video_resize_mode` apply only to the Energon data
 path.
 
+The CORD-v2 image recipes retain the imported video settings but set
+`temporal_patch_dim=1`. RADIO therefore omits the separate video embedder from
+the image-SFT checkpoint. HF export recovers that unused weight from the
+reference HF checkpoint, so pass the original `--hf-model` and `--hf-revision`
+used for training. An existing Megatron video weight takes precedence. If the
+HF configuration requires the weight and neither checkpoint supplies it,
+export fails even with `--not-strict`. Keeping the pretrained video projection
+avoids random initialization on reload; image SFT can still change shared
+weights that affect video quality.
+
 The canonical collator owns `<image>` and `<so_embedding>` as media anchors,
 validates their processor-expanded counts, and carries an explicit ownership
 mask through padding and packing. Put media in structured image/video/audio
