@@ -23,6 +23,7 @@ import pytest
 
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
@@ -102,8 +103,11 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
     common_expansions = 0
     for key, value in zip(mapping.keys, mapping.values):
         if key is None:
-            assert isinstance(value, ast.Name) and value.id == "COMMON_PERF_ENV_VARS"
-            common_expansions += 1
+            assert isinstance(value, ast.Name) and value.id in {"COMMON_PERF_ENV_VARS", "DETERMINISM_ENV_VARS"}
+            if value.id == "COMMON_PERF_ENV_VARS":
+                common_expansions += 1
+            else:
+                result.update(DETERMINISM_ENV_VARS)
             continue
         if isinstance(value, ast.Name):
             assert value.id in local_constants

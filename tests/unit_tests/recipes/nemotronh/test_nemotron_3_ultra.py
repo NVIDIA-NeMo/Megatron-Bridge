@@ -27,6 +27,7 @@ from megatron.bridge.perf_recipes.nemotronh import (
 )
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
     _split_hybrid_layer_pattern,
@@ -39,6 +40,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_config,
     nemotron_3_ultra_sft_openmathinstruct2_packed_config,
 )
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import (
     NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
@@ -166,6 +168,23 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
     assert cfg.ddp.check_for_large_grads is True
     assert cfg.rerun_state_machine.check_for_nan_in_loss is True
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+
+
+@pytest.mark.unit
+def test_gb200_ep16_deterministic_pretrain_applies_determinism() -> None:
+    assert recipes.nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config is (
+        nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config
+    )
+
+    base = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config()
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config()
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size
+    for key, value in DETERMINISM_ENV_VARS.items():
+        assert cfg.env_vars[key] == value
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
 
 
