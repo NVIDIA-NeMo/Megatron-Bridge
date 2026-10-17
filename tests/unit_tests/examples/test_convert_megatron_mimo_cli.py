@@ -14,7 +14,7 @@
 
 """Unit tests for the generic ``examples/conversion/convert_megatron_mimo.py`` CLI parser.
 
-Covers only the model-agnostic ``--component name=tp=N,...`` parsing logic.
+Covers component parsing, command dispatch, and distributed timeout configuration.
 The end-to-end conversion path needs GPUs and torchrun.
 """
 
@@ -23,6 +23,8 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import sys
+from datetime import timedelta
+from unittest.mock import Mock
 
 import pytest
 
@@ -213,3 +215,51 @@ class TestRunImportExport:
             (),
             {"megatron_path": "/ckpt", "hf_path": "/hf", "show_progress": True},
         )
+
+
+@pytest.mark.unit
+class TestDistributedTimeout:
+    @pytest.mark.parametrize(
+        "command, timeout_args, expected",
+        [("export", [], 120), ("import", ["--distributed-timeout-minutes", "180"], 180)],
+    )
+    def test_main_initializes_group_with_timeout(self, cli, monkeypatch, command, timeout_args, expected):
+        monkeypatch.setenv("RANK", "1")
+        monkeypatch.setenv("WORLD_SIZE", "8")
+        monkeypatch.setenv("LOCAL_RANK", "1")
+        monkeypatch.setattr(cli.dist, "is_initialized", lambda: False)
+        monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(cli.torch.cuda, "set_device", Mock())
+        init = Mock()
+        monkeypatch.setattr(cli.dist, "init_process_group", init)
+        run = Mock()
+        monkeypatch.setattr(cli, f"run_{command}", run)
+        args = [command, "--hf-model", "hf", "--component", "language=tp=1", "--megatron-path", "/ckpt"]
+        if command == "export":
+            args += ["--hf-path", "/hf"]
+
+        assert cli.main(args + timeout_args) == 0
+
+        init.assert_called_once()
+        assert init.call_args.kwargs["timeout"] == timedelta(minutes=expected)
+        run.assert_called_once()
+
+    def test_zero_timeout_rejected_before_initialization(self, cli, monkeypatch):
+        init = Mock()
+        monkeypatch.setattr(cli, "_init_distributed", init)
+        with pytest.raises(SystemExit) as exc:
+            cli.main(
+                [
+                    "import",
+                    "--hf-model",
+                    "hf",
+                    "--component",
+                    "language=tp=1",
+                    "--megatron-path",
+                    "/ckpt",
+                    "--distributed-timeout-minutes",
+                    "0",
+                ]
+            )
+        assert exc.value.code == 2
+        init.assert_not_called()
