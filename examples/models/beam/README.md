@@ -207,7 +207,57 @@ alignment. Matched performance comparisons must use the same prepared packs and 
 Fine-grained expert communication overlap is disabled because its layer schedule does not execute Beam's sandwich
 norms and depth-scaled residuals. Enabling that schedule would change the model's computation.
 
-All training commands below start from the imported Megatron checkpoint, keep Beam's routing natural
+#### Launching the GB200 recipes
+
+Use the imported public checkpoint and keep all GPUs within one NVLink domain. On a Slurm cluster with segment
+placement, request `segment=16` for pretraining/SFT and `segment=8` for LoRA, and verify the allocated nodes share
+one domain. The examples below use four GPUs per node, 16 CPU cores per rank, and 900 GiB of host memory per node.
+Set the account, partition and container image as described above, and mount the checkpoint and dataset paths.
+
+These 100-step training checks disable checkpoint writes and evaluation. They retain the recipes' performance
+settings; pretraining uses a shortened 100-step cosine schedule with 40 warmup updates. Finetuning uses each recipe's
+pinned Tulu3 configuration and packing alignment. Keep its dataset configuration by omitting `--dataset`.
+
+```bash
+# Pretraining: 16 nodes x 4 GB200; Beam-tokenized indexed input.
+./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
+  --additional-slurm-params 'segment=16;cpus-per-task=16;mem=900G' \
+  --recipe beam_pretrain_64gpu_gb200_bf16_config --mode pretrain \
+  --dataset megatron-indexed --max_steps 100 --warmup_iters 40 \
+  'dataset.blend=[["work/data/wikitext103/wikitext103_beam_text_document"],null]' \
+  'dataset.split="100,0,0"' dataset.num_workers=8 scheduler.lr_decay_iters=100 \
+  --pretrained_checkpoint work/models/beam/iter_0000000 \
+  checkpoint.load=null checkpoint.save=null checkpoint.finetune=true \
+  checkpoint.load_optim=false checkpoint.load_rng=false \
+  validation.eval_iters=0 validation.eval_interval=1000 \
+  logger.log_interval=1 dist.distributed_timeout_minutes=120
+
+# Full SFT: 16 nodes x 4 GB200; separate packs with alignment 8.
+./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
+  --additional-slurm-params 'segment=16;cpus-per-task=16;mem=900G' \
+  --recipe beam_sft_64gpu_gb200_bf16_config --mode sft \
+  dataset.hf_output_root=work/data/beam-tulu3-8k-pad8 \
+  --pretrained_checkpoint work/models/beam/iter_0000000 \
+  checkpoint.load=null checkpoint.save=null checkpoint.finetune=true \
+  checkpoint.load_optim=false checkpoint.load_rng=false \
+  validation.eval_iters=0 validation.eval_interval=1000 \
+  logger.log_interval=1 dist.distributed_timeout_minutes=120
+
+# LoRA: 8 nodes x 4 GB200; separate packs with alignment 4.
+./scripts/training/train.sh --nodes 8 --gpus-per-node 4 \
+  --additional-slurm-params 'segment=8;cpus-per-task=16;mem=900G' \
+  --recipe beam_peft_32gpu_gb200_bf16_config --mode lora \
+  dataset.hf_output_root=work/data/beam-tulu3-8k-pad4 \
+  --pretrained_checkpoint work/models/beam/iter_0000000 \
+  checkpoint.load=null checkpoint.save=null checkpoint.finetune=true \
+  checkpoint.load_optim=false checkpoint.load_rng=false \
+  validation.eval_iters=0 validation.eval_interval=1000 \
+  logger.log_interval=1 dist.distributed_timeout_minutes=120
+```
+
+### H200 training examples
+
+The H200 commands below start from the imported Megatron checkpoint, keep Beam's routing natural
 (`model.transformer.moe_router_force_load_balancing=false`), and raise the collective timeout because rank 0 packs
 the dataset offline while the other ranks wait.
 
