@@ -85,6 +85,8 @@ class TestCheckpointManagerLifecycle:
             ),
             optimizer=SimpleNamespace(
                 use_distributed_optimizer=False,
+                use_layer_wise_distributed_optimizer=False,
+                optimizer="adam",
                 optimizer_cuda_graph=False,
                 reuse_grad_buf_for_mxfp8_param_ag=False,
             ),
@@ -584,6 +586,15 @@ class TestForceParamSync:
             chunk2.start_param_sync.assert_called_once_with(force_sync=True)
 
 
+def test_force_param_sync_accepts_delegating_model_wrapper():
+    optimizer = Mock()
+    inner_ddp = Mock()
+    wrapper = SimpleNamespace(start_param_sync=inner_ddp.start_param_sync)
+    force_param_sync([wrapper], optimizer=optimizer)
+    optimizer.prepare_model_params_for_param_sync.assert_called_once_with()
+    inner_ddp.start_param_sync.assert_called_once_with(force_sync=True)
+
+
 class TestSaveCheckpointAndTime:
     """Unit tests for save_checkpoint_and_time behavior."""
 
@@ -660,6 +671,18 @@ class TestSaveCheckpointAndTime:
         mock_should_disable.assert_called_once_with(False, True, True)
         mock_force_param_sync.assert_not_called()
         mock_checkpoint_manager.save.assert_called_once()
+
+    @pytest.mark.parametrize("name,layerwise", [("dist_muon", False), ("muon", True)])
+    def test_layerwise_checkpoint_completes_parameter_gather(self, name, layerwise):
+        from megatron.bridge.training.config import OptimizerConfig
+
+        state, _ = self._make_state()
+        state.cfg.optimizer = OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=layerwise)
+        manager = Mock()
+        with patch("megatron.bridge.training.train.force_param_sync") as sync:
+            save_checkpoint_and_time(state, [Mock()], Mock(), Mock(), 0.0, checkpoint_manager=manager)
+        sync.assert_called_once()
+        manager.save.assert_called_once()
 
 
 class TestCheckpointAndDecideExit:

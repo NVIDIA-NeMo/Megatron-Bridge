@@ -22,6 +22,48 @@ The `OptimizerConfig` contains all parameters for the optimization algorithm and
 | `bf16` | `bool` | Use BF16 precision for training |
 | `fp16` | `bool` | Use FP16 precision for training |
 
+## Distributed Muon
+
+Use Bridge's `OptimizerConfig` to select Muon and distribute whole parameter tensors:
+
+```python
+from megatron.bridge.training.config import OptimizerConfig
+
+cfg.optimizer = OptimizerConfig(
+    optimizer="muon",
+    use_layer_wise_distributed_optimizer=True,
+    lr=1e-3,
+    bf16=True,
+)
+```
+
+When changing an existing distributed Adam recipe to Muon, Bridge also accepts
+`use_distributed_optimizer=True` on the optimizer or DDP configuration and
+resolves it to layer-wise optimizer distribution before constructing the model.
+The legacy `optimizer="dist_muon"` spelling resolves to the same mode. Adam and
+SGD continue to use their ordinary distributed optimizer. To run replicated
+Muon, disable both distributed optimizer flags and the DDP distributed flag.
+
+Parameter-gather overlap can be configured through `CommOverlapConfig` for
+layer-wise Muon. The current Core implementation requires one distributed
+optimizer instance and does not support `overlap_param_gather_with_optimizer_step`
+or either FSDP implementation with Muon.
+
+By default, `use_layer_wise_param_layout=True` builds shard-aligned DDP buffers
+for the LayerWise optimizer. Set it to `False` to retain compact DDP buffers and
+use LayerWise's variable-size parameter synchronization path. This reduces
+layout padding while preserving the configured parameter-gather behavior.
+Existing Kimi recipes keep the compact layout and parameter-gather overlap
+disabled until their MoE and pipeline-parallel configurations are validated
+with the shard-aligned layout; other recipes can opt in independently.
+
+Resuming Muon training restores Muon optimizer state. When changing optimization
+algorithms between runs, load model weights with fresh optimizer state using
+`checkpoint.load_optim=False` or the appropriate finetuning configuration;
+Bridge does not convert Adam moments into Muon optimizer state.
+Checkpoints created before distributed-optimizer metadata was recorded retain
+the historical model-space sharding fallback when that metadata key is absent.
+
 ## SchedulerConfig
 
 The `SchedulerConfig` controls learning rate scheduling and weight decay progression throughout training.

@@ -54,6 +54,16 @@ def test_megatron_mimo_runtime_config_update_resolves_eval_batch_size_defaults()
     cfg.validation.eval_global_batch_size = None
     cfg.validation.eval_micro_batch_size = None
     cfg.profiling = None
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.optimizer = "adam"
+    cfg.optimizer.use_distributed_optimizer = False
+    cfg.optimizer.use_layer_wise_distributed_optimizer = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
 
     megatron_mimo_runtime_config_update(cfg)
 
@@ -316,6 +326,7 @@ class TestPretrainMegatronMIMOSetup:
         from megatron.bridge.training.config import OptimizerConfig
 
         cfg.optimizer = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
+        cfg.optimizer.use_layer_wise_param_layout = False
         cfg.optimizer.finalize()
 
         global_state = Mock()
@@ -335,7 +346,9 @@ class TestPretrainMegatronMIMOSetup:
         start_time_tensor.item.return_value = global_state.start_time
 
         with (
-            patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)),
+            patch(
+                "megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)
+            ) as mock_build_model,
             patch(
                 "megatron.core.models.mimo.optimizer.get_mimo_optimizer",
                 return_value=mock_optimizer,
@@ -351,6 +364,7 @@ class TestPretrainMegatronMIMOSetup:
 
         mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
         optimizer_config = mock_get_mimo_optimizer.call_args.args[1]
+        assert mock_build_model.call_args.kwargs["use_layer_wise_param_layout"] is False
         assert type(optimizer_config).__module__ == "megatron.core.optimizer.optimizer_config"
         assert optimizer_config.use_distributed_optimizer is True
         assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False

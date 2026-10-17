@@ -22,7 +22,7 @@ from megatron.bridge.recipes.kimi.kimi_k2 import (
     _get_kimi_k2_pipeline_layout,
     kimi_k2_pretrain_config,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, _validate_and_sync_distributed_optimizer_settings
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -148,18 +148,33 @@ class TestKimiK2PretrainConfig:
         assert cfg.model.num_layers_in_last_pipeline_stage is None
 
     def test_pretrain_config_ddp_settings_for_muon(self):
-        """Test DDP settings configured for Muon optimizer."""
+        """The existing Kimi recipe retains compact, non-overlapped LayerWise Muon."""
         cfg = kimi_k2_pretrain_config()
 
-        # Muon requires these specific DDP settings
         assert cfg.ddp.overlap_grad_reduce is True
-        assert cfg.ddp.overlap_param_gather is False  # Muon needs this to be False
+        assert cfg.ddp.overlap_param_gather is False
+        assert cfg.comm_overlap.overlap_param_gather is False
         assert cfg.ddp.check_for_nan_in_grad is True
-        assert cfg.ddp.use_distributed_optimizer is False  # Muon needs this to be False
+        assert cfg.ddp.use_distributed_optimizer is False
         assert cfg.ddp.use_megatron_fsdp is False
         assert cfg.ddp.grad_reduce_in_fp32 is True
         assert cfg.ddp.average_in_collective is True
         assert cfg.ddp.data_parallel_sharding_strategy == "no_shard"
+        assert cfg.optimizer.optimizer == "dist_muon"
+        assert cfg.optimizer.use_layer_wise_param_layout is False
+
+        _validate_and_sync_distributed_optimizer_settings(cfg)
+
+        assert cfg.optimizer.optimizer == "muon"
+        assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+        assert cfg.optimizer.use_distributed_optimizer is False
+        assert cfg.ddp.use_distributed_optimizer is False
+        assert cfg.optimizer.use_layer_wise_param_layout is False
+
+        cfg.comm_overlap.finalize()
+        cfg.comm_overlap.data_parallel_size = 16
+        overlap_cfg = cfg.comm_overlap._get_optimizer_overlap_cfgs(cfg.model)
+        assert overlap_cfg.overlap_param_gather is False
 
     def test_pretrain_config_dataset_configuration(self):
         """Test dataset configuration."""

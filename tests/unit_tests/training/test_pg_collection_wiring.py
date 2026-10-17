@@ -116,7 +116,9 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
         straggler=None,
         ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
         optimizer=SimpleNamespace(
+            optimizer="adam",
             use_distributed_optimizer=False,
+            use_layer_wise_distributed_optimizer=False,
             optimizer_cuda_graph=False,
         ),
         model=SimpleNamespace(
@@ -224,7 +226,9 @@ def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
         straggler=None,
         ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
         optimizer=SimpleNamespace(
+            optimizer="adam",
             use_distributed_optimizer=False,
+            use_layer_wise_distributed_optimizer=False,
             optimizer_cuda_graph=False,
         ),
         model=SimpleNamespace(
