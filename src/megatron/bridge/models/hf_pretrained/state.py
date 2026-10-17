@@ -924,17 +924,27 @@ class SafeTensorsStateSource(StateSource):
         saved_filenames = set()
         total_saved_tensor_bytes = 0
 
+        unexpected_keys: list[str] = []
+
         for name, tensor in generator:
             all_yielded_keys.add(name)
             if name not in all_expected_keys:
                 if strict:
-                    raise KeyError(
-                        f"Tensor '{name}' from generator not found in the original model structure. "
-                        "Re-run with strict=False to save the partial checkpoint instead of failing."
-                    )
+                    # Recorded and raised after the loop, not here. The comment
+                    # above says why: the other ranks are inside
+                    # ``for _ in generator: pass`` driving their side of the
+                    # export collectives, so leaving the generator mid-stream
+                    # blocks them until the process-group timeout instead of
+                    # failing.
+                    unexpected_keys.append(name)
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
-                    continue
+                continue
+
+            if unexpected_keys:
+                # Already failing. Keep pulling so the other ranks finish, and
+                # write nothing further, as raising on the first offender did.
+                continue
 
             buffered_tensors[name] = tensor
 
@@ -968,6 +978,12 @@ class SafeTensorsStateSource(StateSource):
                 all_saved_keys.update(keys_for_file)
                 del files_to_save[filename]
                 del remaining_keys_by_file[filename]
+
+        if unexpected_keys:
+            raise KeyError(
+                f"Tensor '{unexpected_keys[0]}' from generator not found in the original model structure. "
+                "Re-run with strict=False to save the partial checkpoint instead of failing."
+            )
 
         # --- Final Reporting ---
         if files_to_save:
@@ -1191,13 +1207,22 @@ class SafeTensorsStateSource(StateSource):
         for name, tensor in generator:
             if name not in key_to_filename_map:
                 if strict:
-                    raise KeyError(
-                        f"Tensor '{name}' from generator not found in the original model structure. "
-                        "Re-run with strict=False to save the partial checkpoint instead of failing."
-                    )
+                    # Recorded rather than raised, the way the duplicate-key
+                    # branch below already does it, and for the reason the
+                    # comment on the strict-mode check gives: every rank both
+                    # produces and consumes this generator, so leaving it
+                    # mid-stream hangs the others on the trailing collectives
+                    # instead of failing.
+                    if local_export_error is None:
+                        local_export_error = (
+                            f"Rank {rank}: Tensor '{name}' from generator not found in the original "
+                            "model structure. Re-run with strict=False to save the partial checkpoint "
+                            "instead of failing."
+                        )
+                        buffered_tensors.clear()
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
-                    continue
+                continue
 
             if is_saver_rank:
                 fname = key_to_filename_map[name]
