@@ -166,8 +166,8 @@ layout reaches DP8 without it.
 
 ### GB200 library recipes
 
-The GB200 variants use four GPUs per node within one NVLink domain. Full SFT and LoRA have completed 100-step
-validation with the public checkpoint. Pretraining 100-step validation is still in progress.
+The GB200 variants use four GPUs per node within one NVLink domain. Pretraining, full SFT and LoRA have each
+completed 100-step validation with the public checkpoint.
 
 | Recipe | GPUs | TP / PP / CP / EP / ETP | Sequence length | GBS / MBS |
 | --- | --- | --- | --- | --- |
@@ -182,27 +182,41 @@ communication. Full SFT and LoRA use neither activation recompute nor CUDA graph
 pretraining recipe does not use BF16 gradients or optimizer moments; performance comparisons must account for this
 precision difference. Full SFT and LoRA retain the H200 learning rates, schedules, dataset selection and adapter scope.
 
-The finetuning recipes collect Python garbage every 10 updates, disable activation fusion, and set
-`NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`. Their matched 20-step comparisons retain the same checkpoint, data packs,
+All three recipes collect Python garbage every 10 updates, disable activation fusion, and set
+`NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`. Matched 20-step finetuning comparisons retain the same checkpoint, data packs,
 learning-rate schedule, natural routing and FP32 optimizer state. GC every 5 updates did not improve throughput;
 SM16 with automatic garbage collection did not outperform the selected GC10/SM32 configuration. The combination
 of GC10 and SM16 was not tested for finetuning.
 
-Both final finetuning runs completed 100 finite updates with no skipped or NaN updates in NeMo 26.10 RC5.
+All three final runs completed 100 finite updates with no skipped or NaN updates in NeMo 26.10 RC5.
 Checkpoint writes and validation were disabled for these measurements. Measurements cover updates 51–100, including five garbage-collection cycles and intervening logging. Each rate
-uses the slowest rank's synchronized elapsed time; token rates count physical processed tokens, including padding.
+uses the slowest rank's synchronized elapsed time and Bridge's hybrid-layer model-FLOP estimate; token rates count
+physical processed tokens, including padding.
 
 | Recipe | Seconds/update | Physical tokens/s/GPU | Model TFLOP/s/GPU | Minimum observed free memory | First / last 10-update mean loss |
 | --- | ---: | ---: | ---: | ---: | ---: |
+| Pretraining, 64 GPUs | 7.7679 | 2109.18 | 291.94 | 11.36 GiB | 1.1828 / 1.0398 |
 | Full SFT, 64 GPUs | 1.8025 | 565.84 | 77.72 | 9.28 GiB | 1.0766 / 0.7391 |
 | LoRA, 32 GPUs | 1.4390 | 1419.52 | 194.95 (full-training equivalent) | 87.90 GiB | 1.0778 / 0.8389 |
 
 The LoRA model-work estimate uses the full-training FLOP formula. It is not actual executed LoRA compute or MFU.
 These runs validate training behavior; they do not establish checkpoint save, adapter export or resume behavior.
 
+Matched pretraining screens selected attention/router graphs with expert-activation recompute: graphs alone
+left less than 4 GiB of observed free memory. SM16 and SM32 were effectively tied, so SM32 was retained without a
+performance-superiority claim. TP2/PP2/EP32, activation fusion and TP overlap were rejected after their respective
+memory or numerical comparison failures. Variable baseline timing limits repeatable-speedup claims.
+
 Offline packing aligns individual sequences to 8 tokens for SFT and 4 for LoRA. The LoRA alignment differs from the
 H200 recipe's alignment of 2 and can change pack membership and order. Prepare a separate dataset output for each
 alignment. Matched performance comparisons must use the same prepared packs and starting checkpoint.
+
+The pretraining input is `Salesforce/wikitext`, configuration `wikitext-103-raw-v1`, revision
+`b08601e04326c79dfdd32d625aee71d232d685c3`, training split. Each nonblank row becomes one document in source order,
+tokenized with the pinned Beam tokenizer and an appended EOD token: 1,165,029 documents and 125,410,048 tokens.
+Finetuning uses the recipes' pinned Tulu3 revision `b14afda60f1bbebe55d5d2fa1e4df5042f97f8be`, split
+`train[:10000]`, dataset seed 1234 and model seed 5678. The separate SFT and LoRA packing outputs contain 503 and
+500 packs, respectively. Pretraining uses seed 1234 for both the dataset and model.
 
 Fine-grained expert communication overlap is disabled because its layer schedule does not execute Beam's sandwich
 norms and depth-scaled residuals. Enabling that schedule would change the model's computation.
@@ -332,6 +346,6 @@ The dataset must be tokenized with Beam's tokenizer into Megatron's indexed form
 - The launcher's distributed CPU export requests no GPU resources and therefore fails for Beam with
   "TransformerEngine needs CUDA". Use the single-process CPU commands above with one runtime GPU.
 - Megatron KV-cache inference is not verified; use the legacy full-prefix generation path.
-- Only BF16 recipes are provided. GB200 pretraining validation is pending; no FP8 recipe is provided.
+- Only BF16 recipes are provided; no FP8 recipe is provided.
 - Hugging Face reference inference requires a Transformers build that implements `BeamForCausalLM`. Bridge
   configuration loading and checkpoint conversion also work with its configuration-only fallback.
