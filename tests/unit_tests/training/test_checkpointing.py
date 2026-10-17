@@ -102,6 +102,45 @@ class _DummyClass:
     save_sharded_modelopt_state = None
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("per_rank_objects", [False, True])
+def test_global_checkpoint_load_forwards_per_rank_objects(per_rank_objects):
+    """The configured object-loading policy must reach the real Core strategy."""
+    from megatron.bridge.training import checkpointing
+
+    config = CheckpointConfig(
+        async_save=False,
+        fully_parallel_load=True,
+        ckpt_fully_parallel_load_per_rank_objects=per_rank_objects,
+    )
+    group = Mock()
+    pg = SimpleNamespace(dp_cp=Mock(), dp_cp_gtp_remat=group)
+    context = {}
+    with (
+        patch.object(checkpointing, "TorchDistLoadShardedStrategy") as base_strategy,
+        patch.object(checkpointing.dist_checkpointing, "load", return_value={"model": {}}) as load,
+    ):
+        result = checkpointing._load_global_dist_base_checkpoint(
+            "checkpoint",
+            config,
+            False,
+            {"model": {}},
+            1,
+            False,
+            checkpoint_path_override="checkpoint/iter_0000001",
+            checkpointing_context=context,
+            pg_collection=pg,
+        )
+
+    strategy = load.call_args.args[2]
+    assert isinstance(strategy, checkpointing.FullyParallelLoadStrategyWrapper)
+    assert strategy.per_rank_object_load is per_rank_objects
+    assert strategy.parallelization_group is group
+    assert strategy.base_strategy is base_strategy.return_value
+    assert context["load_strategy"] is strategy
+    assert result[0] == {"model": {}}
+
+
 def test_checkpoint_group_includes_gtp_and_supports_older_collections():
     replica_group = Mock()
     distribution_group = Mock()
