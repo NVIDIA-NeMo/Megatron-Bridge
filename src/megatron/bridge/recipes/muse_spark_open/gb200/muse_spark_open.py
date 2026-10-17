@@ -93,6 +93,15 @@ def muse_spark_open_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.attention_backend = "auto"
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
+    # The model config leaves these Megatron-Core fusions and pipeline-output deallocation off; they shorten the step
+    # without changing the loss.
+    cfg.model.bias_activation_fusion = True
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.model.apply_rope_fusion = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.deallocate_pipeline_outputs = True
+    # Recomputing only the MoE layers is slightly faster, but leaves the second stage too little memory to resume
+    # from a checkpoint.
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "uniform"
     cfg.model.recompute_num_layers = 1
@@ -100,6 +109,7 @@ def muse_spark_open_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_permute_fusion_into_hybridep = True
     cfg.model.moe_shared_expert_overlap = False
 
     cfg.dataset.seq_length = 4096

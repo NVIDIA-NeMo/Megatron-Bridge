@@ -497,7 +497,7 @@ def test_muse_spark_recipes_keep_each_hybridep_group_in_one_nvlink_domain(recipe
     assert cfg.model.recompute_granularity != "full"
 
 
-@pytest.mark.parametrize("recipe_name", _HYBRIDEP_RECIPES)
+@pytest.mark.parametrize("recipe_name", [*_HYBRIDEP_RECIPES, "muse_spark_open_pretrain_192gpu_gb200_bf16_config"])
 def test_muse_spark_recipes_enable_megatron_core_fusions(recipe_name: str) -> None:
     cfg = getattr(muse_spark_recipes, recipe_name)()
 
