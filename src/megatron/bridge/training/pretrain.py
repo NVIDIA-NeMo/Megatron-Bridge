@@ -213,6 +213,8 @@ def _pretrain(
                 logger.exception("Unexpected failure while cleaning up after pretrain failure")
         raise
 
+    # Release DataLoader workers before process-group teardown.
+    del setup_output, train_data_iterator, valid_data_iterator, test_data_iterator
     _maybe_destroy_process_group(should_destroy_process_group)
 
 
