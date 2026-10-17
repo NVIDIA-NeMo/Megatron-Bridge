@@ -261,24 +261,24 @@ def test_muse_spark_peft_recipe_keeps_dora_on_attention_projections() -> None:
 
 def test_muse_spark_pretrain_recipe_contract() -> None:
     cfg = muse_spark_open_pretrain_192gpu_gb200_bf16_config()
-    sft = muse_spark_open_sft_192gpu_gb200_bf16_multimodal_config()
 
     assert isinstance(cfg, ConfigContainer)
     assert isinstance(cfg.dataset, GPTDatasetConfig)
     assert cfg.peft is None
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.tokenizer.tokenizer_model == muse_spark_recipes._MODEL_ID
-    for name in (
-        "tensor_model_parallel_size",
-        "pipeline_model_parallel_size",
-        "pipeline_dtype",
-        "expert_model_parallel_size",
-        "expert_tensor_parallel_size",
-        "sequence_parallel",
-        "hybrid_layer_pattern",
-        "recompute_granularity",
-    ):
-        assert getattr(cfg.model, name) == getattr(sft.model, name)
+    # TP1/PP6/EP32 with full activation recompute: six stages of 9, 11, 11, 11, 11, and 9 decoder blocks.
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert _stage_blocks(cfg) == [9, 11, 11, 11, 11, 9]
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
+    assert _data_parallel_size(cfg, 192) == 32
     # Text-only data never exercises the perception towers.
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is True
@@ -305,11 +305,8 @@ def test_muse_spark_pretrain_recipe_contract() -> None:
     assert cfg.checkpoint.load is None
     # The card command supplies the imported checkpoint; the reusable recipe must not.
     assert cfg.checkpoint.pretrained_checkpoint is None
-    _assert_three_rack_stages(cfg)
-    assert cfg.model.recompute_granularity is None
-    assert _data_parallel_size(cfg, 192) == 16
     # Fixed-length sequences give every EP rank the same token count, so no padding.
-    _assert_hybridep(cfg, ep=64, pad_uneven=False)
+    _assert_hybridep(cfg, ep=32, pad_uneven=False)
 
 
 def test_muse_spark_long_context_sft_packs_32k_with_cp2() -> None:
@@ -384,14 +381,15 @@ def test_muse_spark_pretrain_256gpu_recipe_changes_only_the_pipeline_split() -> 
     reference = muse_spark_open_pretrain_192gpu_gb200_bf16_config()
     cfg = muse_spark_open_pretrain_256gpu_gb200_bf16_config()
 
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.sequence_parallel is True
-    # One pipeline stage per 64-GPU NVL72 domain; the last stage gives up blocks for the output layer.
-    assert cfg.model.pipeline_model_parallel_size == 4
-    assert _stage_blocks(cfg) == [16, 16, 16, 14]
-    # 256 GPUs / (TP4 * PP4) leaves 16 data-parallel replicas; EP64 shards each stage's experts once.
-    assert _data_parallel_size(cfg, 256) == 16
-    _assert_hybridep(cfg, ep=64, pad_uneven=False)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.expert_model_parallel_size == 32
+    assert _stage_blocks(cfg) == [7, 8, 8, 8, 8, 8, 8, 7]
+    # 256 GPUs / (TP1 * PP8) leaves 32 data-parallel replicas; EP32 shards each stage's experts once.
+    assert _data_parallel_size(cfg, 256) == 32
+    # Without a matched HybridEP run this recipe keeps the bridge default all-to-all dispatcher.
+    assert getattr(cfg.model, "moe_token_dispatcher_type", "alltoall") == "alltoall"
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     for section, names in (
         ("train", ("train_iters", "global_batch_size", "micro_batch_size")),
         ("optimizer", ("lr", "min_lr", "use_precision_aware_optimizer")),
@@ -462,7 +460,12 @@ def test_muse_spark_recipe_uses_builder_model_config_api(monkeypatch: pytest.Mon
     assert cfg.model is not None
 
 
-@pytest.mark.parametrize("recipe_name", muse_spark_recipes.__all__)
+# The pretraining recipes keep TP1/EP32 with full activation recompute and are checked on their own; every other
+# recipe runs HybridEP without full recompute and with the Megatron-Core fusions.
+_HYBRIDEP_RECIPES = [name for name in muse_spark_recipes.__all__ if "_pretrain_" not in name]
+
+
+@pytest.mark.parametrize("recipe_name", _HYBRIDEP_RECIPES)
 def test_muse_spark_recipes_keep_each_hybridep_group_in_one_nvlink_domain(recipe_name: str) -> None:
     cfg = getattr(muse_spark_recipes, recipe_name)()
 
@@ -474,11 +477,11 @@ def test_muse_spark_recipes_keep_each_hybridep_group_in_one_nvlink_domain(recipe
     assert cfg.model.recompute_granularity != "full"
 
 
-@pytest.mark.parametrize("recipe_name", muse_spark_recipes.__all__)
+@pytest.mark.parametrize("recipe_name", _HYBRIDEP_RECIPES)
 def test_muse_spark_recipes_enable_megatron_core_fusions(recipe_name: str) -> None:
     cfg = getattr(muse_spark_recipes, recipe_name)()
 
-    # The model config leaves these off; every recipe turns them on.
+    # The model config leaves these off; every HybridEP recipe turns them on.
     for name in (
         "bias_activation_fusion",
         "gradient_accumulation_fusion",

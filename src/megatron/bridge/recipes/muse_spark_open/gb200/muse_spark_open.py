@@ -14,10 +14,12 @@
 
 """Bounded GB200 training recipes for Muse Spark Open.
 
-Every recipe shards the 256 routed experts with EP64 and dispatches them with HybridEP: one EP64 group is one pipeline
-stage's 64 contiguous ranks, which fill one NVL72 NVLink domain (16 nodes of 4 GPUs), so the 192-GPU recipes run three
-pipeline stages and the 256-GPU recipes four. Allocate nodes in 16-node segments, one per NVL72 rack. The 16-GPU
-image-text LoRA recipe is the exception: it keeps EP16 inside one NVLink domain.
+The SFT, LoRA, and image-text recipes shard the 256 routed experts with EP64 and dispatch them with HybridEP: one EP64
+group is one pipeline stage's 64 contiguous ranks, which fill one NVL72 NVLink domain (16 nodes of 4 GPUs), so the
+192-GPU recipes run three pipeline stages and the 256-GPU recipe four. Allocate nodes in 16-node segments, one per NVL72
+rack. The 16-GPU image-text LoRA recipe keeps EP16 inside one NVLink domain. The pretraining recipes keep TP1/EP32 with
+full activation recompute (six pipeline stages and HybridEP on 192 GPUs, eight stages and the all-to-all dispatcher on
+256 GPUs); on 192 GPUs that layout pretrains faster than EP64 without recompute.
 
 Each recipe is self-contained: it sets every model, data, and training option it relies on, even where that
 repeats another recipe.
@@ -56,11 +58,7 @@ _CODERFORGE_REVISION = "060fca96cf723b2ebab3181e9e59fafd273df3cb"  # pragma: all
 def muse_spark_open_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     """Return a 100-step bounded text pretraining config on 192 GB200 GPUs.
 
-    TP4/PP3/EP64 with sequence parallelism: each pipeline stage is one EP64
-    HybridEP group in one NVL72 domain, and the remaining 16 data-parallel
-    replicas each run 64 microbatches per step. The stages hold 21, 22, and 19
-    decoder blocks because the last stage also computes the 202K-vocabulary
-    output layer. The model fits without activation recompute. The data is
+    TP1/PP6/EP32 gives every GPU a unique slice of the experts. The data is
     text-only, so the perception towers stay frozen rather than receiving only
     weight decay. Pass the imported checkpoint with ``--pretrained_checkpoint``
     to start from natural expert routing; the recipe leaves it unset.
@@ -74,18 +72,18 @@ def muse_spark_open_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     cfg.model.seq_length = 4096
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 3
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 6
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
-    # Decoder blocks per stage; the first stage also holds the embedding with the perception towers, the last
-    # stage the output layer.
-    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (21, 22, 19))
-    cfg.model.expert_model_parallel_size = 64
+    # Decoder blocks per stage; the first and last stages also hold the embedding with the perception
+    # towers and the output layer.
+    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (9, 11, 11, 11, 11, 9))
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.cp_comm_type = "a2a"
-    cfg.model.sequence_parallel = True
+    cfg.model.sequence_parallel = False
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_audio_model = True
@@ -94,19 +92,13 @@ def muse_spark_open_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.attention_backend = "auto"
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
-    # The model config leaves these Megatron-Core fusions and pipeline-output deallocation off; they shorten the step
-    # and lower peak memory without changing the loss.
-    cfg.model.bias_activation_fusion = True
-    cfg.model.gradient_accumulation_fusion = True
-    cfg.model.apply_rope_fusion = True
-    cfg.model.moe_router_fusion = True
-    cfg.model.deallocate_pipeline_outputs = True
-    cfg.model.recompute_granularity = None
-    # HybridEP: each EP64 group is one pipeline stage's 64 contiguous ranks (16 nodes) in one NVL72 domain.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    # HybridEP: each EP32 group is one pipeline stage's 32 contiguous ranks (8 nodes) in one NVL72 domain.
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_flex_dispatcher_num_sms = 32
-    cfg.model.moe_permute_fusion_into_hybridep = True
     cfg.model.moe_shared_expert_overlap = False
 
     cfg.dataset.seq_length = 4096
@@ -141,7 +133,7 @@ def muse_spark_open_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
@@ -149,14 +141,12 @@ def muse_spark_open_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
 
 
 def muse_spark_open_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
-    """Return a 100-step bounded text pretraining config on 256 GB200 GPUs with four pipeline stages.
+    """Return a 100-step bounded text pretraining config on 256 GB200 GPUs with eight pipeline stages.
 
-    TP4/PP4/EP64 with sequence parallelism: each pipeline stage is one EP64 HybridEP
-    group in one NVL72 domain, and the remaining 16 data-parallel replicas each run 64
-    microbatches per step, as in the 192-GPU recipe, so both see the same batches. The
-    stages hold 16, 16, 16, and 14 decoder blocks because the last stage also computes
-    the output layer. The data is text-only, so the perception towers stay frozen. Pass
-    the imported checkpoint with ``--pretrained_checkpoint``.
+    TP1/PP8/EP32 keeps each stage's expert all-to-all within 32 GPUs and gives every
+    GPU a unique slice of the experts. The data-parallel size is 32, as in the 192-GPU
+    recipe, so both see the same batches. The data is text-only, so the perception
+    towers stay frozen. Pass the imported checkpoint with ``--pretrained_checkpoint``.
 
     The peak learning rate is 3e-5, decaying to 3e-6, instead of the bounded
     pretraining contract's from-scratch 3e-4: at 3e-4 the warm-started model's loss
@@ -167,18 +157,18 @@ def muse_spark_open_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     cfg.model.seq_length = 4096
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 8
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     # Decoder blocks per stage; the first and last stages also hold the embedding with the perception
     # towers and the output layer.
-    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (16, 16, 16, 14))
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (7, 8, 8, 8, 8, 8, 8, 7))
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.cp_comm_type = "a2a"
-    cfg.model.sequence_parallel = True
+    cfg.model.sequence_parallel = False
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_audio_model = True
@@ -187,20 +177,9 @@ def muse_spark_open_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.attention_backend = "auto"
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
-    # The model config leaves these Megatron-Core fusions and pipeline-output deallocation off; they shorten the step
-    # and lower peak memory without changing the loss.
-    cfg.model.bias_activation_fusion = True
-    cfg.model.gradient_accumulation_fusion = True
-    cfg.model.apply_rope_fusion = True
-    cfg.model.moe_router_fusion = True
-    cfg.model.deallocate_pipeline_outputs = True
-    cfg.model.recompute_granularity = None
-    # HybridEP: each EP64 group is one pipeline stage's 64 contiguous ranks (16 nodes) in one NVL72 domain.
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_flex_dispatcher_num_sms = 32
-    cfg.model.moe_permute_fusion_into_hybridep = True
-    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
 
     cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
@@ -234,9 +213,6 @@ def muse_spark_open_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
     }
     return cfg
 
