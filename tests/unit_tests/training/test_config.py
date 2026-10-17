@@ -614,6 +614,167 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_validation_config_eval_at_step_zero_default(self):
+        """eval_at_step_zero is a bridge addition defaulting to False and is settable."""
+        assert ValidationConfig().eval_at_step_zero is False
+        assert ValidationConfig(eval_at_step_zero=True).eval_at_step_zero is True
+        # Inherited from Megatron-LM's ValidationConfig.
+        assert ValidationConfig().multiple_validation_sets is False
+        assert ValidationConfig().validation_set_names is None
+
+    def test_full_validation_rejected(self):
+        """full_validation is inherited from MCore but unimplemented; setting it must fail loud."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.full_validation = True
+
+        try:
+            with pytest.raises(ValueError, match="full_validation is not supported"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_validation_set_names_require_multiple_validation_sets(self):
+        """validation_set_names without multiple_validation_sets fails config validation."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.validation_set_names = ["alpha", "beta"]
+
+        try:
+            with pytest.raises(ValueError, match="validation_set_names requires multiple_validation_sets"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_multiple_validation_sets_rejects_megatron_mimo(self):
+        """multiple_validation_sets is rejected for MegatronMIMO models, whose data path bypasses it."""
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.multiple_validation_sets = True
+
+        container.model = MagicMock(spec=MegatronMIMOProvider)
+
+        try:
+            with pytest.raises(ValueError, match="MegatronMIMO"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_at_step_zero_rejects_megatron_mimo(self):
+        """eval_at_step_zero is rejected for MegatronMIMO models, whose training loop never runs it."""
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.eval_at_step_zero = True
+
+        container.model = MagicMock(spec=MegatronMIMOProvider)
+
+        try:
+            with pytest.raises(ValueError, match="eval_at_step_zero is not supported for MegatronMIMO"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_duplicate_validation_set_names_rejected(self):
+        """Duplicate set names would collide in logging keys and the per-set loss dict."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.multiple_validation_sets = True
+        container.validation.validation_set_names = ["wiki", "wiki"]
+
+        try:
+            with pytest.raises(ValueError, match="must be unique"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_dataset_side_full_validation_rejected(self):
+        """The duplicate full_validation field on the mcore dataset config is rejected too."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.dataset.full_validation = True
+
+        try:
+            with pytest.raises(ValueError, match="full_validation is not supported"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_multiple_validation_sets_propagated_to_dataset_config(self):
+        """ValidationConfig is the source of truth; validate() mirrors the switch onto the
+        mcore dataset config so BlendedMegatronDatasetBuilder splits the validation blend."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.multiple_validation_sets = True
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.dataset.multiple_validation_sets is True
+
+    def test_multiple_validation_sets_dataset_only_setting_adopted(self):
+        """A legacy Megatron-LM style dataset-side setting is adopted into ValidationConfig."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.dataset.multiple_validation_sets = True
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.validation.multiple_validation_sets is True
+        assert container.dataset.multiple_validation_sets is True
+
+    def test_multiple_validation_sets_conflicting_settings_rejected(self):
+        """An explicit dataset-side False with ValidationConfig True is a contradiction."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.multiple_validation_sets = True
+        container.dataset.multiple_validation_sets = False
+
+        try:
+            with pytest.raises(ValueError, match="Conflicting multiple_validation_sets"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("pipeline_model_parallel_size", [1, 2])
+    def test_multiple_validation_sets_allows_pipeline_parallel(self, monkeypatch, pipeline_model_parallel_size):
+        """multiple_validation_sets validates with any PP size.
+
+        Per-set evaluation runs an identical number of fully-flushed evaluate()
+        calls on every rank, so it stays collective-balanced under PP > 1; no
+        config guard rejects it.
+        """
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=pipeline_model_parallel_size,
+            context_parallel_size=1,
+            pipeline_dtype=torch.bfloat16,
+        )
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8, model_config=gpt_model_cfg)
+        container.validation.multiple_validation_sets = True
+
+        try:
+            container.validate()  # Should pass without error for any PP size
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     @pytest.mark.parametrize(
         "world_size, expect_assertion_error",
         [
@@ -1604,6 +1765,30 @@ class TestConfigContainerValidation:
 
         try:
             with pytest.raises(ValueError, match=match):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_multiple_validation_sets_rejects_dpo(self):
+        """multiple_validation_sets is rejected for DPO, whose loader builds a single validation set."""
+        gpt_model_cfg = create_test_gpt_config(calculate_per_token_loss=True)
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = DPODatasetConfig(
+            seq_length=512,
+            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.dpo = DPOLossConfig()
+        container.ddp.average_in_collective = False
+        container.validation.multiple_validation_sets = True
+
+        try:
+            with pytest.raises(ValueError, match="multiple_validation_sets is not supported for DPO"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)

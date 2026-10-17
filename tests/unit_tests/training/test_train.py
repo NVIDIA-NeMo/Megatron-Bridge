@@ -73,7 +73,7 @@ class TestCheckpointManagerLifecycle:
                 manual_gc=False,
                 check_weight_hash_across_dp_replicas_interval=None,
             ),
-            validation=SimpleNamespace(),
+            validation=SimpleNamespace(eval_at_step_zero=False),
             dataset=GPTDatasetConfig(seq_length=8, random_seed=1234),
             checkpoint=SimpleNamespace(save=None),
             logger=SimpleNamespace(log_throughput_to_tensorboard=False),
