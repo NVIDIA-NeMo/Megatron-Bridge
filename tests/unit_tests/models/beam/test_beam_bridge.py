@@ -57,11 +57,18 @@ def _model_parallel_context():
     """Initialize a 1x1 model-parallel state (NCCL under torchrun on GPU, single-process gloo on CPU)."""
     from megatron.core import parallel_state
 
-    if not torch.distributed.is_initialized():
+    created = not torch.distributed.is_initialized()
+    if created:
         backend = "nccl" if torch.cuda.is_available() else "gloo"
         torch.distributed.init_process_group(backend, init_method="tcp://127.0.0.1:29521", rank=0, world_size=1)
     parallel_state.initialize_model_parallel(1, 1)
-    return parallel_state.destroy_model_parallel
+
+    def teardown():
+        parallel_state.destroy_model_parallel()
+        if created:
+            torch.distributed.destroy_process_group()
+
+    return teardown
 
 
 def test_geometry():
@@ -811,6 +818,7 @@ class TestBeamOutputLayer:
 
         from megatron.bridge.models.gemma.modules import extend_instance
 
+        was_initialized = torch.distributed.is_initialized()
         teardown = _model_parallel_context()
         try:
             cfg = BeamTransformerConfig(
@@ -837,6 +845,7 @@ class TestBeamOutputLayer:
             assert 29.0 < float(out.abs().max()) < 30.0
         finally:
             teardown()
+        assert torch.distributed.is_initialized() == was_initialized
 
 
 class TestTPGreaterThanKVHeads:
