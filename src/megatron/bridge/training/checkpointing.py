@@ -60,11 +60,8 @@ from megatron.core.utils import (
     get_model_config,
     get_pg_rank,
     get_pg_size,
-    grant_shape_mismatch_for_gtp_padding,
-    resolve_gtp_pad_for_alignment,
     unwrap_model,
 )
-from megatron.training.checkpointing import save_tokenizer_assets
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -81,6 +78,7 @@ from megatron.bridge.training.gtp import (
     _get_dataloader_process_group,
     _validate_checkpoint_weight_topology,
     get_data_distribution_group,
+    is_gtp_remat_active,
 )
 from megatron.bridge.training.optim import (
     hybrid_optimizer_state_loading,
@@ -104,6 +102,11 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     read_train_state,
 )
 from megatron.bridge.training.utils.log_utils import append_to_progress_log
+from megatron.bridge.training.utils.mcore_checkpointing import (
+    apply_gtp_checkpoint_padding,
+    gtp_checkpoint_load_context,
+    save_tokenizer_assets,
+)
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.utils.common_utils import (
     get_rank_safe,
@@ -2817,13 +2820,11 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
         for key in list(state_dict.keys()):
             state_dict[f"module.{key}"] = state_dict.pop(key)
 
-    from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
-
-    load_context = contextlib.nullcontext
-    if HAVE_GTP:
-        from megatron.core.tensor_parallel.gtp_api import gtp_native_fp8_load_context
-
-        load_context = partial(gtp_native_fp8_load_context, module)
+    load_context = partial(
+        gtp_checkpoint_load_context,
+        module,
+        gtp_enabled=is_gtp_remat_active(getattr(module, "config", None)),
+    )
 
     try:
         with load_context():
@@ -3843,12 +3844,12 @@ def _load_global_dist_base_checkpoint(
     if is_megatron_mimo and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
         validate_sharding_integrity = False
     if cfg is not None:
-        alignment = resolve_gtp_pad_for_alignment(
-            fp4=bool(getattr(cfg.model, "fp4", None)),
-            fp8_recipe=getattr(cfg.model, "fp8_recipe", None),
-            fp8=bool(getattr(cfg.model, "fp8", None)),
+        apply_gtp_checkpoint_padding(
+            sharded_state_dict,
+            checkpoint_name,
+            cfg.model,
+            gtp_enabled=is_gtp_remat_active(cfg.model),
         )
-        grant_shape_mismatch_for_gtp_padding(sharded_state_dict, checkpoint_name, alignment)
     state_dict = dist_checkpointing.load(
         sharded_state_dict,
         checkpoint_name,
