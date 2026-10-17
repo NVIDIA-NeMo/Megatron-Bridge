@@ -306,7 +306,6 @@ def _entry(
         "precision": _text(merged.get("precision")),
         "last_verified": _text(merged.get("last_verified")),
         "bridge_commit": _text(merged.get("bridge_commit")),
-        **{key: _text(merged[key]) for key in ("hf_revision", "base_container") if key in merged},
         "commands": commands,
         "command_topologies": [command_topology(command) for command in commands],
         "dimensions": _json_value(dimensions or {}),

@@ -51,8 +51,9 @@ models = bridge.get_model(model_config)
 
 Beam runs on the repository's default Megatron-Core pin. The bridge adds Beam's SSMax scaling, attention-gate bias,
 sandwich norms, depth-scaled residuals and FP32 router parameters on top of an unmodified Megatron-Core
-`HybridModel`, so no Megatron-LM branch switch is needed. Loading the Hugging Face checkpoint needs a Transformers
-build that includes Beam (see Known Limitations). The verification runs used the `nvcr.io/nvidia/pytorch:26.08-py3` base container; see the
+`HybridModel`, so no Megatron-LM branch switch is needed. Bridge can load the released checkpoint metadata through
+its configuration fallback; Hugging Face reference inference requires a Transformers build that implements Beam.
+The historical H200 verification runs used the `nvcr.io/nvidia/pytorch:26.08-py3` base container; see the
 [repository installation instructions](../../../README.md#-installation).
 
 The Slurm launchers require an account, partition, and container image. Set them before running any
@@ -262,5 +263,5 @@ The dataset must be tokenized with Beam's tokenizer into Megatron's indexed form
   "TransformerEngine needs CUDA". Use the single-process CPU commands above with one runtime GPU.
 - Megatron KV-cache inference is not verified; use the legacy full-prefix generation path.
 - Only BF16 recipes are provided. The GB200 variants are pending validation; no FP8 recipe is provided.
-- Beam is not in a Transformers release yet, so loading the Hugging Face checkpoint currently needs a Transformers
-  nightly build.
+- Hugging Face reference inference requires a Transformers build that implements `BeamForCausalLM`. Bridge
+  configuration loading and checkpoint conversion also work with its configuration-only fallback.
