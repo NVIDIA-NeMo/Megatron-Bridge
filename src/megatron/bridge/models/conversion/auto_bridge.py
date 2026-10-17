@@ -307,32 +307,27 @@ def _drop_readonly_config_properties(
     return {key: value for key, value in config_dict.items() if key not in readonly_properties}
 
 
-def _check_streaming_argument_support(stream_fn: Callable[..., Any], owner: object, argument: str) -> None:
-    """Fail early when a streaming override cannot accept an export argument."""
+def _check_stream_kwarg_support(stream_fn: Callable[..., Any], owner: object, kwarg: str) -> None:
+    """Fail up front when a bridge's streaming override cannot accept an opt-in keyword.
+
+    Opt-in keywords such as ``with_megatron_names`` or ``moe_shared_loras`` are only forwarded
+    when enabled. Bridges that override the streaming export with an explicit signature (rather
+    than ``*args, **kwargs``) have to forward them themselves; without this check the request
+    would only surface as an opaque ``TypeError`` once the generator is consumed.
+    """
     try:
         parameters = inspect.signature(stream_fn).parameters
     except (TypeError, ValueError):
         # Not introspectable (C callables); let the call itself decide.
         return
-    if argument in parameters or any(
+    if kwarg in parameters or any(
         parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
     ):
         return
     raise TypeError(
         f"{type(owner).__name__}.{getattr(stream_fn, '__name__', 'stream_weights')} does not accept "
-        f"'{argument}'; a bridge that overrides the streaming export must forward this flag "
-        "before the requested export mode can be used."
+        f"'{kwarg}'; a bridge that overrides the streaming export must forward this flag before it can be enabled."
     )
-
-
-def _check_with_megatron_names_support(stream_fn: Callable[..., Any], owner: object) -> None:
-    """Fail up front when a streamer cannot accept ``with_megatron_names``."""
-    _check_streaming_argument_support(stream_fn, owner, "with_megatron_names")
-
-
-def _check_current_pp_stage_only_support(stream_fn: Callable[..., Any], owner: object) -> None:
-    """Fail early when a streamer cannot accept PP-local export."""
-    _check_streaming_argument_support(stream_fn, owner, "current_pp_stage_only")
 
 
 class AutoBridge(Generic[MegatronModelT]):
@@ -868,9 +863,9 @@ class AutoBridge(Generic[MegatronModelT]):
 
         bridge = self._model_bridge
         if with_megatron_names:
-            _check_with_megatron_names_support(bridge.stream_weights_megatron_to_hf, bridge)
+            _check_stream_kwarg_support(bridge.stream_weights_megatron_to_hf, bridge, "with_megatron_names")
         if current_pp_stage_only:
-            _check_current_pp_stage_only_support(bridge.stream_weights_megatron_to_hf, bridge)
+            _check_stream_kwarg_support(bridge.stream_weights_megatron_to_hf, bridge, "current_pp_stage_only")
         return bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
@@ -977,6 +972,7 @@ class AutoBridge(Generic[MegatronModelT]):
         expand_shared_outer: bool = False,
         stack_3d_moe: bool = False,
         with_megatron_names: bool = False,
+        moe_shared_loras: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -998,6 +994,11 @@ class AutoBridge(Generic[MegatronModelT]):
                 (``...experts.base_layer`` for gate_up_proj, bare ``...experts`` for
                 down_proj), instead of the per-expert 2D ``pack_moe`` layout.
                 Default ``False``; no effect for non-shared-outer adapters.
+            moe_shared_loras: Emit shared-outer routed-expert LoRA in the 2D ``experts.w1/w2/w3``
+                layout consumed by vLLM's ``enable_moe_shared_loras`` mode, keeping the shared
+                factors at expert-dim 1. When several layout flags are set, ``stack_3d_moe`` wins
+                over ``moe_shared_loras``, which wins over ``expand_shared_outer``.
+                Default ``False``; no effect for non-shared-outer adapters.
             with_megatron_names: Yield ``HFSourcedWeightTuple`` whose ``megatron_param_names``
                 holds the adapter's ``linear_in`` (lora_A) or ``linear_out`` (lora_B) Megatron
                 weight name. Default ``False`` keeps the two-field tuple.
@@ -1013,8 +1014,14 @@ class AutoBridge(Generic[MegatronModelT]):
             first — :meth:`save_hf_adapter` already does.
         """
         bridge = self._model_bridge
+        # Only forward opt-in flags when set so bridges with a custom adapter streamer keep working by default.
+        opt_in_kwargs: dict[str, bool] = {}
         if with_megatron_names:
-            _check_with_megatron_names_support(bridge.stream_adapter_weights_megatron_to_hf, bridge)
+            opt_in_kwargs["with_megatron_names"] = True
+        if moe_shared_loras:
+            opt_in_kwargs["moe_shared_loras"] = True
+        for kwarg in opt_in_kwargs:
+            _check_stream_kwarg_support(bridge.stream_adapter_weights_megatron_to_hf, bridge, kwarg)
         return bridge.stream_adapter_weights_megatron_to_hf(
             model,
             cpu=cpu,
@@ -1022,7 +1029,7 @@ class AutoBridge(Generic[MegatronModelT]):
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
             stack_3d_moe=stack_3d_moe,
-            **({"with_megatron_names": True} if with_megatron_names else {}),
+            **opt_in_kwargs,
         )
 
     def save_hf_adapter(

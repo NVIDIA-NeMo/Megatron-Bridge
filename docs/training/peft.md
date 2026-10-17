@@ -179,6 +179,25 @@ finalize path takes over (Bridge's setup removes the hooks before the first step
 the wrapper's first call does). The fallback cannot cover fused weight-gradient accumulation
 and logs a warning in that case.
 
+##### Exporting shared-outer MoE adapters
+
+`AutoBridge.export_adapter_weights` emits shared-outer adapters in the legacy (SGLang)
+layout unless a serving layout is requested: the shared factor once as a `[1, ...]` tensor
+under the expert-agnostic name, plus per-expert factors under `experts.N.*` names. Three
+opt-in flags select a serving layout instead, listed from highest to lowest priority:
+
+| Option | Default | Export layout when enabled |
+|--------|---------|----------------------------|
+| `stack_3d_moe` | `False` | vLLM 3D-MoE layout: stacked tensors under `experts.base_layer` (gate/up) and `experts` (down) |
+| `moe_shared_loras` | `False` | vLLM 2D shared-MoE layout under `experts.w1/w2/w3`, with the shared factors kept at expert-dim 1 |
+| `expand_shared_outer` | `False` | vLLM 2D `pack_moe` layout: the shared factor replicated under per-expert `experts.N.*` names |
+
+The flags can be combined; when several are set, the highest-priority one decides the
+layout. With all three unset, existing callers keep the legacy layout. `moe_shared_loras=True`
+is the 2D serving format used when vLLM's `enable_moe_shared_loras` setting is enabled; it
+does not imply a 3D model. Callers can select `stack_3d_moe` from the model's MoE tensor
+layout and `moe_shared_loras` from the serving backend's adapter mode.
+
 #### LoRA+
 
 [LoRA+](https://arxiv.org/abs/2402.12354) trains the B matrix (`linear_out`) at a higher learning rate than A (`linear_in`) by a fixed ratio `lr_B = lora_plus_ratio * lr_A` (paper default 16). The ratio is set on the optimizer, not the `LoRA` adapter: when it differs from `1.0`, `get_lora_plus_config_overrides` (`megatron.bridge.peft.lora`) builds Megatron-Core per-group overrides giving the `*.linear_out.weight` group `max_lr`/`min_lr` scaled by the ratio. Pass `1.0` (or skip the call) to keep a single learning rate.
