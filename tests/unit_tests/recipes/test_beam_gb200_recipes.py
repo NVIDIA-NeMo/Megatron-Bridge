@@ -174,9 +174,13 @@ def test_unsupported_gpu_is_rejected_without_changing_dispatcher(monkeypatch, tm
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
 
 
-def test_sft_selected_execution_preserves_unfused_math(monkeypatch, tmp_path):
-    cfg = gb200.beam_sft_64gpu_gb200_bf16_config()
-    _apply_runtime_config(cfg, 64, monkeypatch, tmp_path)
+@pytest.mark.parametrize(
+    "recipe,world_size",
+    [(gb200.beam_sft_64gpu_gb200_bf16_config, 64), (gb200.beam_peft_32gpu_gb200_bf16_config, 32)],
+)
+def test_finetuning_selected_execution_preserves_unfused_math(recipe, world_size, monkeypatch, tmp_path):
+    cfg = recipe()
+    _apply_runtime_config(cfg, world_size, monkeypatch, tmp_path)
     assert cfg.train.manual_gc and cfg.train.manual_gc_interval == 10
     assert cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
     assert not cfg.model.bias_activation_fusion
