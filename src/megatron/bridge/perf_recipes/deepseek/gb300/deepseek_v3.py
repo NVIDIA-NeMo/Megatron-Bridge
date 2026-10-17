@@ -372,6 +372,26 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdpv2_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron FSDP v2."""
+    cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
+    cfg.ddp.megatron_fsdp_version = 2
+
+    _enable_deepseek_full_iteration(cfg)
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 64
+
+    # Need a fix
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # delay_wgrad_compute is only valid alongside that overlap.
+    cfg.comm_overlap.delay_wgrad_compute = False
+
+    cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
     cfg = deepseek_v3_pretrain_config()
