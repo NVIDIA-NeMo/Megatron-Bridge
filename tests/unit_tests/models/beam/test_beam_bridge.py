@@ -21,6 +21,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from transformers.models import beam
 
 from megatron.bridge.models.beam.beam_bridge import (
     _DENSE_EXPORT_DROPS,
@@ -692,7 +693,6 @@ class TestBuilderBackedConfig:
 
     def test_export_loads_as_beam_config(self, hf_config):
         """The exported dict must be a valid BeamConfig that builds a working BeamForCausalLM."""
-        beam = pytest.importorskip("transformers.models.beam", reason="needs the Beam-enabled transformers")
         cfg = BeamBridge().hf_config_to_model_config(hf_config)
         hf = BeamBridge.megatron_to_hf_config(cfg)
 
@@ -766,7 +766,6 @@ class TestDenseExport:
     def test_dense_export_builds_beam_config_and_round_trips(self, hf_config):
         """Mirror ``AutoBridge.from_auto_config()``: synthesize the HF config from the Megatron config, conform it
         to a reference (MoE) BeamConfig, construct BeamConfig, and get a dense model config back from the bridge."""
-        beam = pytest.importorskip("transformers.models.beam", reason="needs the Beam-enabled transformers")
         from megatron.bridge import AutoBridge
         from megatron.bridge.models.conversion.auto_bridge import _drop_readonly_config_properties
         from megatron.bridge.models.conversion.utils import conform_config_to_reference

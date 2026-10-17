@@ -12,20 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Public Beam metadata must load without a Transformers Beam model implementation."""
+"""Public Beam metadata loads and round-trips through native Transformers configuration."""
 
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
-from transformers import AutoConfig
+from transformers import AutoConfig, BeamConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.beam.beam_config import BeamModelConfig
-from megatron.bridge.models.beam.configuration_beam import BeamConfig
 
 
 pytestmark = pytest.mark.unit
@@ -42,6 +38,7 @@ def checkpoint_metadata(tmp_path):
 def test_public_config_loads_through_autobridge_without_weights(checkpoint_metadata):
     path, source = checkpoint_metadata
     bridge = AutoBridge.from_hf_pretrained(path)
+    assert isinstance(AutoConfig.from_pretrained(path), BeamConfig)
     cfg = bridge.get_model_config()
     assert isinstance(cfg, BeamModelConfig)
     assert cfg.hybrid_layer_pattern.count("*") == source["num_hidden_layers"]
@@ -66,46 +63,3 @@ def test_config_roundtrip_preserves_published_fields(checkpoint_metadata, tmp_pa
         assert getattr(restored, key) == value, key
     assert set(restored.rope_parameters) == {"sliding_attention", "full_attention"}
     assert restored.rope_parameters["full_attention"] is None
-
-
-def test_compatibility_config_retains_native_attention_and_mlp_defaults():
-    cfg = BeamConfig()
-    assert len(cfg.layer_types) == len(cfg.mlp_layer_types) == cfg.num_hidden_layers == 52
-    assert [i for i, kind in enumerate(cfg.layer_types) if kind == "full_attention"] == [
-        5,
-        11,
-        17,
-        23,
-        29,
-        35,
-        41,
-        47,
-        51,
-    ]
-    assert cfg.mlp_layer_types == ["dense"] * 3 + ["sparse"] * 49
-    assert cfg.rope_parameters["full_attention"] is None
-    assert cfg.rope_parameters["sliding_attention"]["rope_type"] == "default"
-    assert not cfg.tie_word_embeddings
-
-
-def test_bridge_import_preserves_an_existing_transformers_registration():
-    code = """
-from transformers import AutoConfig, PreTrainedConfig
-from transformers.models.auto.configuration_auto import CONFIG_MAPPING
-
-class ExistingBeamConfig(PreTrainedConfig):
-    model_type = "beam"
-
-AutoConfig.register("beam", ExistingBeamConfig, exist_ok=True)
-import megatron.bridge.models.beam
-assert CONFIG_MAPPING["beam"] is ExistingBeamConfig
-assert type(AutoConfig.for_model("beam")) is ExistingBeamConfig
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr

@@ -31,8 +31,6 @@ from typing import Any, Collection, Iterable, Mapping
 import torch
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 from megatron.core.models.hybrid.hybrid_model import HybridModel
-from transformers import AutoConfig
-from transformers.models.auto.configuration_auto import CONFIG_MAPPING
 
 from megatron.bridge.models.beam.beam_config import BeamModelConfig
 from megatron.bridge.models.beam.beam_mappings import BeamQKVGateMapping, split_qkv_gate_weights
@@ -46,13 +44,6 @@ from megatron.bridge.models.conversion.peft_bridge import _split_hf_lora_weight_
 
 LAYER_TYPES = ("sliding_attention", "full_attention")
 MLP_LAYER_TYPES = ("dense", "sparse")
-
-# Conversion reads safetensors directly and does not need an HF model class.
-# Preserve native or caller-supplied registrations when they are available.
-if "beam" not in CONFIG_MAPPING:
-    from megatron.bridge.models.beam.configuration_beam import BeamConfig
-
-    AutoConfig.register("beam", BeamConfig)
 
 # The soft-capped output layer uses column-parallel checkpoint sharding.
 AutoMapping.register_module_type("BeamOutputLayer", "column")

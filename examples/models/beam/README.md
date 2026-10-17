@@ -51,8 +51,8 @@ models = bridge.get_model(model_config)
 
 Beam runs on the repository's default Megatron-Core pin. The bridge adds Beam's SSMax scaling, attention-gate bias,
 sandwich norms, depth-scaled residuals and FP32 router parameters on top of an unmodified Megatron-Core
-`HybridModel`, so no Megatron-LM branch switch is needed. Bridge can load the released checkpoint metadata through
-its configuration fallback; Hugging Face reference inference requires a Transformers build that implements Beam.
+`HybridModel`, so no Megatron-LM branch switch is needed. Transformers 5.20.1 or newer (below 5.21) supplies
+the native `BeamConfig` and `BeamForCausalLM` used for checkpoint loading and Hugging Face reference inference.
 The historical H200 verification runs used the `nvcr.io/nvidia/pytorch:26.08-py3` base container; see the
 [repository installation instructions](../../../README.md#-installation).
 
@@ -71,9 +71,7 @@ card's commands, which add the pinned dataset revision, seeds, NaN checks and lo
 
 ## Conversion
 
-Bridge includes a configuration-only fallback for Transformers builds without native Beam registration.
-It supports Bridge model construction and checkpoint conversion; HF model inference still requires a
-Transformers build that implements `BeamForCausalLM`. Existing native Beam registrations take precedence.
+Bridge uses Transformers' native Beam configuration for model construction and checkpoint conversion.
 
 The BF16 checkpoint is about 1 TB. GPU import and export on H200 use two nodes at EP16, which places about 69 GiB of
 weights on each GPU; EP8 on one node would need about 127 GiB per GPU and leaves too little headroom.
@@ -189,6 +187,8 @@ SM16 with automatic garbage collection did not outperform the selected GC10/SM32
 of GC10 and SM16 was not tested for finetuning.
 
 All three final runs completed 100 finite updates with no skipped or NaN updates in NeMo 26.10 RC5.
+These measurements used Transformers 5.17 with Bridge's earlier configuration fallback; they precede the upgrade
+to native Beam support in Transformers 5.20.1.
 Checkpoint writes and validation were disabled for these measurements. Measurements cover updates 51–100, including five garbage-collection cycles and intervening logging. Each rate
 uses the slowest rank's synchronized elapsed time and Bridge's hybrid-layer model-FLOP estimate; token rates count
 physical processed tokens, including padding.
@@ -347,5 +347,4 @@ The dataset must be tokenized with Beam's tokenizer into Megatron's indexed form
   "TransformerEngine needs CUDA". Use the single-process CPU commands above with one runtime GPU.
 - Megatron KV-cache inference is not verified; use the legacy full-prefix generation path.
 - Only BF16 recipes are provided; no FP8 recipe is provided.
-- Hugging Face reference inference requires a Transformers build that implements `BeamForCausalLM`. Bridge
-  configuration loading and checkpoint conversion also work with its configuration-only fallback.
+- Transformers 5.20.1 or newer (below 5.21) is required for native Beam support.
