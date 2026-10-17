@@ -127,6 +127,7 @@ def beam_sft_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigContai
     Uses TP=8, PP=1, CP=1, EP=64, ETP=1 and HybridEP. BF16 model
     computation retains FP32 gradients, master parameters and Adam moments.
     Expert routing follows the released model, including its fixed expert biases.
+    Periodic garbage collection limits host pauses; activation fusion stays disabled.
 
     Args:
         hf_path: Optional local HF checkpoint instead of the pinned Hub revision.
@@ -161,6 +162,7 @@ def beam_sft_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigContai
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
     cfg.model.moe_router_force_load_balancing = False
+    cfg.model.bias_activation_fusion = False
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
@@ -177,6 +179,8 @@ def beam_sft_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigContai
     cfg.dataset.seed = 1234
     cfg.rng.seed = 5678
     cfg.train.train_iters = 100
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.validation.eval_interval = 0
@@ -216,6 +220,7 @@ def beam_sft_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigContai
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,

@@ -129,7 +129,11 @@ def test_runtime_precision_and_routing_preserve_training(recipe, world_size, mon
 def test_finetuning_preserves_h200_hyperparameters_and_dataset_selection(recipe, reference):
     cfg, old = recipe(), reference()
     assert cfg.model.context_parallel_size == 1
-    assert cfg.train == old.train
+    # Host collection scheduling is a performance setting, separate from training semantics.
+    collection_fields = {"manual_gc", "manual_gc_interval"}
+    assert {key: value for key, value in vars(cfg.train).items() if key not in collection_fields} == {
+        key: value for key, value in vars(old.train).items() if key not in collection_fields
+    }
     assert cfg.optimizer == old.optimizer
     assert cfg.scheduler == old.scheduler
     assert cfg.rng == old.rng
@@ -168,3 +172,15 @@ def test_unsupported_gpu_is_rejected_without_changing_dispatcher(monkeypatch, tm
         _apply_runtime_config(cfg, 64, monkeypatch, tmp_path)
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+
+
+def test_sft_selected_execution_preserves_unfused_math(monkeypatch, tmp_path):
+    cfg = gb200.beam_sft_64gpu_gb200_bf16_config()
+    _apply_runtime_config(cfg, 64, monkeypatch, tmp_path)
+    assert cfg.train.manual_gc and cfg.train.manual_gc_interval == 10
+    assert cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+    assert not cfg.model.bias_activation_fusion
+    assert not cfg.model.moe_router_force_load_balancing
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
