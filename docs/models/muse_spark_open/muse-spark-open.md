@@ -303,30 +303,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-17</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.082231</dd>
+            <dd>1.068234</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.8572639</dd>
+            <dd>0.8691962</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>5,614.890 ms</dd>
+            <dd>3,153.380 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>69.230 TFLOP/s/GPU</dd>
+            <dd>120.320 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>243.163 tokens/s/GPU</dd>
+            <dd>432.975 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -342,7 +342,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Observed on the pinned public revision with 192 GB200 GPUs at TP4/PP6/CP2/EP32/ETP1 with sequence parallelism and all-to-all context parallelism (pipeline stages of 9, 11, 11, 11, 11, and 9 decoder blocks; four data-parallel replicas running two microbatches each per step): the command warm-starts every language-model parameter from the imported checkpoint with full activation recompute, the all-to-all MoE dispatcher, and the distributed optimizer with FP32 gradient reduction; the perception towers stay frozen because the data is text only. Data is the revision-pinned Tulu 3 SFT mixture train[:10000], rendered with the model chat template whose current-date default is fixed to 2026-10-04 and offline-packed to 32,768 tokens with pad_seq_to_mult 8 (2 x CP, and TP x CP for sequence parallelism): 143 packs averaging 69.9 sequences, none truncated, so 20 steps at GBS 8 make about 1.1 passes. The longest sequence has 8,688 tokens, so the run exercises packed context parallelism rather than attention across one 32K-token sequence. Peak LR is 1e-6 with 2 warmup steps and cosine decay to 0 at step 20; model seed 5678 and data seed 1234. All 20 optimizer-step rows are present exactly once with finite loss and gradient norm and zero skipped or NaN iterations. Loss moves from 1.082231 to 0.8572639 (minimum 0.8273457 at step 13); gradient norm is between 6.4 and 20.2 over steps 1-5, 118.6 at step 6, and between 1.5 and 3.5 from step 7 on, and is clipped at 1.0. Steps 11-20 average 5,614.89 ms, 69.23 model TFLOP/s/GPU, and 243.163 token slots/s/GPU. Peak allocated memory per pipeline stage is 98.4, 105.8, 107.8, 104.4, 107.2, and 89.4 GiB. The post-setup config persists; no checkpoint is saved.
+        <p>Observed on the pinned public revision with 192 GB200 GPUs at TP4/PP6/CP4/EP32/ETP1 with sequence parallelism and all-to-all context parallelism (pipeline stages of 9, 11, 11, 11, 11, and 9 decoder blocks; two data-parallel replicas running four microbatches each per step): the command warm-starts every language-model parameter from the imported checkpoint with selective activation recompute of the MoE layers, the Megatron-Core bias-activation, gradient-accumulation, RoPE, and router fusions with pipeline-output deallocation, and the distributed optimizer with FP32 gradient reduction; the perception towers stay frozen because the data is text only. MoE tokens are dispatched with HybridEP (flex dispatcher, 32 SMs, permutation fused into the dispatch, and each rank&#x27;s dispatch input padded to the largest token count in its group because packed microbatches differ in length): each EP32 group is one pipeline stage&#x27;s 32 contiguous ranks on 8 nodes in one NVL72 NVLink domain, and the recipe sets NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=32, NVLINK_DOMAIN_SIZE=72, and USE_MNNVL=1. Data is the revision-pinned Tulu 3 SFT mixture train[:10000], rendered with the model chat template whose current-date default is fixed to 2026-10-04 and offline-packed to 32,768 tokens with pad_seq_to_mult 16 (a multiple of 2 x CP, and of TP x CP for sequence parallelism): 144 packs averaging 69.4 sequences, none truncated, so 20 steps at GBS 8 make about 1.1 passes. The longest sequence has 8,688 tokens, so the run exercises packed context parallelism rather than attention across one 32K-token sequence. Peak LR is 1e-6 with 2 warmup steps and cosine decay to 0 at step 20; model seed 5678 and data seed 1234. All 20 optimizer-step rows are present exactly once with finite loss and gradient norm and zero skipped or NaN iterations. Loss moves from 1.068234 to 0.8691962 (minimum 0.803125 at step 19); gradient norm is between 6.2 and 20.3 over steps 1-5 and between 1.3 and 7.4 from step 6 on, and is clipped at 1.0. Steps 11-20 average 3,153.38 ms, 120.32 model TFLOP/s/GPU, and 432.975 token slots/s/GPU. Peak allocated memory per pipeline stage is 111.0, 121.5, 123.4, 115.2, 108.3, and 89.0 GiB. The post-setup config persists; no checkpoint is saved.
 </p>
       </section>
     </article>
