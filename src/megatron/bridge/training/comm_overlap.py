@@ -641,3 +641,8 @@ class CommOverlapConfig:
             comm_overlap_cfg = self._get_optimizer_overlap_cfgs(model_config)
             self._apply_cfgs(comm_overlap_cfg, optimizer_config)
             self._apply_cfgs(comm_overlap_cfg, ddp_config)
+
+        if getattr(model_config, "delay_megamoe_wgrad", False):
+            # DDP must defer its post-accumulate hooks until the delayed MegaMoE wgrad GEMMs
+            # complete, without enabling the legacy model-wide delay_wgrad_compute path.
+            ddp_config.delay_wgrad_compute = True
