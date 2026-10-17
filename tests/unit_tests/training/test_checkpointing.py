@@ -846,6 +846,7 @@ class TestSaveCheckpoint:
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
         assert legacy_tracker.read_text() == "500"
 
+    @pytest.mark.parametrize("num_flops", [1000000, 16777217, 10**20 + 1234567890123])
     @pytest.mark.parametrize("save_rng", [True, False])
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
@@ -895,6 +896,7 @@ class TestSaveCheckpoint:
         mock_wandb,
         save_checkpoint_fixtures,
         save_rng,
+        num_flops,
     ):
         """Test saving a global checkpoint."""
         # Setup mocks
@@ -940,12 +942,20 @@ class TestSaveCheckpoint:
             save_checkpoint_fixtures["mock_model"],
             save_checkpoint_fixtures["mock_optimizer"],
             save_checkpoint_fixtures["mock_scheduler"],
-            1000000,
+            num_flops,
             checkpointing_context={},
             non_persistent_ckpt=False,
         )
 
         assert [call[0] for call in call_order.mock_calls] == ["model", "loader"]
+
+        train_state_saves = [
+            call.args[0] for call in mock_torch_save.call_args_list if str(call.args[1]).endswith("train_state.pt")
+        ]
+        assert train_state_saves
+        for saved_state in train_state_saves:
+            assert saved_state["floating_point_operations_so_far"].dtype == torch.float64
+            assert saved_state["floating_point_operations_so_far"].item() == float(num_flops)
 
         # Verify calls
         mock_ft.on_checkpointing_start.assert_called_once()
