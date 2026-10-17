@@ -29,6 +29,7 @@ from megatron.core.transformer.enums import AttnBackend, LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.deepseek import (
     set_deepseek_v3_pipeline_model_parallel_layout,
     set_deepseek_v4_pipeline_model_parallel_layout,
@@ -187,9 +188,10 @@ def test_model_and_perf_deepseek_recipes_bake_environment_defaults(monkeypatch: 
     assert "QUANTIZATION_TYPE_DEBUG" not in recipe_config.env_vars
     assert "TORCHINDUCTOR_WORKER_START" not in perf_config.env_vars
     assert "QUANTIZATION_TYPE_DEBUG" not in perf_config.env_vars
-    assert perf_config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
-    assert perf_config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert perf_config.env_vars["USE_MNNVL"] == 1
+    # The GB200 perf recipe dispatches through NCCL EP, so it carries no HybridEP topology.
+    assert perf_config.model.moe_flex_dispatcher_backend == "ncclep"
+    assert perf_config.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert perf_config.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
 
 
 def test_deepseek_v3_pipeline_layout_can_place_mtp_in_standalone_stage():

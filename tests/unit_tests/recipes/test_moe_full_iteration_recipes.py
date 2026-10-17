@@ -52,7 +52,7 @@ def _assert_full_iteration_hybridep(cfg: ConfigContainer) -> None:
     assert cfg.ddp.check_for_nan_in_grad is False
     assert cfg.rerun_state_machine.check_for_nan_in_loss is False
 
-    # GB300 recipes default to the NCCL EP dispatch stack; every other GPU keeps HybridEP.
+    # GB200, GB300 and VRNVL72 recipes default to the NCCL EP dispatch stack; every other GPU keeps HybridEP.
     if cfg.model.moe_flex_dispatcher_backend == "ncclep":
         assert cfg.model.moe_use_grouped_tensor is True
         assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
@@ -89,7 +89,6 @@ def test_qwen3_235b_vrnvl72_nvfp4_uses_full_iteration_stack() -> None:
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert cfg.comm_overlap.delay_wgrad_compute is True
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
     assert (
         cfg.model.tensor_model_parallel_size,
         cfg.model.pipeline_model_parallel_size,
@@ -112,7 +111,6 @@ def test_deepseek_v3_256gpu_vrnvl72_nvfp4_uses_full_iteration_stack() -> None:
     assert cfg.comm_overlap.delay_wgrad_compute is True
     assert cfg.model.recompute_modules == []
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
     assert cfg.env_vars["NVTE_DPA_FP8_RECIPE"] == "MXFP8BlockScaling"
     assert cfg.env_vars["NVTE_DPA_FP8_FORMAT"] == "E4M3"
     assert (
@@ -136,7 +134,6 @@ def test_deepseek_v3_4gpu_vrnvl72_proxies_use_full_iteration_stack(recipe: Calla
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert cfg.comm_overlap.delay_wgrad_compute is True
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == cfg.model.expert_model_parallel_size == 4
     assert (
         cfg.model.tensor_model_parallel_size,
         cfg.model.pipeline_model_parallel_size,
