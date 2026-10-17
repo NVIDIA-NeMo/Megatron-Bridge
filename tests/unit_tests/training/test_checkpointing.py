@@ -5673,13 +5673,15 @@ class TestCheckpointManager:
                 module_name=None,
             )
 
-    def test_default_checkpoint_manager_load_delegates(self):
+    @pytest.mark.parametrize("with_migration_hook", [False, True])
+    def test_default_checkpoint_manager_load_delegates(self, with_migration_hook):
         """Test DefaultCheckpointManager.load() delegates to load_checkpoint."""
         config = CheckpointConfig()
         mock_state = Mock(spec=GlobalState)
         mock_model = [Mock()]
         mock_optimizer = Mock()
         mock_scheduler = Mock()
+        migration_hook = Mock() if with_migration_hook else None
 
         ctx = CheckpointLoadContext(
             state=mock_state,
@@ -5688,6 +5690,7 @@ class TestCheckpointManager:
             opt_param_scheduler=mock_scheduler,
             strict=False,
             skip_load_to_model_and_opt=True,
+            checkpoint_state_migration_hook=migration_hook,
         )
 
         with (
@@ -5710,6 +5713,7 @@ class TestCheckpointManager:
                 skip_load_to_model_and_opt=True,
                 pg_collection=None,
                 module_name=None,
+                checkpoint_state_migration_hook=migration_hook,
             )
             assert result == (100, 50000)
 

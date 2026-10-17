@@ -768,6 +768,8 @@ class CheckpointLoadContext:
         strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
         skip_load_to_model_and_opt: If True, only loads metadata but skips loading
             state into model and optimizer modules.
+        checkpoint_state_migration_hook: Optional in-memory migration of native
+            resume metadata, before runtime counters and final state-dict application.
     """
 
     state: GlobalState
@@ -779,6 +781,7 @@ class CheckpointLoadContext:
     skip_load_to_model_and_opt: bool = False
     pg_collection: ProcessGroupCollection | None = None
     module_name: str | None = None
+    checkpoint_state_migration_hook: Callable[[StateDict, TrainState], None] | None = None
 
 
 @runtime_checkable
@@ -906,6 +909,7 @@ class DefaultCheckpointManager:
             skip_load_to_model_and_opt=ctx.skip_load_to_model_and_opt,
             pg_collection=ctx.pg_collection,
             module_name=ctx.module_name,
+            checkpoint_state_migration_hook=ctx.checkpoint_state_migration_hook,
         )
 
     def finalize_async_saves(self, state: GlobalState, blocking: bool = False, terminate: bool = False) -> None:
@@ -2497,6 +2501,8 @@ def load_checkpoint(
     skip_load_to_model_and_opt: bool = False,
     pg_collection: Optional[ProcessGroupCollection] = None,
     module_name: str | None = None,
+    *,
+    checkpoint_state_migration_hook: Callable[[StateDict, TrainState], None] | None = None,
 ) -> tuple[int, int]:
     """Load a model checkpoint.
 
@@ -2517,6 +2523,16 @@ def load_checkpoint(
                       extracting from model via get_pg_collection(). Required for MegatronMIMO where
                       model-level PG extraction may not reflect rank-local topology.
         module_name: Optional MegatronMIMO module name for per-module RNG state namespacing.
+        checkpoint_state_migration_hook: Optional callback ``hook(state_dict, train_state)``
+            that migrates loaded native resume metadata in place. Called once on each
+            loading rank after checkpoint data and TrainState are restored, before
+            microbatch counters are updated and final model/optimizer/scheduler
+            ``load_state_dict`` calls run. Also
+            called for metadata-only resumes, but not for missing checkpoints,
+            finetuning, release checkpoints, or Hugging Face initialization. The hook
+            must make rank-consistent changes and cannot change the already-loaded
+            tensor layout. Tensor checkpoint I/O has already occurred; mutations are
+            not transactional. Exceptions propagate to the caller. No files are rewritten.
 
     Returns:
         A tuple containing:
@@ -2554,6 +2570,7 @@ def load_checkpoint(
         skip_load_to_model_and_opt=skip_load_to_model_and_opt,
         pg_collection=pg_collection,
         module_name=module_name,
+        checkpoint_state_migration_hook=checkpoint_state_migration_hook,
     )
 
 
@@ -2884,6 +2901,8 @@ def _load_checkpoint_from_path(
     ignore_ckpt_step: bool = False,
     pg_collection: Optional[ProcessGroupCollection] = None,
     module_name: str | None = None,
+    *,
+    checkpoint_state_migration_hook: Callable[[StateDict, TrainState], None] | None = None,
 ) -> tuple[int, int]:
     """Load a checkpoint from a given path.
 
@@ -2902,6 +2921,8 @@ def _load_checkpoint_from_path(
         pg_collection: Optional ProcessGroupCollection. When provided, uses this instead of
                       extracting from model via get_pg_collection(). Required for MegatronMIMO where
                       model-level PG extraction may not reflect rank-local topology.
+        checkpoint_state_migration_hook: Optional in-place native resume metadata migration.
+            See :func:`load_checkpoint` for the callback contract.
 
     Returns:
         A tuple containing:
@@ -3278,6 +3299,9 @@ def _load_checkpoint_from_path(
 
     if cfg.checkpoint.finetune or release:
         state.train_state.step = 0
+
+    if checkpoint_state_migration_hook is not None and not cfg.checkpoint.finetune and not release:
+        checkpoint_state_migration_hook(state_dict, state.train_state)
 
     # For local checkpoints, checkpoint_name is a CkptID tuple.
     # Normalize to string for downstream logging / wandb / mlflow.
