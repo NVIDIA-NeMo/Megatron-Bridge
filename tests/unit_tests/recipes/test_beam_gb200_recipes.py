@@ -27,6 +27,7 @@ from megatron.bridge.models.beam.beam_config import BeamModelConfig
 from megatron.bridge.models.beam.modeling_beam import validate_beam_config
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import runtime_config_update
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 from tests.unit_tests.recipes.test_beam_recipes import _BeamAutoBridge
 
@@ -188,3 +189,22 @@ def test_finetuning_selected_execution_preserves_unfused_math(recipe, world_size
     assert cfg.model.recompute_granularity is None
     assert cfg.model.cuda_graph_impl == "none"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
+
+
+def test_pretraining_graphs_and_selective_activation_recompute_survive_finalization(monkeypatch, tmp_path):
+    cfg = gb200.beam_pretrain_64gpu_gb200_bf16_config()
+    _apply_runtime_config(cfg, 64, monkeypatch, tmp_path)
+    model = cfg.model.transformer
+    assert model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(model) == ["attn", "moe_router"]
+    assert model.cuda_graph_warmup_steps == 3
+    assert model.use_te_rng_tracker and cfg.rng.te_rng_tracker
+    assert model.recompute_granularity == "selective" and model.recompute_modules == ["moe_act"]
+    assert model.recompute_method is None and model.recompute_num_layers is None
+    assert not model.bias_activation_fusion and not model.moe_router_aux_loss_fusion
+    assert model.moe_flex_dispatcher_num_sms == model.moe_hybridep_num_sms_preprocessing == 32
+    assert cfg.train.manual_gc and cfg.train.manual_gc_interval == 10
+    assert cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+    restored = BeamModelConfig.from_dict(cfg.model.as_dict())
+    restored.finalize()
+    assert restored.as_dict() == cfg.model.as_dict()

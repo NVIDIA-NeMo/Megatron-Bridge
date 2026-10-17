@@ -13,9 +13,10 @@ through the builder-backed `BeamModelConfig`.
 
 The GB200 library variants target 64 GPUs for pretraining and full SFT, and 32 GPUs for LoRA, within one NVLink
 domain. They use HybridEP, BF16 computation and FP32 optimizer state while retaining Beam's natural routing.
-Validation and performance measurements are pending. See the
+Full SFT and LoRA have passed 100-step training checks with the public checkpoint; pretraining validation is
+still in progress. See the
 [recipe guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/beam#gb200-library-recipes)
-for the parallel layouts and data-packing requirements.
+for measured finetuning throughput, parallel layouts and data-packing requirements.
 
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 

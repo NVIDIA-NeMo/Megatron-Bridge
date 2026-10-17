@@ -24,6 +24,7 @@ from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VA
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 BEAM_HF_MODEL_ID = "reflection/Beam-1.0-501B-A23B"
@@ -37,6 +38,8 @@ def beam_pretrain_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigC
     Uses TP=4, PP=1, CP=1, EP=64, ETP=1 and HybridEP. BF16 model
     computation retains FP32 gradients, master parameters and Adam moments.
     Expert routing follows the released model, including its fixed expert biases.
+    Attention and router CUDA graphs reduce launch overhead. Selective expert
+    activation recompute provides memory headroom without replaying projections.
 
     Args:
         hf_path: Optional local HF checkpoint instead of the pinned Hub revision.
@@ -58,7 +61,6 @@ def beam_pretrain_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigC
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
-    # CP would change the per-example loss normalization of the finetuning recipes.
     cfg.model.context_parallel_size = 1
     cfg.model.cp_comm_type = "a2a"
     cfg.model.expert_model_parallel_size = 64
@@ -71,9 +73,17 @@ def beam_pretrain_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigC
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
     cfg.model.moe_router_force_load_balancing = False
-    cfg.model.recompute_granularity = None
+    cfg.model.bias_activation_fusion = False
+    cfg.model.moe_router_aux_loss_fusion = False
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_warmup_steps = 3
+    set_cuda_graph_modules(cfg.model, ["attn", "moe_router"])
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
     # Beam's sandwich norms and depth-scaled residuals require the ordinary layer schedule.
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False, overlap_moe_expert_parallel_comm=False)
     cfg.ddp.overlap_grad_reduce = True
@@ -81,6 +91,8 @@ def beam_pretrain_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigC
 
     cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
     cfg.train.global_batch_size = 256
     cfg.train.micro_batch_size = 1
     cfg.scheduler.lr_warmup_init = 0.0
@@ -113,6 +125,7 @@ def beam_pretrain_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigC
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
