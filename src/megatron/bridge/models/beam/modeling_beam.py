@@ -35,7 +35,7 @@ distributed optimizer supports mixed FP32/BF16 parameter groups directly.
 import dataclasses
 import functools
 import math
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple, cast
 
 import torch
 from megatron.core import parallel_state
@@ -61,6 +61,10 @@ from megatron.core.transformer.transformer_layer import (
 )
 from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group, make_sharded_tensors_for_checkpoint
 from megatron.core.utils import divide, get_tensor_model_parallel_group_if_none
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.beam.beam_config import BeamTransformerConfig
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +336,8 @@ class BeamTEDotProductAttention(_BeamSSMaxCoreAttentionMixin, TEDotProductAttent
 # ---------------------------------------------------------------------------
 
 
-@jit_fuser
+# Megatron-Core selects an untyped Torch fuser at import time.
+@jit_fuser  # type: ignore[misc]
 def apply_output_gate(x: torch.Tensor, gate: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
     """Gate ``x`` with ``sigmoid(gate [+ bias per head])``.
 
@@ -384,7 +389,7 @@ class AttentionOutputGateBias(MegatronModule):
 
     def forward(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
         """Apply the gate after this module's parameter-gather hooks have run."""
-        return apply_output_gate(x, gate, self.bias)
+        return cast(torch.Tensor, apply_output_gate(x, gate, self.bias))
 
     def sharded_state_dict(
         self,
@@ -483,6 +488,9 @@ class BeamTransformerLayerMixin:
     (offload commits, recompute hooks, viewless outputs) stays in place.
     """
 
+    config: "BeamTransformerConfig"
+    is_moe_layer: bool
+
     def __init__(self, config, submodules, layer_number: int = 1, *args, **kwargs):
         super().__init__(config, submodules, layer_number, *args, **kwargs)
         has_attention = not isinstance(self.self_attention, IdentityOp)
@@ -528,10 +536,12 @@ class BeamTransformerLayerMixin:
             raise ValueError("Enabled post-layer norms require a normalization module in the spec.")
         return norm(config=self.config, hidden_size=self.config.hidden_size, eps=self.config.layernorm_epsilon)
 
-    def _get_submodules_under_cudagraphs(self):
+    def _get_submodules_under_cudagraphs(self) -> list[torch.nn.Module]:
         """Include captured sandwich norms in parameter-gather hooks during graph replay."""
-        submodules = super()._get_submodules_under_cudagraphs()
-        scopes = self.config.cuda_graph_modules
+        # The concrete Megatron-Core layer supplies the cooperative superclass method.
+        submodules: list[torch.nn.Module] = super()._get_submodules_under_cudagraphs()  # type: ignore[misc]
+        # Native config finalization normalizes graph scopes to enum members.
+        scopes = cast(list[CudaGraphModule], self.config.cuda_graph_modules)
         if not scopes:
             # Whole-layer capture already includes every child module.
             return submodules
@@ -657,7 +667,7 @@ class BeamTopKRouter(TopKRouter):
     router reproduces HF's fp32 expert selection.
     """
 
-    def __init__(self, config, *args, **kwargs):
+    def __init__(self, config: "BeamTransformerConfig", *args: object, **kwargs: object) -> None:
         super().__init__(config, *args, **kwargs)
         # Fixed checkpoint biases still affect routing, but need no token-count collective.
         self.frozen_expert_bias = self.enable_expert_bias and config.moe_router_bias_update_rate == 0.0
