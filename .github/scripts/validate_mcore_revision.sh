@@ -16,6 +16,7 @@ refs=$(git ls-remote \
   "$repo" \
   "refs/heads/main" \
   "refs/heads/dev" \
+  "refs/heads/core_r*" \
   "refs/heads/pull-request/*" \
   "refs/heads/gh-readonly-queue/*/pr-*" \
   "refs/pull/*/merge")
@@ -25,7 +26,9 @@ git -C "$object_store" init --quiet
 
 main_sha=$(awk '$2 == "refs/heads/main" {print $1}' <<<"$refs")
 dev_sha=$(awk '$2 == "refs/heads/dev" {print $1}' <<<"$refs")
-for protected_sha in "$main_sha" "$dev_sha"; do
+# Stable release branches can contain cherry-picks absent from main and dev.
+mapfile -t release_shas < <(awk '$2 ~ /^refs\/heads\/core_r[0-9]+\.[0-9]+\.[0-9]+$/ {print $1}' <<<"$refs")
+for protected_sha in "$main_sha" "$dev_sha" "${release_shas[@]}"; do
   if [[ -n "$protected_sha" ]] && \
     git -C "$object_store" fetch --quiet --filter=blob:none --no-tags "$repo" "$protected_sha" "$revision"; then
     if git -C "$object_store" merge-base --is-ancestor "$revision" "$protected_sha"; then
