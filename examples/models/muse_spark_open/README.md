@@ -14,12 +14,13 @@ implementation, the text-only mode, and the supported parallelism.
 The GB200 recipes are defined in
 [muse_spark_open.py](../../../src/megatron/bridge/recipes/muse_spark_open/gb200/muse_spark_open.py) and
 warm-start from the imported checkpoint. The verification card gives the import command and the
-training commands for the pretraining, SFT, long-context SFT, and LoRA recipes. The 4K and 8K SFT,
-LoRA, and image-text recipes shard the 256 routed experts with EP64 and dispatch them with HybridEP,
-one NVL72 NVLink domain (16 nodes) per pipeline stage, without full activation recompute. The
-pretraining and the 32K and 64K SFT recipes keep EP32; on 192 GPUs that pretraining layout, with
-full activation recompute, is faster than EP64 without recompute. The 32K SFT recipe dispatches with
-HybridEP and recomputes only the MoE layers; the 64K recipe keeps full activation recompute.
+training commands for the pretraining, SFT, long-context SFT, and LoRA recipes. Every recipe
+dispatches the routed experts with HybridEP. The 4K and 8K SFT, LoRA, and image-text recipes shard
+the 256 routed experts with EP64, one NVL72 NVLink domain (16 nodes) per pipeline stage; of these,
+only the image-text SFT recipe, whose first stage also trains the vision tower, uses full activation
+recompute. The pretraining and the 32K and 64K SFT recipes keep EP32; on 192 GPUs that pretraining
+layout, with full activation recompute, is faster than EP64 without recompute. The 32K SFT recipe
+recomputes only the MoE layers; the 64K recipe keeps full activation recompute.
 
 | Recipe | Workload | Nodes | Layout |
 | --- | --- | ---: | --- |
@@ -38,9 +39,8 @@ tower. The recipes are short verification runs whose learning-rate decay ends at
 raise `scheduler.lr_decay_iters` together with the step count to train longer.
 
 HybridEP needs each expert-parallel group inside one NVL72 NVLink domain: every EP64 group is one
-pipeline stage's 64 contiguous ranks (16 nodes), the EP32 groups of the 192-GPU pretraining and 32K
-SFT recipes are one stage's 32 ranks (8 nodes), and the 4-node image-text LoRA recipe keeps EP16.
-The 256-GPU pretraining recipe and the 64K SFT recipe use the all-to-all dispatcher. On
+pipeline stage's 64 contiguous ranks (16 nodes), every EP32 group of the pretraining and 32K and 64K
+SFT recipes is one stage's 32 ranks (8 nodes), and the 4-node image-text LoRA recipe keeps EP16. On
 block-topology Slurm clusters, allocate the nodes in 16-node segments. Setting
 `model.transformer.moe_token_dispatcher_type` to `alltoall` switches back to the all-to-all
 dispatcher.

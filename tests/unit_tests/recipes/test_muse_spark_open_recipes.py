@@ -95,7 +95,10 @@ def test_muse_spark_multimodal_sft_recipe_contract_and_balanced_stages() -> None
     assert cfg.model.cp_comm_type == "a2a"
     assert cfg.model.sequence_parallel is True
     _assert_three_rack_stages(cfg)
-    assert cfg.model.recompute_granularity is None
+    # The first stage also trains the vision tower; without recompute it runs out of memory.
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
     # Fixed-length image-text samples give every EP rank the same token count, so no padding.
     _assert_hybridep(cfg, ep=64, pad_uneven=False)
     assert _data_parallel_size(cfg, 192) == 16
@@ -369,8 +372,11 @@ def test_muse_spark_coderforge_sft_packs_64k_with_cp4() -> None:
     }
     assert cfg.model.pipeline_model_parallel_size == 6
     assert _stage_blocks(cfg) == [9, 11, 11, 11, 11, 9]
-    assert cfg.model.expert_model_parallel_size == 32
+    # Each EP32 group is one stage's 32 ranks inside one NVL72 domain; packed widths vary, so HybridEP pads.
+    _assert_hybridep(cfg, ep=32, pad_uneven=True)
+    # With 16K tokens per rank, recomputing only the MoE layers leaves too little headroom.
     assert cfg.model.recompute_granularity == "full"
+    assert not (cfg.dataset.dataset_kwargs or {}).get("pad_to_max_length", False)
     data_parallel = 192 // (
         cfg.model.tensor_model_parallel_size * cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size
     )
@@ -389,9 +395,8 @@ def test_muse_spark_pretrain_256gpu_recipe_changes_only_the_pipeline_split() -> 
     assert _stage_blocks(cfg) == [7, 8, 8, 8, 8, 8, 8, 7]
     # 256 GPUs / (TP1 * PP8) leaves 32 data-parallel replicas; EP32 shards each stage's experts once.
     assert _data_parallel_size(cfg, 256) == 32
-    # Without a matched HybridEP run this recipe keeps the bridge default all-to-all dispatcher.
-    assert getattr(cfg.model, "moe_token_dispatcher_type", "alltoall") == "alltoall"
-    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    # Each EP32 group is one stage's 32 contiguous ranks inside one NVL72 domain, as in the 192-GPU recipe.
+    _assert_hybridep(cfg, ep=32, pad_uneven=False)
     for section, names in (
         ("train", ("train_iters", "global_batch_size", "micro_batch_size")),
         ("optimizer", ("lr", "min_lr", "use_precision_aware_optimizer")),
@@ -401,8 +406,19 @@ def test_muse_spark_pretrain_256gpu_recipe_changes_only_the_pipeline_split() -> 
     ):
         for name in names:
             assert getattr(getattr(cfg, section), name) == getattr(getattr(reference, section), name)
-    for name in ("freeze_vision_model", "freeze_audio_model", "recompute_granularity", "seq_length"):
-        assert getattr(cfg.model, name) == getattr(reference.model, name)
+    for name in (
+        "freeze_vision_model",
+        "freeze_audio_model",
+        "recompute_granularity",
+        "seq_length",
+        "moe_permute_fusion_into_hybridep",
+        "bias_activation_fusion",
+        "gradient_accumulation_fusion",
+        "apply_rope_fusion",
+        "moe_router_fusion",
+        "deallocate_pipeline_outputs",
+    ):
+        assert getattr(cfg.model, name) == getattr(reference.model, name), name
     assert cfg.checkpoint.pretrained_checkpoint is None
 
 
@@ -462,8 +478,8 @@ def test_muse_spark_recipe_uses_builder_model_config_api(monkeypatch: pytest.Mon
     assert cfg.model is not None
 
 
-# The pretraining and the 32K and 64K SFT recipes keep their EP32 layouts with full activation recompute and are
-# checked on their own; every other recipe runs HybridEP without full recompute, with the Megatron-Core fusions.
+# The pretraining and the 32K and 64K SFT recipes keep their EP32 layouts and are checked on their own; every other
+# recipe runs EP16 or EP64 HybridEP with the Megatron-Core fusions.
 _EP32_RECIPES = (
     "muse_spark_open_pretrain_192gpu_gb200_bf16_config",
     "muse_spark_open_pretrain_256gpu_gb200_bf16_config",
@@ -471,21 +487,6 @@ _EP32_RECIPES = (
     "muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config",
 )
 _HYBRIDEP_RECIPES = [name for name in muse_spark_recipes.__all__ if name not in _EP32_RECIPES]
-
-
-@pytest.mark.parametrize(
-    "recipe_name",
-    [
-        "muse_spark_open_pretrain_256gpu_gb200_bf16_config",
-        "muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config",
-    ],
-)
-def test_muse_spark_recipes_that_keep_alltoall(recipe_name: str) -> None:
-    cfg = getattr(muse_spark_recipes, recipe_name)()
-
-    # The bridge default (alltoall) applies; these recipes do not select flex dispatch.
-    assert getattr(cfg.model, "moe_token_dispatcher_type", "alltoall") == "alltoall"
-    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
 
 
 @pytest.mark.parametrize("recipe_name", _HYBRIDEP_RECIPES)
@@ -496,8 +497,9 @@ def test_muse_spark_recipes_keep_each_hybridep_group_in_one_nvlink_domain(recipe
     # An NVL72 rack holds 16 nodes of 4 GPUs; HybridEP needs the EP group inside one NVLink domain.
     assert ep in (16, 64)
     _assert_hybridep(cfg, ep=ep, pad_uneven=getattr(cfg.model, "moe_hybridep_pad_uneven_dispatch_inputs", False))
-    # No recipe falls back to full activation recompute.
-    assert cfg.model.recompute_granularity != "full"
+    # Only the image-text SFT recipe, whose first stage also trains the vision tower, recomputes full layers.
+    if recipe_name != "muse_spark_open_sft_192gpu_gb200_bf16_multimodal_config":
+        assert cfg.model.recompute_granularity != "full"
 
 
 @pytest.mark.parametrize(
@@ -505,7 +507,9 @@ def test_muse_spark_recipes_keep_each_hybridep_group_in_one_nvlink_domain(recipe
     [
         *_HYBRIDEP_RECIPES,
         "muse_spark_open_pretrain_192gpu_gb200_bf16_config",
+        "muse_spark_open_pretrain_256gpu_gb200_bf16_config",
         "muse_spark_open_sft_192gpu_gb200_bf16_long_context_config",
+        "muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config",
     ],
 )
 def test_muse_spark_recipes_enable_megatron_core_fusions(recipe_name: str) -> None:
