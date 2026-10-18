@@ -2,8 +2,12 @@
 
 `kimi_k3_pretrain_config` is **early, perf not optimized**. It uses the native
 K3 provider with TP4/PP4/EP128 on 512 GB200 GPUs, BF16, full activation
-recomputation, and distributed Adam. The uneven pipeline has 24/23/23/23 layers;
-CP and virtual pipeline parallelism are disabled.
+recomputation, and distributed Adam. The uneven pipeline has 24/23/23/23 layers.
+
+**Context parallelism (CP > 1) and virtual pipeline parallelism (VPP) are not
+supported by the current Kimi K3 implementation.** Keep
+`context_parallel_size=1` and `virtual_pipeline_model_parallel_size=None`.
+The model rejects CP > 1 and any non-`None` VPP setting.
 
 Launch with the standard recipe runner inside your allocation:
 

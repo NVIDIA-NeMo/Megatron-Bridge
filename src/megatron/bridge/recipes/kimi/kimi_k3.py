@@ -35,6 +35,11 @@ def kimi_k3_pretrain_config() -> ConfigContainer:
     validation; neither convergence nor independent full-model loss agreement
     is established. Use 4096 only as an OOM fallback for the initial trial.
 
+    Context parallelism (CP > 1) and virtual pipeline parallelism (VPP) are
+    not supported by the current Kimi K3 implementation. Keep
+    ``context_parallel_size=1`` and ``virtual_pipeline_model_parallel_size=None``.
+    The model rejects CP > 1 and any non-None VPP setting.
+
     Launch with ``scripts/training/run_recipe.py --recipe kimi_k3_pretrain_config``.
     Set ``KIMI_K3_HF_PATH`` to an existing local snapshot when offline. Supply
     real, K3-tokenized RP2 through ``dataset.blend`` or ``dataset.blend_per_split``
