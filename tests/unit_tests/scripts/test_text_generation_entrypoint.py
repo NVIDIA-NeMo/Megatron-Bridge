@@ -20,6 +20,7 @@ import importlib.util
 import socket
 import sys
 import types
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -48,7 +49,7 @@ def _add_no_args(parser: object) -> object:
 
 
 @pytest.fixture
-def text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch):
+def text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType]:
     monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
     shared_helpers = {
         "HFTokenizerAdapter": _PassthroughInit,
@@ -117,7 +118,7 @@ def text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch):
 
 
 def _args(**overrides: object) -> types.SimpleNamespace:
-    values = {
+    values: dict[str, object] = {
         "use_legacy_generation": True,
         "use_coordinator": False,
         "ep": 1,
@@ -358,7 +359,9 @@ def test_dynamic_generation_releases_cached_memory_before_engine_setup(
             assert events == ["cache_released"]
             assert kwargs["model"] is model
             assert kwargs["use_coordinator"] is use_coordinator
-            assert kwargs["inference_config"]["kv_cache_buffer_size_gb"] == 20.0
+            inference_config = kwargs["inference_config"]
+            assert isinstance(inference_config, dict)
+            assert inference_config["kv_cache_buffer_size_gb"] == 20.0
             events.append("engine_created")
 
         def __enter__(self) -> _WorkerLLM:
