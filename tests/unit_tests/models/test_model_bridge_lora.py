@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, PropertyMock
 
 import pytest
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from megatron.core import parallel_state
 
 import megatron.bridge.models.conversion.model_bridge as model_bridge_module
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -31,12 +36,15 @@ from megatron.bridge.models.conversion.model_bridge import (
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    MegatronParamMapping,
     RowParallelMapping,
     _fuse_gdn_separate_to_grouped,
     merge_gdn_linear_weights,
     merge_qkv_weights,
 )
 from megatron.bridge.models.conversion.peft_bridge import AdapterWeight
+from megatron.bridge.peft.lora_layers import LoRALinear
+from megatron.bridge.peft.lora_merge import LoRAMerge
 
 
 class DummyBridge(MegatronModelBridge):
@@ -73,6 +81,84 @@ def _patch_parallel_state(monkeypatch):
         "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_group",
         lambda: None,
     )
+
+
+def _check_merge(rank, tp_group, layout, scale):
+    torch.manual_seed(123)
+    dim, width, rows = 4, 6, 8
+    base_full = torch.randn(rows, width, dtype=torch.float64)
+    a_full = torch.randn(dim, width, dtype=torch.float64)
+    b_full = torch.randn(rows, dim, dtype=torch.float64)
+    x = torch.randn(3, width, dtype=torch.float64)
+    upstream = torch.randn(3, rows, dtype=torch.float64)
+    a_ref, b_ref = a_full.clone().requires_grad_(), b_full.clone().requires_grad_()
+    expected = base_full + (2.0 if scale is None else scale) * (b_ref @ a_ref)
+    (torch.nn.functional.linear(x, expected) * upstream).sum().backward()
+
+    if layout == "column":
+        base = base_full.chunk(2, dim=0)[rank]
+        a = a_full.chunk(2, dim=0)[rank].clone().requires_grad_()
+        b = b_full.chunk(2, dim=0)[rank].clone().requires_grad_()
+        expected = expected.chunk(2, dim=0)[rank]
+        a_grad, b_grad = a_ref.grad.chunk(2, dim=0)[rank], b_ref.grad.chunk(2, dim=0)[rank]
+        upstream = upstream.chunk(2, dim=-1)[rank]
+    elif layout == "row":
+        base = base_full.chunk(2, dim=1)[rank]
+        a = a_full.chunk(2, dim=1)[rank].clone().requires_grad_()
+        b = b_full.chunk(2, dim=0)[rank].clone().requires_grad_()
+        expected = expected.chunk(2, dim=1)[rank]
+        a_grad, b_grad = a_ref.grad.chunk(2, dim=1)[rank], b_ref.grad.chunk(2, dim=0)[rank]
+        x = x.chunk(2, dim=-1)[rank]
+    else:
+        base = base_full
+        a, b = a_full.clone().requires_grad_(), b_full.clone().requires_grad_()
+        a_grad, b_grad = a_ref.grad, b_ref.grad
+
+    # Exercise the public effective-weight property as well as explicit export scaling.
+    if scale is None:
+        linear = torch.nn.Linear(base.shape[1], base.shape[0], bias=False, dtype=base.dtype)
+        linear.weight = torch.nn.Parameter(base.clone(), requires_grad=False)
+        adapter = torch.nn.Module()
+        adapter.linear_in = torch.nn.Linear(a.shape[1], a.shape[0], bias=False, dtype=a.dtype)
+        adapter.linear_out = torch.nn.Linear(b.shape[1], b.shape[0], bias=False, dtype=b.dtype)
+        adapter.linear_in.weight, adapter.linear_out.weight = torch.nn.Parameter(a), torch.nn.Parameter(b)
+        adapter.alpha, adapter.dim, adapter.tp_group = 8, dim, tp_group
+        wrapped = LoRALinear(linear, adapter)
+        a, b = adapter.linear_in.weight, adapter.linear_out.weight
+
+        def merge():
+            return wrapped.weight
+
+    else:
+
+        def merge():
+            return LoRAMerge().merge(base, b, a, 8, dim, tp_group=tp_group, scale=scale)
+
+    merged = merge()
+    torch.testing.assert_close(merged, expected, rtol=0, atol=0)
+    (torch.nn.functional.linear(x, merged) * upstream).sum().backward()
+    assert a.grad is not None
+    assert b.grad is not None
+    torch.testing.assert_close(a.grad, a_grad, rtol=1e-12, atol=1e-12)
+    torch.testing.assert_close(b.grad, b_grad, rtol=1e-12, atol=1e-12)
+
+    with torch.no_grad():
+        exported = merge()
+    assert not exported.requires_grad
+    torch.testing.assert_close(exported, expected, rtol=0, atol=0)
+
+
+def _distributed_merge_worker(rank, rendezvous):
+    torch.set_num_threads(1)
+    dist.init_process_group(
+        "gloo", init_method=f"file://{rendezvous}", rank=rank, world_size=2, timeout=timedelta(seconds=60)
+    )
+    try:
+        for layout in ("column", "row", "replicated"):
+            for scale in (None, 0.375):
+                _check_merge(rank, dist.group.WORLD, layout, scale)
+    finally:
+        dist.destroy_process_group()
 
 
 def _patch_pipeline_state(
@@ -383,19 +469,30 @@ def test_merge_lora_adapter_weights_qkv_split(monkeypatch):
     torch.testing.assert_close(updated["v_proj.weight"], v_weight)
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("tp_size", [1, 2, 4, 8])
 @pytest.mark.parametrize("trailing_shape", [(), (4,)])
-def test_split_kda_qkv_linear_out_weight(trailing_shape):
+@pytest.mark.parametrize("value_head_dim", [2, 4])
+def test_split_kda_qkv_linear_out_weight(monkeypatch, tp_size, trailing_shape, value_head_dim):
     config = SimpleNamespace(
         kda_two_stage_gates=True,
-        linear_num_key_heads=2,
-        linear_num_value_heads=2,
+        linear_num_key_heads=8,
+        linear_num_value_heads=8,
         linear_key_head_dim=2,
-        linear_value_head_dim=2,
+        linear_value_head_dim=value_head_dim,
     )
-    sections = [torch.full((4, *trailing_shape), value) for value in (1.0, 2.0, 3.0)]
-    actual = DummyBridge()._split_qkv_linear_out_weight([SimpleNamespace(config=config)], torch.cat(sections))
+    sections = [
+        (torch.arange(rows, dtype=torch.float32) + offset)
+        .reshape(rows, *([1] * len(trailing_shape)))
+        .expand(rows, *trailing_shape)
+        .clone()
+        for rows, offset in ((16, 1), (16, 101), (8 * value_head_dim, 201))
+    ]
+    shards = [torch.cat([section.chunk(tp_size, dim=0)[rank] for section in sections]) for rank in range(tp_size)]
+    monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_world_size", lambda: tp_size)
+    actual = DummyBridge()._split_qkv_linear_out_weight([SimpleNamespace(config=config)], torch.cat(shards))
     for name, expected in zip(("q_proj", "k_proj", "v_proj"), sections, strict=True):
-        torch.testing.assert_close(actual[name], expected)
+        torch.testing.assert_close(actual[name], expected, rtol=0, atol=0)
 
 
 def test_merge_lora_adapter_weights_grouped_expert_missing_expert_idx(monkeypatch):
@@ -1386,6 +1483,89 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     torch.testing.assert_close(weights[0].weight, torch.ones(2, 2))
     torch.testing.assert_close(weights[1].weight, qkv_slices["q_proj"])
     torch.testing.assert_close(weights[3].weight, qkv_slices["k_proj"])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tp_size", [1, 2, 4, 8])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("value_head_dim", [2, 4])
+def test_stream_kda_adapter_weights_preserves_tp_projection_order(monkeypatch, tp_size, dtype, value_head_dim):
+    from megatron.bridge.models.glm5next.glm53flash_bridge import _ColumnParallelConcatMapping
+
+    bridge = DummyBridge()
+    prefix = "decoder.layers.0.self_attention.in_proj"
+    hf_prefix = "model.layers.0.self_attn"
+    projection_names = ("q_proj", "k_proj", "v_proj")
+    config = SimpleNamespace(
+        num_moe_experts=0,
+        kda_two_stage_gates=True,
+        linear_num_key_heads=8,
+        linear_num_value_heads=8,
+        linear_key_head_dim=2,
+        linear_value_head_dim=value_head_dim,
+    )
+    linear_in = torch.eye(8, dtype=dtype)
+    sections = [
+        (torch.arange(rows * 8).reshape(rows, 8) + offset).to(dtype)
+        for rows, offset in ((16, 1), (16, 129), (8 * value_head_dim, 257))
+    ]
+    in_shards = list(linear_in.chunk(tp_size, dim=0))
+    out_shards = [torch.cat([section.chunk(tp_size, dim=0)[rank] for section in sections]) for rank in range(tp_size)]
+    adapter = SimpleNamespace(
+        linear_in=SimpleNamespace(weight=in_shards[0]),
+        linear_out=SimpleNamespace(weight=out_shards[0]),
+    )
+    registry = MegatronMappingRegistry(
+        _ColumnParallelConcatMapping(f"{prefix}.weight", [f"{hf_prefix}.{name}.weight" for name in projection_names])
+    )
+    monkeypatch.setattr(bridge, "mapping_registry", lambda: registry)
+    monkeypatch.setattr(
+        bridge,
+        "_megatron_global_adapters_info_all_pp_ranks",
+        lambda *_: [(f"{prefix}.adapter", prefix, False, True, False, 8, 8, 0, 0)],
+    )
+    monkeypatch.setattr(bridge, "_get_adapter_wrap_module", lambda *_: (adapter, None))
+    monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_world_size", lambda: tp_size)
+    monkeypatch.setattr(MegatronParamMapping, "tp_size", PropertyMock(return_value=tp_size))
+    monkeypatch.setattr(
+        MegatronParamMapping,
+        "gather_from_tp_ranks",
+        lambda mapping, _: in_shards if mapping.megatron_param.endswith("linear_in.weight") else out_shards,
+    )
+    models = [SimpleNamespace(config=config)]
+
+    # Keep task construction, ColumnParallelMapping, materialization and streaming real;
+    # mock only discovery and collectives, not the layout conversion under test.
+    tasks = bridge.build_adapter_conversion_tasks(models)[prefix]
+    assert isinstance(tasks[0].linear_out_task.mapping, ColumnParallelMapping)
+    materialized = bridge.materialize_adapter_weights(tasks)[0]
+    torch.testing.assert_close(materialized.linear_out_weight.weight, torch.cat(out_shards), rtol=0, atol=0)
+    exported = {
+        weight.param_name: weight.weight
+        for weight in bridge.stream_adapter_weights_megatron_to_hf(models, cpu=True, show_progress=False)
+    }
+
+    assert len(exported) == 6
+    for projection, expected in zip(projection_names, sections, strict=True):
+        actual_in = exported[f"{hf_prefix}.{projection}.lora_A.weight"]
+        actual_out = exported[f"{hf_prefix}.{projection}.lora_B.weight"]
+        torch.testing.assert_close(actual_in, linear_in, rtol=0, atol=0)
+        torch.testing.assert_close(actual_out, expected, rtol=0, atol=0)
+        torch.testing.assert_close(
+            actual_out.float() @ actual_in.float(), expected.float() @ linear_in.float(), rtol=0, atol=0
+        )
+
+    merged = bridge._merge_lora_adapter_weights(
+        models,
+        {
+            f"{hf_prefix}.{name}.weight": torch.zeros_like(section)
+            for name, section in zip(projection_names, sections, strict=True)
+        },
+        [materialized],
+    )
+    for projection, expected in zip(projection_names, sections, strict=True):
+        torch.testing.assert_close(merged[f"{hf_prefix}.{projection}.weight"], expected, rtol=0, atol=0)
 
 
 def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
@@ -2748,3 +2928,15 @@ def test_column_parallel_mapping_skips_ep_gather_for_adapters(monkeypatch):
 
     result = mapping.megatron_to_hf(torch.ones(2, 2), None)
     torch.testing.assert_close(result["hf_param"], torch.ones(2, 2))
+
+
+@pytest.mark.unit
+def test_tp_merge_forward_and_backward(tmp_path: Path):
+    """Real TP2 collectives must sum all ranks' contributions to the gathered adapter."""
+    mp.spawn(_distributed_merge_worker, args=(str(tmp_path / "rendezvous"),), nprocs=2, join=True)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("scale", [None, 0.375])
+def test_single_rank_merge_forward_and_backward(scale):
+    _check_merge(0, None, "replicated", scale)
