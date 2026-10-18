@@ -197,7 +197,10 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    # Sequence parallelism whenever TP > 1: without it, Megatron-Core leaves the
+    # GatedDeltaNet out_norm gradient as a per-rank partial sum across TP ranks
+    # (NVIDIA/Megatron-LM#7613), so the replicated weight drifts apart.
+    cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_vision_projection = False
@@ -697,7 +700,10 @@ def qwen35_vl_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    # Sequence parallelism whenever TP > 1: without it, Megatron-Core leaves the
+    # GatedDeltaNet out_norm gradient as a per-rank partial sum across TP ranks
+    # (NVIDIA/Megatron-LM#7613), so the replicated weight drifts apart.
+    cfg.model.sequence_parallel = True
 
     # VLM-specific settings
     cfg.model.freeze_language_model = False
@@ -798,7 +804,10 @@ def qwen35_vl_9b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    # Sequence parallelism whenever TP > 1: without it, Megatron-Core leaves the
+    # GatedDeltaNet out_norm gradient as a per-rank partial sum across TP ranks
+    # (NVIDIA/Megatron-LM#7613), so the replicated weight drifts apart.
+    cfg.model.sequence_parallel = True
 
     # VLM-specific settings
     cfg.model.freeze_language_model = False
@@ -897,7 +906,10 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    # Sequence parallelism whenever TP > 1: without it, Megatron-Core leaves the
+    # GatedDeltaNet out_norm gradient as a per-rank partial sum across TP ranks
+    # (NVIDIA/Megatron-LM#7613), so the replicated weight drifts apart.
+    cfg.model.sequence_parallel = True
 
     # VLM-specific settings
     cfg.model.freeze_language_model = False

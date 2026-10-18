@@ -50,7 +50,10 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    # Sequence parallelism whenever TP > 1: without it, Megatron-Core leaves the
+    # GatedDeltaNet out_norm gradient as a per-rank partial sum across TP ranks
+    # (NVIDIA/Megatron-LM#7613), so the replicated weight drifts apart.
+    cfg.model.sequence_parallel = True
     cfg.model.calculate_per_token_loss = True
 
     cfg.train.global_batch_size = 32

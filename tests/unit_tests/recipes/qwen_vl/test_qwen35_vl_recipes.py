@@ -981,7 +981,7 @@ def test_qwen35_vl_27b_gb200_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_dtype is None
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.context_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
+    assert cfg.model.sequence_parallel is True
     assert cfg.model.calculate_per_token_loss is True
 
     assert cfg.model.freeze_language_model is False
@@ -1759,3 +1759,44 @@ def test_gb200_long_context_pins_model_and_processor_together(monkeypatch):
     cfg = recipe()
     encoder = cfg.dataset.task_encoder
     assert calls == [(encoder.hf_processor_path, {"revision": encoder.hf_processor_revision})]
+
+
+_QWEN35_VL_ALL_RECIPE_FUNCS = list(
+    {
+        id(func): func
+        for func in (
+            _QWEN35_VL_PRETRAIN_MOCK_FUNCS
+            + _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS
+            + _QWEN35_VL_SFT_FUNCS
+            + _QWEN35_VL_H100_SFT_FUNCS
+            + _QWEN35_VL_PEFT_FUNCS
+            + _QWEN35_VL_H100_PEFT_FUNCS
+            + _QWEN35_VL_GB200_FUNCS
+            + _QWEN35_VL_GB300_FUNCS
+        )
+    }.values()
+)
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN35_VL_ALL_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_qwen35_vl_recipes_training_the_language_model_with_tp_enable_sequence_parallel(
+    recipe_func: Callable, monkeypatch: pytest.MonkeyPatch
+):
+    """A recipe that trains the language model with TP > 1 must enable sequence parallelism.
+
+    The GatedDeltaNet out_norm weight is replicated on every TP rank, but the value heads it
+    scales are split across them, so each rank's backward only yields a partial gradient.
+    Megatron-Core sums that gradient across TP ranks only through the sequence-parallel path,
+    so with TP > 1 and sequence parallelism off the replicated weight is trained with a
+    different partial gradient on each rank (NVIDIA/Megatron-LM#7613). Frozen language models
+    and PEFT recipes do not train out_norm.
+    """
+    for module in (_qwen35_vl_h100_module, _qwen35_vl_gb200_module, _qwen35_vl_gb300_module):
+        if hasattr(module, "AutoBridge"):
+            monkeypatch.setattr(module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = recipe_func()
+
+    trains_out_norm = cfg.peft is None and not cfg.model.freeze_language_model
+    if trains_out_norm and cfg.model.tensor_model_parallel_size > 1:
+        assert cfg.model.sequence_parallel is True
