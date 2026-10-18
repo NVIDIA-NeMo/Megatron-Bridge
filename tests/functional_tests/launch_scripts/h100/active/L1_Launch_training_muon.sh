@@ -17,7 +17,7 @@ MUON_TEST_OUTPUT=$(mktemp -d)
 DRIVER=tests/functional_tests/training/muon_distributed_checkpoint.py
 for test_case in muon_on muon_off muon_inherited muon_alias muon_resume muon_hash \
     adam_on adam_off adam_resume muon_builder_on muon_builder_off muon_builder_resume \
-    muon_reshard_on muon_reshard_resume; do
+    muon_reshard_on muon_reshard_resume muon_legacy_on muon_legacy_resume; do
     uv run python -m torch.distributed.run --nnodes=1 --nproc_per_node=2 \
         --master-addr=127.0.0.1 --master-port=29512 \
         "$DRIVER" --root "$MUON_TEST_OUTPUT" --case "$test_case"

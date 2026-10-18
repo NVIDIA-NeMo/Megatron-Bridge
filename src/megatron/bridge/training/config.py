@@ -134,12 +134,13 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
-    use_layer_wise_param_layout: bool = True
+    use_layer_wise_param_layout: bool = False
     """Use the precomputed shard-aligned layout for the LayerWise optimizer.
 
-    Set to ``False`` to retain compact DDP buffers and use LayerWise's
-    variable-size parameter synchronization path. This setting has no effect unless
-    ``use_layer_wise_distributed_optimizer`` is enabled.
+    The default retains compact DDP buffers, LayerWise's variable-size parameter
+    synchronization, and the optimizer representation used by existing checkpoints.
+    Shard-aligned buffers are opt-in and require compatible parameter routing.
+    This setting has no effect unless ``use_layer_wise_distributed_optimizer`` is enabled.
     """
 
     def __post_init__(self) -> None:

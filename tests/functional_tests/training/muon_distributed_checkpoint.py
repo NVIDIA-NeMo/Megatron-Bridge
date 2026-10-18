@@ -9,7 +9,9 @@ all rank artifacts without initializing distributed training.
 import argparse
 import json
 import logging
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
@@ -154,6 +156,12 @@ def run_case(root: Path, case: str) -> None:
         use_distributed_optimizer=cfg.ddp.use_distributed_optimizer,
         use_layer_wise_distributed_optimizer=case not in ("muon_alias", "muon_inherited") and name == "muon",
     )
+    if case == "muon_legacy_on":
+        # Recreate the compact optimizer representation used before the layout option.
+        cfg.optimizer.use_layer_wise_param_layout = False
+    elif case != "muon_legacy_resume":
+        # Keep the existing full-layout matrix as explicit opt-in coverage.
+        cfg.optimizer.use_layer_wise_param_layout = True
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=False,
         overlap_grad_reduce=True,
@@ -169,7 +177,18 @@ def run_case(root: Path, case: str) -> None:
     elif case.endswith("_resume"):
         source = case.removesuffix("_resume") + "_on"
         cfg.checkpoint.load = str(root / source / "checkpoints" / "iter_0000002")
-    pretrain(cfg, forward_step, callbacks=[RecordTraining(root / case)])
+    # Older compact checkpoints omitted distributed-optimizer sharding metadata.
+    # Save that exact representation, then resume using today's untouched default.
+    legacy_metadata = (
+        patch(
+            "megatron.bridge.training.checkpointing._uses_distributed_optimizer",
+            return_value=False,
+        )
+        if case == "muon_legacy_on"
+        else nullcontext()
+    )
+    with legacy_metadata:
+        pretrain(cfg, forward_step, callbacks=[RecordTraining(root / case)])
 
 
 def compare(root: Path) -> None:
@@ -184,6 +203,7 @@ def compare(root: Path) -> None:
         ("muon_builder_on", "muon_builder_off"),
         ("muon_builder_on", "muon_builder_resume"),
         ("muon_reshard_on", "muon_reshard_resume"),
+        ("muon_legacy_on", "muon_legacy_resume"),
     ]
     for reference, candidate in pairs:
         for rank in range(2):
@@ -254,6 +274,8 @@ if __name__ == "__main__":
             "muon_reshard_resume",
             "muon_dp2_save",
             "muon_dp1_resume",
+            "muon_legacy_on",
+            "muon_legacy_resume",
         ],
     )
     parser.add_argument("--compare", action="store_true")

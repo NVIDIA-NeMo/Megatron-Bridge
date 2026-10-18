@@ -85,8 +85,16 @@ def components(model: MimoModel) -> list[DistributedDataParallel]:
 
 
 def build(
-    optimizer_name: str, mode: str, *, matrices_only: bool = False, overlap: bool = False
+    optimizer_name: str,
+    mode: str,
+    *,
+    matrices_only: bool = False,
+    overlap: bool = False,
+    fallback_case: str | None = None,
 ) -> tuple[MimoModel, MimoOptimizer]:
+    default_layout = mode == "default"
+    if default_layout:
+        mode = "compact"
     torch.manual_seed(123)
     config = TransformerConfig(num_layers=1, hidden_size=16, num_attention_heads=2, bf16=True)
     pg = ProcessGroupCollection.use_mpu_process_groups()
@@ -110,6 +118,13 @@ def build(
         cp_group=pg.cp,
         tp_group=pg.tp,
     ).cuda()
+    if fallback_case == "scalar_only":
+        for name, param in model.named_parameters():
+            param.requires_grad_(name.endswith(".linear.bias"))
+    elif fallback_case == "expert_bias":
+        for name, param in model.named_parameters():
+            if name.endswith(".linear.bias"):
+                param.allreduce = False
     original = {id(p): name for name, p in model.named_parameters()}
     model = _cast_model_dtype_except_fp32_marked([model], torch.bfloat16)[0]
     optimizer_config = OptimizerConfig(
@@ -122,6 +137,8 @@ def build(
         clip_grad=0.0,
         muon_split_qkv=False,
     )
+    if not default_layout:
+        optimizer_config.use_layer_wise_param_layout = mode == "full"
     ddp = DistributedDataParallelConfig(
         grad_reduce_in_fp32=True, overlap_grad_reduce=overlap, overlap_param_gather=overlap
     )
@@ -135,7 +152,7 @@ def build(
         grids,
         {"language": pg, "vision": pg},
         use_layer_wise_distributed_optimizer=optimizer_config.use_layer_wise_distributed_optimizer,
-        use_layer_wise_param_layout=mode == "full",
+        use_layer_wise_param_layout=optimizer_config.use_layer_wise_param_layout,
     )
     # Dtype casting and DDP must preserve parameter identity, including tied aliases.
     assert set(original) == {id(p) for p in model.parameters()}
@@ -173,24 +190,34 @@ def build(
         if optimizer_name == "adam" and mode != "replicated":
             children = getattr(opt, "chained_optimizers", [opt])
             assert children and all(isinstance(child, DistributedOptimizer) for child in children)
-        elif optimizer_name == "muon" and mode == "compact":
+        elif optimizer_name != "adam" and mode == "compact":
             assert isinstance(opt, LayerWiseDistributedOptimizer)
             assert not opt.use_buffer_param_sync
         elif optimizer_name == "muon" and mode == "full":
             assert isinstance(opt.chained_optimizers[0], LayerWiseDistributedOptimizer)
             assert opt.chained_optimizers[0].use_buffer_param_sync
             assert any(isinstance(child, DistributedOptimizer) for child in opt.chained_optimizers)
-        if optimizer_name == "muon" and mode != "replicated":
+        if optimizer_name != "adam" and mode != "replicated":
             layer_wise = opt if mode == "compact" else opt.chained_optimizers[0]
             owned = [{id(p) for p in shard} for shard in layer_wise.dp_cp_params_list]
+            expert_owned = [{id(p) for p in shard} for shard in (layer_wise.expt_dp_params_list or [])]
             component = model.language_model if module_name == "language" else model.modality_submodules[module_name]
             trainable = {id(p) for p in component.parameters() if p.requires_grad}
             matrices = {
                 identity for identity in trainable if original[identity].endswith((".linear.weight", ".second.weight"))
             }
-            assert set.union(*owned) == (trainable if mode == "compact" else matrices)
+            assert set.union(*owned, *expert_owned) == (trainable if mode == "compact" else matrices)
             assert not owned[0].intersection(owned[1])
-            assert all(shard.intersection(matrices) for shard in owned)
+            # Expert fallback groups change the compact packing order; they need
+            # complete/disjoint ownership, not a matrix on every dense-DP shard.
+            if matrices and fallback_case is None:
+                assert all(shard.intersection(matrices) for shard in owned)
+            if expert_owned:
+                assert not expert_owned[0].intersection(expert_owned[1])
+                assert set[int]().union(*owned).isdisjoint(set[int]().union(*expert_owned))
+                assert set.union(*expert_owned) == {
+                    id(p) for p in component.parameters() if p.requires_grad and not getattr(p, "allreduce", True)
+                }
     logger.info("%s %s optimizers: %s", optimizer_name, mode, [type(o).__name__ for o in optimizer.chained_optimizers])
     return model, optimizer
 
@@ -309,7 +336,7 @@ def run(output: Path, optimizer_name: str, mode: str, *, overlap: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--case", choices=["construct", "compact", "full", "adam", "all"], default="all")
+    parser.add_argument("--case", choices=["construct", "compact", "full", "adam", "defaults", "all"], default="all")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     logger.setLevel(logging.INFO)
@@ -317,6 +344,30 @@ def main() -> None:
     dist.init_process_group("nccl")
     parallel_state.initialize_model_parallel()
     try:
+        if args.case in ("defaults", "all"):
+            for name, fallback_case in [
+                ("lion", None),
+                ("soap", None),
+                ("muon", "expert_bias"),
+                ("muon", "scalar_only"),
+            ]:
+                # Omit the layout option. These domains fail with full layout:
+                # non-Muon excluded matrices, expert scalars, and all-fallback domains.
+                model, optimizer = build(name, "default", fallback_case=fallback_case)
+                optimizer.zero_grad()
+                for component in components(model):
+                    component.zero_grad_buffer()
+                    for param in component.parameters():
+                        if param.requires_grad:
+                            param.main_grad.fill_(0.01)
+                    component.finish_grad_sync()
+                success, norm, _ = optimizer.step()
+                assert success and norm is not None and torch.isfinite(torch.tensor(norm))
+                force_param_sync([model], optimizer)
+                assert all(torch.isfinite(param).all() for param in model.parameters())
+                logger.info(
+                    "PASS default compact %s %s: real DDP construction, ownership, optimizer step", name, fallback_case
+                )
         if args.case in ("construct", "all"):
             build("muon", "compact", matrices_only=True)
         for name, mode in [("muon", "compact"), ("muon", "full"), ("adam", "full")]:

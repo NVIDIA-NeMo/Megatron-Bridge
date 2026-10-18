@@ -49,10 +49,20 @@ layer-wise Muon. The current Core implementation requires one distributed
 optimizer instance and does not support `overlap_param_gather_with_optimizer_step`
 or either FSDP implementation with Muon.
 
-By default, `use_layer_wise_param_layout=True` builds shard-aligned DDP buffers
-for the LayerWise optimizer. Set it to `False` to retain compact DDP buffers and
-use LayerWise's variable-size parameter synchronization path. This reduces
-layout padding while preserving the configured parameter-gather behavior.
+By default, `use_layer_wise_param_layout=False` retains compact DDP buffers and
+LayerWise's variable-size parameter synchronization path. This preserves the
+optimizer representation of existing Muon checkpoints while retaining the
+configured parameter-gather behavior. Set it to `True` to opt into shard-aligned
+buffers for a compatible model and optimizer.
+
+The current Core full-layout path does not support Lion/SOAP matrices marked
+`use_muon=False`, expert-parallel scalar fallback parameters (such as MoE expert
+biases), or optimizer domains whose trainable parameters all use the scalar
+fallback (such as bias-only tuning or a scalar-only MIMO component). Keep compact
+layout for these cases. Also retain the checkpoint's layout when resuming
+optimizer state: loading an older compact Muon checkpoint into the full-layout
+optimizer representation is not supported.
+
 Existing Kimi recipes keep the compact layout and parameter-gather overlap
 disabled until their MoE and pipeline-parallel configurations are validated
 with the shard-aligned layout; other recipes can opt in independently.

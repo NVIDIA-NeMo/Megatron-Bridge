@@ -215,7 +215,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         pg_collection: ProcessGroupCollection | None = None,
         *,
         use_layer_wise_distributed_optimizer: bool = False,
-        use_layer_wise_param_layout: bool = True,
+        use_layer_wise_param_layout: bool = False,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -616,7 +616,7 @@ def get_model(
     *,
     pg_collection: ProcessGroupCollection,
     use_layer_wise_distributed_optimizer: bool = False,
-    use_layer_wise_param_layout: bool = True,
+    use_layer_wise_param_layout: bool = False,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 

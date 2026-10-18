@@ -4140,17 +4140,17 @@ class TestRuntimeConfigUpdate:
         config_path = tmp_path / "recipe.yaml"
 
         try:
-            assert full_cfg.optimizer.use_layer_wise_param_layout is True
-            assert full_cfg.to_dict()["optimizer"]["use_layer_wise_param_layout"] is True
+            assert full_cfg.optimizer.use_layer_wise_param_layout is False
+            assert full_cfg.to_dict()["optimizer"]["use_layer_wise_param_layout"] is False
             process_config_with_overrides(
                 full_cfg,
-                cli_overrides=["optimizer.use_layer_wise_param_layout=false"],
+                cli_overrides=["optimizer.use_layer_wise_param_layout=true"],
             )
-            assert full_cfg.optimizer.use_layer_wise_param_layout is False
+            assert full_cfg.optimizer.use_layer_wise_param_layout is True
 
             full_cfg.to_yaml(str(config_path))
             restored_cfg = ConfigContainer.from_yaml(str(config_path))
-            assert restored_cfg.optimizer.use_layer_wise_param_layout is False
+            assert restored_cfg.optimizer.use_layer_wise_param_layout is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

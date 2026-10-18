@@ -38,7 +38,7 @@ def wrap_megatron_mimo_model_distributed(
     pg_collections: Dict[str, Optional["ProcessGroupCollection"]],
     *,
     use_layer_wise_distributed_optimizer: bool = False,
-    use_layer_wise_param_layout: bool = True,
+    use_layer_wise_param_layout: bool = False,
 ) -> "MimoModel":
     """Wrap MegatronMIMO model's submodules with DDP.
 

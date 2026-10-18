@@ -511,7 +511,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         post_wrap_hook: Optional[Callable[[List[MegatronModule]], List[MegatronModule]]] = None,
         *,
         use_layer_wise_distributed_optimizer: bool = False,
-        use_layer_wise_param_layout: bool = True,
+        use_layer_wise_param_layout: bool = False,
     ) -> List[MegatronModule]:
         """Build MegatronMIMO model with heterogeneous parallelism and DDP wrapping.
 

@@ -185,10 +185,22 @@ def test_provider_forwards_layerwise_layout_to_get_model():
             ddp_config=DistributedDataParallelConfig(),
             pg_collection=Mock(),
             use_layer_wise_distributed_optimizer=True,
-            use_layer_wise_param_layout=False,
         )
     assert build.call_args.kwargs["use_layer_wise_distributed_optimizer"] is True
     assert build.call_args.kwargs["use_layer_wise_param_layout"] is False
+
+
+@pytest.mark.parametrize("name", ["muon", "dist_muon", "adaptive_muon", "lion", "soap"])
+def test_layerwise_layout_defaults_to_compact_after_normalization(name: str) -> None:
+    cfg = SimpleNamespace(
+        optimizer=OptimizerConfig(optimizer=name, use_distributed_optimizer=True),
+        ddp=DistributedDataParallelConfig(use_distributed_optimizer=True),
+    )
+    _validate_and_sync_distributed_optimizer_settings(cfg)
+    cfg.optimizer.finalize()
+    assert cfg.optimizer.use_layer_wise_distributed_optimizer
+    assert not cfg.optimizer.use_layer_wise_param_layout
+    assert not cfg.ddp.use_distributed_optimizer
 
 
 @pytest.mark.parametrize(

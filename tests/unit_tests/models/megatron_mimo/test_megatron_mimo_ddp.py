@@ -272,6 +272,7 @@ class TestWrapMegatronMIMOModelDistributed:
                     "images": pg if module_name == "images" else None,
                 },
                 use_layer_wise_distributed_optimizer=True,
+                use_layer_wise_param_layout=True,
             )
 
         mock_ddp.assert_called_once()
@@ -313,7 +314,6 @@ class TestWrapMegatronMIMOModelDistributed:
             grids,
             pg_collections,
             use_layer_wise_distributed_optimizer=True,
-            use_layer_wise_param_layout=False,
         )
 
         mock_tag.assert_not_called()
