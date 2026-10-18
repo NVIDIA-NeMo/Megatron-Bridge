@@ -15,6 +15,7 @@
 import torch
 import torch.distributed as dist
 from megatron.core.utils import get_pg_size
+from torch.distributed.nn.functional import all_gather
 
 
 class LoRAMerge:
@@ -35,7 +36,8 @@ class LoRAMerge:
     ) -> torch.Tensor:
         """
         Merges the LoRA adapter weights with the base model weights.
-        Handles tensor parallelism by gathering sharded dimensions.
+        Handles tensor parallelism by gathering sharded dimensions. The gather
+        sums backward contributions across TP ranks when used as a live weight.
 
         For ColumnParallelLinear (e.g., linear_qkv, linear_fc1):
             - base_weight: (out_features/TP, in_features)
@@ -70,15 +72,11 @@ class LoRAMerge:
             return base_weight + lora_weight
 
         if linear_in.shape[0] * tp_size == dim and linear_out.shape[1] == dim:
-            linear_in_list = [torch.empty_like(linear_in) for _ in range(tp_size)]
-            dist.all_gather(linear_in_list, linear_in, group=tp_group)
-            linear_in_full = torch.cat(linear_in_list, dim=0)
+            linear_in_full = torch.cat(all_gather(linear_in, group=tp_group), dim=0)
             lora_weight = lora_scale * (linear_out @ linear_in_full)
 
         elif linear_out.shape[0] * tp_size == base_weight.shape[0]:
-            linear_out_list = [torch.empty_like(linear_out) for _ in range(tp_size)]
-            dist.all_gather(linear_out_list, linear_out, group=tp_group)
-            linear_out_full = torch.cat(linear_out_list, dim=0)
+            linear_out_full = torch.cat(all_gather(linear_out, group=tp_group), dim=0)
             lora_weight = lora_scale * (linear_out_full @ linear_in)
 
         else:
