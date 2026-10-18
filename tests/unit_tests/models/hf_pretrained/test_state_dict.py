@@ -200,6 +200,22 @@ class TestStateDictKeyRetrieval:
         assert "transformer.wte.weight" in state_dict
         assert "missing.key" not in state_dict
 
+    def test_membership_follows_wrapped_get_all_keys(self, mock_model):
+        """Membership tracks a temporarily wrapped source.get_all_keys (as the Kimi bridges do)."""
+        state_dict = StateDict(mock_model.state_dict())
+        source = state_dict.source
+        assert "lm_head.virtual" not in state_dict  # build the key set before wrapping
+
+        original_get_all_keys = source.get_all_keys
+        source.get_all_keys = lambda: original_get_all_keys() + ["lm_head.virtual"]
+        try:
+            assert "lm_head.virtual" in state_dict
+        finally:
+            source.get_all_keys = original_get_all_keys
+
+        assert "lm_head.virtual" not in state_dict
+        assert "lm_head.weight" in state_dict
+
 
 class TestStateDictTensorLoading:
     """Test tensor loading functionality."""

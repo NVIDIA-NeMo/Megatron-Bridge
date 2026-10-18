@@ -158,6 +158,13 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     with external process managers that handle GPU visibility.
     """
 
+    use_megatron_fsdp: bool = False
+    """Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2.
+
+    Megatron Core no longer declares this field on its ``DistributedInitConfig``; Bridge keeps it
+    so recipes and user configs can continue to enable Megatron FSDP through ``cfg.dist``.
+    """
+
     gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
     """Accumulate GTP remat reduce-scatter results locally in FP32."""
 
