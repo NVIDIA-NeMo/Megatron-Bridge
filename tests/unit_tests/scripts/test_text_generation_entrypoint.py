@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib.util
+import socket
 import sys
 import types
 from pathlib import Path
@@ -230,6 +231,109 @@ def test_dynamic_generation_rejects_failed_inference_requests(
             args,
             model=object(),
             tokenizer=tokenizer,
+            prompts=["Hello world"],
+            sampling_params=object(),
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("use_coordinator", "explicit_host", "expected_host"),
+    [
+        (True, None, "192.0.2.12"),
+        (True, "192.0.2.20", "192.0.2.20"),
+        (True, "explicit.example.test", "explicit.example.test"),
+        (False, None, None),
+    ],
+)
+def test_dynamic_generation_resolves_default_coordinator_address(
+    text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    use_coordinator: bool,
+    explicit_host: str | None,
+    expected_host: str | None,
+) -> None:
+    received: dict[str, object] = {}
+    resolved: list[str] = []
+
+    def resolve(host: str) -> str:
+        resolved.append(host)
+        return "192.0.2.12"
+
+    class _WorkerLLM:
+        is_primary_rank = False
+
+        def __init__(self, **kwargs: object) -> None:
+            received.update(kwargs)
+
+        def __enter__(self) -> _WorkerLLM:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(text_generation_entrypoint, "MegatronLLM", _WorkerLLM)
+    # Patch the standard module so this test also exercises the unfixed entrypoint.
+    monkeypatch.setattr(socket, "gethostname", lambda: "worker.example.test")
+    monkeypatch.setattr(socket, "gethostbyname", resolve)
+    args = types.SimpleNamespace(
+        max_new_tokens=16,
+        max_seq_length=128,
+        max_batch_size=1,
+        tp=1,
+        block_size_tokens=8,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+        use_coordinator=use_coordinator,
+        coordinator_host=explicit_host,
+        coordinator_port=12345,
+    )
+    text_generation_entrypoint._generate_with_dynamic_engine(
+        args,
+        model=object(),
+        tokenizer=types.SimpleNamespace(tokenize=lambda _prompt: [1, 2]),
+        prompts=["Hello world"],
+        sampling_params=object(),
+    )
+    assert received["coordinator_host"] == expected_host
+    assert received["coordinator_port"] == 12345
+    assert resolved == (["worker.example.test"] if use_coordinator and explicit_host is None else [])
+
+
+@pytest.mark.unit
+def test_dynamic_generation_propagates_address_resolution_failure(
+    text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def resolve(host: str) -> str:
+        raise socket.gaierror("unresolvable node")
+
+    def unexpected_engine(**kwargs: object) -> None:
+        pytest.fail("Do not construct the engine after address resolution fails")
+
+    monkeypatch.setattr(socket, "gethostbyname", resolve)
+    monkeypatch.setattr(text_generation_entrypoint, "MegatronLLM", unexpected_engine)
+    args = types.SimpleNamespace(
+        max_new_tokens=16,
+        max_seq_length=128,
+        max_batch_size=1,
+        tp=1,
+        block_size_tokens=8,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+        use_coordinator=True,
+        coordinator_host=None,
+        coordinator_port=None,
+    )
+    with pytest.raises(socket.gaierror, match="unresolvable node"):
+        text_generation_entrypoint._generate_with_dynamic_engine(
+            args,
+            model=object(),
+            tokenizer=types.SimpleNamespace(tokenize=lambda _prompt: [1, 2]),
             prompts=["Hello world"],
             sampling_params=object(),
         )

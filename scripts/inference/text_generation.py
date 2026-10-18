@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 import sys
 from pathlib import Path
 
@@ -151,12 +152,16 @@ def _generate_with_dynamic_engine(
         return_log_probs=args.return_log_probs,
         enable_chunked_prefill=args.enable_chunked_prefill,
     )
+    coordinator_host = args.coordinator_host
+    if args.use_coordinator and coordinator_host is None:
+        # ZMQ binds local interfaces or numeric addresses, not DNS hostnames.
+        coordinator_host = socket.gethostbyname(socket.gethostname())
     with MegatronLLM(
         model=model,
         tokenizer=tokenizer,
         inference_config=inference_config,
         use_coordinator=args.use_coordinator,
-        coordinator_host=args.coordinator_host,
+        coordinator_host=coordinator_host,
         coordinator_port=args.coordinator_port,
     ) as llm:
         if llm.is_primary_rank:
