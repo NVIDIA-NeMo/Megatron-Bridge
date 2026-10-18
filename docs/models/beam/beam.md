@@ -50,6 +50,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <div class="verification-hardware-controls" aria-label="GPU filter">
         <span>GPU</span>
         <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="GB200">GB200</button>
         <button type="button" data-hardware="H200">H200</button>
       </div>
       <span class="verification-combination-count" aria-live="polite"></span>
@@ -91,9 +92,23 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="beam-pretrain-gb200" aria-controls="beam-pretrain-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · GB200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
     <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H200" data-status="verified" data-entry="beam-sft-h200" aria-controls="beam-sft-h200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · H200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="beam-sft-gb200" aria-controls="beam-sft-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · GB200</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
@@ -108,6 +123,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H200" data-status="verified" data-entry="beam-peft-h200" aria-controls="beam-peft-h200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>LoRA · H200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="beam-peft-gb200" aria-controls="beam-peft-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · GB200</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
@@ -269,6 +291,65 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
 </p>
       </section>
     </article>
+    <article id="beam-pretrain-gb200" class="verification-model-detail" data-entry-detail="beam-pretrain-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-18</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.226944</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>1.045373</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>7,673.710 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>296.820 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>2,135.082 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>160.945 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>167.066 GiB</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe beam_pretrain_64gpu_gb200_bf16_config --mode pretrain --max_steps 100 --pretrained_checkpoint work/models/beam-public/iter_0000000 --dataset megatron-indexed --seq_length 4096 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_beam_text_document&quot;],null]&#x27; &#x27;dataset.split=&quot;100,0,0&quot;&#x27; dataset.random_seed=1234 rng.seed=1234 dataset.path_to_cache=work/cache/beam-gb200/wikitext103 dataset.num_workers=8 tokenizer.tokenizer_model=reflection/Beam-1.0-501B-A23B &#x27;tokenizer.hf_tokenizer_kwargs={revision:&quot;06641076793dad51b8907f7eb2a14f4e08fd3ec8&quot;}&#x27; checkpoint.load=null checkpoint.save=null checkpoint.finetune=true checkpoint.load_optim=false checkpoint.load_rng=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=1000 logger.log_interval=1 logger.log_throughput=true logger.log_throughput_to_tensorboard=true logger.wandb_project=null logger.tensorboard_dir=work/model-verification/beam/gb200-pretrain/tensorboard logger.save_config_filepath=work/model-verification/beam/gb200-pretrain/ConfigContainer.yaml dist.distributed_timeout_minutes=30</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Using NeMo 26.10 RC5 with Transformers 5.20.1 at the recorded Bridge commit. On 64 GB200 (16 nodes x 4) in one NVLink domain, TP4/PP1/CP1/EP64/ETP1, DP16, SP on, GBS/MBS 256/1 and 16 micro-batches per update. HybridEP uses 32 communication and preprocessing SMs. Attention/router CUDA graphs and selective moe_act recomputation are active; no full recompute. Warm-starts from the imported public Beam revision on Beam-tokenized WikiText-103 (125,410,048 tokens, 1,165,029 documents), with LR 1e-4 cosine to 1e-5, 40 warmup steps and effective weight decay 0.033. This is bounded support verification outside the default RP2/GBS1024 convergence cohort. All 100 updates are finite with zero skipped/NaN updates; first/last ten-update mean losses are 1.1827501/1.0397604. The post-setup configuration persists. Every rank has the complete expected model partition and FP32 optimizer state; all 101 selected graph layers replay and expert-activation recomputation executes. Minimum observed free memory is 11.36 GiB. Synchronized steps 51-100 including periodic garbage collection and logging take 7.6850 seconds/update: 2131.93 physical tokens/s/GPU and 295.09 model TFLOP/s/GPU. This remains below the approximate 400 model TFLOP/s/GPU BF16 GB200 guidance and does not establish a canonical performance benchmark. No checkpoint was written, so this run does not establish checkpoint save/resume.
+</p>
+      </section>
+    </article>
     <article id="beam-sft-h200" class="verification-model-detail" data-entry-detail="beam-sft-h200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · H200</h4>
@@ -317,6 +398,65 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>On 128 H200 (16 nodes x 8), TP8/PP2/EP64/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2 with FP32 gradient reduction, FP32 master weights and FP32 Adam moments. Pad-8 offline packing is 99.59% efficient; Tulu 3 train[:10000] packs into 503 8K packs, so the 100 steps sample 800 packs (501 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,952,199 supervised tokens after label masking. LM loss is finite from 1.04323 to 0.7587349 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 128-shard weights-only iter_0000100 checkpoint (1.0 TB, 26,131 entries, model state only) is the one the export item consumes. An earlier run of the same command on the same packed data started from the same loss, ended at 0.7583156 and matched these throughput figures within 0.2%. The 120-minute collective timeout covers rank 0&#x27;s offline packing while the other ranks wait.
+</p>
+      </section>
+    </article>
+    <article id="beam-sft-gb200" class="verification-model-detail" data-entry-detail="beam-sft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-18</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.043078</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.7586285</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>1,137.640 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>129.750 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>900.109 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>165.633 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>168.633 GiB</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe beam_sft_64gpu_gb200_bf16_config --mode sft --max_steps 100 --pretrained_checkpoint work/models/beam-public/iter_0000000 --seq_length 8192 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; dataset.seed=1234 rng.seed=5678 dataset.enable_offline_packing=true dataset.offline_packing_specs.pad_seq_to_mult=8 dataset.hf_output_root=work/data/beam-tulu3-8k-pad8 dataset.offline_packing_specs.packed_train_data_path=work/data/beam-tulu3-8k-pad8/training_8192.idx.parquet dataset.offline_packing_specs.packed_metadata_path=work/data/beam-tulu3-8k-pad8/8192_metadata.jsonl tokenizer.tokenizer_model=reflection/Beam-1.0-501B-A23B &#x27;tokenizer.hf_tokenizer_kwargs={revision:&quot;06641076793dad51b8907f7eb2a14f4e08fd3ec8&quot;}&#x27; checkpoint.load=null checkpoint.save=null checkpoint.finetune=true checkpoint.load_optim=false checkpoint.load_rng=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=1000 logger.log_interval=1 logger.log_throughput=true logger.log_throughput_to_tensorboard=true logger.wandb_project=null logger.tensorboard_dir=work/model-verification/beam/gb200-sft/tensorboard logger.save_config_filepath=work/model-verification/beam/gb200-sft/ConfigContainer.yaml dist.distributed_timeout_minutes=30</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Using NeMo 26.10 RC5 with Transformers 5.20.1 at the recorded Bridge commit. On 64 GB200 (16 nodes x 4) in one NVLink domain, TP8/PP1/CP1/EP64/ETP1, DP8, SP on, GBS/MBS 8/1 without accumulation. HybridEP uses 32 communication and preprocessing SMs; execution is eager without recompute. Warm-starts from the imported public Beam revision. The pinned Tulu 3 train[:10000] split uses the recipe&#x27;s assistant-only chat preprocessing and seed-1234 offline packing: 503 packs at length 8192 and alignment 8 with 2,488,968 supervised tokens per dataset pass; the run consumes 800 packs over 100 updates. LR is 5e-6 cosine to zero after 10 warmup steps, effective weight decay 0.033, with FP32 gradients/master parameters/moments. All 100 updates are finite with zero skipped/NaN updates; first/last ten-update mean losses are 1.07662232/0.73895962. The post-setup configuration persists; expected model partitions and optimizer state were checked on every rank. Minimum observed free memory is 9.28 GiB. Synchronized steps 51-100 including periodic garbage collection and logging take 1.6841 seconds/update: 605.61 physical tokens/s/GPU and 83.18 model TFLOP/s/GPU. This is bounded training support verification; checkpoint writes and evaluation are disabled, so full-checkpoint export/inference is not established.
 </p>
       </section>
     </article>
@@ -419,6 +559,65 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>On 16 H200 (2 nodes x 8), TP2/PP1/EP16/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2. Pad-2 offline packing is 99.65% efficient; Tulu 3 train[:10000] packs into 499 8K packs with Beam&#x27;s chat template, so the 100 steps sample 800 packs (497 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,992,654 supervised tokens after label masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_qkv (fused Q/K/V and attention output gate) and linear_proj is trainable. LM loss is finite from 1.190599 to 0.8183495 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 16-shard iter_0000100 adapter checkpoint holds all 208 expected adapter entries (52 attention layers x 2 projections x 2 LoRA matrices).
+</p>
+      </section>
+    </article>
+    <article id="beam-peft-gb200" class="verification-model-detail" data-entry-detail="beam-peft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-18</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.113574</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.8564881</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>1,224.100 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>258.360 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>1,673.066 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>76.577 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>90.389 GiB</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 8 --gpus-per-node 4 --recipe beam_peft_32gpu_gb200_bf16_config --mode lora --max_steps 100 --pretrained_checkpoint work/models/beam-public/iter_0000000 --seq_length 8192 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; dataset.seed=1234 rng.seed=5678 dataset.enable_offline_packing=true dataset.offline_packing_specs.pad_seq_to_mult=4 dataset.hf_output_root=work/data/beam-tulu3-8k-pad4 dataset.offline_packing_specs.packed_train_data_path=work/data/beam-tulu3-8k-pad4/training_8192.idx.parquet dataset.offline_packing_specs.packed_metadata_path=work/data/beam-tulu3-8k-pad4/8192_metadata.jsonl tokenizer.tokenizer_model=reflection/Beam-1.0-501B-A23B &#x27;tokenizer.hf_tokenizer_kwargs={revision:&quot;06641076793dad51b8907f7eb2a14f4e08fd3ec8&quot;}&#x27; checkpoint.load=null checkpoint.save=null checkpoint.finetune=true checkpoint.load_optim=false checkpoint.load_rng=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=1000 logger.log_interval=1 logger.log_throughput=true logger.log_throughput_to_tensorboard=true logger.wandb_project=null logger.tensorboard_dir=work/model-verification/beam/gb200-peft/tensorboard logger.save_config_filepath=work/model-verification/beam/gb200-peft/ConfigContainer.yaml dist.distributed_timeout_minutes=30</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Using NeMo 26.10 RC5 with Transformers 5.20.1 at the recorded Bridge commit. On 32 GB200 (8 nodes x 4) in one NVLink domain, TP4/PP1/CP1/EP32/ETP1, DP8, SP on, GBS/MBS 8/1 without accumulation. HybridEP uses 32 communication and preprocessing SMs; execution is eager without recompute. Warm-starts from the imported public Beam revision. The pinned Tulu 3 train[:10000] split uses the recipe&#x27;s assistant-only chat preprocessing and seed-1234 offline packing: 500 packs at length 8192 and alignment 4 with 2,488,968 supervised tokens per dataset pass; the run consumes 800 packs over 100 updates. LR is 1e-4 cosine to zero after 10 warmup steps, effective weight decay 0.033, with FP32 gradients/master parameters/moments. Only rank-8, alpha-16, zero-dropout LoRA on linear_qkv (including the fused attention output gate) and linear_proj is trainable: 208 BF16 adapter parameter names across 52 attention layers; base weights remain frozen. All 100 updates are finite with zero skipped/NaN updates; first/last ten-update mean losses are 1.0777790/0.83885297. The post-setup configuration persists. Minimum observed free memory is 87.90 GiB. Synchronized steps 51-100 including periodic garbage collection and logging take 1.3313 seconds/update: 1534.31 physical tokens/s/GPU and 210.71 full-training-equivalent model TFLOP/s/GPU. Both the metric-field and synchronized LoRA FLOP estimates use the full-training formula, not actual adapter compute or MFU. Checkpoint writes and evaluation are disabled; adapter save/export/resume remains unverified.
 </p>
       </section>
     </article>
