@@ -51,6 +51,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hf_pretrained.auto_model import PreTrainedAutoModel
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
@@ -289,6 +290,9 @@ def _resolve_pretrained_wrapper_cls(
         return PreTrainedTokenClassification
     if any(arch.endswith("ForMaskedLM") for arch in architectures):
         return PreTrainedMaskedLM
+    auto_map = getattr(config, "auto_map", None) or {}
+    if isinstance(auto_map, dict) and "AutoModel" in auto_map and "AutoModelForCausalLM" not in auto_map:
+        return PreTrainedAutoModel
     return PreTrainedCausalLM
 
 
@@ -442,7 +446,8 @@ class AutoBridge(Generic[MegatronModelT]):
         architectures = getattr(config, "architectures", [])
         if not architectures:
             return False
-        return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
+        registered = cls.list_supported_models()
+        return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) or arch in registered for arch in architectures)
 
     @classmethod
     def from_auto_config(cls, megatron_path: str, hf_model_id: str, trust_remote_code: bool = False) -> "AutoBridge":
@@ -2412,6 +2417,8 @@ class AutoBridge(Generic[MegatronModelT]):
             return PreTrainedTokenClassification
         if isinstance(self.hf_pretrained, PreTrainedMaskedLM):
             return PreTrainedMaskedLM
+        if isinstance(self.hf_pretrained, PreTrainedAutoModel):
+            return PreTrainedAutoModel
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
             return PreTrainedCausalLM
         return _resolve_pretrained_wrapper_cls(self.hf_pretrained)
@@ -2457,7 +2464,10 @@ class AutoBridge(Generic[MegatronModelT]):
         causal_lm_arch = None
         for architecture_name in architectures:
             # TODO: Can we improve this?
-            if architecture_name.endswith(SUPPORTED_HF_ARCHITECTURES):
+            if (
+                architecture_name.endswith(SUPPORTED_HF_ARCHITECTURES)
+                or architecture_name in self.list_supported_models()
+            ):
                 causal_lm_arch = architecture_name
                 break
 
@@ -2506,7 +2516,7 @@ class AutoBridge(Generic[MegatronModelT]):
         # Check if we have an implementation for this specific architecture
         architecture = None
         for arch_name in config.architectures:
-            if arch_name.endswith(SUPPORTED_HF_ARCHITECTURES):
+            if arch_name.endswith(SUPPORTED_HF_ARCHITECTURES) or arch_name in cls.list_supported_models():
                 architecture = arch_name
                 break
 
