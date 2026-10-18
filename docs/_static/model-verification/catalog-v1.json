@@ -1122,7 +1122,7 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "b53e66c47b9704dd16ce399865bea4f4f004e53b",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -1137,15 +1137,15 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-pretrain-performance-gb200",
-          "expected_result": "On 128 GB200, PP1/EP64/CP1/TP1/DP2 with GBS/MBS 2048/1, FP8-MX, HybridEP dispatch, and full-iteration CUDA graphs completes 50 steps with finite losses, no skipped or NaN iterations, and all five metrics recorded. This benchmark uses forced routing, a static expert-rank capacity, paged stash, and a different batch/objective contract, so its metrics must not be compared with natural-routing library pretraining as convergence evidence.\n",
+          "expected_result": "On 128 GB200, PP1/EP32/CP1/TP1/DP4 with GBS/MBS 2048/1, FP8-MX, HybridEP dispatch, and full-iteration CUDA graphs completes 50 steps with finite losses, no skipped or NaN iterations, and all five metrics recorded. This benchmark uses forced routing, a static expert-rank capacity, paged stash, and a different batch/objective contract, so its metrics must not be compared with natural-routing library pretraining as convergence evidence.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-06",
+          "last_verified": "2026-10-14",
           "metrics": {
-            "final_loss": 3.62683,
-            "initial_loss": 13.5875,
-            "last_10_steps_model_tflops_per_gpu_avg": 731.4,
-            "last_10_steps_step_time_ms_avg": 8134.6,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 8056.45
+            "final_loss": 4.25929,
+            "initial_loss": 12.59972,
+            "last_10_steps_model_tflops_per_gpu_avg": 731.83,
+            "last_10_steps_step_time_ms_avg": 8146.44,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 8044.741
           },
           "precision": "fp8_mx",
           "source_pointer": "items.pretrain_performance.GB200",
@@ -11821,7 +11821,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "49c103c714f3d62d7609f27a46e42dc14e95afa6",
+          "bridge_commit": "e2f2496cbb89e3c881fd54b1568d2689d91df764",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11838,15 +11838,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "glm5-sft-gb200",
-          "expected_result": "Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup configuration. Strictly reloaded the step-100 checkpoint with raise_all and completed a further training step. Metrics cover the original 100 steps only.",
+          "expected_result": "Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1, TP1/PP6/EP32 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing, warm-started from the pinned Hugging Face checkpoint. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations, and the step-100 checkpoint and post-setup configuration were saved.",
           "hardware": "GB200",
-          "last_verified": "2026-10-07",
+          "last_verified": "2026-10-15",
           "metrics": {
-            "final_loss": 0.3063886,
-            "initial_loss": 1.456939,
-            "last_10_steps_model_tflops_per_gpu_avg": 14.18,
-            "last_10_steps_step_time_ms_avg": 6468.4,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 52.769361
+            "final_loss": 0.6933057,
+            "initial_loss": 1.473073,
+            "last_10_steps_model_tflops_per_gpu_avg": 14.74,
+            "last_10_steps_step_time_ms_avg": 6157.27,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 55.435824
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
@@ -11855,7 +11855,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "49c103c714f3d62d7609f27a46e42dc14e95afa6",
+          "bridge_commit": "e2f2496cbb89e3c881fd54b1568d2689d91df764",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -11879,9 +11879,9 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-sft-export-inference-gb200",
-          "expected_result": "Exported the verified corrected packed-CP SFT step-100 checkpoint to BF16 Hugging Face format on 48 GB200 GPUs, including all 59870 tensors and the 791 MTP tensors. All 16 native Transformers TP ranks strictly reloaded the export on 16 GB200 GPUs without CPU or disk offload. Greedy inference generated 16 tokens with a maximum of 16; completion: \"Deterministic tests are important because they provide consistent and reliable results, allowing for easier\"",
+          "expected_result": "Exported the GLM-5 SFT step-100 checkpoint to BF16 Hugging Face format on 48 GB200 GPUs, including all 59870 tensors and the 791 MTP tensors. All 16 native Transformers TP ranks strictly reloaded the export on 16 GB200 GPUs. Greedy inference generated 16 tokens with a maximum of 16; completion: \"Deterministic tests matter because they provide consistent and reliable results, allowing for easier identification\"",
           "hardware": "GB200",
-          "last_verified": "2026-10-07",
+          "last_verified": "2026-10-15",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.GB200",
@@ -11925,7 +11925,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "a860b62ff21c9bdceb7f285d97d41acc790fe4d8",
+          "bridge_commit": "e2f2496cbb89e3c881fd54b1568d2689d91df764",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11942,15 +11942,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "glm5-peft-gb200",
-          "expected_result": "Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, MTP1 and natural routing. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved adapter, optimizer, scheduler and RNG state, strictly reloaded the step-100 adapters with raise_all, and completed step 101 at zero LR. All 790 saved adapter tensors matched the reloaded checkpoint exactly; only the five configured MLA projection targets were adapted. Metrics cover training steps 1-100 only.",
+          "expected_result": "Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, TP1/PP6/EP32, MTP1, all-to-all expert dispatch and natural routing, warm-started from the pinned Hugging Face checkpoint. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations, and the step-100 adapter checkpoint with optimizer and RNG state was saved.",
           "hardware": "GB200",
-          "last_verified": "2026-10-07",
+          "last_verified": "2026-10-15",
           "metrics": {
-            "final_loss": 0.941183,
-            "initial_loss": 1.544981,
-            "last_10_steps_model_tflops_per_gpu_avg": 11.71,
-            "last_10_steps_step_time_ms_avg": 7883.89,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 43.29504
+            "final_loss": 0.9403105,
+            "initial_loss": 1.545165,
+            "last_10_steps_model_tflops_per_gpu_avg": 15.72,
+            "last_10_steps_step_time_ms_avg": 5760.54,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 59.253704
           },
           "precision": "bf16",
           "source_pointer": "items.peft.GB200",
@@ -12209,7 +12209,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "49c103c714f3d62d7609f27a46e42dc14e95afa6",
+          "bridge_commit": "e2f2496cbb89e3c881fd54b1568d2689d91df764",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -12226,15 +12226,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "glm5-2-sft-gb200",
-          "expected_result": "Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup configuration. Strictly reloaded the step-100 checkpoint with raise_all and completed a further training step. Metrics cover the original 100 steps only.",
+          "expected_result": "Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1, TP1/PP6/EP32 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing, warm-started from the pinned Hugging Face checkpoint. All LM/MTP losses were finite with zero skipped or NaN iterations, and the step-100 checkpoint and post-setup configuration were saved.",
           "hardware": "GB200",
-          "last_verified": "2026-10-07",
+          "last_verified": "2026-10-15",
           "metrics": {
-            "final_loss": 0.7940679,
-            "initial_loss": 1.913098,
-            "last_10_steps_model_tflops_per_gpu_avg": 17.14,
-            "last_10_steps_step_time_ms_avg": 6738.85,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 50.65157
+            "final_loss": 1.063773,
+            "initial_loss": 1.913887,
+            "last_10_steps_model_tflops_per_gpu_avg": 17.89,
+            "last_10_steps_step_time_ms_avg": 7959.68,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 42.882796
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
@@ -12243,7 +12243,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "49c103c714f3d62d7609f27a46e42dc14e95afa6",
+          "bridge_commit": "e2f2496cbb89e3c881fd54b1568d2689d91df764",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -12267,9 +12267,9 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-sft-export-inference-gb200",
-          "expected_result": "Exported the verified corrected packed-CP SFT step-100 checkpoint to BF16 Hugging Face format on 48 GB200 GPUs, including all 59585 tensors and the 791 MTP tensors. All 16 native Transformers TP ranks strictly reloaded the export on 16 GB200 GPUs without CPU or disk offload. Greedy inference generated 16 tokens with a maximum of 16; completion: \"Deterministic tests matter because they provide consistent and repeatable results, allowing for reliable\"",
+          "expected_result": "Exported the GLM-5.2 SFT step-100 checkpoint to BF16 Hugging Face format on 48 GB200 GPUs, including all 59585 tensors and the 791 MTP tensors. All 16 native Transformers TP ranks strictly reloaded the export on 16 GB200 GPUs. Greedy inference generated 16 tokens with a maximum of 16; completion: \"Deterministic tests matter because they provide consistent and reliable results, allowing for accurate identification\"",
           "hardware": "GB200",
-          "last_verified": "2026-10-07",
+          "last_verified": "2026-10-15",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.GB200",
@@ -12313,7 +12313,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "0b59ee513ff26c259461c87c085f491a8fa3ef4d",
+          "bridge_commit": "e2f2496cbb89e3c881fd54b1568d2689d91df764",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -12330,15 +12330,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "glm5-2-peft-gb200",
-          "expected_result": "Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, MTP1 and natural routing. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved adapter, optimizer, scheduler and RNG state, strictly reloaded the step-100 adapters with raise_all, and completed step 101 at zero LR. All 790 saved adapter tensors matched the reloaded checkpoint exactly; only the five configured MLA projection targets were adapted. Metrics cover training steps 1-100 only.",
+          "expected_result": "Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, TP1/PP6/EP32, MTP1, all-to-all expert dispatch and natural routing, warm-started from the pinned Hugging Face checkpoint. All LM/MTP losses were finite with zero skipped or NaN iterations, and the step-100 adapter checkpoint with optimizer and RNG state was saved.",
           "hardware": "GB200",
-          "last_verified": "2026-10-07",
+          "last_verified": "2026-10-15",
           "metrics": {
-            "final_loss": 0.8791012,
-            "initial_loss": 1.903576,
-            "last_10_steps_model_tflops_per_gpu_avg": 23.03,
-            "last_10_steps_step_time_ms_avg": 4322.97,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 78.958062
+            "final_loss": 0.8795374,
+            "initial_loss": 1.903709,
+            "last_10_steps_model_tflops_per_gpu_avg": 21.57,
+            "last_10_steps_step_time_ms_avg": 5695.94,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 59.925725
           },
           "precision": "bf16",
           "source_pointer": "items.peft.GB200",

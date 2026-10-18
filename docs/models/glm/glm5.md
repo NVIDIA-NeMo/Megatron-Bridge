@@ -313,30 +313,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-07</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-15</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.456939</dd>
+            <dd>1.473073</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.3063886</dd>
+            <dd>0.6933057</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>6,468.400 ms</dd>
+            <dd>6,157.270 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>14.180 TFLOP/s/GPU</dd>
+            <dd>14.740 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>52.769 tokens/s/GPU</dd>
+            <dd>55.436 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -352,7 +352,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup configuration. Strictly reloaded the step-100 checkpoint with raise_all and completed a further training step. Metrics cover the original 100 steps only.</p>
+        <p>Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1, TP1/PP6/EP32 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing, warm-started from the pinned Hugging Face checkpoint. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations, and the step-100 checkpoint and post-setup configuration were saved.</p>
       </section>
     </article>
     <article id="glm5-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="glm5-sft-long-context-gb200" tabindex="-1">
@@ -413,30 +413,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-07</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-15</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.544981</dd>
+            <dd>1.545165</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.941183</dd>
+            <dd>0.9403105</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>7,883.890 ms</dd>
+            <dd>5,760.540 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>11.710 TFLOP/s/GPU</dd>
+            <dd>15.720 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>43.295 tokens/s/GPU</dd>
+            <dd>59.254 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -452,7 +452,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, MTP1 and natural routing. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved adapter, optimizer, scheduler and RNG state, strictly reloaded the step-100 adapters with raise_all, and completed step 101 at zero LR. All 790 saved adapter tensors matched the reloaded checkpoint exactly; only the five configured MLA projection targets were adapted. Metrics cover training steps 1-100 only.</p>
+        <p>Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, TP1/PP6/EP32, MTP1, all-to-all expert dispatch and natural routing, warm-started from the pinned Hugging Face checkpoint. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations, and the step-100 adapter checkpoint with optimizer and RNG state was saved.</p>
       </section>
     </article>
   </div>
