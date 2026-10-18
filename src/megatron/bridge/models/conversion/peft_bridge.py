@@ -409,10 +409,15 @@ class MegatronPeftBridge:
         model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
         config = model.config
         if getattr(config, "kda_two_stage_gates", False):
-            # Low-rank KDA gates leave a contiguous Q/K/V-only input projection.
+            # ColumnParallelMapping gathers [Q_rank | K_rank | V_rank] in TP-rank order.
             q_dim = config.linear_num_key_heads * config.linear_key_head_dim
             v_dim = config.linear_num_value_heads * config.linear_value_head_dim
-            q_out, k_out, v_out = linear_out_weight.split((q_dim, q_dim, v_dim), dim=0)
+            tp_size = parallel_state.get_tensor_model_parallel_world_size()
+            shards = linear_out_weight.reshape(tp_size, -1, *linear_out_weight.shape[1:])
+            q_out, k_out, v_out = (
+                section.flatten(0, 1)
+                for section in shards.split((q_dim // tp_size, q_dim // tp_size, v_dim // tp_size), dim=1)
+            )
         else:
             # LoRA rank is the feature width, not an FP8-compressed hidden size.
             feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
