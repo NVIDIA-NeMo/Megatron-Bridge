@@ -66,6 +66,11 @@ try:
 except ImportError:  # pragma: no cover
     Glm5NextForConditionalGeneration = "Glm5NextForConditionalGeneration"  # type: ignore[assignment]
 
+# Importing vision_patch patches the HF Glm5NextVisionModel classes in place
+# (fp32 intermediate reductions) so the train-side vision forward matches the
+# rollout side. No-op for text-only runs.
+from megatron.bridge.models.glm5next import vision_patch  # noqa: F401
+
 
 if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
