@@ -23,6 +23,7 @@ import types
 from pathlib import Path
 
 import pytest
+import torch
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -48,6 +49,7 @@ def _add_no_args(parser: object) -> object:
 
 @pytest.fixture
 def text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
     shared_helpers = {
         "HFTokenizerAdapter": _PassthroughInit,
         "add_distributed_args": _add_no_args,
@@ -337,3 +339,55 @@ def test_dynamic_generation_propagates_address_resolution_failure(
             prompts=["Hello world"],
             sampling_params=object(),
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("use_coordinator", [True, False])
+def test_dynamic_generation_releases_cached_memory_before_engine_setup(
+    text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    use_coordinator: bool,
+) -> None:
+    events: list[str] = []
+    model = object()
+
+    class _WorkerLLM:
+        is_primary_rank = False
+
+        def __init__(self, **kwargs: object) -> None:
+            assert events == ["cache_released"]
+            assert kwargs["model"] is model
+            assert kwargs["use_coordinator"] is use_coordinator
+            assert kwargs["inference_config"]["kv_cache_buffer_size_gb"] == 20.0
+            events.append("engine_created")
+
+        def __enter__(self) -> _WorkerLLM:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: events.append("cache_released"))
+    monkeypatch.setattr(text_generation_entrypoint, "MegatronLLM", _WorkerLLM)
+    args = types.SimpleNamespace(
+        max_new_tokens=16,
+        max_seq_length=128,
+        max_batch_size=1,
+        tp=1,
+        block_size_tokens=8,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+        use_coordinator=use_coordinator,
+        coordinator_host="192.0.2.12" if use_coordinator else None,
+        coordinator_port=None,
+    )
+    text_generation_entrypoint._generate_with_dynamic_engine(
+        args,
+        model=model,
+        tokenizer=types.SimpleNamespace(tokenize=lambda _prompt: [1, 2]),
+        prompts=["Hello world"],
+        sampling_params=object(),
+    )
+    assert events == ["cache_released", "engine_created"]

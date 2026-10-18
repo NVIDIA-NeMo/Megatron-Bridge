@@ -30,6 +30,7 @@ for _path in (G_SRC_ROOT, G_MCORE_ROOT):
     if _path.exists() and str(_path) not in sys.path:
         sys.path.append(str(_path))
 
+import torch
 import torch.distributed as dist
 from megatron.core.inference.apis import MegatronLLM, SamplingParams
 from megatron.core.inference.contexts import StaticInferenceContext
@@ -156,6 +157,8 @@ def _generate_with_dynamic_engine(
     if args.use_coordinator and coordinator_host is None:
         # ZMQ binds local interfaces or numeric addresses, not DNS hostnames.
         coordinator_host = socket.gethostbyname(socket.gethostname())
+    # Release unused checkpoint-loading buffers for NCCL communicator allocations.
+    torch.cuda.empty_cache()
     with MegatronLLM(
         model=model,
         tokenizer=tokenizer,
