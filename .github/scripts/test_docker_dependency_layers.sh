@@ -116,6 +116,13 @@ dev_ancestor_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 printf 'dev tip\n' >>"$revision_worktree/file"
 git -C "$revision_worktree" commit -qam dev-tip
 dev_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" switch -q --detach "$main_sha"
+printf 'release\n' >>"$revision_worktree/file"
+git -C "$revision_worktree" commit -qam release
+release_ancestor_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+printf 'release tip\n' >>"$revision_worktree/file"
+git -C "$revision_worktree" commit -qam release-tip
+release_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" branch contributor "$ancestor_sha"
 git -C "$revision_worktree" switch -q contributor
 printf 'approved\n' >>"$revision_worktree/file"
@@ -140,6 +147,7 @@ git -C "$revision_worktree" commit -q -m unapproved
 unapproved_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" push -q "$revision_repo" "$main_sha:refs/heads/main"
 git -C "$revision_worktree" push -q "$revision_repo" "$dev_sha:refs/heads/dev"
+git -C "$revision_worktree" push -q "$revision_repo" "$release_sha:refs/heads/core_r0.20.0"
 git -C "$revision_worktree" push -q "$revision_repo" "$mirror_sha:refs/heads/pull-request/123"
 git -C "$revision_worktree" push -q "$revision_repo" "$merge_sha:refs/pull/123/merge"
 git -C "$revision_worktree" push -q \
@@ -147,6 +155,11 @@ git -C "$revision_worktree" push -q \
   "$queue_sha:refs/heads/gh-readonly-queue/main/pr-123-$main_sha"
 git -C "$revision_worktree" push -q "$revision_repo" "$orphan_sha:refs/pull/456/merge"
 git -C "$revision_worktree" push -q "$revision_repo" "$unapproved_sha:refs/heads/unapproved"
+git -C "$revision_worktree" push -q "$revision_repo" \
+  "$unapproved_sha:refs/heads/core_r0.20.0.beta" \
+  "$unapproved_sha:refs/heads/core_r0.20.0-rc1" \
+  "$unapproved_sha:refs/heads/core_r0.x.0" \
+  "$unapproved_sha:refs/heads/core_r0.21.0/feature"
 
 mkdir -p "$temporary_dir/revision-bin"
 cat >"$temporary_dir/revision-bin/repo-validator" <<EOF
@@ -160,6 +173,8 @@ chmod +x "$temporary_dir/revision-validator"
 "$temporary_dir/revision-validator" "$revision_repo" "$ancestor_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$dev_ancestor_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$dev_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$release_ancestor_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$release_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$mirror_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$merge_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"
