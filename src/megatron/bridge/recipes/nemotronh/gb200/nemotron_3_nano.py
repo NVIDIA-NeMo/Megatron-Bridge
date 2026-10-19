@@ -216,7 +216,6 @@ def nemotron_3_5_lightning_pretrain_8k_fsdp_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
     set_cuda_graph_modules(cfg.model, [])
 
-    cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.num_distributed_optimizer_instances = 1
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"

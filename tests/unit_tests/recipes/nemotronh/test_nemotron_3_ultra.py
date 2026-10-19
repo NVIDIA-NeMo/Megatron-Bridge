@@ -124,7 +124,6 @@ def test_h100_large_scale_pretrain_preserves_functional_policy() -> None:
     assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 1
 
-    assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
     assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
@@ -159,7 +158,6 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
 
-    assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.ddp.use_distributed_optimizer is True
     assert cfg.optimizer.use_precision_aware_optimizer is True
@@ -236,7 +234,6 @@ def test_vrnvl72_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.mixed_precision.fp4_param_gather is True
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
-    assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.model.tensor_parallel_num_weight_shards == 64
     assert cfg.model.expert_tensor_parallel_num_weight_shards == 1
@@ -272,7 +269,6 @@ def test_nvfp4_perf_recipes_use_gtp_partial_cuda_graphs_and_nccl_ep(
     assert cfg.mixed_precision.fp4 == "e2m1"
     assert cfg.mixed_precision.fp4_param_gather is True
 
-    assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.model.tensor_parallel_num_weight_shards == 64
     assert cfg.model.expert_tensor_parallel_num_weight_shards == 1

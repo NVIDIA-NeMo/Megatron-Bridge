@@ -12,7 +12,11 @@ verification commands, see [skills/nemo-mbridge-perf-megatron-fsdp/SKILL.md](../
 ## What It Is
 
 Megatron FSDP is the Megatron-Core custom FSDP implementation exposed in Bridge
-through `use_megatron_fsdp`.
+through `ddp.use_megatron_fsdp`.
+
+Replace the removed `dist.use_megatron_fsdp` setting in existing configurations
+with `ddp.use_megatron_fsdp`. Set this flag only on `DistributedDataParallelConfig`;
+`DistributedInitConfig` no longer accepts it.
 
 Compared with other data-parallel strategies:
 
@@ -47,7 +51,7 @@ Prefer another path when:
 
 Megatron FSDP in Bridge requires:
 
-- `use_megatron_fsdp` to be enabled
+- `ddp.use_megatron_fsdp` to be enabled
 - checkpoint format `fsdp_dtensor`
 - standard rank initialization order
 
@@ -65,7 +69,7 @@ alternative rank-initialization order that conflicts with FSDP sharding.
 
 Important stable constraints:
 
-- `use_megatron_fsdp` and `use_torch_fsdp2` are mutually exclusive
+- `ddp.use_megatron_fsdp` and `dist.use_torch_fsdp2` are mutually exclusive
 - `use_tp_pp_dp_mapping` is not supported with Megatron FSDP
 - legacy checkpoint formats such as `torch_dist` and `zarr` are not valid for
   Megatron FSDP save/load

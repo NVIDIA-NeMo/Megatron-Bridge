@@ -665,7 +665,7 @@ def train(
             params_norm = None
 
             if config.logger.log_params_norm:
-                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
+                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.ddp.use_megatron_fsdp)
 
             learning_rate = None
             decoupled_learning_rate = None
