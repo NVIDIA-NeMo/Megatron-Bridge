@@ -174,13 +174,6 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     with external process managers that handle GPU visibility.
     """
 
-    use_megatron_fsdp: bool = False
-    """Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2.
-
-    Megatron Core no longer declares this field on its ``DistributedInitConfig``; Bridge keeps it
-    so recipes and user configs can continue to enable Megatron FSDP through ``cfg.dist``.
-    """
-
     gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
     """Accumulate GTP remat reduce-scatter results locally in FP32."""
 
@@ -1116,10 +1109,6 @@ class ConfigContainer(Container):
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """Validate and apply configuration required by the selected Megatron-FSDP version."""
-        # Set configs needed for Megatron-FSDP.
-        self.dist.use_megatron_fsdp = True
-        self.ddp.use_megatron_fsdp = True
-
         megatron_fsdp_version = self.ddp.megatron_fsdp_version
         if megatron_fsdp_version == 1:
             self._validate_and_apply_megatron_fsdp_v1_configs()
@@ -1449,7 +1438,7 @@ class ConfigContainer(Container):
         """
         _validate_and_sync_distributed_optimizer_settings(self)
         if self.optimizer.optimizer not in ("adam", "sgd") and (
-            self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
+            self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
         ):
             raise ValueError("Emerging optimizers such as Muon do not support Megatron-FSDP or Torch-FSDP2.")
 
@@ -1646,7 +1635,7 @@ class ConfigContainer(Container):
                     "checkpoint.dist_ckpt_optim_fully_reshardable=False."
                 )
             if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
-                if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+                if self.ddp.use_megatron_fsdp:
                     raise ValueError(
                         "GTP + mxfp8 is not supported with Megatron FSDP because "
                         "reuse_grad_buf_for_mxfp8_param_ag is required."
@@ -1743,7 +1732,7 @@ class ConfigContainer(Container):
             if not self.model.mtp_num_layers:
                 raise ValueError("freeze_base_model_for_mtp requires mtp_num_layers.")
         if getattr(self.model, "moe_shortcut_connection", False) and (
-            self.dist.use_torch_fsdp2 or self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+            self.dist.use_torch_fsdp2 or self.ddp.use_megatron_fsdp
         ):
             raise ValueError("moe_shortcut_connection is not supported with FSDP.")
         # Core also enables LayerWise for legacy dist_* optimizer names.
@@ -1753,14 +1742,14 @@ class ConfigContainer(Container):
             raise ValueError("Layer-wise distributed optimizer does not support moe_single_grouped_weight.")
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
-        if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
+        if self.ddp.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive.")
         # Validate Megatron-FSDP configuration.
-        if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+        if self.ddp.use_megatron_fsdp:
             self._validate_and_apply_megatron_fsdp_configs()
 
         # Validate reuse_grad_buf_for_mxfp8_param_ag when FSDP is not enabled
-        is_fsdp = self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+        is_fsdp = self.ddp.use_megatron_fsdp
         if (
             not is_fsdp
             and self.mixed_precision is not None
