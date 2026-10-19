@@ -14,7 +14,10 @@
 
 """Unit tests for the public recipe training command."""
 
+import ast
 import importlib.util
+import logging
+import os
 import sys
 import types
 from pathlib import Path
@@ -497,12 +500,15 @@ def test_library_only_canonical_name_applies_runtime_environment_without_restart
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
-@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"])
-def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch, env_name):
-    module, handles = _load_module()
+@pytest.mark.parametrize(
+    "env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP", "TORCHINDUCTOR_COMPILE_THREADS"]
+)
+def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch, caplog, env_name):
     monkeypatch.delenv(env_name, raising=False)
+    module, handles = _load_module()
     config = SimpleNamespace(env_vars={env_name: 1})
     handles.recipe_runner.load_recipe.return_value = config
+    caplog.set_level(logging.INFO)
 
     module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
 
@@ -511,12 +517,41 @@ def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch, en
     assert bootstrap_call.args == (config,)
     assert bootstrap_call.kwargs["script_path"].endswith("scripts/training/run_recipe.py")
     handles.recipe_runner.apply_runtime_environment.assert_not_called()
+    assert f"import-time variables: {env_name}." in caplog.text
 
 
-@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"])
-def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch, env_name):
+@pytest.mark.parametrize(
+    "env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP", "TORCHINDUCTOR_COMPILE_THREADS"]
+)
+def test_library_recipe_bootstraps_import_time_environment_set_by_a_library(monkeypatch, env_name):
+    monkeypatch.delenv(env_name, raising=False)
     module, handles = _load_module()
+    # A library sets the variable while the script imports it (vLLM sets TORCHINDUCTOR_COMPILE_THREADS=1).
+    monkeypatch.setenv(env_name, "library value")
+    config = SimpleNamespace(env_vars={env_name: 1})
+    handles.recipe_runner.load_recipe.return_value = config
+    environment_at_bootstrap = {}
+
+    def bootstrap(config, **_):
+        environment_at_bootstrap[env_name] = os.environ.get(env_name)
+        return config
+
+    handles.recipe_runner.bootstrap_recipe_environment.side_effect = bootstrap
+
+    module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    # The library value is dropped, so the bootstrap exports the recipe value to the re-executed process.
+    assert environment_at_bootstrap == {env_name: None}
+    handles.recipe_runner.apply_runtime_environment.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP", "TORCHINDUCTOR_COMPILE_THREADS"]
+)
+def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch, env_name):
     monkeypatch.setenv(env_name, "0")
+    module, handles = _load_module()
     config = SimpleNamespace(env_vars={env_name: 1})
     handles.recipe_runner.load_recipe.return_value = config
 
@@ -524,6 +559,28 @@ def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch, 
 
     handles.recipe_runner.apply_runtime_environment.assert_called_once_with(config)
     handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+
+
+def test_startup_environment_is_recorded_before_library_imports():
+    # A library can set an import-time variable while the script imports it (vLLM sets
+    # TORCHINDUCTOR_COMPILE_THREADS=1), so the caller's environment must be recorded before any such import.
+    script_path = Path(__file__).resolve().parents[4] / "scripts" / "training" / "run_recipe.py"
+    statements = ast.parse(script_path.read_text()).body
+    record_line = next(
+        statement.lineno
+        for statement in statements
+        if isinstance(statement, ast.Assign) and ast.unparse(statement.targets[0]) == "STARTUP_ENV_VAR_NAMES"
+    )
+    library_import_lines = [
+        statement.lineno
+        for statement in statements
+        if isinstance(statement, (ast.Import, ast.ImportFrom))
+        and (statement.module if isinstance(statement, ast.ImportFrom) else statement.names[0].name).split(".")[0]
+        not in sys.stdlib_module_names
+    ]
+
+    assert library_import_lines
+    assert record_line < min(library_import_lines)
 
 
 def test_benchmark_dry_run_accepts_config_overrides(monkeypatch):

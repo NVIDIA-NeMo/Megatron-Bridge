@@ -179,9 +179,17 @@ Current OpenMath starting points are:
   and later, a TE norm that is a pipeline stage's first backward operation fails
   with `invalid device context`, so the recipe does not recompute the pre-MLP
   norms and sets `NVTE_NORM_FWD_USE_CUDNN=1` and `NVTE_NORM_BWD_USE_CUDNN=1` to
-  use cuDNN normalization kernels. The recipe places 5 decoder layers on the
-  last pipeline stage, which also holds the output layer and MTP, and 9 to 11 on
-  the others; when changing `PP`, also override `model.hybrid_layer_pattern`.
+  use cuDNN normalization kernels. It also sets `TORCHINDUCTOR_COMPILE_THREADS=1`
+  so Inductor compiles kernels in the training process: on Python 3.12 before
+  3.12.8 (and 3.13.0), Inductor's default pool of forked compile workers can
+  deadlock when it re-forks after an idle period
+  ([pytorch/pytorch#200848](https://github.com/pytorch/pytorch/issues/200848)),
+  which the long, staggered first step triggers often and which stalls the
+  whole pipeline. `run_recipe.py` re-executes itself so this setting takes
+  effect before Inductor is imported. The recipe places 5 decoder
+  layers on the last pipeline stage, which also holds the output layer and MTP,
+  and 9 to 11 on the others; when changing `PP`, also override
+  `model.hybrid_layer_pattern`.
 
 For 4xGB200 nodes:
 

@@ -328,6 +328,8 @@ def test_openmath_sft_uses_48_node_layout() -> None:
     # cuDNN norms avoid TE's NVRTC norm path and its first-backward "invalid device context" failure.
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+    # In-process Inductor compilation avoids the forked compile-worker pool, which can deadlock in the first step.
+    assert cfg.env_vars["TORCHINDUCTOR_COMPILE_THREADS"] == 1
 
     # 48 nodes x 8 GPUs: dense DP 16 keeps 8 microbatches per step, and expert DP 2 shards expert optimizer state.
     world_size = 384

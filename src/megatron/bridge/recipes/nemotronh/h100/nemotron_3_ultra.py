@@ -369,6 +369,13 @@ def nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config() -> C
         # context" when a norm is the first backward operation on GPU 0 (TE 2.18 and later).
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # Compile Inductor kernels in the training process. The default worker pool shuts down after 60 s
+        # idle and re-forks on the next compile; on Python 3.12 before 3.12.8 (and 3.13.0) a worker forked
+        # while the old pool shuts down can hang on an inherited lock (pytorch/pytorch#200848), stalling its
+        # expert-parallel group and then the whole pipeline. Each rank re-forks often during this recipe's
+        # staggered twelve-stage first step. In a matched 48-node run, in-process compilation did not slow
+        # the first step.
+        "TORCHINDUCTOR_COMPILE_THREADS": 1,
         # HybridEP topology for this recipe.
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NVLINK_DOMAIN_SIZE": 8,

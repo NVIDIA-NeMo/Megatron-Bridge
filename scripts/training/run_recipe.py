@@ -79,6 +79,11 @@ from typing import TYPE_CHECKING, Literal
 
 logger = logging.getLogger(__name__)
 
+# Environment variables set when this script started, recorded before the imports below. A library can set an
+# import-time recipe variable while it is imported, after the library that reads it (vLLM sets
+# TORCHINDUCTOR_COMPILE_THREADS=1 after Inductor has read it), so only these names are the caller's settings.
+STARTUP_ENV_VAR_NAMES = frozenset(os.environ)
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
@@ -133,10 +138,14 @@ TrainMode = Literal["pretrain", "finetune", "dpo"]
 
 
 # Recipe environment variables that are read when a library is imported, before this script applies the recipe
-# environment. A library recipe that declares one of them (and the user has not set it) is re-executed with the
+# environment. A library recipe that declares one of them (and the caller has not set it) is re-executed with the
 # recipe environment in place. Transformer Engine reads NVTE_CUTEDSL_FUSED_GROUPED_MLP once, when it registers the
 # CuTe DSL fused grouped MLP at import time; set any later, it is ignored and the unfused grouped GEMM runs.
-IMPORT_TIME_RECIPE_ENV_VARS = frozenset({"NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"})
+# Inductor likewise reads TORCHINDUCTOR_COMPILE_THREADS once, when its config module is imported; set any later,
+# Inductor still compiles through its default pool of forked compile workers.
+IMPORT_TIME_RECIPE_ENV_VARS = frozenset(
+    {"NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP", "TORCHINDUCTOR_COMPILE_THREADS"}
+)
 
 
 COMMON_OVERRIDE_FIELDS = (
@@ -471,10 +480,10 @@ def _selected_recipe_name(args: argparse.Namespace) -> str:
     return args.recipe or f"{args.model}_{recipe_task(args.mode)}_config"
 
 
-def _requires_recipe_environment_bootstrap(recipe: ConfigContainer) -> bool:
-    """Return whether a recipe declares an unset import-time environment variable."""
+def _unset_import_time_recipe_env_vars(recipe: ConfigContainer) -> list[str]:
+    """Return the import-time variables the recipe declares that were not set when this script started."""
     recipe_env = getattr(recipe, "env_vars", None) or {}
-    return any(name in recipe_env and name not in os.environ for name in IMPORT_TIME_RECIPE_ENV_VARS)
+    return sorted(name for name in IMPORT_TIME_RECIPE_ENV_VARS - STARTUP_ENV_VAR_NAMES if name in recipe_env)
 
 
 def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
@@ -569,7 +578,18 @@ def main(argv: list[str] | None = None) -> None:
             world_size=benchmark_world_size,
         )
     configuration_mode = _train_mode(args.mode)
-    if benchmark_metadata is not None or _requires_recipe_environment_bootstrap(recipe):
+    unset_import_time_env_vars = _unset_import_time_recipe_env_vars(recipe)
+    if benchmark_metadata is not None or unset_import_time_env_vars:
+        if unset_import_time_env_vars:
+            # Logged as a warning so that it shows before training sets up logging.
+            logger.warning(
+                "Re-executing with the recipe environment exported; import-time variables: %s.",
+                ", ".join(unset_import_time_env_vars),
+            )
+        # Drop values set after this script started, such as by a library during this script's imports, so the
+        # re-executed process starts with the recipe values.
+        for name in unset_import_time_env_vars:
+            os.environ.pop(name, None)
         recipe = bootstrap_recipe_environment(
             recipe,
             script_path=str(Path(__file__).resolve()),
