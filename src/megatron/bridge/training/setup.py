@@ -82,8 +82,8 @@ from megatron.bridge.training.tensor_inspect import (
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.training.utils.optimizer_utils import uses_layer_wise_optimizer
+from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
@@ -633,7 +633,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
-            use_layer_wise_param_layout=cfg.optimizer.use_layer_wise_param_layout,
+            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
         )
     else:
         model = model_config.provide_distributed_model(
@@ -642,7 +642,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
             use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
-            use_layer_wise_param_layout=cfg.optimizer.use_layer_wise_param_layout,
+            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
         )

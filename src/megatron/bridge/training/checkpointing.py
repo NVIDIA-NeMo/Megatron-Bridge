@@ -3078,7 +3078,20 @@ def _load_checkpoint_from_path(
                 # Older mixed-optimizer checkpoints omitted this key and used
                 # DistributedOptimizer's model-space default.
                 sharding_type = sharded_sd_metadata.get("distrib_optim_sharding_type", "fully_sharded_model_space")
-                if not tp_pp_match and sharding_type not in DistributedOptimizer.checkpoint_fully_reshardable_formats:
+                # Compact LayerWise state is stored in model space even when the
+                # shared metadata says dp_reshardable. Apply tensor-sharded
+                # restrictions only if either side actually uses DistOpt state.
+                has_tensor_sharded_state = (
+                    cfg.optimizer.use_distributed_optimizer
+                    or _has_distributed_optimizer(optimizer)
+                    or _has_distributed_optimizer_state(state_dict.get("optimizer", {}))
+                    or run_config.get("optimizer", {}).get("use_distributed_optimizer", False)
+                )
+                if (
+                    not tp_pp_match
+                    and has_tensor_sharded_state
+                    and sharding_type not in DistributedOptimizer.checkpoint_fully_reshardable_formats
+                ):
                     raise RuntimeError(
                         f"{mismatch_msg}: not supported for DistributedOptimizer with sharding type"
                         f" {sharding_type}."
@@ -4161,6 +4174,18 @@ def _has_distributed_optimizer(optimizer: MegatronOptimizer | None) -> bool:
 def _uses_distributed_optimizer(config: Any, optimizer: MegatronOptimizer | None) -> bool:
     """Combine declared LayerWise mode with the constructed optimizer tree."""
     return uses_distributed_optimizer(config) or _has_distributed_optimizer(optimizer)
+
+
+def _has_distributed_optimizer_state(state: object) -> bool:
+    """Detect saved tensor-sharded state, including nested optimizer chains."""
+    if isinstance(state, dict):
+        # DistOpt keeps this discriminator in common state, outside sharded tensors.
+        return "param_state_sharding_type" in state or any(
+            _has_distributed_optimizer_state(value) for value in state.values()
+        )
+    if isinstance(state, (list, tuple)):
+        return any(_has_distributed_optimizer_state(value) for value in state)
+    return False
 
 
 def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: CheckpointConfig) -> dict:

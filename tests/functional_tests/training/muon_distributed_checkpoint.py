@@ -53,7 +53,11 @@ class RecordTraining(Callback):
         torch.testing.assert_close(before, after, rtol=0, atol=0)
 
     def on_train_end(self, context: CallbackContext) -> None:
-        force_param_sync(context.model, context.optimizer)
+        # Non-overlapped compact LayerWise synchronizes in optimizer.step(); its
+        # DDP buckets do not implement parameter synchronization.
+        sync_chunks = [chunk for chunk in context.model if chunk.ddp_config.param_sync_via_bucket_group]
+        if sync_chunks:
+            force_param_sync(sync_chunks, context.optimizer)
         rank = torch.distributed.get_rank()
         self.output.mkdir(parents=True, exist_ok=True)
         tensors = {
@@ -115,7 +119,8 @@ def run_case(root: Path, case: str) -> None:
         )
     # The resize source saves at step 2 and continues through step 3, providing
     # an uninterrupted two-rank control for the one-rank resume.
-    cfg.train.train_iters = 3 if case.startswith("muon_dp") else 6
+    topology_resume = case in ("muon_tp2_resume", "muon_pp2_resume")
+    cfg.train.train_iters = 5 if topology_resume else 3 if case.startswith("muon_dp") else 6
     cfg.train.global_batch_size = 4
     cfg.train.micro_batch_size = 1
     # Keep hash checks separate: they force a gather and could hide a broken
@@ -159,7 +164,7 @@ def run_case(root: Path, case: str) -> None:
     if case == "muon_legacy_on":
         # Recreate the compact optimizer representation used before the layout option.
         cfg.optimizer.use_layer_wise_param_layout = False
-    elif case != "muon_legacy_resume":
+    elif case != "muon_legacy_resume" and not topology_resume:
         # Keep the existing full-layout matrix as explicit opt-in coverage.
         cfg.optimizer.use_layer_wise_param_layout = True
     cfg.comm_overlap = CommOverlapConfig(
@@ -172,7 +177,17 @@ def run_case(root: Path, case: str) -> None:
         # Exercise the lifecycle gate independently of CommOverlapConfig.
         cfg.ddp.overlap_param_gather = True
         cfg.optimizer.overlap_param_gather = True
-    if case == "muon_dp1_resume":
+    if topology_resume:
+        # This source was written by the current compact path with dp_reshardable
+        # metadata, not the emulated historical save path. Its state is model-space.
+        cfg.checkpoint.load = str(root / "muon_legacy_resume" / "checkpoints" / "iter_0000004")
+        cfg.checkpoint.save = None
+        cfg.checkpoint.load_rng = False
+        cfg.validation.eval_iters = 0
+        cfg.model.tensor_model_parallel_size = 2 if case == "muon_tp2_resume" else 1
+        cfg.model.pipeline_model_parallel_size = 2 if case == "muon_pp2_resume" else 1
+        cfg.comm_overlap.overlap_param_gather = False
+    elif case == "muon_dp1_resume":
         cfg.checkpoint.load = str(root / "muon_dp2_save" / "checkpoints" / "iter_0000002")
     elif case.endswith("_resume"):
         source = case.removesuffix("_resume") + "_on"
@@ -220,7 +235,20 @@ def compare(root: Path) -> None:
             ]
             torch.testing.assert_close(*weights, rtol=0, atol=0)
     compare_dp_resize(root)
+    compare_topology_resume(root)
     logger.info("All optimizer modes, overlap pairs and fresh-process resumes match their expected tolerances.")
+
+
+def compare_topology_resume(root: Path) -> None:
+    """Verify compact TP/PP resharding restores the step and performs a finite update."""
+    for case in ("muon_tp2_resume", "muon_pp2_resume"):
+        for rank in range(2):
+            record = json.loads((root / case / f"records-rank{rank}.json").read_text())
+            assert record["start_step"] == 4 and record["end_step"] == 5
+            assert len(record["records"]) == 1
+            assert torch.isfinite(torch.tensor(record["records"][0]["grad_norm"]))
+            weights = torch.load(root / case / f"weights-rank{rank}.pt", map_location="cpu", weights_only=True)
+            assert weights and all(torch.isfinite(value).all() for value in weights.values())
 
 
 def compare_dp_resize(root: Path) -> None:
@@ -276,6 +304,8 @@ if __name__ == "__main__":
             "muon_dp1_resume",
             "muon_legacy_on",
             "muon_legacy_resume",
+            "muon_tp2_resume",
+            "muon_pp2_resume",
         ],
     )
     parser.add_argument("--compare", action="store_true")

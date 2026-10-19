@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import dataclasses
 import os
 import warnings
 from pathlib import Path
@@ -539,6 +540,8 @@ class GetModelKwargs(TypedDict, total=False):
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
         mixed_precision_wrapper: Module wrapper to apply for fp16/bf16. None to skip.
+        use_layer_wise_distributed_optimizer: Enable LayerWise optimizer model wrapping.
+        use_layer_wise_param_layout: Opt into shard-aligned LayerWise buffers instead of compact buffers.
     """
 
     ddp_config: DistributedDataParallelConfig | None
@@ -561,6 +564,8 @@ class GetModelKwargs(TypedDict, total=False):
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
+    use_layer_wise_distributed_optimizer: bool
+    use_layer_wise_param_layout: bool
 
 
 class ModelParallelKwargs(TypedDict, total=False):
@@ -739,10 +744,19 @@ def get_model(
         correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
+        effective_ddp_config = ddp_config
+        if use_layer_wise_distributed_optimizer and not use_megatron_fsdp and not use_torch_fsdp2:
+            # Direct callers can bypass ConfigContainer normalization. Keep the
+            # ordinary DistOpt flag aligned with the requested LayerWise layout
+            # without mutating their configuration object.
+            effective_ddp_config = dataclasses.replace(
+                ddp_config,
+                use_distributed_optimizer=use_layer_wise_param_layout,
+            )
         model = _ddp_wrap(
             model,
             data_parallel_random_init,
-            ddp_config,
+            effective_ddp_config,
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,

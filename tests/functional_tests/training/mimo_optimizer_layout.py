@@ -143,6 +143,13 @@ def build(
         grad_reduce_in_fp32=True, overlap_grad_reduce=overlap, overlap_param_gather=overlap
     )
     _validate_and_sync_distributed_optimizer_settings(SimpleNamespace(optimizer=optimizer_config, ddp=ddp))
+    if default_layout:
+        # Direct wrapper callers can retain the ordinary DDP flag. The omitted
+        # layout option must still select compact LayerWise buffers safely.
+        ddp.use_distributed_optimizer = True
+    layout_kwargs = (
+        {} if default_layout else {"use_layer_wise_param_layout": optimizer_config.use_layer_wise_param_layout}
+    )
     model = wrap_megatron_mimo_model_distributed(
         model,
         ddp,
@@ -152,8 +159,10 @@ def build(
         grids,
         {"language": pg, "vision": pg},
         use_layer_wise_distributed_optimizer=optimizer_config.use_layer_wise_distributed_optimizer,
-        use_layer_wise_param_layout=optimizer_config.use_layer_wise_param_layout,
+        **layout_kwargs,
     )
+    if default_layout:
+        assert ddp.use_distributed_optimizer  # The wrapper must not mutate caller-owned config.
     # Dtype casting and DDP must preserve parameter identity, including tied aliases.
     assert set(original) == {id(p) for p in model.parameters()}
     for component in components(model):

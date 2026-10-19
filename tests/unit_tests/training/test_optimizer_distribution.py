@@ -134,9 +134,11 @@ def test_layerwise_overlap_configuration(name, layerwise, overlap):
 
 
 @pytest.mark.parametrize("builder", [False, True])
-@pytest.mark.parametrize("name,layerwise", [("adam", False), ("muon", True), ("dist_muon", False)])
-@pytest.mark.parametrize("param_layout", [False, True])
+@pytest.mark.parametrize("name,layerwise", [("adam", False), ("sgd", False), ("muon", True), ("dist_muon", False)])
+@pytest.mark.parametrize("param_layout", [None, False, True])
 def test_model_setup_forwards_layerwise_layout(builder, name, layerwise, param_layout):
+    from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+
     from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
     from megatron.bridge.models.transformer_config import TransformerConfig
     from megatron.bridge.training.config import DistributedInitConfig
@@ -149,14 +151,16 @@ def test_model_setup_forwards_layerwise_layout(builder, name, layerwise, param_l
         else Mock()
     )
     model.freeze_base_model_for_mtp = False
+    optimizer_kwargs = dict(optimizer=name, use_layer_wise_distributed_optimizer=layerwise)
+    optimizer = (
+        MCoreOptimizerConfig(**optimizer_kwargs)
+        if param_layout is None
+        else OptimizerConfig(**optimizer_kwargs, use_layer_wise_param_layout=param_layout)
+    )
     cfg = SimpleNamespace(
         model=model,
         ddp=DistributedDataParallelConfig(),
-        optimizer=OptimizerConfig(
-            optimizer=name,
-            use_layer_wise_distributed_optimizer=layerwise,
-            use_layer_wise_param_layout=param_layout,
-        ),
+        optimizer=optimizer,
         dist=DistributedInitConfig(),
         rng=SimpleNamespace(data_parallel_random_init=False),
     )
@@ -171,8 +175,47 @@ def test_model_setup_forwards_layerwise_layout(builder, name, layerwise, param_l
         else:
             _build_distributed_model(cfg, Mock())
             kwargs = model.provide_distributed_model.call_args.kwargs
-    assert kwargs["use_layer_wise_distributed_optimizer"] is (name != "adam")
-    assert kwargs["use_layer_wise_param_layout"] is param_layout
+    assert kwargs["use_layer_wise_distributed_optimizer"] is (name not in ("adam", "sgd"))
+    assert kwargs["use_layer_wise_param_layout"] is (param_layout is True)
+
+
+@pytest.mark.parametrize("name,layerwise", [("adam", False), ("muon", True)])
+@pytest.mark.parametrize("param_layout", [None, False, True])
+@pytest.mark.parametrize("layout_override", [None, False, True])
+def test_mimo_setup_preserves_layout_override_with_core_optimizer_config(
+    name: str, layerwise: bool, param_layout: bool | None, layout_override: bool | None
+) -> None:
+    from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+
+    from megatron.bridge.training.setup_megatron_mimo import setup_megatron_mimo
+
+    optimizer_kwargs = dict(optimizer=name, use_layer_wise_distributed_optimizer=layerwise)
+    optimizer = (
+        MCoreOptimizerConfig(**optimizer_kwargs)
+        if param_layout is None
+        else OptimizerConfig(**optimizer_kwargs, use_layer_wise_param_layout=param_layout)
+    )
+    cfg = SimpleNamespace(
+        model=Mock(),
+        optimizer=optimizer,
+        ddp=DistributedDataParallelConfig(),
+        rng=SimpleNamespace(seed=1234),
+    )
+    # Stop at model construction: this unit test checks config forwarding, not distributed setup.
+    with (
+        patch("megatron.bridge.training.setup_megatron_mimo.dist.get_rank", return_value=0),
+        patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", Mock()),
+        patch(
+            "megatron.bridge.models.megatron_mimo.build_megatron_mimo_model",
+            side_effect=RuntimeError("model construction reached"),
+        ) as build,
+        pytest.raises(RuntimeError, match="model construction reached"),
+    ):
+        setup_megatron_mimo(SimpleNamespace(cfg=cfg), use_layer_wise_param_layout=layout_override)
+
+    expected_layout = layout_override if layout_override is not None else param_layout is True
+    assert build.call_args.kwargs["use_layer_wise_param_layout"] is expected_layout
+    assert build.call_args.kwargs["use_layer_wise_distributed_optimizer"] is layerwise
 
 
 def test_provider_forwards_layerwise_layout_to_get_model():

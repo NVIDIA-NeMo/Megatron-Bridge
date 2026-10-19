@@ -192,7 +192,7 @@ def setup_megatron_mimo(
 
     megatron_mimo_provider = cfg.model
     if use_layer_wise_param_layout is None:
-        use_layer_wise_param_layout = cfg.optimizer.use_layer_wise_param_layout
+        use_layer_wise_param_layout = getattr(cfg.optimizer, "use_layer_wise_param_layout", False)
     model, megatron_mimo_infra = build_megatron_mimo_model(
         megatron_mimo_provider,
         ddp_config=cfg.ddp,

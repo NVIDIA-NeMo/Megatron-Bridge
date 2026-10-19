@@ -241,7 +241,7 @@ class TestWrapMegatronMIMOModelDistributed:
         """Layout and DDP must agree on encoder overlap before constructing buckets."""
         model = self._create_mock_megatron_mimo_model(modality_names=["images"])
         ddp_config = DistributedDataParallelConfig(
-            use_distributed_optimizer=True,
+            use_distributed_optimizer=False,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
             bucket_size=128,
@@ -285,7 +285,10 @@ class TestWrapMegatronMIMOModelDistributed:
         assert component_config.overlap_grad_reduce == (module_name == "language")
         assert component_config.overlap_param_gather == (module_name == "language")
         assert component_config.grad_reduce_in_fp32
+        assert component_config.use_distributed_optimizer
+        assert component_config is not ddp_config
         assert ddp_config.overlap_grad_reduce and ddp_config.overlap_param_gather
+        assert not ddp_config.use_distributed_optimizer
 
     @patch("megatron.core.optimizer.layer_wise_optimizer.tag_params_for_buffer_routing")
     @patch("megatron.core.optimizer.layer_wise_optimizer.LayerWiseDistributedOptimizer.compute_full_param_layout")
@@ -298,7 +301,7 @@ class TestWrapMegatronMIMOModelDistributed:
         language_model = model.language_model
         encoder = model.modality_submodules["images"]
         ddp_config = DistributedDataParallelConfig(
-            use_distributed_optimizer=False, overlap_grad_reduce=False, overlap_param_gather=False
+            use_distributed_optimizer=True, overlap_grad_reduce=False, overlap_param_gather=False
         )
         parallelism = self._create_megatron_mimo_parallelism_config({"language": {"dp": 2}, "images": {"dp": 2}})
         grids = {
@@ -322,8 +325,10 @@ class TestWrapMegatronMIMOModelDistributed:
             pg.setup_process_groups_for_ddp.assert_not_called()
         assert [call.kwargs["module"] for call in mock_ddp.call_args_list] == [language_model, encoder]
         assert [call.kwargs["full_param_layout"] for call in mock_ddp.call_args_list] == [None, None]
-        assert [call.kwargs["ddp_config"] for call in mock_ddp.call_args_list] == [ddp_config, ddp_config]
-        assert not ddp_config.use_distributed_optimizer
+        component_configs = [call.kwargs["ddp_config"] for call in mock_ddp.call_args_list]
+        assert all(config is not ddp_config for config in component_configs)
+        assert all(not config.use_distributed_optimizer for config in component_configs)
+        assert ddp_config.use_distributed_optimizer
 
     @patch("megatron.core.distributed.DistributedDataParallel")
     @patch("torch.distributed.get_rank")

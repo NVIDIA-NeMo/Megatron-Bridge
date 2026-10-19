@@ -85,8 +85,12 @@ def wrap_megatron_mimo_model_distributed(
         module_ddp_config: "DistributedDataParallelConfig",
     ) -> "DistributedDataParallel":
         layout = None
+        if use_layer_wise_distributed_optimizer:
+            module_ddp_config = dataclasses.replace(
+                module_ddp_config,
+                use_distributed_optimizer=use_layer_wise_param_layout,
+            )
         if use_layer_wise_distributed_optimizer and use_layer_wise_param_layout:
-            module_ddp_config.use_distributed_optimizer = True
             tag_params_for_buffer_routing([module])
             groups = pg.setup_process_groups_for_ddp(pg, config, module_ddp_config)
             bucket_size = module_ddp_config.bucket_size
