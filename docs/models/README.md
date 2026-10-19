@@ -4,7 +4,7 @@
 
 Choose a model to open its interactive import/export and training configurations. Every option comes directly from an authoritative YAML verification card; independent fields are never combined into synthetic commands.
 
-Current inventory: **28 model cards** and **406 concrete configurations**.
+Current inventory: **30 model cards** and **425 concrete configurations**.
 
 Each model page lets you select import/export, pretraining, benchmarking, SFT, LoRA, or long-context SFT and immediately see the exact command and expected result for the recorded precision and GPU.
 
@@ -72,11 +72,15 @@ Choose a model to inspect its recorded import/export, training, and precision co
   <section class="verification-provider-card">
     <header class="verification-provider-heading">
       <strong>Meta</strong>
-      <span>1 model</span>
+      <span>2 models</span>
     </header>
     <div class="verification-provider-models">
       <a class="verification-model-link" href="muse_glimmer/muse-glimmer.html#verified-muse-glimmer-30b">
         <strong title="meta-models/Muse-Glimmer-30B">Muse-Glimmer-30B</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+      </a>
+      <a class="verification-model-link" href="muse_spark_open/muse-spark-open.html#verified-muse-spark-open-816b-a42b">
+        <strong title="meta-models/Muse-Spark-Open-816B-A42B">Muse-Spark-Open-816B-A42B</strong>
         <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
     </div>
@@ -115,10 +119,6 @@ Choose a model to inspect its recorded import/export, training, and precision co
       <span>8 models</span>
     </header>
     <div class="verification-provider-models">
-      <a class="verification-model-link" href="nemotron/nemotron-3-omni.html#verified-nemotron-3-nano-omni-30b-a3b-reasoning">
-        <strong title="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16">Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
       <a class="verification-model-link" href="nemotron/nemotron3-nano.html#verified-nemotron-3-nano-30b-a3b">
         <strong title="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16">NVIDIA-Nemotron-3-Nano-30B-A3B-BF16</strong>
         <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
@@ -126,6 +126,10 @@ Choose a model to inspect its recorded import/export, training, and precision co
       <a class="verification-model-link" href="nemotron/nemotron3-nano-4b.html#verified-nemotron-3-nano-4b">
         <strong title="nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16">NVIDIA-Nemotron-3-Nano-4B-BF16</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </a>
+      <a class="verification-model-link" href="nemotron/nemotron-3-omni.html#verified-nemotron-3-nano-omni-30b-a3b-reasoning">
+        <strong title="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16">Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
       <a class="verification-model-link" href="nemotron/nemotron3-super.html#verified-nemotron-3-super-120b-a12b">
         <strong title="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16">NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong> <!-- pragma: allowlist secret -->
@@ -195,6 +199,18 @@ Choose a model to inspect its recorded import/export, training, and precision co
   </section>
   <section class="verification-provider-card">
     <header class="verification-provider-heading">
+      <strong>reflection</strong>
+      <span>1 model</span>
+    </header>
+    <div class="verification-provider-models">
+      <a class="verification-model-link" href="beam/beam.html#verified-beam">
+        <strong title="reflection/Beam-1.0-501B-A23B">Beam-1.0-501B-A23B</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </a>
+    </div>
+  </section>
+  <section class="verification-provider-card">
+    <header class="verification-provider-heading">
       <strong>StepFun</strong>
       <span>1 model</span>
     </header>
@@ -213,11 +229,11 @@ Choose a model to inspect its recorded import/export, training, and precision co
     <div class="verification-provider-models">
       <a class="verification-model-link" href="glm/glm5.html#verified-glm5">
         <strong title="zai-org/GLM-5">GLM-5</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </a>
       <a class="verification-model-link" href="glm/glm5-2.html#verified-glm5-2">
         <strong title="zai-org/GLM-5.2">GLM-5.2</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </a>
     </div>
   </section>

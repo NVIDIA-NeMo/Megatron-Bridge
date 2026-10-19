@@ -19,10 +19,14 @@ from __future__ import annotations
 import argparse
 import ast
 import functools
+import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
+
+logger = logging.getLogger(__name__)
 
 BENCHMARK_RECIPE_FAMILY_PREFIXES = (
     ("qwen3_vl_", "qwen_vl"),
@@ -44,6 +48,10 @@ BENCHMARK_RECIPE_PATTERN = re.compile(
     r"(?P<precision>bf16|fp8cs|fp8ds|fp8mx|fp8sc|nvfp4)"
     r"(?:_[a-z0-9_]+)?_config$"
 )
+
+# Deprecated recipe hardware names and their replacements. When the deprecation window ends, drop an entry together
+# with its counterpart in LEGACY_GPU_ALIASES (scripts/performance/argument_parser.py).
+LEGACY_HARDWARE_ALIASES = {"vr200": "vrnvl72"}
 
 BENCHMARK_RECIPE_ROOT = Path(__file__).resolve().parents[2] / "src" / "megatron" / "bridge" / "perf_recipes"
 
@@ -72,7 +80,7 @@ LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset(
     }
 )
 
-PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora"})
+PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora", "dpo"})
 TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})
 
 # Exact source-specific overrides take precedence over family defaults. The
@@ -91,7 +99,6 @@ QWEN_VL_RECIPE_PREFIXES = ("qwen3_vl_", "qwen35_vl_")
 RECIPE_FORWARD_STEP_PREFIXES = (
     ("bagel_", "bagel_step"),
     ("nemotron_35_super_vl_", "nemotron_omni_step"),
-    ("nemotron_nano_v2_vl_", "llava_step"),
     ("nemotron_omni_", "nemotron_omni_step"),
     ("qwen2_audio_", "audio_lm_step"),
     ("qwen3_omni_", "qwen3_omni_step"),
@@ -104,6 +111,7 @@ RECIPE_FORWARD_STEP_PREFIXES = (
     ("kimi_k25_vl_", "vlm_step"),
     ("ministral3_", "vlm_step"),
     ("muse_glimmer_", "vlm_step"),
+    ("muse_spark_open_", "vlm_step"),
     ("qwen25_vl_", "vlm_step"),
     ("flux_", "flux_step"),
     ("wan_", "wan_step"),
@@ -182,8 +190,31 @@ def available_benchmark_recipe_metadata(recipe_name: str) -> BenchmarkRecipeMeta
     return metadata
 
 
+@functools.lru_cache(maxsize=None)
+def _canonical_recipe_name(recipe_name: str) -> str:
+    """Replace a deprecated hardware name in a benchmark recipe name when the renamed recipe is exported.
+
+    Cached so each process logs the deprecation once per requested name.
+    """
+    match = BENCHMARK_RECIPE_PATTERN.search(recipe_name)
+    if match is None or match.group("hardware") not in LEGACY_HARDWARE_ALIASES:
+        return recipe_name
+    start, end = match.span("hardware")
+    canonical_name = f"{recipe_name[:start]}{LEGACY_HARDWARE_ALIASES[match.group('hardware')]}{recipe_name[end:]}"
+    if available_benchmark_recipe_metadata(canonical_name) is None:
+        return recipe_name
+    # Every rank re-runs this lookup, so only the launcher and global rank 0 warn.
+    if os.environ.get("RANK", os.environ.get("SLURM_PROCID", "0")) == "0":
+        logger.warning("Recipe '%s' uses a deprecated hardware name; use '%s'.", recipe_name, canonical_name)
+    return canonical_name
+
+
 def resolved_benchmark_recipe_metadata(recipe_name: str) -> BenchmarkRecipeMetadata | None:
-    """Return benchmark metadata after applying unified lookup precedence."""
+    """Return benchmark metadata after applying legacy hardware aliases and unified lookup precedence.
+
+    A deprecated hardware name resolves to the renamed recipe, so callers load ``metadata.recipe_name``.
+    """
+    recipe_name = _canonical_recipe_name(recipe_name)
     if recipe_name in LIBRARY_RECIPE_PRECEDENCE_COLLISIONS:
         return None
     return available_benchmark_recipe_metadata(recipe_name)
@@ -203,6 +234,9 @@ def recipe_step(recipe_name: str, *, native_energon_packing: bool = False) -> st
         return "vlm_step"
     if recipe_name in RECIPE_FORWARD_STEPS:
         return RECIPE_FORWARD_STEPS[recipe_name]
+    # DPO computes its pair loss inside the forward step, so DPO recipes never use a modality step.
+    if infer_recipe_mode(recipe_name) == "dpo":
+        return "dpo_step"
     for prefix, step_name in RECIPE_FORWARD_STEP_PREFIXES:
         if recipe_name.startswith(prefix):
             return step_name
@@ -228,6 +262,8 @@ def infer_recipe_mode(recipe_name: str) -> str | None:
         return "pretrain"
     if "_sft_" in normalized_name or "_finetune_" in normalized_name:
         return "sft"
+    if "_dpo_" in normalized_name:
+        return "dpo"
     if "_dora_" in normalized_name:
         return "dora"
     if "_peft_" in normalized_name or "_lora_" in normalized_name:

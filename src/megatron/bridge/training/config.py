@@ -18,6 +18,7 @@ import os
 import warnings
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import torch
@@ -41,6 +42,7 @@ from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.determinism import apply_determinism_to_args
 
 from megatron.bridge.data.base import (
     DataloaderConfig,
@@ -50,6 +52,7 @@ from megatron.bridge.data.base import (
     DatasetBuildContext as DatasetBuildContext,
 )
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
+from megatron.bridge.data.builders.dpo import DPODatasetConfig
 from megatron.bridge.data.builders.energon import EnergonDatasetConfig
 
 # Deprecated training.config import compatibility. New code imports dataset
@@ -70,6 +73,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import Megatron
 from megatron.bridge.models.transformer_config import _enable_safe_hybridep_dispatch
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.training.dpo import DPOLossConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -84,6 +88,7 @@ from megatron.bridge.utils.cuda_graph import (
     is_full_iteration_cuda_graph,
     validate_cuda_graph_configuration,
 )
+from megatron.bridge.utils.gdn_utils import validate_cudnn_gdn_stack
 
 
 @dataclass
@@ -151,6 +156,13 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     (e.g., via CUDA_VISIBLE_DEVICES environment variable). When True, uses device 0
     instead of local rank for CUDA device selection. This is useful when launching
     with external process managers that handle GPU visibility.
+    """
+
+    use_megatron_fsdp: bool = False
+    """Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2.
+
+    Megatron Core no longer declares this field on its ``DistributedInitConfig``; Bridge keeps it
+    so recipes and user configs can continue to enable Megatron FSDP through ``cfg.dist``.
     """
 
     gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
@@ -1015,6 +1027,7 @@ class ConfigContainer(Container):
         | DirectHFSFTDatasetConfig
         | EnergonDatasetConfig
         | MockVLMSFTDatasetConfig
+        | DPODatasetConfig
         | DatasetProvider
     )
     logger: LoggerConfig
@@ -1026,6 +1039,7 @@ class ConfigContainer(Container):
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
     profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
     peft: Optional[PEFT] = None
+    dpo: Optional[DPOLossConfig] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     tensor_inspect: TensorInspectConfig | None = None
@@ -1071,18 +1085,15 @@ class ConfigContainer(Container):
         if not getattr(self.model, "deterministic_mode", False):
             return
 
-        # Disallow cross-entropy loss fusion as it is not deterministic
-        assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
-            "Cross Entropy Fusion is currently not deterministic."
+        # Megatron-Core's --deterministic-mode setup, so both frameworks enforce the same rules.
+        apply_determinism_to_args(
+            SimpleNamespace(
+                cross_entropy_loss_fusion=getattr(self.model, "cross_entropy_loss_fusion", False),
+                tp_comm_overlap=self.comm_overlap.tp_comm_overlap if self.comm_overlap is not None else False,
+                moe_router_fusion=getattr(self.model, "moe_router_fusion", False),
+                moe_router_aux_loss_fusion=getattr(self.model, "moe_router_aux_loss_fusion", None),
+            )
         )
-
-        all_reduce_choices = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
-        assert os.getenv("NCCL_ALGO", -1) != -1 and os.getenv("NCCL_ALGO") in all_reduce_choices, (
-            f"NCCL_ALGO must be one of {all_reduce_choices}."
-        )
-
-        # Enable deterministic algorithms in torch
-        torch.use_deterministic_algorithms(True)
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """Validate and apply configuration required by the selected Megatron-FSDP version."""
@@ -1249,13 +1260,16 @@ class ConfigContainer(Container):
             raise ValueError(f"{feature} does not yet support pipeline parallelism.")
 
     def _validate_global_batch_packing(self) -> None:
-        """Check and complete the configuration for global-batch online packing.
+        """Check and complete the configuration for global-batch online packing and dynamic CP.
 
         ``dataset.enable_global_batch_packing`` drives ``model.sequence_packing_scheduler``
-        (``dp_balanced`` unless set explicitly), the way in-batch packing drives
-        ``variable_seq_lengths``.
+        (``default_dynamic_cp`` when ``model.dynamic_context_parallel`` is set, else
+        ``dp_balanced``), the way in-batch packing drives ``variable_seq_lengths``.
         """
-        from megatron.bridge.training.global_batch_packing import probe_global_batch_packing_support
+        from megatron.bridge.training.global_batch_packing import (
+            DYNAMIC_CP_SCHEDULERS,
+            probe_global_batch_packing_support,
+        )
 
         feature = "Global-batch packing"
         model = self.model
@@ -1271,16 +1285,21 @@ class ConfigContainer(Container):
                 "sample): GPTSFTDatasetConfig with enable_global_batch_packing=True, or a DatasetProvider whose "
                 "yields_unpacked_samples is True."
             )
-        if getattr(model, "dynamic_context_parallel", False):
-            raise ValueError(
-                f"{feature} does not support model.dynamic_context_parallel yet; unset it to pack with the "
-                "static context-parallel group."
-            )
+        dynamic_cp = bool(getattr(model, "dynamic_context_parallel", False))
         scheduler = getattr(model, "sequence_packing_scheduler", None)
         if scheduler is None:
-            scheduler = "dp_balanced"
+            scheduler = "default_dynamic_cp" if dynamic_cp else "dp_balanced"
             model.sequence_packing_scheduler = scheduler
-        unsupported = probe_global_batch_packing_support(scheduler)
+        if dynamic_cp and scheduler not in DYNAMIC_CP_SCHEDULERS:
+            raise ValueError(
+                f"model.dynamic_context_parallel requires a dynamic-CP scheduler {DYNAMIC_CP_SCHEDULERS}, "
+                f"got model.sequence_packing_scheduler={scheduler!r}."
+            )
+        if scheduler in DYNAMIC_CP_SCHEDULERS and not dynamic_cp:
+            raise ValueError(
+                f"model.sequence_packing_scheduler={scheduler!r} requires model.dynamic_context_parallel=True."
+            )
+        unsupported = probe_global_batch_packing_support(scheduler, dynamic_cp=dynamic_cp)
         if unsupported is not None:
             raise ValueError(f"{feature}: {unsupported}")
 
@@ -1301,15 +1320,33 @@ class ConfigContainer(Container):
         if getattr(model, "max_seqlen_per_dp_cp_rank", None) is None:
             raise ValueError(
                 "model.max_seqlen_per_dp_cp_rank must be set explicitly for global-batch packing: it is the token "
-                "capacity of one rank per microbatch, so a bin holds at most context_parallel_size times that."
+                "capacity of one rank per microbatch, so a bin holds at most that many tokens per rank of its CP "
+                "group (under dynamic CP, also the length above which a sequence needs a larger group)."
             )
 
         cp_size = model.context_parallel_size
-        capacity = cp_size * model.max_seqlen_per_dp_cp_rank
+        pool = cp_size
+        if dynamic_cp:
+            pool = self.get_data_parallel_size(get_world_size_safe()) * cp_size
+            if self.dist.use_decentralized_pg:
+                raise ValueError(
+                    "model.dynamic_context_parallel requires dist.use_decentralized_pg=False: Megatron-Core resolves "
+                    "dynamic CP groups from parallel_state."
+                )
+            if pool < 2 or pool & (pool - 1):
+                raise ValueError(
+                    f"Dynamic context parallelism needs a power-of-two dp * cp pool of at least 2, got {pool}."
+                )
+            min_cp = getattr(model, "min_dynamic_context_parallel_size", 1)
+            if min_cp < 1 or min_cp & (min_cp - 1) or min_cp > pool:
+                raise ValueError(
+                    f"model.min_dynamic_context_parallel_size must be a power of two in [1, dp * cp = {pool}], got {min_cp}."
+                )
+        capacity = pool * model.max_seqlen_per_dp_cp_rank
         seq_length = getattr(self.dataset, "seq_length", None) or model.seq_length
         if capacity < seq_length:
             raise ValueError(
-                f"Bin capacity too small: {cp_size} CP ranks x max_seqlen_per_dp_cp_rank "
+                f"Bin capacity too small: {pool} ranks x max_seqlen_per_dp_cp_rank "
                 f"{model.max_seqlen_per_dp_cp_rank} = {capacity} tokens < seq_length {seq_length}; the longest sample "
                 "could never be scheduled."
             )
@@ -1364,6 +1401,30 @@ class ConfigContainer(Container):
                 if hasattr(config, field_name):
                     setattr(config, field_name, False)
 
+    def _validate_dpo_contract(self) -> None:
+        """Constraints the DPO loss places on the run."""
+        if self.dpo is None:
+            raise ValueError("DPO requires dpo to be a DPOLossConfig.")
+        if not getattr(self.model, "calculate_per_token_loss", False):
+            raise ValueError("DPO requires model.calculate_per_token_loss=True.")
+        if self.ddp.average_in_collective:
+            raise ValueError("DPO requires ddp.average_in_collective=False.")
+        if getattr(self.model, "context_parallel_size", 1) != 1:
+            raise ValueError("DPO does not support context parallelism (model.context_parallel_size must be 1).")
+        if getattr(self.model, "mtp_num_layers", None):
+            raise ValueError("DPO does not support MTP heads (model.mtp_num_layers must be None).")
+        row_counts = (
+            ("train.micro_batch_size", self.train.micro_batch_size),
+            ("train.global_batch_size", self.train.global_batch_size),
+            ("validation.eval_micro_batch_size", self.validation.eval_micro_batch_size),
+            ("validation.eval_global_batch_size", self.validation.eval_global_batch_size),
+        )
+        for name, value in row_counts:
+            if value is not None and value % 2 != 0:
+                raise ValueError(f"DPO requires an even {name} (one pair is two rows), got {value}.")
+        if self.dist.eval_context_parallel_size is not None:
+            raise ValueError("DPO does not support dist.eval_context_parallel_size.")
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1398,9 +1459,12 @@ class ConfigContainer(Container):
                 "enable_global_batch_packing is mutually exclusive with offline, in-batch, and Energon packing: "
                 "the scheduler packs unpacked samples itself."
             )
-        if not enable_global_batch_packing and getattr(self.model, "sequence_packing_scheduler", None) is not None:
+        if not enable_global_batch_packing and (
+            getattr(self.model, "sequence_packing_scheduler", None) is not None
+            or getattr(self.model, "dynamic_context_parallel", False)
+        ):
             raise ValueError(
-                "model.sequence_packing_scheduler is driven by the dataset: set "
+                "model.sequence_packing_scheduler / model.dynamic_context_parallel are driven by the dataset: set "
                 "dataset.enable_global_batch_packing=True on a GPTSFTDatasetConfig."
             )
         if enable_offline_packing and offline_packing_specs is None:
@@ -1476,13 +1540,21 @@ class ConfigContainer(Container):
         has_sp = getattr(self.model, "sequence_parallel", False)
         cp_multiples = [2 * size if size > 1 else 1 for size in cp_sizes]
         sp_multiples = [size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
+        if enable_global_batch_packing and getattr(self.model, "dynamic_context_parallel", False):
+            # Dynamic CP may run a sequence on any group of the dp x cp pool, up to the whole pool.
+            # The pool is a power of two (checked in _validate_global_batch_packing), so multiples
+            # of the full pool cover every smaller group, for both the CP zigzag split (2 x group)
+            # and the sequence-parallel shard of each CP chunk (group x tp).
+            dp_size = self.get_data_parallel_size(get_world_size_safe())
+            cp_multiples = [2 * dp_size * size for size in cp_sizes]
+            sp_multiples = [dp_size * size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
         collate_padding_multiple = math.lcm(*cp_multiples, *sp_multiples)
         if enable_global_batch_packing:
             self._apply_global_batch_packing_padding(collate_padding_multiple)
         if (
             isinstance(
                 self.dataset,
-                (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+                (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig, DPODatasetConfig),
             )
             or (isinstance(self.dataset, GPTSFTDatasetConfig) and enable_in_batch_packing)
         ) and self.dataset.seq_length % collate_padding_multiple != 0:
@@ -1508,6 +1580,13 @@ class ConfigContainer(Container):
                 self.dataset.pad_to_multiple_of,
                 collate_padding_multiple,
             )
+        elif isinstance(self.dataset, DPODatasetConfig):
+            self._validate_dpo_contract()
+            self.dataset.pad_seq_length_to_mult = collate_padding_multiple
+            # Pair batches are padded to their own longest row, so the activation width changes per
+            # micro batch and pipeline stages must exchange shapes, as with in-batch packing.
+            if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
+                transformer_config.variable_seq_lengths = True
 
         _enable_safe_hybridep_dispatch(transformer_config, uses_thd=uses_thd)
 
@@ -1678,6 +1757,7 @@ class ConfigContainer(Container):
         _validate_and_sync_distributed_optimizer_settings(self)
         _validate_mixed_precision_consistency(self)
         _validate_fine_grained_activation_offloading(self)
+        validate_cudnn_gdn_stack(self.model)
 
         # CUDA graph scope validation: check_for_nan_in_loss must be disabled with full_iteration graph
         if is_full_iteration_cuda_graph(self.model):
@@ -2057,7 +2137,7 @@ class ConfigContainer(Container):
 def _get_mcore_transformer_parent(model_config: Any) -> type:
     """Determine the correct Mcore TransformerConfig parent class for a model.
 
-    Some models (e.g., DeepSeek v2/v3) inherit from MLATransformerConfig instead of
+    Some models (e.g., DeepSeek v3) inherit from MLATransformerConfig instead of
     the base TransformerConfig. This function checks the inheritance chain to find
     the appropriate Mcore class to use as the baseline for comparison.
 

@@ -25,6 +25,7 @@ import torch
 
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
+    DPODatasetConfig,
     EnergonDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
@@ -66,6 +67,7 @@ from megatron.bridge.training.config import (
     apply_environment_variables,
     megatron_mimo_runtime_config_update,
 )
+from megatron.bridge.training.dpo import DPOLossConfig
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.utils.cuda_graph import (
@@ -507,27 +509,80 @@ class TestMockGPTDatasetConfig:
             ).finalize()
 
 
+_DETERMINISM_ENV_VARS = (
+    "NCCL_ALGO",
+    "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
+    "CUBLAS_WORKSPACE_CONFIG",
+    "MAMBA_DETERMINISTIC",
+    "CAUSAL_CONV1D_DETERMINISTIC",
+    "TRITON_CACHE_AUTOTUNING",
+)
+
+
+@pytest.fixture
+def isolated_determinism_state(monkeypatch):
+    """Keep Megatron-Core's determinism setup from leaking env vars or torch global state."""
+    import torch.utils.deterministic
+
+    for name in _DETERMINISM_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        torch.utils.deterministic, "fill_uninitialized_memory", torch.utils.deterministic.fill_uninitialized_memory
+    )
+    calls = []
+    monkeypatch.setattr(torch, "use_deterministic_algorithms", lambda flag, **_kwargs: calls.append(flag))
+    return calls
+
+
 class TestConfigContainerValidation:
-    def test_deterministic_mode_disallows_ce_fusion(self, monkeypatch):
+    def test_deterministic_mode_disallows_ce_fusion(self, isolated_determinism_state):
         """Test that deterministic mode disallows cross-entropy loss fusion."""
         gpt_model_cfg = create_test_gpt_config(
             deterministic_mode=True,
             cross_entropy_loss_fusion=True,
         )
 
-        # Ensure NCCL_ALGO present but valid, so we fail on CE fusion
-        monkeypatch.setenv("NCCL_ALGO", "Tree")
-
         container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         try:
-            with pytest.raises(AssertionError, match="Cross Entropy Fusion is currently not deterministic"):
+            with pytest.raises(AssertionError, match="cross_entropy_loss_fusion=False"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_deterministic_mode_requires_nccl_algo_and_sets_torch(self, monkeypatch):
-        """Test that deterministic mode requires NCCL_ALGO and sets torch.use_deterministic_algorithms."""
+    def test_deterministic_mode_rejects_moe_aux_loss_fusion(self, isolated_determinism_state):
+        """Deterministic mode rejects the MoE aux-loss fusion but keeps fused TopK routing."""
+        gpt_model_cfg = create_test_gpt_config(deterministic_mode=True, cross_entropy_loss_fusion=False)
+        gpt_model_cfg.moe_router_fusion = True
+        gpt_model_cfg.moe_router_aux_loss_fusion = True
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+                container._validate_and_apply_deterministic_mode()
+
+            gpt_model_cfg.moe_router_aux_loss_fusion = False
+            container._validate_and_apply_deterministic_mode()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_deterministic_mode_rejects_tp_comm_overlap(self, isolated_determinism_state):
+        """TP communication overlap is not bit-exact and must be off."""
+        gpt_model_cfg = create_test_gpt_config(deterministic_mode=True, cross_entropy_loss_fusion=False)
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+        container.comm_overlap = SimpleNamespace(tp_comm_overlap=True)
+
+        try:
+            with pytest.raises(AssertionError, match="tp_comm_overlap=False"):
+                container._validate_and_apply_deterministic_mode()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_deterministic_mode_env_matches_megatron_core(self, monkeypatch, isolated_determinism_state):
+        """Env vars follow Megatron-Core's rules: defaults filled, non-deterministic values rejected."""
+        import torch.utils.deterministic
+
         gpt_model_cfg = create_test_gpt_config(
             deterministic_mode=True,
             cross_entropy_loss_fusion=False,
@@ -537,27 +592,25 @@ class TestConfigContainerValidation:
         container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         try:
-            # Missing NCCL_ALGO
-            monkeypatch.delenv("NCCL_ALGO", raising=False)
-            with pytest.raises(AssertionError, match="NCCL_ALGO must be one of"):
-                container.validate()
+            # Tree has no controllable reduction order and is rejected, as in Megatron-Core.
+            monkeypatch.setenv("NCCL_ALGO", "Tree")
+            with pytest.raises(AssertionError, match="NCCL_ALGO='Tree'"):
+                container._validate_and_apply_deterministic_mode()
 
-            # Invalid NCCL_ALGO
-            monkeypatch.setenv("NCCL_ALGO", "AllReduce")
-            with pytest.raises(AssertionError, match="NCCL_ALGO must be one of"):
-                container.validate()
-
-            # Valid NCCL_ALGO -> should pass and call torch deterministic
             monkeypatch.setenv("NCCL_ALGO", "Ring")
+            monkeypatch.setenv("NVTE_ALLOW_NONDETERMINISTIC_ALGO", "1")
+            with pytest.raises(AssertionError, match="NVTE_ALLOW_NONDETERMINISTIC_ALGO='1'"):
+                container._validate_and_apply_deterministic_mode()
 
-            called = {"det": False}
-
-            def _mock_use_deterministic(flag):
-                called["det"] = flag
-
-            with patch.object(torch, "use_deterministic_algorithms", side_effect=_mock_use_deterministic):
-                container.validate()
-                assert called["det"] is True
+            # Unset values get the canonical defaults; torch deterministic mode is enabled.
+            monkeypatch.delenv("NCCL_ALGO")
+            monkeypatch.delenv("NVTE_ALLOW_NONDETERMINISTIC_ALGO")
+            container._validate_and_apply_deterministic_mode()
+            assert os.environ["NCCL_ALGO"] == "Ring"
+            assert os.environ["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
+            assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+            assert isolated_determinism_state == [True]
+            assert torch.utils.deterministic.fill_uninitialized_memory is False
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -1468,6 +1521,90 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             assert dataset_cfg.pad_to_multiple_of == 24
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("tensor_size", "pipeline_size", "expected_pad_mult", "expected_variable_seq"),
+        [(4, 1, 4, False), (1, 2, 1, True)],
+        ids=["sequence-parallel", "pipeline-parallel"],
+    )
+    def test_dpo_dataset_adapts_to_sequence_and_pipeline_parallelism(
+        self, tensor_size, pipeline_size, expected_pad_mult, expected_variable_seq
+    ):
+        """DPO batches are padded dynamically: SP needs a TP-multiple collate width, PP stages must exchange shapes."""
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=tensor_size,
+            sequence_parallel=tensor_size > 1,
+            pipeline_model_parallel_size=pipeline_size,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = DPODatasetConfig(
+            seq_length=512,
+            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=tensor_size * pipeline_size,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.dpo = DPOLossConfig()
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_seq_length_to_mult == expected_pad_mult
+            assert gpt_model_cfg.variable_seq_lengths is expected_variable_seq
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("mutate", "match"),
+        [
+            (lambda c: setattr(c, "dpo", None), "DPOLossConfig"),
+            (lambda c: setattr(c.model, "calculate_per_token_loss", False), "calculate_per_token_loss"),
+            (lambda c: setattr(c.ddp, "average_in_collective", True), "average_in_collective"),
+            (lambda c: setattr(c.model, "context_parallel_size", 2), "context_parallel_size"),
+            (lambda c: setattr(c.model, "mtp_num_layers", 1), "mtp_num_layers"),
+            (lambda c: setattr(c.train, "micro_batch_size", 1), "even train.micro_batch_size"),
+            (lambda c: setattr(c.validation, "eval_micro_batch_size", 3), "eval_micro_batch_size"),
+            (lambda c: setattr(c.dist, "eval_context_parallel_size", 2), "eval_context_parallel_size"),
+        ],
+        ids=[
+            "no_loss_config",
+            "per_token_loss",
+            "average_in_collective",
+            "cp",
+            "mtp",
+            "odd_mbs",
+            "odd_eval_mbs",
+            "eval_cp",
+        ],
+    )
+    def test_dpo_dataset_enforces_the_loss_contract(self, mutate, match):
+        """A DPO dataset pulls in the loss contract: each violated knob is named in the error."""
+        gpt_model_cfg = create_test_gpt_config(calculate_per_token_loss=True)
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = DPODatasetConfig(
+            seq_length=512,
+            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.dpo = DPOLossConfig()
+        container.ddp.average_in_collective = False
+        mutate(container)
+
+        try:
+            with pytest.raises(ValueError, match=match):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -2595,8 +2732,8 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_cuda_graph_local_inference_scope_rejects_training_modules(self, monkeypatch):
-        """Test that an inference scope does not bypass local training-scope validation."""
+    def test_cuda_graph_local_inference_scope_allows_training_modules(self, monkeypatch):
+        """Test that local per-layer training modules can be combined with an inference scope."""
         gpt_model_cfg = create_test_gpt_config(
             cuda_graph_impl="local",
             inference_cuda_graph_scope="block",
@@ -2610,14 +2747,15 @@ class TestConfigContainerValidation:
         )
 
         try:
-            with pytest.raises(ValueError, match='cuda_graph_impl="local"'):
-                container.validate()
+            container.validate()
+            assert container.model.cuda_graph_impl == "local"
+            assert cuda_graph_module_names(container.model) == ["mlp"]
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    @pytest.mark.parametrize("graph_modules", [["mlp"], ["moe_router"]])
-    def test_cuda_graph_local_scoped_modules_raise_clear_error(self, graph_modules, monkeypatch):
-        """Test that Bridge rejects local scoped graphs before MCore layer construction."""
+    @pytest.mark.parametrize("graph_modules", [["attn"], ["attn", "mlp"]])
+    def test_cuda_graph_local_scoped_modules_allow_validation(self, graph_modules, monkeypatch):
+        """Test that Bridge passes local per-layer CUDA graph modules through to MCore."""
         gpt_model_cfg = create_test_gpt_config(
             cuda_graph_impl="local",
             use_te_rng_tracker=True,
@@ -2630,16 +2768,14 @@ class TestConfigContainerValidation:
         )
 
         try:
-            with pytest.raises(
-                ValueError,
-                match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
-            ):
-                container.validate()
+            container.validate()
+            assert container.model.cuda_graph_impl == "local"
+            assert cuda_graph_module_names(container.model) == graph_modules
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_cuda_graph_local_deprecated_scope_raise_clear_error(self, monkeypatch):
-        """Test post-construction cuda_graph_scope overrides fail clearly for local scoped graphs."""
+    def test_cuda_graph_local_deprecated_scope_allows_validation(self, monkeypatch):
+        """Test post-construction cuda_graph_scope overrides are accepted for local per-layer graphs."""
         gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
         gpt_model_cfg.cuda_graph_impl = "local"
         gpt_model_cfg.cuda_graph_scope = ["mlp"]
@@ -2650,23 +2786,41 @@ class TestConfigContainerValidation:
         )
 
         try:
+            container.validate()
+            assert container.model.cuda_graph_impl == "local"
+            assert cuda_graph_module_names(container.model) == ["mlp"]
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_cuda_graph_local_whole_layer_raise_clear_error(self, monkeypatch):
+        """Test that Bridge rejects local whole-layer capture before MCore layer construction."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="local",
+            use_te_rng_tracker=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
             with pytest.raises(
                 ValueError,
-                match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+                match='cuda_graph_impl="local".*cuda_graph_modules',
             ):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_cuda_graph_local_deprecated_scope_direct_provider_raise_clear_error(self):
-        """Test direct provider construction validates local scoped graphs before MCore build."""
+    def test_cuda_graph_local_whole_layer_direct_provider_raise_clear_error(self):
+        """Test direct provider construction validates local whole-layer capture before MCore build."""
         gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True, vocab_size=128)
         gpt_model_cfg.cuda_graph_impl = "local"
-        gpt_model_cfg.cuda_graph_scope = ["mlp"]
 
         with pytest.raises(
             ValueError,
-            match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+            match='cuda_graph_impl="local".*cuda_graph_modules',
         ):
             gpt_model_cfg.provide()
 
@@ -4493,6 +4647,22 @@ class TestDistributedOptimizerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
 
+@pytest.mark.unit
+class TestCudnnGdnStackValidationHook:
+    """ConfigContainer.validate() runs the cuDNN GDN stack check; see tests/unit_tests/utils/test_gdn_utils.py."""
+
+    @patch("megatron.bridge.training.config.validate_cudnn_gdn_stack")
+    def test_config_container_validate_runs_the_check(self, mock_check):
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=create_test_gpt_config()
+        )
+        try:
+            container.validate()
+            mock_check.assert_called_once_with(container.model)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+
 class TestSampleBasedTraining:
     """Tests for sample-based training configuration and validation."""
 
@@ -5377,15 +5547,95 @@ class TestGlobalBatchPackingValidation:
 
     @pytest.mark.skipif(
         not hasattr(GPTModelProvider, "dynamic_context_parallel"),
-        reason="the pinned Megatron-Core has no dynamic context parallel field",
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
     )
-    def test_dynamic_context_parallel_is_rejected(self):
+    def test_dynamic_cp_selects_dynamic_scheduler_and_pool_padding_multiple(self):
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=64,
+            dynamic_context_parallel=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
+        )
+        container.ddp.average_in_collective = False
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.model.sequence_packing_scheduler == "default_dynamic_cp"
+        # dp 4 x cp 2 = pool 8 -> 2 * pool
+        assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 16
+
+    @pytest.mark.skipif(
+        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
+    )
+    def test_dynamic_cp_sequence_parallel_multiple_covers_the_whole_pool(self):
+        # TP4 x CP1 x DP2: a sequence may run on a CP2 group spanning both DP ranks, so each of its
+        # two CP shards must split over four TP ranks: 2 x 4 = 8 (the static rule would give 4).
+        model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+            context_parallel_size=1,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=256,
+            dynamic_context_parallel=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
+        )
+        container.ddp.average_in_collective = False
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 8
+
+    @pytest.mark.skipif(
+        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
+    )
+    def test_dynamic_cp_rejects_non_power_of_two_pool(self):
         model_cfg = create_test_gpt_config(
             context_parallel_size=2,
             calculate_per_token_loss=True,
             max_seqlen_per_dp_cp_rank=256,
             dynamic_context_parallel=True,
         )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=6)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=6,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=self._gpt_sft_unpacked_dataset(512),
+        )
+        container.ddp.average_in_collective = False
+        try:
+            with pytest.raises(ValueError, match="power-of-two"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_dynamic_scheduler_requires_dynamic_context_parallel(self, monkeypatch):
+        from megatron.bridge.training import global_batch_packing
+
+        probe = MagicMock(return_value=None)
+        monkeypatch.setattr(global_batch_packing, "probe_global_batch_packing_support", probe)
+        model_cfg = create_test_gpt_config(
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=256,
+            sequence_packing_scheduler="default_dynamic_cp",
+        )
+        # The flag defaults to False on the dev pin and is absent on older main pins.
+        assert not getattr(model_cfg, "dynamic_context_parallel", False)
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=8,
@@ -5395,8 +5645,9 @@ class TestGlobalBatchPackingValidation:
         )
         container.ddp.average_in_collective = False
         try:
-            with pytest.raises(ValueError, match="dynamic_context_parallel"):
+            with pytest.raises(ValueError, match="requires model.dynamic_context_parallel=True"):
                 container.validate()
+            probe.assert_not_called()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

@@ -15,9 +15,11 @@
 import json
 import re
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union, cast
+from typing import Any, Callable, Dict, Generic, Iterator, List, Literal, Optional, Tuple, TypeVar, Union, cast
 
 import torch
 import torch.distributed
@@ -49,6 +51,13 @@ import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+# Export policy is scoped to one conversion operation rather than stored on a
+# mapping instance. Some mappings (notably AutoMapping) create their concrete
+# delegate lazily while ``megatron_to_hf`` is running, so an instance property
+# would not reliably reach the object that performs the PP broadcast.
+_SKIP_PP_BROADCAST: ContextVar[bool] = ContextVar("megatron_bridge_skip_pp_broadcast", default=False)
 
 
 @dataclass(frozen=True)
@@ -262,6 +271,26 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # absent for some layers or configurations. Both bypass the hf_keys check in
         # `build_conversion_tasks`, which raises otherwise.
         self.allow_hf_name_mismatch = False
+
+    @classmethod
+    @contextmanager
+    def skip_pp_broadcast(cls) -> Iterator[None]:
+        """Disable PP replication for the duration of one HF export.
+
+        In this mode ``broadcast_from_pp_rank`` and
+        ``broadcast_obj_from_pp_rank`` return the value local to the current
+        rank. TP/EP collectives remain enabled, so mappings still perform all
+        required shard reconstruction and HF layout conversion on the owning
+        pipeline stage.
+
+        The policy is held in a :class:`ContextVar` so it also applies to
+        mappings created lazily by wrappers such as :class:`AutoMapping`.
+        """
+        token = _SKIP_PP_BROADCAST.set(True)
+        try:
+            yield
+        finally:
+            _SKIP_PP_BROADCAST.reset(token)
 
     def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
         """Describe canonical local HF views for one mapped parameter.
@@ -628,6 +657,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 in the calling code).
         """
 
+        # PP-local export deliberately leaves non-owning stages with ``None``.
+        # The caller filters those tasks, while the owning stage continues into
+        # the normal TP/EP gathering and layout-conversion code below.
+        if _SKIP_PP_BROADCAST.get():
+            return tensor
+
         # Fast-path when we are not using pipeline parallelism.
         if self.pp_size == 1:
             return tensor
@@ -715,7 +750,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         Raises:
             ValueError: If object does not exist on any rank.
         """
+        if _SKIP_PP_BROADCAST.get():
+            return obj
+
         if self.pp_size == 1:
+            if obj is None:
+                raise ValueError(f"{self.megatron_param}: Object must exist on at least one PP rank")
             return obj
 
         # Check if we already have a cached result (only if cache_key is provided)
@@ -741,7 +781,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 break
 
         if src_rank is None:
-            raise ValueError("Object must exist on at least one PP rank")
+            raise ValueError(f"{self.megatron_param}: Object must exist on at least one PP rank")
 
         # ------------------------------------------------------------------
         # 3. Broadcast the object from the source rank to all ranks
@@ -1973,27 +2013,30 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Need to determine type even if module is None (different PP rank)
         assert self.megatron_param is not None, "`megatron_param` is required for AutoMapping."
 
-        if self._mapping is None:
+        mapping = self._mapping
+        if mapping is None:
             if megatron_module is not None:
-                self._detected_type = self._detect_parallelism_type(megatron_module)
+                detected_type = self._detect_parallelism_type(megatron_module)
                 # Broadcast to other ranks
-                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type, "detected_type")
+                detected_type = self.broadcast_obj_from_pp_rank(detected_type, "detected_type")
             else:
                 # Receive from owning rank
-                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
-                if self._detected_type is None:
-                    # PP group likely has 1 member - skipping.
-                    return {}
+                detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
 
-            # If no PP rank detected a type (e.g. Megatron parameter without an
-            # HF counterpart, such as MoE modules on dense layers created by
-            # moe_layer_freq), skip export gracefully.
-            if self._detected_type is None:
+            # A stage-local export has nothing to receive for a non-local task.
+            # Full export must instead reject missing owners in the broadcast helper.
+            if _SKIP_PP_BROADCAST.get() and detected_type is None:
                 return {}
 
-            self._mapping = self._get_or_create_mapping(self._detected_type)
+            mapping = self._get_or_create_mapping(detected_type)
+            # A PP-local export skips this task on non-owning stages. Do not
+            # cache the lazy delegate only on the owner, or a later full export
+            # could enter different PP collectives on different ranks.
+            if not _SKIP_PP_BROADCAST.get():
+                self._detected_type = detected_type
+                self._mapping = mapping
 
-        result = self._mapping.megatron_to_hf(megatron_weights, megatron_module)
+        result = mapping.megatron_to_hf(megatron_weights, megatron_module)
 
         # Apply reverse permutation if specified (after gathering)
         if self.permute_dims is not None and result:
@@ -2532,11 +2575,13 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
 
             # Define component indices in the concatenated tensor
-            z_shard_idx = torch.arange(d_inner)
-            x_shard_idx = torch.arange(d_inner, 2 * d_inner)
-            B_shard_idx = torch.arange(2 * d_inner, 2 * d_inner + d_tot_ssm)
-            C_shard_idx = torch.arange(2 * d_inner + d_tot_ssm, 2 * d_inner + 2 * d_tot_ssm)
-            dt_shard_idx = torch.arange(2 * (d_inner + d_tot_ssm), 2 * (d_inner + d_tot_ssm) + config.mamba_num_heads)
+            z_shard_idx = torch.arange(d_inner, device=hf_weights.device)
+            x_shard_idx = torch.arange(d_inner, 2 * d_inner, device=hf_weights.device)
+            B_shard_idx = torch.arange(2 * d_inner, 2 * d_inner + d_tot_ssm, device=hf_weights.device)
+            C_shard_idx = torch.arange(2 * d_inner + d_tot_ssm, 2 * d_inner + 2 * d_tot_ssm, device=hf_weights.device)
+            dt_shard_idx = torch.arange(
+                2 * (d_inner + d_tot_ssm), 2 * (d_inner + d_tot_ssm) + config.mamba_num_heads, device=hf_weights.device
+            )
 
             # Reshape for tensor parallel distribution
             target_shape = (self.tp_size, -1, config.hidden_size)
@@ -2582,11 +2627,15 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         n_heads_local = config.mamba_num_heads // self.tp_size
 
         # Extract local components
-        z_shard_idx = torch.arange(d_inner_local)
-        x_shard_idx = torch.arange(d_inner_local) + d_inner_local
-        B_shard_idx = torch.arange(d_tot_ssm_local) + 2 * d_inner_local
-        C_shard_idx = torch.arange(d_tot_ssm_local) + 2 * d_inner_local + d_tot_ssm_local
-        dt_shard_idx = torch.arange(n_heads_local) + 2 * (d_inner_local + d_tot_ssm_local)
+        z_shard_idx = torch.arange(d_inner_local, device=megatron_weights.device)
+        x_shard_idx = torch.arange(d_inner_local, device=megatron_weights.device) + d_inner_local
+        B_shard_idx = torch.arange(d_tot_ssm_local, device=megatron_weights.device) + 2 * d_inner_local
+        C_shard_idx = (
+            torch.arange(d_tot_ssm_local, device=megatron_weights.device) + 2 * d_inner_local + d_tot_ssm_local
+        )
+        dt_shard_idx = torch.arange(n_heads_local, device=megatron_weights.device) + 2 * (
+            d_inner_local + d_tot_ssm_local
+        )
 
         local_components = [
             megatron_weights[z_shard_idx],
@@ -2625,7 +2674,9 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self._tp_mapping = ColumnParallelMapping(megatron_param, megatron_param)
 
     @abstractmethod
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         ...
 
@@ -2645,7 +2696,7 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
                 assert "bias" in self.megatron_param, "Only bias and weight are supported for conv1d"
                 target_shape = (self.tp_size, -1)
 
-            shard_idx = self.get_shard_idx(config, local_tp=False)
+            shard_idx = self.get_shard_idx(config, local_tp=False, device=hf_weights.device)
 
             # Extract and reshape components
             sharded_weights = [hf_weights[idx].reshape(target_shape) for idx in shard_idx]
@@ -2680,7 +2731,7 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
-        shard_idx = self.get_shard_idx(config, local_tp=True)
+        shard_idx = self.get_shard_idx(config, local_tp=True, device=megatron_weights.device)
 
         local_components = [megatron_weights[idx] for idx in shard_idx]
 
@@ -2704,7 +2755,9 @@ class GDNConv1dMapping(ChunkedMapping):
     tensor-parallel distributed format for GDN SSM layers.
     """
 
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         qk_dim = config.linear_key_head_dim * config.linear_num_key_heads
         v_dim = config.linear_value_head_dim * config.linear_num_value_heads
@@ -2712,9 +2765,9 @@ class GDNConv1dMapping(ChunkedMapping):
             qk_dim = qk_dim // self.tp_size
             v_dim = v_dim // self.tp_size
 
-        q_shard_idx = torch.arange(qk_dim)
-        k_shard_idx = torch.arange(qk_dim) + qk_dim
-        v_shard_idx = torch.arange(v_dim) + qk_dim * 2
+        q_shard_idx = torch.arange(qk_dim, device=device)
+        k_shard_idx = torch.arange(qk_dim, device=device) + qk_dim
+        v_shard_idx = torch.arange(v_dim, device=device) + qk_dim * 2
 
         return [q_shard_idx, k_shard_idx, v_shard_idx]
 
@@ -2726,7 +2779,9 @@ class MambaConv1dMapping(ChunkedMapping):
     tensor-parallel distributed format for Mamba SSM layers.
     """
 
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         d_inner = config.mamba_num_heads * config.mamba_head_dim
         d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
@@ -2735,9 +2790,9 @@ class MambaConv1dMapping(ChunkedMapping):
             d_tot_ssm = d_tot_ssm // self.tp_size
 
         # Extract local components
-        x_shard_idx = torch.arange(d_inner)
-        B_shard_idx = torch.arange(d_tot_ssm) + d_inner
-        C_shard_idx = torch.arange(d_tot_ssm) + d_inner + d_tot_ssm
+        x_shard_idx = torch.arange(d_inner, device=device)
+        B_shard_idx = torch.arange(d_tot_ssm, device=device) + d_inner
+        C_shard_idx = torch.arange(d_tot_ssm, device=device) + d_inner + d_tot_ssm
 
         return [x_shard_idx, B_shard_idx, C_shard_idx]
 

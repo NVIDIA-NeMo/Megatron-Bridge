@@ -5,13 +5,11 @@ Llama model documentation is organized by model variant.
 ```{toctree}
 :hidden:
 
-llama2.md
 llama3.md
 ```
 
 | Variant | Guide |
 |---------|-------|
-| Llama 2 | [llama2.md](llama2.md) |
 | Llama 3 | [llama3.md](llama3.md) |
 
 ## Recipes

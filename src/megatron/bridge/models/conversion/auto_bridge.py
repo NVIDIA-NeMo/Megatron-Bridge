@@ -42,7 +42,6 @@ from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
-from megatron.bridge.models._deprecation import warn_if_deprecated_model, warn_if_legacy_nemotron_path
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -55,7 +54,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
-from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, _existing_safetensors_files
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
@@ -78,10 +77,21 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronH_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
     "NemotronLabsDiffusionModel",
+    "DiffusionGemmaForBlockDiffusion",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
     "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
     "ForTokenClassification",
 )
+
+# Error-message metadata only: shared architectures used by supported successors
+# must not appear here. Consult this only after normal bridge lookup fails.
+_REMOVED_HF_ARCHITECTURES = {
+    "DeepseekV2ForCausalLM": "DeepSeek V2",
+    "DeciLMForCausalLM": "Llama Nemotron",
+    "GemmaForCausalLM": "Gemma 1",
+    "Gemma2ForCausalLM": "Gemma 2",
+    "NemotronForCausalLM": "Nemotron-4",
+}
 
 # hf_pretrained wrapper types that carry both a config and (optionally) loaded weights.
 # Used for isinstance checks that should accept any such wrapper, regardless of which
@@ -271,6 +281,10 @@ def _resolve_pretrained_wrapper_cls(
     supported architectures use :class:`PreTrainedCausalLM`.
     """
     architectures = getattr(config, "architectures", None) or []
+    if "NemotronH_Omni_Reasoning_V3" in architectures:
+        from megatron.bridge.models.nemotron_omni.hf_pretrained import Nemotron35VLPretrained
+
+        return Nemotron35VLPretrained
     if any(arch.endswith("ForTokenClassification") for arch in architectures):
         return PreTrainedTokenClassification
     if any(arch.endswith("ForMaskedLM") for arch in architectures):
@@ -293,27 +307,32 @@ def _drop_readonly_config_properties(
     return {key: value for key, value in config_dict.items() if key not in readonly_properties}
 
 
-def _check_with_megatron_names_support(stream_fn: Callable[..., Any], owner: object) -> None:
-    """Fail up front when a bridge's streaming override cannot accept ``with_megatron_names``.
-
-    Bridges that override the streaming export with an explicit signature (rather than
-    ``*args, **kwargs``) have to forward the keyword themselves; without this check the
-    request would only surface as an opaque ``TypeError`` once the generator is consumed.
-    """
+def _check_streaming_argument_support(stream_fn: Callable[..., Any], owner: object, argument: str) -> None:
+    """Fail early when a streaming override cannot accept an export argument."""
     try:
         parameters = inspect.signature(stream_fn).parameters
     except (TypeError, ValueError):
         # Not introspectable (C callables); let the call itself decide.
         return
-    if "with_megatron_names" in parameters or any(
+    if argument in parameters or any(
         parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
     ):
         return
     raise TypeError(
         f"{type(owner).__name__}.{getattr(stream_fn, '__name__', 'stream_weights')} does not accept "
-        "'with_megatron_names'; a bridge that overrides the streaming export must forward this flag "
-        "before its exported weights can carry source Megatron parameter names."
+        f"'{argument}'; a bridge that overrides the streaming export must forward this flag "
+        "before the requested export mode can be used."
     )
+
+
+def _check_with_megatron_names_support(stream_fn: Callable[..., Any], owner: object) -> None:
+    """Fail up front when a streamer cannot accept ``with_megatron_names``."""
+    _check_streaming_argument_support(stream_fn, owner, "with_megatron_names")
+
+
+def _check_current_pp_stage_only_support(stream_fn: Callable[..., Any], owner: object) -> None:
+    """Fail early when a streamer cannot accept PP-local export."""
+    _check_streaming_argument_support(stream_fn, owner, "current_pp_stage_only")
 
 
 class AutoBridge(Generic[MegatronModelT]):
@@ -373,18 +392,6 @@ class AutoBridge(Generic[MegatronModelT]):
         self.hf_pretrained: (
             PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig
         ) = hf_pretrained
-        if isinstance(hf_pretrained, PretrainedConfig):
-            hf_config = hf_pretrained
-            model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
-        else:
-            # Pretrained wrappers load their config lazily. A deprecation
-            # warning must not turn construction into an HF Hub request.
-            wrapper_state = vars(hf_pretrained)
-            hf_config = wrapper_state.get("_config")
-            model_name_or_path = wrapper_state.get("_model_name_or_path")
-        if hf_config is not None:
-            warn_if_deprecated_model(hf_config, model_name_or_path)
-
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.text_only = getattr(hf_pretrained, "_text_only", False) is True
@@ -461,7 +468,6 @@ class AutoBridge(Generic[MegatronModelT]):
         Raises:
             FileNotFoundError: If run_config.yaml is not found in the Megatron path
         """
-        warn_if_legacy_nemotron_path(hf_model_id)
 
         from transformers import AutoConfig
 
@@ -614,7 +620,6 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> # Works with local paths too
             >>> bridge = AutoBridge.from_hf_pretrained("/path/to/model")
         """
-        warn_if_legacy_nemotron_path(path)
 
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
@@ -800,13 +805,15 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
         with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
 
         This method yields weight tensors in HuggingFace format, handling the
         gathering of distributed tensors and format conversion. It's useful for
-        streaming weight export or custom processing. All ranks get full tensors.
+        streaming weight export or custom processing. By default all ranks get full tensors;
+        set ``current_pp_stage_only=True`` to yield only the current pipeline stage's tensors.
 
         If the model contains LoRA adapters, they will be automatically merged
         into the base weights before export. This ensures the exported model
@@ -831,6 +838,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 a grouped-expert export, and none for HF-only passthrough tensors. Bridges that
                 override ``stream_weights_megatron_to_hf`` must accept the flag; otherwise a
                 ``TypeError`` is raised before any weight is streamed.
+            current_pp_stage_only: Export only parameters owned by the current pipeline stage and
+                suppress cross-stage PP broadcasts. TP/EP gathering and HF layout conversion remain
+                enabled. Defaults to False. Bridges that override the streamer must accept this
+                flag when it is enabled.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor), or HFSourcedWeightTuple
@@ -858,6 +869,8 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = self._model_bridge
         if with_megatron_names:
             _check_with_megatron_names_support(bridge.stream_weights_megatron_to_hf, bridge)
+        if current_pp_stage_only:
+            _check_current_pp_stage_only_support(bridge.stream_weights_megatron_to_hf, bridge)
         return bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
@@ -868,6 +881,7 @@ class AutoBridge(Generic[MegatronModelT]):
             weight_dtype=weight_dtype,
             # Only forward the flag when set so bridges with a custom streamer keep working by default.
             **({"with_megatron_names": True} if with_megatron_names else {}),
+            **({"current_pp_stage_only": True} if current_pp_stage_only else {}),
         )
 
     def export_hf_weights_modelopt(
@@ -1086,7 +1100,6 @@ class AutoBridge(Generic[MegatronModelT]):
             build_adapter_config_dict,
             convert_adapter_weights_to_peft_state,
             infer_rank_pattern_from_adapter_weights,
-            infer_target_modules_from_adapter_weights,
         )
 
         if dist.is_initialized():
@@ -1127,7 +1140,7 @@ class AutoBridge(Generic[MegatronModelT]):
                     or getattr(self.hf_pretrained, "name_or_path", "")
                 )
 
-            target_modules = infer_target_modules_from_adapter_weights(module_adapter_keys)
+            target_modules = self._model_bridge._adapter_target_modules(module_adapter_keys)
             adapter_config = build_adapter_config_dict(
                 peft_config,
                 target_modules=target_modules,
@@ -1249,7 +1262,12 @@ class AutoBridge(Generic[MegatronModelT]):
                             .hf_pretrained
                         )
                     else:
-                        artifact_source = PreTrainedCausalLM.from_pretrained(artifact_source_path, **artifact_kwargs)
+                        artifact_cls = _resolve_pretrained_wrapper_cls(self.hf_pretrained)
+                        # Preserve specialized causal-family processor loaders without
+                        # changing the artifact contract for non-causal model heads.
+                        if not issubclass(artifact_cls, PreTrainedCausalLM):
+                            artifact_cls = PreTrainedCausalLM
+                        artifact_source = artifact_cls.from_pretrained(artifact_source_path, **artifact_kwargs)
                     artifact_source.config = self.hf_pretrained
                     additional_files = getattr(model_bridge_instance, "ADDITIONAL_FILE_PATTERNS", None) or None
                     artifact_source.save_artifacts(
@@ -1355,6 +1373,10 @@ class AutoBridge(Generic[MegatronModelT]):
             - The saved weights can be loaded with HuggingFace's from_pretrained
         """
         is_distributed = dist.is_initialized()
+        rank = dist.get_rank() if is_distributed else 0
+        output_path = Path(path).resolve()
+        previous_weight_files = _existing_safetensors_files(output_path) if rank == 0 else set()
+        saved_filenames: set[str] = set()
         if is_distributed:
             dist.barrier()
         bridge = self._model_bridge
@@ -1401,7 +1423,7 @@ class AutoBridge(Generic[MegatronModelT]):
             ignored_source_key_prefixes = (
                 _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ()
             ) or None
-            source.save_generator(
+            saved_filenames = source.save_generator(
                 generator,
                 path,
                 strict=strict,
@@ -1418,8 +1440,6 @@ class AutoBridge(Generic[MegatronModelT]):
 
             # NOTE: Collects the full state dict into CPU memory before sharding.
             # For very large models (>70B), this may require significant host RAM.
-            rank = dist.get_rank() if is_distributed else 0
-
             if rank == 0:
                 state_dict = {name: tensor.contiguous().cpu() for name, tensor in generator}
             else:
@@ -1434,14 +1454,19 @@ class AutoBridge(Generic[MegatronModelT]):
                 for filename, tensors in plan.filename_to_tensors.items():
                     shard = {k: state_dict[k] for k in tensors}
                     save_file(shard, safe_dir / filename)
+                    saved_filenames.add(filename)
                 if plan.is_sharded:
                     index = {"metadata": plan.metadata, "weight_map": plan.tensor_to_filename}
                     with open(safe_dir / "model.safetensors.index.json", "w") as f:
                         json.dump(index, f, indent=2)
+                    saved_filenames.add("model.safetensors.index.json")
+
+        if rank == 0:
+            for filename in previous_weight_files - saved_filenames:
+                (output_path / filename).unlink(missing_ok=True)
 
         # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
         if quant_tensors:
-            rank = dist.get_rank() if is_distributed else 0
             if rank == 0:
                 sidecar_path = Path(path) / "modelopt_weights.pt"
                 sidecar_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1849,11 +1874,21 @@ class AutoBridge(Generic[MegatronModelT]):
         # adapter weights are exported at full precision; bfloat16 downstream
         # PEFT merges can introduce ~1e-3 weight errors that compound into
         # large logit diffs.
-        provider = self.to_megatron_provider(load_weights=True)
-        provider.pipeline_dtype = torch.float32
-        provider.params_dtype = torch.float32
-        provider.finalize()
-        provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+        use_model_config = self._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION
+        if use_model_config:
+            # Builder-backed families: build through ModelConfig/ModelBuilder (get_model loads
+            # the base weights in its first pre-wrap hook, before the LoRA hook).
+            model_config = self.get_model_config()
+            model_config.transformer.pipeline_dtype = torch.float32
+            model_config.transformer.params_dtype = torch.float32
+            model_config.transformer.use_cpu_initialization = True
+            model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
+        else:
+            provider = self.to_megatron_provider(load_weights=True)
+            provider.pipeline_dtype = torch.float32
+            provider.params_dtype = torch.float32
+            provider.finalize()
+            provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
 
         def _load_and_export_adapter(model):
             """Load adapter weights into a materialized model and export them as PEFT."""
@@ -1894,11 +1929,14 @@ class AutoBridge(Generic[MegatronModelT]):
             nullcontext() if torch.distributed.is_initialized() else temporary_distributed_context(backend="gloo")
         )
         with model_context:
-            model = provider.provide_distributed_model(
-                wrap_with_ddp=False,
-                use_cpu_initialization=True,
-                init_model_with_meta_device=False,
-            )
+            if use_model_config:
+                model = self.get_model(model_config, wrap_with_ddp=False, mixed_precision_wrapper=None)
+            else:
+                model = provider.provide_distributed_model(
+                    wrap_with_ddp=False,
+                    use_cpu_initialization=True,
+                    init_model_with_meta_device=False,
+                )
             _load_and_export_adapter(model)
 
     def push_to_hub(self, path: str | Path) -> None: ...
@@ -1919,8 +1957,8 @@ class AutoBridge(Generic[MegatronModelT]):
             Serializable model config linked to its model builder.
 
         Raises:
-            ModelConfigNotSupportedError: If the selected model family explicitly
-                disables the builder path.
+            ModelConfigNotSupportedError: If the selected model family has not
+                migrated to builder-backed configs.
         """
         hf_config = (
             self.hf_pretrained.config
@@ -2027,10 +2065,13 @@ class AutoBridge(Generic[MegatronModelT]):
                 if hf_path is None:
                     pretrained = self.hf_pretrained
                 else:
-                    pretrained = self._pretrained_wrapper_cls.from_pretrained(
-                        hf_path,
-                        trust_remote_code=self.trust_remote_code,
-                    )
+                    if self.text_only:
+                        pretrained = self._text_only_pretrained_from_path(hf_path)
+                    else:
+                        pretrained = self._pretrained_wrapper_cls.from_pretrained(
+                            hf_path,
+                            trust_remote_code=self.trust_remote_code,
+                        )
                     self._set_source_metadata(model_config, hf_model_id=hf_path, hf_model_revision=None)
                 model_config.pre_wrap_hooks[:] = [
                     partial(self._model_bridge.load_weights_hf_to_megatron, pretrained),
@@ -2390,7 +2431,7 @@ class AutoBridge(Generic[MegatronModelT]):
         Behavior:
         - If the model can be imported from transformers directly, return the actual transformers class object.
         - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g.,
-        "DeepseekV2ForCausalLM").
+        "DeepseekV3ForCausalLM").
 
         Returns:
             str | type: The Transformers model class, or its class name for
@@ -2493,6 +2534,13 @@ class AutoBridge(Generic[MegatronModelT]):
                     has_implementation = (arch_key in registry) or (getattr(arch_key, "__name__", None) in registry)
 
                 if not has_implementation:
+                    if architecture in _REMOVED_HF_ARCHITECTURES:
+                        raise ValueError(
+                            f"Support for {_REMOVED_HF_ARCHITECTURES[architecture]} "
+                            f"(architecture '{architecture}') was removed in Megatron Bridge 0.7.0. "
+                            "Use Megatron Bridge 0.6.x for this model."
+                        )
+
                     # Get list of supported models
                     supported_models = cls.list_supported_models()
 
