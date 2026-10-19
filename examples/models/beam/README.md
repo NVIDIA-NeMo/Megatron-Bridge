@@ -14,8 +14,6 @@ current verification status.
 | Beam-1.0-501B-A23B | `reflection/Beam-1.0-501B-A23B` | BF16 |
 
 The commands below pin the public release revision `06641076793dad51b8907f7eb2a14f4e08fd3ec8`.
-The verification card retains the exact revisions used for historical runs; its original H200 revision is no longer
-publicly resolvable. Those historical measurements do not establish identical results for the public release weights.
 
 ## Modeling
 
@@ -55,8 +53,7 @@ sandwich norms, depth-scaled residuals and FP32 router parameters on top of an u
 the native `BeamConfig` and `BeamForCausalLM` used for checkpoint loading and Hugging Face reference inference.
 This minimum applies to Beam; Megatron Bridge's package-wide Transformers lower bound remains 5.15.
 Native Beam HF integration tests skip on older Transformers versions, while tests that do not need those classes run.
-The historical H200 verification runs used the `nvcr.io/nvidia/pytorch:26.08-py3` base container; see the
-[repository installation instructions](../../../README.md#-installation).
+See the [repository installation instructions](../../../README.md#-installation) for environment setup.
 
 The Slurm launchers require an account, partition, and container image. Set them before running any
 `--executor slurm` conversion or `train.sh` command:
@@ -67,8 +64,7 @@ export SLURM_PARTITION=your-partition
 export CONTAINER_IMAGE=your-container-image
 ```
 
-The conversion and Megatron inference examples below adapt the historical verification commands to the public release
-revision and shorter paths. The historical runs used H200 (CPU conversion on a B300 host). The training commands are shortened from the
+The examples below use the public release revision and relative paths. The training commands are shortened from the
 card's commands, which add the pinned dataset revision, seeds, NaN checks and logging options.
 
 ## Conversion
@@ -95,8 +91,6 @@ weights on each GPU; EP8 on one node would need about 127 GiB per GPU and leaves
   --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 \
   --distributed-save --save-every-n-ranks 1 --no-progress
 ```
-
-The historical GPU round trip reproduced all 38,366 source tensors exactly; `config.json` differs only in `transformers_version`.
 
 CPU import and export run in a single process on a host with well over 1 TB of memory and need one runtime GPU
 (`--gpus-per-node 1`): Beam's attention layers are Transformer Engine modules, and Transformer Engine refuses to
@@ -129,16 +123,14 @@ Megatron generation uses the non-cached legacy full-prefix path on 2 x 8 H200:
   --max_new_tokens 32 --apply-chat-template --legacy-full-prefix
 ```
 
-Greedy generation is deterministic across runs. Beam's chat template opens each response in the analysis channel,
+Beam's chat template opens each response in the analysis channel,
 so short token budgets end before the final channel.
 
 To compare the imported checkpoint with Hugging Face, use `--task model-comparison` with reference logits from a BF16
-Hugging Face forward of the same revision (`--hf-logits-path`). On the prompt "The capital of France is the city of"
-the historical comparison predicted " Paris" in both implementations with cosine similarity 0.9997.
+Hugging Face forward of the same revision (`--hf-logits-path`).
 
 For Hugging Face inference on a single 8 x H200 node, cap each GPU at 110 GiB so Transformers offloads the remaining
-layers to CPU. Uncapped `--device-map auto` placement runs out of memory while it stacks the per-expert weights, and
-a 125 GiB cap leaves only about 1.5 GiB of headroom when the loader stacks two layers at once:
+layers to CPU and leaves room for temporary buffers while loading the per-expert weights:
 
 ```bash
 ./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 8 \
@@ -183,31 +175,24 @@ pretraining recipe does not use BF16 gradients or optimizer moments; performance
 precision difference. Full SFT and LoRA retain the H200 learning rates, schedules, dataset selection and adapter scope.
 
 All three recipes collect Python garbage every 10 updates, disable activation fusion, and set
-`NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`. Matched 20-step finetuning comparisons retain the same checkpoint, data packs,
-learning-rate schedule, natural routing and FP32 optimizer state. GC every 5 updates did not improve throughput;
-SM16 with automatic garbage collection did not outperform the selected GC10/SM32 configuration. The combination
-of GC10 and SM16 was not tested for finetuning.
+`NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`. HybridEP uses 32 communication and preprocessing SMs.
 
-All three final runs completed 100 finite updates with no skipped or NaN updates in NeMo 26.10 RC5.
-These measurements used Transformers 5.17 with Bridge's earlier configuration fallback; they precede the upgrade
-to native Beam support in Transformers 5.20.1.
-Checkpoint writes and validation were disabled for these measurements. Measurements cover updates 51–100, including five garbage-collection cycles and intervening logging. Each rate
+All three runs recorded in the verification card completed 100 finite updates with no skipped or NaN updates in
+NeMo 26.10 RC5 with Transformers 5.20.1, verified on 2026-10-18.
+The table uses the card's synchronized updates 51–100 measurements, including five garbage-collection cycles and
+intervening logging. These are separate from the card's final-ten-step logger averages.
+Checkpoint writes and evaluation were disabled for these measurements. Each rate
 uses the slowest rank's synchronized elapsed time and Bridge's hybrid-layer model-FLOP estimate; token rates count
 physical processed tokens, including padding.
 
 | Recipe | Seconds/update | Physical tokens/s/GPU | Model TFLOP/s/GPU | Minimum observed free memory | First / last 10-update mean loss |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Pretraining, 64 GPUs | 7.7679 | 2109.18 | 291.94 | 11.36 GiB | 1.1828 / 1.0398 |
-| Full SFT, 64 GPUs | 1.8025 | 565.84 | 77.72 | 9.28 GiB | 1.0766 / 0.7391 |
-| LoRA, 32 GPUs | 1.4390 | 1419.52 | 194.95 (full-training equivalent) | 87.90 GiB | 1.0778 / 0.8389 |
+| Pretraining, 64 GPUs | 7.6850 | 2131.93 | 295.09 | 11.36 GiB | 1.1828 / 1.0398 |
+| Full SFT, 64 GPUs | 1.6841 | 605.61 | 83.18 | 9.28 GiB | 1.0766 / 0.7390 |
+| LoRA, 32 GPUs | 1.3313 | 1534.31 | 210.71 (full-training equivalent) | 87.90 GiB | 1.0778 / 0.8389 |
 
 The LoRA model-work estimate uses the full-training FLOP formula. It is not actual executed LoRA compute or MFU.
 These runs validate training behavior; they do not establish checkpoint save, adapter export or resume behavior.
-
-Matched pretraining screens selected attention/router graphs with expert-activation recompute: graphs alone
-left less than 4 GiB of observed free memory. SM16 and SM32 were effectively tied, so SM32 was retained without a
-performance-superiority claim. TP2/PP2/EP32, activation fusion and TP overlap were rejected after their respective
-memory or numerical comparison failures. Variable baseline timing limits repeatable-speedup claims.
 
 Offline packing aligns individual sequences to 8 tokens for SFT and 4 for LoRA. The LoRA alignment differs from the
 H200 recipe's alignment of 2 and can change pack membership and order. Prepare a separate dataset output for each
@@ -345,6 +330,7 @@ The dataset must be tokenized with Beam's tokenizer into Megatron's indexed form
 
 ## Known Limitations
 
+- Full-checkpoint conversion and inference have not been revalidated with native Transformers 5.20.1 Beam support.
 - The launcher's distributed CPU export requests no GPU resources and therefore fails for Beam with
   "TransformerEngine needs CUDA". Use the single-process CPU commands above with one runtime GPU.
 - Megatron KV-cache inference is not verified; use the legacy full-prefix generation path.
