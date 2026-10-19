@@ -14,9 +14,10 @@
 
 """Process environment defaults shared by every hardware recipe.
 
-Keep this mapping limited to values that are identical across all hardware
-recipes. Model- and topology-specific values belong directly in the owning
-recipe builder so users can see the complete launch environment.
+Keep this mapping limited to defaults shared by all hardware recipes. Model-
+and topology-specific values, including overrides of these defaults, belong
+directly in the owning recipe builder so users can see the complete launch
+environment.
 """
 
 COMMON_RECIPE_ENV_VARS: dict[str, str | int | float | bool] = {

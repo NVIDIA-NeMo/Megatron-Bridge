@@ -192,7 +192,18 @@ class TestRecipeRunnerQwen3Omni:
 
         assert module.apply_runtime_environment(config) is config
 
-        handles["apply_environment_variables"].assert_called_once_with(config)
+        handles["apply_environment_variables"].assert_called_once_with(config, warn_on_ignored_allocator_settings=True)
+
+    def test_apply_runtime_environment_forwards_allocator_warning_choice(self):
+        """The re-exec bootstrap disables the late-allocator warning through the shared runner."""
+        module, handles = _load_recipe_runner_module()
+        config = SimpleNamespace(ddp=SimpleNamespace(nccl_ub=False))
+
+        module.apply_runtime_environment(config, warn_on_ignored_allocator_settings=False)
+
+        handles["apply_environment_variables"].assert_called_once_with(
+            config, warn_on_ignored_allocator_settings=False
+        )
 
     def test_llm_step_alias_loads_gpt_forward_step(self):
         """The public LLM step should resolve lazily to the GPT forward step."""

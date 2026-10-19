@@ -311,9 +311,13 @@ def _set_if_present(container: object, field_name: str, value: object | None) ->
         setattr(container, field_name, value)
 
 
-def apply_runtime_environment(config: ConfigContainer) -> ConfigContainer:
+def apply_runtime_environment(
+    config: ConfigContainer,
+    *,
+    warn_on_ignored_allocator_settings: bool = True,
+) -> ConfigContainer:
     """Apply environment settings derived from the resolved ConfigContainer."""
-    apply_environment_variables(config)
+    apply_environment_variables(config, warn_on_ignored_allocator_settings=warn_on_ignored_allocator_settings)
     if getattr(getattr(config, "ddp", None), "nccl_ub", False):
         os.environ.setdefault("NCCL_NVLS_ENABLE", "1")
         os.environ.setdefault("NCCL_CTA_POLICY", "1")
@@ -341,7 +345,8 @@ def bootstrap_recipe_environment(
     bootstrap in a new process. ``execvpe`` preserves the current PID, so the
     second interpreter returns normally after re-applying idempotent defaults.
     """
-    config = apply_runtime_environment(config)
+    # The new interpreter starts with these values, so allocator settings applied here still take effect.
+    config = apply_runtime_environment(config, warn_on_ignored_allocator_settings=False)
     if os.environ.get(RECIPE_ENV_BOOTSTRAP_MARKER) == str(os.getpid()):
         return config
 

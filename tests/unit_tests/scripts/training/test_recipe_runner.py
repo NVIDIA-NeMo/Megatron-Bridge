@@ -551,11 +551,13 @@ def test_benchmark_bootstrap_applies_environment_before_self_exec(
     config = object()
     events: list[str] = []
     exec_calls: list[tuple[str, list[str], dict[str, str]]] = []
+    allocator_warning_choices: list[bool] = []
     monkeypatch.delenv(recipe_runner.RECIPE_ENV_BOOTSTRAP_MARKER, raising=False)
     monkeypatch.delenv("RECIPE_DEFAULT", raising=False)
 
-    def apply_environment(current_config: object) -> object:
+    def apply_environment(current_config: object, *, warn_on_ignored_allocator_settings: bool) -> object:
         events.append("environment")
+        allocator_warning_choices.append(warn_on_ignored_allocator_settings)
         recipe_runner.os.environ.setdefault("RECIPE_DEFAULT", "enabled")
         return current_config
 
@@ -574,6 +576,8 @@ def test_benchmark_bootstrap_applies_environment_before_self_exec(
         )
 
     assert events == ["environment", "exec"]
+    # The restarted interpreter reads allocator settings at startup, so the late-setting warning would be wrong here.
+    assert allocator_warning_choices == [False]
     executable, command, environment = exec_calls[0]
     assert executable == recipe_runner.sys.executable
     assert command == [
@@ -604,7 +608,7 @@ def test_benchmark_bootstrap_marker_skips_second_exec(
         )
         is config
     )
-    apply_environment.assert_called_once_with(config)
+    apply_environment.assert_called_once_with(config, warn_on_ignored_allocator_settings=False)
     execvpe.assert_not_called()
 
 

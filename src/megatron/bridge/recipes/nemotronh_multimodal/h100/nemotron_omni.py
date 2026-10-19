@@ -184,6 +184,9 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 8,
+        # The verified run used PyTorch's default allocator. With expandable segments, rank 0 reserves about
+        # 5 GiB more and the step after a checkpoint save runs out of memory on 80 GB H100s.
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:False",
         "USE_MNNVL": 0,
     }
     return cfg

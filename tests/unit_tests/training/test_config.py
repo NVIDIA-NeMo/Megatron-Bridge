@@ -4194,6 +4194,43 @@ class TestRuntimeConfigUpdate:
         with pytest.raises((TypeError, ValueError)):
             apply_environment_variables(config)
 
+    @pytest.mark.parametrize(
+        ("cuda_initialized", "launch_env", "recipe_value", "warn", "expect_warning"),
+        [
+            (True, {}, "expandable_segments:True", True, True),
+            (True, {}, "expandable_segments:False,max_split_size_mb:128", True, True),
+            (False, {}, "expandable_segments:True", True, False),
+            (True, {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}, "expandable_segments:True", True, False),
+            (True, {"PYTORCH_ALLOC_CONF": "expandable_segments:True"}, "expandable_segments:True", True, False),
+            (True, {}, "expandable_segments: False", True, False),
+            (True, {}, "expandable_segments:True", False, False),
+        ],
+    )
+    def test_recipe_allocator_setting_warns_when_applied_after_cuda_init(
+        self, monkeypatch, cuda_initialized, launch_env, recipe_value, warn, expect_warning
+    ):
+        """PyTorch ignores allocator settings set after CUDA initializes, so a late recipe value should warn."""
+        from megatron.bridge.training import config as config_module
+
+        config = MagicMock(spec=ConfigContainer)
+        config.env_vars = {"PYTORCH_CUDA_ALLOC_CONF": recipe_value}
+        monkeypatch.setattr(config_module.torch.cuda, "is_initialized", lambda: cuda_initialized)
+        warn_rank_0 = MagicMock()
+        monkeypatch.setattr(config_module, "warn_rank_0", warn_rank_0)
+
+        with patch.dict(os.environ):
+            os.environ.pop("PYTORCH_ALLOC_CONF", None)
+            os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+            os.environ.update(launch_env)
+
+            apply_environment_variables(config, warn_on_ignored_allocator_settings=warn)
+
+            assert os.environ["PYTORCH_CUDA_ALLOC_CONF"] == launch_env.get("PYTORCH_CUDA_ALLOC_CONF", recipe_value)
+
+        assert warn_rank_0.called is expect_warning
+        if expect_warning:
+            assert f"PYTORCH_CUDA_ALLOC_CONF={recipe_value}" in warn_rank_0.call_args.args[0]
+
     def test_recipe_environment_variables_support_hydra_overrides(self):
         """The top-level mapping should be replaceable through the shared recipe override path."""
         from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides

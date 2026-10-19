@@ -314,6 +314,7 @@ def test_cord_v2_8gpu_sft_recipe_uses_validated_execution_tuning(fake_processor)
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe", "layernorm"]
     assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is True
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:False"
 
 
 @pytest.mark.parametrize(

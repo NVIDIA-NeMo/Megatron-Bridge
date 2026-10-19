@@ -2227,25 +2227,61 @@ def _get_key_config_values(config_obj: Any) -> Dict[str, Any]:
     return values
 
 
-def apply_environment_variables(cfg: ConfigContainer) -> None:
+# PyTorch reads its CUDA caching-allocator settings once, when CUDA initializes.
+_CUDA_ALLOCATOR_ENV_VARS = frozenset({"PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF"})
+
+
+def _is_default_allocator_setting(value: str) -> bool:
+    """Return whether an allocator setting only restates PyTorch's default of no expandable segments."""
+    # PyTorch ignores whitespace when it parses allocator settings.
+    return all(option in {"", "expandable_segments:False"} for option in "".join(value.split()).split(","))
+
+
+def apply_environment_variables(cfg: ConfigContainer, *, warn_on_ignored_allocator_settings: bool = True) -> None:
     """Apply recipe environment variable defaults to the current process.
 
     Existing process values are preserved so explicit launcher or shell
     settings take precedence over recipe defaults.
 
+    PyTorch reads CUDA allocator settings such as ``PYTORCH_CUDA_ALLOC_CONF``
+    only when CUDA initializes. When the launch environment sets no allocator
+    variable and CUDA is already initialized, a recipe allocator setting does
+    not change the current process, so a warning is issued.
+
     Args:
         cfg: Configuration container with environment variable defaults.
+        warn_on_ignored_allocator_settings: Warn when a non-default recipe
+            allocator setting is applied after CUDA initialization. Callers
+            that restart the process with the updated environment pass False.
 
     Raises:
         ValueError: If an environment variable name is empty.
         TypeError: If an environment variable value is not a scalar.
     """
+    launch_sets_allocator = not _CUDA_ALLOCATOR_ENV_VARS.isdisjoint(os.environ)
+    ignored_allocator_settings: list[str] = []
     for name, value in cfg.env_vars.items():
         if not isinstance(name, str) or not name:
             raise ValueError("Environment variable names must be non-empty strings.")
         if not isinstance(value, (str, int, float, bool)):
             raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
+        if (
+            warn_on_ignored_allocator_settings
+            and name in _CUDA_ALLOCATOR_ENV_VARS
+            and not launch_sets_allocator
+            and not _is_default_allocator_setting(str(value))
+            and torch.cuda.is_initialized()
+        ):
+            ignored_allocator_settings.append(f"{name}={value}")
         os.environ.setdefault(name, str(value))
+
+    if ignored_allocator_settings:
+        warn_rank_0(
+            f"Recipe env_vars set {', '.join(ignored_allocator_settings)} after CUDA was initialized. PyTorch reads "
+            "allocator settings only when CUDA initializes, so this process keeps its startup allocator settings. "
+            "To use the recipe value, set it in the launch environment; with scripts/training/train.sh, export it "
+            "and pass its name with --env."
+        )
 
 
 def runtime_config_update(cfg: ConfigContainer) -> None:
