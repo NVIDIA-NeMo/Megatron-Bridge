@@ -262,6 +262,25 @@ class MoeAmaxFanoutMapping(AmaxMapping):
         return new_mapping
 
 
+class PackedExpertAmaxMapping(MoeAmaxFanoutMapping):
+    """Grouped-MoE amax mapping for HF checkpoints that pack all experts into one tensor.
+
+    HF names one quantizer per packed tensor (e.g. ``experts.gate_up_proj_input_quantizer``),
+    so it exports the maximum of the per-EP-rank grouped-MoE amax values.
+    """
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: torch.Tensor | None,
+        megatron_module: object | None,
+    ) -> dict[str, torch.Tensor]:
+        base = AmaxMapping.megatron_to_hf(self, megatron_weights, megatron_module)
+        if not base:
+            return {}
+        weight = torch.stack(self._gather_amax_by_ep_rank(next(iter(base.values())))).amax(dim=0)
+        return {pattern: weight for pattern in self.hf_patterns}
+
+
 def _convert_hf_weight_names(hf_param: str | dict[str, str], mapped_name: str) -> list[str]:
     if isinstance(hf_param, dict):
         return [
@@ -367,8 +386,8 @@ def convert_to_amax_map(
     Note:
         Mappings ending in '.weight' become regular amax mappings. MoE expert
         mappings ending in '.weight*' become fanout mappings when their HF names
-        contain one additional expert wildcard. Other layouts cannot be represented
-        by the shared-expert fanout mapping and are skipped.
+        contain one additional expert wildcard, and input-quantizer mappings to one
+        packed HF tensor of all experts when they do not. Other layouts are skipped.
     """
     extended_mapping = []
 
@@ -387,6 +406,18 @@ def convert_to_amax_map(
                     MoeAmaxFanoutMapping(
                         megatron_param=new_megatron_param,
                         hf_patterns=hf_patterns,
+                    )
+                )
+            elif (
+                mapped_name == ".input_quantizer._amax"
+                and isinstance(mapping.hf_param, str)
+                and mapping._count_wildcard_groups(mapping.hf_param) == megatron_wildcards
+            ):
+                # Packed HF experts (e.g. ``experts.gate_up_proj``) share one input quantizer.
+                extended_mapping.append(
+                    PackedExpertAmaxMapping(
+                        megatron_param=new_megatron_param,
+                        hf_patterns=[f"{mapping.hf_param}_{mapped_name.removeprefix('.')}"],
                     )
                 )
             continue
@@ -429,3 +460,30 @@ def convert_to_amax_map(
             extended_mapping.append(new_mapping)
 
     return extended_mapping
+
+
+def amax_mapping_hf_names(mapping: MegatronParamMapping, num_experts: int | None = None) -> list[str]:
+    """Return the HF ``_amax`` names a resolved amax mapping exports to, without converting tensors.
+
+    Args:
+        mapping: Amax mapping returned by ``MegatronMappingRegistry.megatron_to_hf_lookup``.
+        num_experts: Total number of routed experts; required for grouped-MoE fanout mappings.
+    """
+    if isinstance(mapping, MoeAmaxFanoutMapping):
+        names = []
+        for pattern in mapping.hf_patterns:
+            if not mapping._EXPERT_WILDCARD_RE.search(pattern):
+                names.append(pattern)
+                continue
+            if not num_experts:
+                raise ValueError(f"num_experts is required to name the experts of {mapping.megatron_param}")
+            names.extend(
+                mapping._EXPERT_WILDCARD_RE.sub(rf"\g<1>{expert}\g<3>", pattern, count=1)
+                for expert in range(num_experts)
+            )
+        return names
+    if isinstance(mapping, AmaxFanoutMapping):
+        return list(mapping.hf_targets)
+    if isinstance(mapping, AmaxMapping):
+        return list(mapping.hf_param.values()) if isinstance(mapping.hf_param, dict) else [mapping.hf_param]
+    return []

@@ -336,6 +336,56 @@ def _check_current_pp_stage_only_support(stream_fn: Callable[..., Any], owner: o
     _check_streaming_argument_support(stream_fn, owner, "current_pp_stage_only")
 
 
+MODELOPT_QUANTIZER_STATE_FILE = "quantizer_state.pth"
+MODELOPT_QUANTIZER_RECIPE_FILE = "quant_recipe.yaml"
+MODELOPT_QUANTIZER_RECIPE_FORMAT = "modelopt_quantizer_recipe"
+MODELOPT_QUANTIZER_RECIPE_VERSION = 1
+
+
+def _save_modelopt_quantizer_sidecars(
+    path: Path, quantizer_recipe: dict[str, dict[str, Any]], quant_tensors: dict[str, torch.Tensor]
+) -> None:
+    """Write ModelOpt quantizer ranges and recipe under HF names, e.g. for vLLM fake-quant serving.
+
+    ``quantizer_state.pth`` holds the tensors (e.g. ``_amax``) of the enabled quantizers and
+    ``quant_recipe.yaml`` their properties-only ModelOpt state. Neither is written when no
+    quantizer is enabled (e.g. weight-only formats whose weights were folded), so the export
+    stays a plain checkpoint.
+    """
+    import yaml
+
+    class _RecipeDumper(yaml.SafeDumper):
+        pass
+
+    # Quantizer states can record runtime dtypes and shapes; store dtypes by name, shapes as lists.
+    _RecipeDumper.add_representer(torch.dtype, lambda dumper, dtype: dumper.represent_str(str(dtype)))
+    _RecipeDumper.add_representer(torch.Size, lambda dumper, size: dumper.represent_list(list(size)))
+
+    state_path = path / MODELOPT_QUANTIZER_STATE_FILE
+    recipe_path = path / MODELOPT_QUANTIZER_RECIPE_FILE
+    if not quantizer_recipe:
+        state_path.unlink(missing_ok=True)
+        recipe_path.unlink(missing_ok=True)
+        return
+    # Share identical states so the YAML stores each distinct quantizer config once (as an anchor).
+    shared_states = {}
+    quantizers = {
+        name: shared_states.setdefault(yaml.dump(state, Dumper=_RecipeDumper, sort_keys=True), state)
+        for name, state in quantizer_recipe.items()
+    }
+    path.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {name: tensor for name, tensor in quant_tensors.items() if name.rpartition(".")[0] in quantizers},
+        state_path,
+    )
+    recipe = {
+        "format": MODELOPT_QUANTIZER_RECIPE_FORMAT,
+        "version": MODELOPT_QUANTIZER_RECIPE_VERSION,
+        "quantizers": quantizers,
+    }
+    recipe_path.write_text(yaml.dump(recipe, Dumper=_RecipeDumper, sort_keys=False))
+
+
 class AutoBridge(Generic[MegatronModelT]):
     """
     Automatically select and instantiate the appropriate bridge for a model.
@@ -1454,11 +1504,13 @@ class AutoBridge(Generic[MegatronModelT]):
         )
         model_instance = self._get_model_instance(model)
         quant_tensors = None
+        quantizer_recipe = None
         # Import lazily so Bridge conversion modules can load before ModelOpt
         # registers its Megatron-Bridge plugin hooks.
         from modelopt.torch.quantization.utils import is_quantized
 
         if is_quantized(model_instance):
+            quantizer_recipe = bridge.build_modelopt_quantizer_recipe(self.hf_pretrained, model)
             quant_tensors = {}
 
             def _filter_quant(gen):
@@ -1529,12 +1581,9 @@ class AutoBridge(Generic[MegatronModelT]):
             for filename in previous_weight_files - saved_filenames:
                 (output_path / filename).unlink(missing_ok=True)
 
-        # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
-        if quant_tensors:
-            if rank == 0:
-                sidecar_path = Path(path) / "modelopt_weights.pt"
-                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(quant_tensors, sidecar_path)
+        # Save the quantizer sidecars after the main generator is consumed (rank 0 only).
+        if rank == 0 and quantizer_recipe is not None:
+            _save_modelopt_quantizer_sidecars(output_path, quantizer_recipe, quant_tensors)
 
         if is_distributed:
             dist.barrier()

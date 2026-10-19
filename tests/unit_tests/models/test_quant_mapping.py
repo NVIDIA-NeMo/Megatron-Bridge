@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -24,6 +23,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ConcatenatedQKVMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     QKVGMapping,
     QKVMapping,
@@ -33,6 +33,8 @@ from megatron.bridge.models.conversion.quant_mapping import (
     AmaxFanoutMapping,
     AmaxMapping,
     MoeAmaxFanoutMapping,
+    PackedExpertAmaxMapping,
+    amax_mapping_hf_names,
     derive_kv_bmm_amax_map,
 )
 
@@ -278,21 +280,17 @@ class TestQuantMappingRegistryIntegration:
 
     @pytest.fixture
     def registry(self, llama_like_mappings):
-        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}, clear=False):
-            return MegatronMappingRegistry(*llama_like_mappings)
+        return MegatronMappingRegistry(*llama_like_mappings)
 
-    def test_quant_mappings_disabled_by_default(self, llama_like_mappings):
-        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "0"}, clear=False):
-            registry = MegatronMappingRegistry(*llama_like_mappings)
-        assert not any(isinstance(m, AmaxMapping) for m in registry.get_all_mappings())
+    def test_quant_mappings_registered_by_default(self, registry):
         assert (
             registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.core_attention.k_bmm_quantizer._amax")
-            is None
+            is not None
         )
 
     def test_quant_mappings_count(self, registry):
         """weight_quantizer and input_quantizer amax mappings are added in equal numbers."""
-        amax_mappings = [m for m in registry.get_all_mappings() if isinstance(m, AmaxMapping)]
+        amax_mappings = [m for m in registry._quantization_mappings if isinstance(m, AmaxMapping)]
         weight_q = [m for m in amax_mappings if "weight_quantizer" in m.megatron_param]
         input_q = [m for m in amax_mappings if "input_quantizer" in m.megatron_param]
         assert len(weight_q) == len(input_q)
@@ -471,8 +469,7 @@ class TestKvBmmQuantMappingPrefixes:
             )
         ]
 
-        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}, clear=False):
-            registry = MegatronMappingRegistry(*mappings)
+        registry = MegatronMappingRegistry(*mappings)
 
         mapping = registry.megatron_to_hf_lookup(
             "language_model.decoder.layers.9.self_attention.core_attention.k_bmm_quantizer._amax"
@@ -706,8 +703,7 @@ class TestMoeQuantMappingRegistryIntegration:
 
     @pytest.fixture
     def registry(self, moe_like_mappings):
-        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}, clear=False):
-            return MegatronMappingRegistry(*moe_like_mappings)
+        return MegatronMappingRegistry(*moe_like_mappings)
 
     def test_moe_weight_star_resolves_to_moe_fanout(self, registry):
         m = registry.megatron_to_hf_lookup("decoder.layers.0.mlp.experts.linear_fc2.weight_quantizer._amax")
@@ -779,8 +775,7 @@ class TestMoeQuantMappingRegistryIntegration:
                 "model.layers.*.mlp.experts.*.gate_proj.weight",
             ),
         ]
-        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}, clear=False):
-            registry = MegatronMappingRegistry(*mappings)
+        registry = MegatronMappingRegistry(*mappings)
 
         m = registry.megatron_to_hf_lookup(
             "decoder.layers.0.mlp.experts.local_experts.1.linear_fc1.weight_quantizer._amax"
@@ -934,3 +929,47 @@ class TestEPRenumberRegexSkipsAmax:
             ep_rank=1,
         )
         assert out == "decoder.layers.0.mlp.experts.linear_fc1.bias3"
+
+
+class TestAmaxMappingHfNames:
+    def test_names_cover_fanout_and_experts(self):
+        registry = MegatronMappingRegistry(
+            QKVMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                q="model.layers.*.self_attn.q_proj.weight",
+                k="model.layers.*.self_attn.k_proj.weight",
+                v="model.layers.*.self_attn.v_proj.weight",
+            ),
+            AutoMapping(
+                "decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                "model.layers.*.mlp.experts.*.down_proj.weight",
+            ),
+        )
+        layer = "decoder.layers.1"
+
+        def names(megatron_name, num_experts=None):
+            return amax_mapping_hf_names(registry.megatron_to_hf_lookup(megatron_name), num_experts)
+
+        assert names(f"{layer}.self_attention.linear_qkv.input_quantizer._amax") == [
+            f"model.layers.1.self_attn.{p}_proj.input_quantizer._amax" for p in "qkv"
+        ]
+        assert names(f"{layer}.self_attention.core_attention.k_bmm_quantizer._amax") == [
+            "model.layers.1.self_attn.k_bmm_quantizer._amax"
+        ]
+        assert names(f"{layer}.mlp.experts.linear_fc2.input_quantizer._amax", num_experts=2) == [
+            f"model.layers.1.mlp.experts.{e}.down_proj.input_quantizer._amax" for e in range(2)
+        ]
+        with pytest.raises(ValueError, match="num_experts"):
+            names(f"{layer}.mlp.experts.linear_fc2.input_quantizer._amax")
+
+    def test_packed_experts_share_one_input_quantizer(self):
+        registry = MegatronMappingRegistry(
+            FusedGatedExpertMapping(
+                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                hf_param="model.layers.*.mlp.experts.gate_up_proj",
+            ),
+        )
+        mapping = registry.megatron_to_hf_lookup("decoder.layers.2.mlp.experts.linear_fc1.input_quantizer._amax")
+        assert isinstance(mapping, PackedExpertAmaxMapping)
+        assert amax_mapping_hf_names(mapping) == ["model.layers.2.mlp.experts.gate_up_proj_input_quantizer._amax"]
+        assert registry.megatron_to_hf_lookup("decoder.layers.2.mlp.experts.linear_fc1.weight_quantizer._amax") is None

@@ -12,6 +12,7 @@ This guide covers model quantization in Megatron Bridge using NVIDIA ModelOpt, i
 - [Overview](#overview)
 - [Post-Training Quantization (PTQ)](#post-training-quantization-ptq)
 - [Programmatic ModelOpt Export](#programmatic-modelopt-export)
+- [Fake-Quantized Hugging Face Export](#fake-quantized-hugging-face-export)
 - [Quantization-Aware Training (QAT)](#quantization-aware-training-qat)
 
 ## Overview
@@ -180,6 +181,24 @@ for name, weight in bridge.export_hf_weights_modelopt(
 `ignore_patterns` are matched against Hugging Face parameter names. The matcher handles the optional `model.` prefix
 and ModelOpt scale suffixes, so a pattern can target the logical parameter name without separately listing
 `*.weight_scale` and `*.weight_scale_2`.
+
+### Fake-Quantized Hugging Face Export
+
+`AutoBridge.save_hf_pretrained()` and `save_hf_weights()` also save a fake-quantized ModelOpt model, for
+example to evaluate a format that inference engines have no kernels for in vLLM's ModelOpt fake-quant serving.
+Weights are saved as they are in the model, so fold the weight quantizers into them first with
+`modelopt.torch.quantization.fold_weight`. The enabled quantizers are written next to the weights under
+Hugging Face names:
+
+- `quantizer_state.pth`: their tensors (e.g. `model.layers.0.self_attn.q_proj.input_quantizer._amax`), in their
+  original precision;
+- `quant_recipe.yaml`: their settings, one ModelOpt `get_modelopt_state(properties_only=True)` per quantizer, under
+  a `format: modelopt_quantizer_recipe`, `version: 1` header.
+
+Neither file is written when no quantizer is enabled, e.g. a weight-only format after folding. The export fails if
+an enabled quantizer has no Hugging Face name or holds tensors other than `_amax`. See the
+[ModelOpt Megatron-Bridge example](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge)
+for the export and serving commands.
 
 ### Supported Models For PTQ
 
