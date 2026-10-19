@@ -18,13 +18,19 @@ import json
 from pathlib import Path
 
 import pytest
-from transformers import AutoConfig, BeamConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.beam.beam_config import BeamModelConfig
 
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def native_transformers():
+    return pytest.importorskip(
+        "transformers", minversion="5.20.1", reason="Native Beam requires Transformers >= 5.20.1"
+    )
 
 
 @pytest.fixture
@@ -35,10 +41,10 @@ def checkpoint_metadata(tmp_path):
     return tmp_path, config
 
 
-def test_public_config_loads_through_autobridge_without_weights(checkpoint_metadata):
+def test_public_config_loads_through_autobridge_without_weights(checkpoint_metadata, native_transformers):
     path, source = checkpoint_metadata
     bridge = AutoBridge.from_hf_pretrained(path)
-    assert isinstance(AutoConfig.from_pretrained(path), BeamConfig)
+    assert isinstance(native_transformers.AutoConfig.from_pretrained(path), native_transformers.BeamConfig)
     cfg = bridge.get_model_config()
     assert isinstance(cfg, BeamModelConfig)
     assert cfg.hybrid_layer_pattern.count("*") == source["num_hidden_layers"]
@@ -50,8 +56,9 @@ def test_public_config_loads_through_autobridge_without_weights(checkpoint_metad
     assert cfg.moe_router_bias_update_rate == cfg.moe_aux_loss_coeff == 0
 
 
-@pytest.mark.parametrize("config_class", [AutoConfig, BeamConfig])
-def test_config_roundtrip_preserves_published_fields(checkpoint_metadata, tmp_path, config_class):
+@pytest.mark.parametrize("config_class", ["AutoConfig", "BeamConfig"])
+def test_config_roundtrip_preserves_published_fields(checkpoint_metadata, tmp_path, config_class, native_transformers):
+    config_class = getattr(native_transformers, config_class)
     path, source = checkpoint_metadata
     cfg = config_class.from_pretrained(path)
     for key, value in source.items():

@@ -53,6 +53,8 @@ Beam runs on the repository's default Megatron-Core pin. The bridge adds Beam's 
 sandwich norms, depth-scaled residuals and FP32 router parameters on top of an unmodified Megatron-Core
 `HybridModel`, so no Megatron-LM branch switch is needed. Transformers 5.20.1 or newer (below 5.21) supplies
 the native `BeamConfig` and `BeamForCausalLM` used for checkpoint loading and Hugging Face reference inference.
+This minimum applies to Beam; Megatron Bridge's package-wide Transformers lower bound remains 5.15.
+Native Beam HF integration tests skip on older Transformers versions, while tests that do not need those classes run.
 The historical H200 verification runs used the `nvcr.io/nvidia/pytorch:26.08-py3` base container; see the
 [repository installation instructions](../../../README.md#-installation).
 

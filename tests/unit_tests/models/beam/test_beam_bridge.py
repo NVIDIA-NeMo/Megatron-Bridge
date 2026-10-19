@@ -21,7 +21,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers.models import beam
 
 from megatron.bridge.models.beam.beam_bridge import (
     _DENSE_EXPORT_DROPS,
@@ -42,6 +41,14 @@ from megatron.bridge.models.beam.beam_mappings import (
 from megatron.bridge.models.beam.modeling_beam import BeamOutputLayer, beam_logit_softcapping
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVGMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+
+@pytest.fixture
+def native_hf_beam():
+    pytest.importorskip("transformers", minversion="5.20.1", reason="Native Beam requires Transformers >= 5.20.1")
+    from transformers.models import beam
+
+    return beam
 
 
 def _cfg(num_heads=8, num_query_groups=2, head_size=4, hidden=16):
@@ -691,12 +698,12 @@ class TestBuilderBackedConfig:
         assert restored.transformer.attention_output_gate_bias is True
         assert restored.get_builder_cls() is BeamModelBuilder
 
-    def test_export_loads_as_beam_config(self, hf_config):
+    def test_export_loads_as_beam_config(self, hf_config, native_hf_beam):
         """The exported dict must be a valid BeamConfig that builds a working BeamForCausalLM."""
         cfg = BeamBridge().hf_config_to_model_config(hf_config)
         hf = BeamBridge.megatron_to_hf_config(cfg)
 
-        beam_cfg = beam.BeamConfig(**hf)
+        beam_cfg = native_hf_beam.BeamConfig(**hf)
         assert beam_cfg.model_type == "beam"
         assert beam_cfg.layer_types == BEAM_CFG["layer_types"]
         assert beam_cfg.mlp_layer_types == BEAM_CFG["mlp_layer_types"]
@@ -704,7 +711,7 @@ class TestBuilderBackedConfig:
         assert beam_cfg.rope_parameters["full_attention"] is None
         assert beam_cfg.num_experts == 8 and beam_cfg.sliding_window == 512
 
-        model = beam.BeamForCausalLM(beam_cfg).eval()
+        model = native_hf_beam.BeamForCausalLM(beam_cfg).eval()
         prefix = "model.layers.0."
         names = {n[len(prefix) :] for n, _ in model.named_parameters() if n.startswith(prefix)}
         assert {
@@ -763,7 +770,7 @@ class TestDenseExport:
                 assert key not in exported, key
             assert exported["layer_types"] == BEAM_CFG["layer_types"]
 
-    def test_dense_export_builds_beam_config_and_round_trips(self, hf_config):
+    def test_dense_export_builds_beam_config_and_round_trips(self, hf_config, native_hf_beam):
         """Mirror ``AutoBridge.from_auto_config()``: synthesize the HF config from the Megatron config, conform it
         to a reference (MoE) BeamConfig, construct BeamConfig, and get a dense model config back from the bridge."""
         from megatron.bridge import AutoBridge
@@ -772,11 +779,11 @@ class TestDenseExport:
 
         dense_cfg = self._dense(hf_config)
         exported = BeamBridge.megatron_to_hf_config(dense_cfg)
-        beam_cfg = beam.BeamConfig(**exported)
+        beam_cfg = native_hf_beam.BeamConfig(**exported)
         assert beam_cfg.mlp_layer_types == ["dense"] * 4
-        model = beam.BeamForCausalLM(beam_cfg)
+        model = native_hf_beam.BeamForCausalLM(beam_cfg)
         assert not any(".experts." in n or ".mlp.gate." in n for n, _ in model.named_parameters())
-        reference = beam.BeamConfig(**{k: v for k, v in BEAM_CFG.items() if k != "default_theta"})
+        reference = native_hf_beam.BeamConfig(**{k: v for k, v in BEAM_CFG.items() if k != "default_theta"})
         synthesized = conform_config_to_reference(exported, reference.to_dict())
         synthesized = _drop_readonly_config_properties(synthesized, type(reference))
         synthesized = type(reference)(**synthesized)
