@@ -255,6 +255,28 @@ class TestQwen3Conversion:
             raise
 
     @pytest.mark.run_only_on("GPU")
+    def test_qwen3_tied_embeddings_builder_pp(self, qwen3_toy_model_path):
+        """Tied embeddings stay synchronized when the builder path splits the model across PP stages."""
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "tests/functional_tests/test_groups/models/qwen/tied_embeddings_builder_pp.py",
+            "--hf-model-id",
+            qwen3_toy_model_path,
+            "--pp",
+            "2",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parents[5], timeout=300)
+        if result.returncode != 0:
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+        assert result.returncode == 0, "Tied-embedding builder check failed at PP=2"
+        assert "Tied-embedding builder verification passed:" in result.stdout
+
+    @pytest.mark.run_only_on("GPU")
     def test_qwen3_autoconfig_roundtrip(self, qwen3_toy_model_path, tmp_path):
         from tests.functional_tests.utils import autoconfig_roundtrip
 

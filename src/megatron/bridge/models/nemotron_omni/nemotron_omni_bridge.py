@@ -352,6 +352,16 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
 
         return MegatronMappingRegistry(*mappings)
 
+    @staticmethod
+    def _hf_requires_video_embedder(config) -> bool:
+        vision_config = getattr(config, "vision_config", None)
+        separate_video_embedder = (
+            vision_config.get("separate_video_embedder", False)
+            if isinstance(vision_config, dict)
+            else getattr(vision_config, "separate_video_embedder", False)
+        )
+        return separate_video_embedder is True
+
     @torch.no_grad()
     def stream_weights_megatron_to_hf(
         self,
@@ -387,15 +397,15 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         video_owned_elsewhere = current_pp_stage_only and any(
             name.endswith("vision_model.video_embedder.weight") for name in getattr(self, "_cached_param_owners", {})
         )
-        recover_video = not video_exported and not video_owned_elsewhere
-        config = getattr(hf_pretrained, "config", hf_pretrained)
-        vision_config = getattr(config, "vision_config", None)
-        separate_video_embedder = (
-            vision_config.get("separate_video_embedder", False)
-            if isinstance(vision_config, dict)
-            else getattr(vision_config, "separate_video_embedder", False)
+        # MIMO calls this stream once per route. Only the vision route may
+        # recover video weights: an earlier language-route fallback would win
+        # deduplication over the trained weight emitted by the vision route.
+        video_in_registry = any(
+            mapping.hf_param == self._HF_VIDEO_EMBEDDER_KEY for mapping in self.mapping_registry().mappings
         )
-        video_required = separate_video_embedder is True and recover_video
+        recover_video = video_in_registry and not video_exported and not video_owned_elsewhere
+        config = getattr(hf_pretrained, "config", hf_pretrained)
+        video_required = recover_video and self._hf_requires_video_embedder(config)
         missing_video_error = (
             f"Cannot export Nemotron Omni: {self._HF_VIDEO_EMBEDDER_KEY} is missing from the Megatron model "
             "and cannot be recovered from the reference HF checkpoint. Provide the original HF checkpoint "
@@ -467,6 +477,11 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     _HF_PASSTHROUGH_KEYS = (*NemotronOmniBridge._HF_PASSTHROUGH_KEYS, _HF_SUMMARY_IDXS_BUFFER)
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
+
+    @staticmethod
+    def _hf_requires_video_embedder(config) -> bool:
+        # Super VL uses the top-level temporal size, overriding nested RADIO flags.
+        return int(getattr(config, "video_temporal_patch_size", 1) or 1) > 1
 
     @staticmethod
     def _hf_language_config(hf_config):

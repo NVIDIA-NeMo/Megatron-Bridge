@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from contextlib import nullcontext
 from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
@@ -38,10 +39,14 @@ from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, S
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.conversion import (
     MegatronMIMOBridge,
+    MIMOComponent,
     get_mimo_conversion_spec,
     validate_route_table,
 )
-from megatron.bridge.models.megatron_mimo.conversion.orchestrator import build_route_local_registry
+from megatron.bridge.models.megatron_mimo.conversion.orchestrator import (
+    _stream_mimo_weights_to_rank0,
+    build_route_local_registry,
+)
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -744,6 +749,7 @@ def test_nemotron_35_super_vl_strict_reexport_preserves_summary_buffer(tmp_path,
         hf_pretrained.name_or_path = str(first_export)
     else:
         hf_pretrained = Mock(spec=PreTrainedCausalLM)
+        hf_pretrained.config = PretrainedConfig()
         hf_pretrained.state = StateDict(source)
     converted = [] if omit_learned_weight else [HFWeightTuple(learned_key, learned_weight)]
     second_export = tmp_path / "second-export"
@@ -847,6 +853,87 @@ def test_nemotron_omni_export_fails_without_required_video_weight(tmp_path, refe
     with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(())):
         with pytest.raises(ValueError, match="video_embedder.weight"):
             list(NemotronOmniBridge().stream_weights_megatron_to_hf([], config))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("video_state", ["trained", "recover", "unavailable"])
+def test_nemotron_omni_mimo_video_export_uses_vision_route(tmp_path, video_state):
+    name = NemotronOmniBridge._HF_VIDEO_EMBEDDER_KEY
+    original = torch.ones(4, 6)
+    trained = original + 2
+    config = PretrainedConfig()
+    config.vision_config = {"separate_video_embedder": True}
+    if video_state != "unavailable":
+        save_file({name: original}, tmp_path / "model.safetensors")
+        config.name_or_path = str(tmp_path)
+    bridge = NemotronOmniBridge()
+    routes = [
+        MIMOComponent("language", "language_model.", "language_model"),
+        MIMOComponent("images", "vision_model.", "vision_model"),
+        MIMOComponent("projector", "vision_projection.", "vision_projection"),
+    ]
+    model = nn.Module()
+    for route in routes:
+        model.add_module(route.target_module_path, nn.Module())
+    visited = []
+
+    def mapped_stream(self, submodule, *args, **kwargs):
+        visited.append(submodule)
+        if submodule is model.vision_model and video_state == "trained":
+            yield HFWeightTuple(name, trained)
+
+    orchestrator = "megatron.bridge.models.megatron_mimo.conversion.orchestrator"
+    with (
+        patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", mapped_stream),
+        patch(f"{orchestrator}.dist.is_initialized", return_value=False),
+        patch(f"{orchestrator}._bridged_parallel_state", side_effect=lambda _: nullcontext()),
+        patch(f"{orchestrator}.component_pg_context", side_effect=lambda *_: nullcontext()),
+    ):
+        stream = _stream_mimo_weights_to_rank0(
+            source_bridge=bridge,
+            hf_pretrained=config,
+            mimo_model=model,
+            routes=routes,
+            pg_collections={route.name: object() for route in routes},
+            show_progress=False,
+        )
+        if video_state == "unavailable":
+            with pytest.raises(ValueError, match="video_embedder.weight"):
+                list(stream)
+            assert visited == [model.language_model, model.vision_model]
+            return
+        exported = list(stream)
+    assert len(exported) == 1
+    assert torch.equal(exported[0].weight, trained if video_state == "trained" else original)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("video_state", ["recover", "unavailable", "image_only"])
+def test_super_vl_export_uses_top_level_video_config(tmp_path, video_state):
+    config = PretrainedConfig()
+    config.video_temporal_patch_size = 1 if video_state == "image_only" else 2
+    # Video checkpoints omit the nested flag; stale image-only flags must not win.
+    config.vision_config = {"separate_video_embedder": True} if video_state == "image_only" else {}
+    name = NemotronOmniBridge._HF_VIDEO_EMBEDDER_KEY
+    original = torch.arange(24, dtype=torch.float32).reshape(4, 6)
+    if video_state == "recover":
+        save_file({name: original}, tmp_path / "model.safetensors")
+        config.name_or_path = str(tmp_path)
+    elif video_state == "unavailable":
+        save_file({"unrelated.weight": torch.ones(1)}, tmp_path / "model.safetensors")
+        config.name_or_path = str(tmp_path)
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(())):
+        stream = Nemotron35SuperVLBridge().stream_weights_megatron_to_hf([], config)
+        if video_state == "unavailable":
+            with pytest.raises(ValueError, match="video_embedder.weight"):
+                list(stream)
+        elif video_state == "image_only":
+            assert list(stream) == []
+        else:
+            exported = list(stream)
+            assert len(exported) == 1
+            assert exported[0].param_name == name
+            assert torch.equal(exported[0].weight, original)
 
 
 @pytest.mark.unit
