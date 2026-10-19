@@ -11,7 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""H100 recipes for GLM-5.2."""
+"""H100 recipes for GLM-5.2.
+
+These recipes use the HybridEP MoE dispatcher and the TileLang DSA kernels. Both compile their kernels in every
+process during the first training step, and the pipeline stages reach that point one after another, so the first
+step takes far longer than later steps. TileLang loads the compiled kernels from ``TMPDIR``, which must be on a
+filesystem that allows executing files. Its DSA backward kernels accumulate with floating-point atomics, so runs
+with deterministic mode enabled are not bit-for-bit reproducible.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +37,23 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 _GLM52_MODEL_ID = "zai-org/GLM-5.2"
 _GLM52_MODEL_REVISION = "4d67f66cc64d3219133b767c253b2ad1425c6c88"  # pragma: allowlist secret
 _TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist secret
+
+# HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+_H100_HYBRIDEP_ENV_VARS = {
+    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+    "NVLINK_DOMAIN_SIZE": 8,
+    "USE_MNNVL": 0,
+}
+# The cuDNN DSA backend runs FlashMLA kernels, which docker/Dockerfile.ci builds without H100 (sm_90) kernels
+# (FLASH_MLA_DISABLE_SM90=1), so it fails on H100 with "no kernel image is available". TileLang compiles the DSA
+# kernels for the local GPU instead.
+_H100_DSA_KERNEL_BACKEND = "tilelang"
+# HybridEP and TileLang compile their kernels in every process at the first step, one pipeline stage after
+# another, so a stage can wait on its neighbor far longer than the 10-minute default timeout. With 11 stages the
+# longest wait was about 30 minutes (50 on a busy cluster), and each extra stage adds about 2.5 minutes (4.5): about
+# 35 and 50 minutes for the 13- and 19-stage recipes here (60 and 85 on a busy cluster). The timeout applies to every
+# collective for the whole run; dist.distributed_timeout_seconds_after_init can lower it after the first step.
+_H100_DISTRIBUTED_TIMEOUT_MINUTES = 120
 
 
 def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
@@ -52,14 +76,14 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.microbatch_group_size_per_vp_stage = None
 
-    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.dsa_kernel_backend = _H100_DSA_KERNEL_BACKEND
     cfg.model.mtp_num_layers = 1
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.persist_layer_norm = True
@@ -101,7 +125,8 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, **_H100_HYBRIDEP_ENV_VARS}
     return cfg
 
 
@@ -125,14 +150,14 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.microbatch_group_size_per_vp_stage = None
 
-    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.dsa_kernel_backend = _H100_DSA_KERNEL_BACKEND
     cfg.model.mtp_num_layers = 1
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.persist_layer_norm = True
@@ -184,7 +209,8 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.save_rng = False
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, **_H100_HYBRIDEP_ENV_VARS}
     return cfg
 
 
@@ -208,14 +234,14 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.microbatch_group_size_per_vp_stage = None
 
-    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.dsa_kernel_backend = _H100_DSA_KERNEL_BACKEND
     cfg.model.mtp_num_layers = 1
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.persist_layer_norm = True
@@ -262,7 +288,8 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     block_counts = [6] + [4] * 18
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, **_H100_HYBRIDEP_ENV_VARS}
     return cfg
 
 
@@ -286,14 +313,14 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.microbatch_group_size_per_vp_stage = None
 
-    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.dsa_kernel_backend = _H100_DSA_KERNEL_BACKEND
     cfg.model.mtp_num_layers = 1
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.persist_layer_norm = True
@@ -357,7 +384,8 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.checkpoint.load = None
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, **_H100_HYBRIDEP_ENV_VARS}
     return cfg
 
 
