@@ -1960,24 +1960,27 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "bd56432512613a88ceae9ecb05654b63955f6dcb",
+          "bridge_commit": "27cacee9bfa562a00ed6b93ce7bbe88ce0cffdba",
           "command_topologies": [
             {
               "expert_parallel": "16",
               "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "6",
               "pipeline_parallel": "3",
-              "tensor_parallel": "1"
+              "tensor_parallel": "1",
+              "total_gpus": 48
             }
           ],
           "commands": [
-            "uv run python scripts/inference/text_generation.py --hf-model-path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B --megatron-model-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000 --prompt \"\ub300\ud55c\ubbfc\uad6d\uc758 \uc218\ub3c4\ub294\" --max_new_tokens 16 --temperature 0 --top_k 1 --termination-id -1 --tp 1 --pp 3 --ep 16 --etp 1 --dtype bf16 --max_seq_length 128 --max_batch_size 1 --use-coordinator --inference-moe-token-dispatcher-type nccl --distributed-timeout-minutes 180"
+            "./scripts/inference/infer.sh --nodes 6 --gpus-per-node 8 --task text-generation --hf-model-path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B --megatron-model-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000 --prompt \"\ub300\ud55c\ubbfc\uad6d\uc758 \uc218\ub3c4\ub294\" --max_new_tokens 16 --temperature 0 --top_k 1 --tp 1 --pp 3 --ep 16 --etp 1 --dtype bf16 --max_seq_length 128 --max_batch_size 1 --kv_cache_buffer_size_gb 20 --use-coordinator --inference-moe-token-dispatcher-type nccl --distributed-timeout-minutes 180"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "k-exaone-2-inference",
-          "expected_result": "Generates an exact 16-token result. Literal completion: '?\n\nAnswer: Seoul\n\nWhat is the most pop song in the world?\n\nAnswer: \"'",
+          "expected_result": "On 48 H100 GPUs (TP1/PP3/EP16/ETP1), deterministic greedy generation\ncompleted with the original 20 GiB KV-cache budget and natural EOS\nstopping enabled. The Korean prompt produced exactly 16 new tokens,\nidentifying Seoul as the capital and largest city of South Korea.\nInference environment: NeMo Framework 26.10 release-candidate runtime.\nThe card-level 26.08 base records earlier checks.\nLiteral completion: ' \uc11c\uc6b8\uc785\ub2c8\ub2e4.\n\n\uc11c\uc6b8\uc740 \ub300\ud55c\ubbfc\uad6d\uc758 \uc218\ub3c4\uc774\uc790 \ucd5c\ub300 \ub3c4\uc2dc\uc785\ub2c8\ub2e4.\n\n\uc11c\uc6b8\uc740'",
           "hardware": null,
-          "last_verified": "2026-07-31",
+          "last_verified": "2026-10-18",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.inference",
@@ -2125,7 +2128,7 @@
       "min_transformers_version": "5.9.0",
       "slug": "k-exaone-2",
       "source_card": "examples/model_verification_cards/k-exaone-2/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining, full SFT, and PEFT in this Bridge revision. CPU conversion, GPU export, training, export-after-SFT, long-context SFT, and checkpoint resume remain unverified. A complete 750B GPU import from a clean commit persisted and reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A 2-GPU structural MoE/MTP proxy also completed three finite optimizer steps and saved checkpoints, but does not substitute for a full-model training item. The manual forward comparison against a memory-bounded Hugging Face reference that applies the configured SwiGLU limits matched the next token with 0.999997 cosine similarity on 48 GB200 GPUs. Complete-model deterministic inference generated and independently confirmed exactly 16 new tokens. The implementation fixes are committed; GPU export remains unverified pending its own clean-commit rerun and exact audit.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining, full SFT, and PEFT in this Bridge revision. CPU conversion, GPU export, training, export-after-SFT, long-context SFT, and checkpoint resume remain unverified. A complete 750B GPU import from a clean commit persisted and reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A 2-GPU structural MoE/MTP proxy also completed three finite optimizer steps and saved checkpoints, but does not substitute for a full-model training item. The manual forward comparison against a memory-bounded Hugging Face reference that applies the configured SwiGLU limits matched the next token with 0.999997 cosine similarity on 48 GB200 GPUs. Deterministic inference through the public launcher produced the expected 16-token Korean completion on 48 H100 GPUs. The implementation fixes are committed; GPU export remains unverified pending its own clean-commit rerun and exact audit.\n",
       "title": "k_exaone_2_750b_a37b"
     },
     {
