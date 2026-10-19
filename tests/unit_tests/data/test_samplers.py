@@ -144,6 +144,27 @@ def test_dataloader_worker_releases_gpu_fds_before_caller_initialization(monkeyp
     assert caller_calls.value == 1
 
 
+@pytest.mark.parametrize(
+    ("num_workers", "prefetch_factor", "expected"),
+    [(0, None, None), (0, 4, None), (2, None, 2), (2, 8, 8)],
+)
+def test_prefetch_factor_applies_only_to_worker_loaders(
+    num_workers: int, prefetch_factor: int | None, expected: int | None
+) -> None:
+    """prefetch_factor reaches worker-backed loaders; PyTorch rejects it without workers."""
+    dataloader = build_pretraining_data_loader(
+        dataset=_RandomValueDataset(),
+        consumed_samples=0,
+        dataloader_type="single",
+        micro_batch_size=1,
+        num_workers=num_workers,
+        data_sharding=False,
+        prefetch_factor=prefetch_factor,
+    )
+
+    assert dataloader.prefetch_factor == expected
+
+
 def test_cyclic_sampler_non_sharded_tail_keeps_data_parallel_epochs_aligned() -> None:
     """Every DP rank must cross a truncated cyclic epoch on the same step."""
 

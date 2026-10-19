@@ -27,7 +27,10 @@ import pytest
 import torch
 
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.recipes.recipe_test_utils import (
+    NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
+    patch_recipe_module_global,
+)
 
 
 _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
@@ -35,7 +38,7 @@ _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c
 _NEMOTRONH_RECIPE_FUNCS = [
     getattr(_nemotronh_module, name)
     for name in getattr(_nemotronh_module, "__all__", [])
-    if callable(getattr(_nemotronh_module, name, None)) and not name.startswith("nemotronh_")
+    if callable(getattr(_nemotronh_module, name, None))
 ]
 
 
@@ -72,6 +75,21 @@ class _FakeAutoBridge:
         return _FakeModelProvider()
 
 
+class _FakeUltraModelProvider(_FakeModelProvider):
+    """Fake provider with Nemotron 3 Ultra's decoder pattern, which the SFT recipe splits into stages."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hybrid_layer_pattern = NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
+
+
+class _FakeUltraAutoBridge(_FakeAutoBridge):
+    """Return the Nemotron 3 Ultra fake provider."""
+
+    def to_megatron_provider(self, *args, **kwargs):
+        return _FakeUltraModelProvider()
+
+
 @pytest.fixture(autouse=True)
 def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep AutoBridge-backed recipe construction deterministic and offline."""
@@ -81,10 +99,11 @@ def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
         "megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.h100.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
-        "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
         module = importlib.import_module(module_name)
         patch_recipe_module_global(monkeypatch, module, "AutoBridge", _FakeAutoBridge)
+    ultra_module = importlib.import_module("megatron.bridge.recipes.nemotronh.nemotron_3_ultra")
+    patch_recipe_module_global(monkeypatch, ultra_module, "AutoBridge", _FakeUltraAutoBridge)
 
 
 def _assert_basic_config(cfg):
@@ -182,11 +201,11 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
             id="nano-gb300",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
-            "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
+            "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+            "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config",
             True,
             108,
-            id="nano-vr200",
+            id="nano-vrnvl72",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
@@ -203,11 +222,11 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
             id="super-gb300",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
-            "nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config",
+            "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+            "nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config",
             False,
             32,
-            id="super-vr200",
+            id="super-vrnvl72",
         ),
     ],
 )
@@ -648,76 +667,6 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
     gb200.env_vars = h100.env_vars
 
     assert gb200 == h100
-
-
-def test_nemotron_nano_9b_v2_lora_defaults():
-    """Test that Nemotron Nano 9B v2 LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_peft_config
-
-    cfg = nemotron_nano_9b_v2_peft_config(peft_scheme="lora")
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, Nemotron Nano 9B v2 should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-
-
-def test_nemotron_nano_9b_v2_full_sft_defaults():
-    """Test that Nemotron Nano 9B v2 full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_sft_config
-
-    cfg = nemotron_nano_9b_v2_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, Nemotron Nano 9B v2 should use TP=2, PP=1
-    assert cfg.model.tensor_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
-    assert cfg.peft is None
-
-
-def test_nemotron_nano_12b_v2_lora_defaults():
-    """Test that Nemotron Nano 12B v2 LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_peft_config
-
-    cfg = nemotron_nano_12b_v2_peft_config(peft_scheme="lora")
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, Nemotron Nano 12B v2 should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-
-
-def test_nemotron_nano_12b_v2_full_sft_defaults():
-    """Test that Nemotron Nano 12B v2 full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_sft_config
-
-    cfg = nemotron_nano_12b_v2_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, Nemotron Nano 12B v2 should use TP=4, PP=1
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
-    assert cfg.peft is None
 
 
 # --- Nemotron 3 Super tests ---

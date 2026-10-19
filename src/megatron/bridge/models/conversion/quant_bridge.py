@@ -22,6 +22,8 @@ from megatron.core.fp8_utils import get_grouped_quantized_members, is_grouped_mx
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
+from megatron.bridge.models.conversion.gtp import _gather_gtp_weight, _is_gtp_param
+
 
 if TYPE_CHECKING:
     from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
@@ -68,6 +70,11 @@ def _validate_native_mxfp8_storage(
     global_param_name: str,
 ) -> tuple[_NativeMXFP8StorageSpec, torch.Tensor, torch.Tensor]:
     """Validate native MXFP8 backing metadata without projecting its payload."""
+    if _is_gtp_param(param):
+        raise ValueError(
+            f"{global_param_name}: local native MXFP8 export cannot represent GTP sharding; "
+            "use gathered dequantized export or gathered quantized export instead"
+        )
     get_metadata = getattr(param, "get_metadata", None)
     if not callable(get_metadata):
         raise ValueError(f"{global_param_name}: native MXFP8 storage is missing metadata")
@@ -347,10 +354,11 @@ class MegatronQuantizationBridge:
 
         mapping_registry = self.mapping_registry()
         mapping_registry.set_process_groups_from_pg_collection(_get_pg_collection_from_model(megatron_model))
-        model_config = unwrap_model(megatron_model)[0].config
+        unwrapped_model = unwrap_model(megatron_model)[0]
+        model_config = unwrapped_model.config
         pp_rank = _get_pp_rank(megatron_model)
         global_names = self._megatron_global_param_names_all_pp_ranks(megatron_model)
-        if self._share_embeddings_and_output_weights(model_config):
+        if self._share_embeddings_and_output_weights(unwrapped_model):
             global_names = [name for name in global_names if "output_layer" not in name]
 
         num_experts = int(getattr(model_config, "num_moe_experts", 0) or 0)
@@ -545,6 +553,8 @@ class MegatronQuantizationBridge:
         if _uses_dtensor_or_fsdp(task.param_weight, task.megatron_module):
             raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
         if is_grouped_mxfp8tensor(task.param_weight):
+            if _is_gtp_param(task.param_weight):
+                raise ValueError(f"{task.global_param_name}: local native MXFP8 export cannot represent GTP sharding")
             if self._is_mtp_param(task.global_param_name):
                 raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
             if not _supports_native_grouped_mxfp8(task.mapping):
@@ -716,7 +726,7 @@ class MegatronQuantizationBridge:
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
         grouped_buffers: dict[str, dict[int, torch.Tensor]] = {}
@@ -725,7 +735,11 @@ class MegatronQuantizationBridge:
             megatron_to_hf_tasks, "Converting to HuggingFace (Quantized)", show_progress
         ):
             converted_weights_dict = task.mapping.megatron_to_hf_quant(
-                task.param_weight, task.megatron_module, quantization_checker, quant_fn, quant_block_size
+                _gather_gtp_weight(task.param_weight),
+                task.megatron_module,
+                quantization_checker,
+                quant_fn,
+                quant_block_size,
             )
             if getattr(task.mapping, "is_grouped_export", False):
                 converted_weights_dict = self._accumulate_grouped_export(

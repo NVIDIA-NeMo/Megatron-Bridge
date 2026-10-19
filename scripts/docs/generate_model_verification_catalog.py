@@ -59,7 +59,7 @@ CAPABILITY_TABS = (
         "Pretrain",
         ("pretrain", "pretrain_fsdp", "pretrain_weak_scaling"),
     ),
-    ("benchmark", "Benchmark", ("pretrain_performance",)),
+    ("benchmark", "Benchmark", ("pretrain_performance", "pretrain_performance_hsdp")),
     ("sft", "SFT", ("sft",)),
     ("lora", "LoRA", ("peft",)),
     ("long-context", "Long Context", ("sft_long_context",)),
@@ -91,6 +91,7 @@ DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset(
 )
 MODEL_PAGE_PATHS = {
     "bagel": "models/bagel/bagel.md",
+    "beam": "models/beam/beam.md",
     "deepseek-v3": "models/deepseek/deepseek-v3.md",
     "deepseek-v4-flash": "models/deepseek/deepseek-v4.md",
     "gemma-3-4b-it": "models/gemma/gemma3-vl.md",
@@ -104,6 +105,7 @@ MODEL_PAGE_PATHS = {
     "minimax-m3": "models/minimax/minimax-m3.md",
     "moonlight-16b-a3b": "models/moonlight/moonlight.md",
     "muse-glimmer-30b": "models/muse_glimmer/muse-glimmer.md",
+    "muse-spark-open-816b-a42b": "models/muse_spark_open/muse-spark-open.md",
     "nemotron-3-nano-30b-a3b": "models/nemotron/nemotron3-nano.md",
     "nemotron-3-nano-4b": "models/nemotron/nemotron3-nano-4b.md",
     "nemotron-3-nano-omni-30b-a3b-reasoning": "models/nemotron/nemotron-3-omni.md",
@@ -443,7 +445,14 @@ def build_catalog(repo_root: Path) -> dict[str, object]:
     if not cards:
         raise CatalogError(f"no cards matched {CARD_GLOB}")
     models = [normalize_card(card, repo_root) for card in cards]
-    models.sort(key=lambda model: (str(model["hf_id"]).casefold(), str(model["slug"])))
+    # Ignore the repeated vendor prefix so Nano precedes Nano Omni, followed
+    # by Super, Ultra, Lightning, and Super VL in every generated model list.
+    models.sort(
+        key=lambda model: (
+            str(model["hf_id"]).casefold().replace("nvidia/nvidia-nemotron-", "nvidia/nemotron-"),
+            str(model["slug"]),
+        )
+    )
     return {
         "schema_version": CATALOG_SCHEMA_VERSION,
         "source": CARD_GLOB,
@@ -588,6 +597,7 @@ def _entry_option_label(entry: dict[str, object]) -> str:
         "pretrain": "Pretrain",
         "pretrain_fsdp": "Pretrain · FSDP",
         "pretrain_performance": "Benchmark",
+        "pretrain_performance_hsdp": "Benchmark · HSDP",
         "pretrain_weak_scaling": "Pretrain · Weak scaling",
         "sft": "SFT",
         "peft": "LoRA",

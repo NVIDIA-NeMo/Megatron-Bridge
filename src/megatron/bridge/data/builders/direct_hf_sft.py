@@ -15,7 +15,7 @@
 """Serializable config and runtime builder for direct Hugging Face SFT."""
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Literal
@@ -38,6 +38,7 @@ from megatron.bridge.data.sft_processing import (
 )
 from megatron.bridge.data.sources.hf import (
     HFDatasetSourceConfig,
+    as_hf_dataset_source,
     hf_dataset_supports_split,
     load_and_adapt_hf_dataset,
     load_and_blend_hf_datasets,
@@ -54,13 +55,6 @@ CollateFunction = Callable[..., dict[str, torch.Tensor]]
 _DEEPSEEK_V4_TOKENIZER_SIZE = 129280
 _DEEPSEEK_V4_ASSISTANT_TOKEN = "<｜Assistant｜>"
 _DEEPSEEK_V4_ASSISTANT_TOKEN_ID = 128804
-
-
-def _as_source(entry: "HFDatasetSourceConfig | Mapping[str, Any]") -> HFDatasetSourceConfig:
-    """Rebuild a source that an override round trip flattened into a mapping."""
-    if isinstance(entry, HFDatasetSourceConfig):
-        return entry
-    return HFDatasetSourceConfig(**dict(entry))
 
 
 @dataclass(kw_only=True)
@@ -94,6 +88,12 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
     megatron_mimo_scalable_dp: bool = False
+    megatron_mimo_intra_microbatch_reorder: bool = False
+    # Reorder cost = encoder_weight * image patches + language_weight * real tokens; only the ratio matters.
+    megatron_mimo_reorder_encoder_cost_weight: float = 1.0
+    megatron_mimo_reorder_language_cost_weight: float = 0.0
+    megatron_mimo_reorder_overlap: bool = True
+    megatron_mimo_reorder_window_size: int = 1
 
     def validate(self) -> None:
         """Validate declarative source and dataset settings."""
@@ -102,9 +102,9 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
         validate_sft_preprocessing_config(self.preprocessing)
         self._validate_sources()
         if self.validation_source is not None:
-            self.validation_source = _as_source(self.validation_source)
+            self.validation_source = as_hf_dataset_source(self.validation_source)
         if self.test_source is not None:
-            self.test_source = _as_source(self.test_source)
+            self.test_source = as_hf_dataset_source(self.test_source)
         if self.do_validation and self.validation_source is not None:
             self._inherit_source_adapter_kwargs(self.validation_source)
             self.validation_source.validate()
@@ -125,6 +125,27 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
                     "megatron_mimo_scalable_dp requires drop_last=True; a partial final micro-batch "
                     "gives modules unequal shares and misaligns the modality routing."
                 )
+        if self.megatron_mimo_intra_microbatch_reorder:
+            if not self.megatron_mimo_scalable_dp:
+                raise ValueError(
+                    "megatron_mimo_intra_microbatch_reorder requires megatron_mimo_scalable_dp=True; the "
+                    "per-sample exchange rebalances canonical-grid shards."
+                )
+            if (
+                self.megatron_mimo_reorder_encoder_cost_weight < 0
+                or self.megatron_mimo_reorder_language_cost_weight < 0
+            ):
+                raise ValueError("megatron_mimo_reorder_*_cost_weight must be >= 0.")
+            if (
+                self.megatron_mimo_reorder_encoder_cost_weight == 0
+                and self.megatron_mimo_reorder_language_cost_weight == 0
+            ):
+                raise ValueError(
+                    "megatron_mimo_intra_microbatch_reorder requires megatron_mimo_reorder_encoder_cost_weight > 0 "
+                    "or megatron_mimo_reorder_language_cost_weight > 0; a zero cost has nothing to balance."
+                )
+            if self.megatron_mimo_reorder_window_size < 1:
+                raise ValueError("megatron_mimo_reorder_window_size must be >= 1.")
         validate_declarative_mapping(self.hf_processor_kwargs, field_name="hf_processor_kwargs")
         if self.hf_processor_kwargs is not None and "trust_remote_code" in self.hf_processor_kwargs:
             raise ValueError(
@@ -151,9 +172,9 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
         # Any override re-serializes this config through OmegaConf, which returns
         # dataclasses as plain mappings even when the override targeted another field.
         if isinstance(self.source, list):
-            self.source = [_as_source(entry) for entry in self.source]
+            self.source = [as_hf_dataset_source(entry) for entry in self.source]
         else:
-            self.source = _as_source(self.source)
+            self.source = as_hf_dataset_source(self.source)
 
         sources = self.training_sources
         if isinstance(self.source, list) or self.source_weights is not None:

@@ -27,6 +27,7 @@ from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_pg_rank, unwrap_model
 
+from megatron.bridge.models.conversion.gtp import _gather_gtp_weight
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -149,6 +150,42 @@ def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expecte
 
 class MegatronPeftBridge:
     """Mixin providing adapter-aware utilities for Megatron model bridges."""
+
+    def _adapter_target_modules(self, adapter_weight_names: Iterable[str]) -> list[str]:
+        """Return the ``target_modules`` written to an exported ``adapter_config.json``.
+
+        ``AutoBridge.save_hf_adapter`` calls this hook with the Hugging Face PEFT names of
+        the exported adapter weights (for example
+        ``base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight``). The default
+        keeps PEFT's usual leaf-name selectors (``q_proj``, ``gate_proj``, ...), inferred by
+        :func:`infer_target_modules_from_adapter_weights`.
+
+        Override it when a leaf name is shared by modules the adapter does not cover. PEFT
+        matches ``target_modules`` by suffix, so a bare leaf name attaches an untrained
+        adapter to every module with that name when the adapter is loaded.
+
+        Example: Beam has an attention output gate ``self_attn.gate_proj`` and an MLP
+        ``mlp.gate_proj``. For an adapter trained on attention only, the default returns
+        ``["gate_proj", "k_proj", "o_proj", "q_proj", "v_proj"]``, which also wraps every
+        ``mlp.gate_proj`` on load. ``BeamBridge`` returns full module paths instead::
+
+            def _adapter_target_modules(self, adapter_weight_names):
+                return sorted(
+                    {
+                        _split_hf_lora_weight_name(name)[0].removeprefix("base_model.model.")
+                        for name in adapter_weight_names
+                    }
+                )
+
+        which yields ``["model.layers.0.self_attn.gate_proj", "model.layers.0.self_attn.q_proj", ...]``.
+
+        Args:
+            adapter_weight_names: Hugging Face PEFT names of the exported LoRA weights.
+
+        Returns:
+            Sorted ``target_modules`` entries for the PEFT adapter config.
+        """
+        return infer_target_modules_from_adapter_weights(adapter_weight_names)
 
     def _get_lora_unwrapped_name(self, megatron_param: str) -> str:
         """Remove `.to_wrap` from LoRA parameter names."""
@@ -803,12 +840,14 @@ class MegatronPeftBridge:
                 )
             else:
                 linear_in_dict = adapter_task.linear_in_task.mapping.megatron_to_hf(
-                    adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_in_task.param_weight),
+                    adapter_task.linear_in_task.megatron_module,
                 )
                 linear_in_tensor = next(iter(linear_in_dict.values()))
 
                 linear_out_dict = adapter_task.linear_out_task.mapping.megatron_to_hf(
-                    adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_out_task.param_weight),
+                    adapter_task.linear_out_task.megatron_module,
                 )
                 linear_out_tensor = next(iter(linear_out_dict.values()))
 
@@ -842,7 +881,9 @@ class MegatronPeftBridge:
         """Broadcast and gather grouped-expert adapter weights on their real expert-TP axis."""
 
         mapping = task.mapping
-        tensor = mapping.broadcast_from_pp_rank(task.param_weight, cache_key=task.global_param_name)
+        tensor = mapping.broadcast_from_pp_rank(
+            _gather_gtp_weight(task.param_weight), cache_key=task.global_param_name
+        )
         assert tensor is not None, f"Expected adapter tensor for {task.global_param_name}"
         tensor = mapping.maybe_dequantize(tensor)
         if mapping.tp_size > 1:

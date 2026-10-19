@@ -33,6 +33,40 @@ from transformers import PreTrainedConfig
 logger = logging.getLogger(__name__)
 
 
+def _materialize_gtp_weight_shards(value: Any, _memo: dict[int, Any] | None = None) -> Any:
+    """Preserve runtime GTP sizes in constructor fields before sanitizing configs."""
+    if not isinstance(value, (dict, list)):
+        return value
+    if _memo is None:
+        _memo = {}
+    if id(value) in _memo:
+        return _memo[id(value)]
+    if isinstance(value, list):
+        result_list = []
+        _memo[id(value)] = result_list
+        result_list.extend(_materialize_gtp_weight_shards(item, _memo) for item in value)
+        return result_list
+    result = {}
+    _memo[id(value)] = result
+    result.update({key: _materialize_gtp_weight_shards(item, _memo) for key, item in value.items()})
+    for shard_name, parallel_name, remat_name in (
+        ("tensor_parallel_num_weight_shards", "tensor_model_parallel_size", "gtp_weight_remat_size"),
+        (
+            "expert_tensor_parallel_num_weight_shards",
+            "expert_tensor_parallel_size",
+            "expert_gtp_weight_remat_size",
+        ),
+    ):
+        remat_size = result.get(remat_name)
+        if result.get(shard_name) is not None or not isinstance(remat_size, int) or remat_size <= 1:
+            continue
+        tp_size = result.get("tensor_model_parallel_size", 1)
+        parallel_size = result.get(parallel_name) or tp_size
+        if isinstance(parallel_size, int) and parallel_size > 0:
+            result[shard_name] = parallel_size * remat_size
+    return result
+
+
 class _ConfigContainerBase(_MCoreConfigContainerBase):
     """Bridge config container that lets composite HF configs construct their children.
 
@@ -55,7 +89,7 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
             return cls._convert_recipe_config_to_dict(value)
         if isinstance(value, PreTrainedConfig) and not hasattr(value, "to_cfg_dict"):
             return cls._convert_pretrained_config_to_dict(value, include_target=True)
-        return super()._convert_value_to_dict(value)
+        return _materialize_gtp_weight_shards(super()._convert_value_to_dict(value))
 
     @classmethod
     def _convert_recipe_config_to_dict(cls, value: RecipeConfig) -> dict[str, Any]:
@@ -184,4 +218,4 @@ def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, A
     Returns:
         The config dictionary with backward compatibility fixes applied.
     """
-    return _sanitize_dataclass_config(config_dict)
+    return _sanitize_dataclass_config(_materialize_gtp_weight_shards(config_dict))

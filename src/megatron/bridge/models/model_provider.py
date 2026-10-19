@@ -325,10 +325,18 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             seed_kwargs: Additional arguments for `model_parallel_cuda_manual_seed`.
             **model_parallel_kwargs: Additional arguments for `parallel_state.initialize_model_parallel`.
         """
+        # Resolve public weight-shard counts before reading the derived GTP axes
+        # used to construct process groups and configure GTP kernels.
+        self.finalize()
         if not torch.distributed.is_initialized():
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
+        from megatron.bridge.training.gtp import configure_gtp_remat
+
+        configure_gtp_remat(self)
+        model_parallel_kwargs.setdefault("gtp_remat_size", getattr(self, "gtp_weight_remat_size", 1))
+        model_parallel_kwargs.setdefault("expert_gtp_remat_size", getattr(self, "expert_gtp_weight_remat_size", 1))
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=getattr(self, "tensor_model_parallel_size", 1),
             pipeline_model_parallel_size=getattr(self, "pipeline_model_parallel_size", 1),
@@ -555,12 +563,14 @@ class ModelParallelKwargs(TypedDict, total=False):
     """
 
     tensor_model_parallel_size: int
+    tensor_parallel_num_weight_shards: int
     pipeline_model_parallel_size: int
     num_layers_in_first_pipeline_stage: int | None
     num_layers_in_last_pipeline_stage: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
+    expert_tensor_parallel_num_weight_shards: int
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None
@@ -597,6 +607,7 @@ def get_model(
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     *,
     pg_collection: ProcessGroupCollection,
+    use_layer_wise_distributed_optimizer: bool = False,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -619,6 +630,7 @@ def get_model(
         bf16: Enable BF16 mixed precision training. If None, uses model config
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
+        use_layer_wise_distributed_optimizer: Build shard-aligned DDP layouts for layer-wise optimizers.
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
@@ -723,6 +735,7 @@ def get_model(
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
             pg_collection=pg_collection,
         )
 

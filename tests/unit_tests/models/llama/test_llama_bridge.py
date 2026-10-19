@@ -715,7 +715,7 @@ class TestLlamaBridgeMappingRegistry:
         assert mapping.hf_param == "model.norm.weight"
 
     def test_export_preserves_persisted_rotary_inv_freq(self):
-        """Test that Llama 2 rotary buffers are copied from the source checkpoint."""
+        """Test that serialized rotary buffers are copied from the source checkpoint."""
         bridge = LlamaBridge()
         task = Mock(global_param_name="decoder.layers.3.self_attention.linear_qkv.layer_norm_weight")
         converted = {"model.layers.3.input_layernorm.weight": torch.ones(4096)}

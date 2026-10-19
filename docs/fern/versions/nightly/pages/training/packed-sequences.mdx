@@ -16,7 +16,7 @@ those examples are batched conventionally, many tokens in each batch are just
 padding. Packed sequences reduce that waste by building longer packs from
 multiple examples and carrying boundary metadata into the attention path.
 
-In Bridge today, there are three distinct packing paths plus long-context
+In Bridge today, there are four distinct packing paths plus long-context
 enablement through context parallelism:
 
 | Path | Use case | Key config |
@@ -24,18 +24,21 @@ enablement through context parallelism:
 | Offline packed SFT | Text-only finetuning | `enable_offline_packing=True` plus `offline_packing_specs` |
 | Runtime in-batch packing | GPT-SFT JSONL, Direct Hugging Face, and supported VLM finetuning | `enable_in_batch_packing=True` |
 | Energon online packing | Qwen-VL data using the model-owned Energon collator | `packing_buffer_size=<candidate samples per worker>` |
+| Global-batch online packing | Variable-length SFT, packed every step across data-parallel ranks | `enable_global_batch_packing=True` |
 | Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
-These are related but they are not the same knob. Offline packed SFT and
-runtime in-batch packing solve padding waste; long-context training
-primarily addresses activation memory and communication tradeoffs at larger
+These are related but they are not the same knob. The four packing paths
+solve padding waste and differ in when, and over which samples, they form
+packs; long-context training primarily addresses activation memory and communication tradeoffs at larger
 sequence lengths.
 
 The shared implementation lives under `megatron.bridge.data.packing`: offline
 GPT SFT materialization, packed Parquet runtime datasets, bin-packing
 algorithms, and collate-time THD packing each have separate modules. Energon
 online packing uses the task encoder's native `select_samples_to_pack` and
-`pack_selected_samples` API while reusing the same canonical THD batch builder. Ordinary
+`pack_selected_samples` API while reusing the same canonical THD batch builder. Global-batch
+online packing keeps only its unpacked-sample contract there, because
+Megatron-Core's scheduler forms its packs inside the training loop. Ordinary
 non-packed padding remains in `megatron.bridge.data.collators`. Use
 `scripts/training/prepare_gpt_sft_packed_data.py` when packed GPT SFT artifacts
 should be prepared before launching training.
@@ -189,6 +192,113 @@ They must provide equal per-rank dispatch shapes. Disable CUDA graphs when packe
 THD token counts can differ so the recipe can enable safe padding. Direct model-
 provider callers must explicitly enable the setting when they supply uneven THD
 inputs because no combined recipe is available to infer their layout.
+
+## Global-Batch Online Packing
+
+Global-batch online packing forms packs **once per training step, after a
+data-parallel all-gather of sample lengths**, using Megatron-Core's
+sequence-packing scheduler. Its candidate pool is the whole global batch across
+data-parallel ranks. It is the only packing path whose pool crosses rank
+boundaries, so it can even out packed work across ranks instead of packing each
+rank's samples on their own.
+
+| Path | Switch | Packs formed | Candidate pool |
+|---|---|---|---|
+| Offline packed SFT | `enable_offline_packing` plus `offline_packing_specs` | ahead of time, on disk | whole dataset |
+| Runtime in-batch packing | `enable_in_batch_packing` | at collate time | one microbatch on one rank |
+| Energon online packing | `packing_buffer_size` | in the dataloader buffer | one worker's buffer on one rank |
+| Global-batch online packing | `enable_global_batch_packing` | every step, after a DP all-gather | the global batch across DP ranks |
+
+### How It Works
+
+Every step, Megatron-Core pulls the step's samples on each data-parallel rank,
+all-gathers their lengths, and uses the `dp_balanced` scheduler to form packs of
+at most `model.max_seqlen_per_dp_cp_rank x context_parallel_size` tokens. Each
+pack becomes one THD microbatch with concatenated tokens, `cu_seqlens`
+boundaries, per-sequence position ids, and variable-length attention, and it
+runs on the model's context-parallel group. The number of microbatches
+therefore changes from step to step, and Bridge passes the scheduled count to
+the pipeline schedule.
+
+Bridge wires the scheduler in through the same points the other packing paths
+use:
+
+- `dataset.enable_global_batch_packing` drives `model.sequence_packing_scheduler`,
+  which defaults to `dp_balanced`.
+- The mode counts as THD input, so MoE token dispatch gets the same safe-padding
+  treatment as the other packing paths.
+- It shares the runtime THD constraints listed below with Energon online packing.
+- The context-parallel alignment multiple comes from the same derivation the
+  other packing paths use.
+- It marks the model for variable-length pipeline shapes.
+
+`train_step` and `evaluate` wrap the raw data iterator once per step with
+Megatron-Core's `wrap_data_iterator` and run the scheduled number of
+microbatches. `get_batch` delegates to Megatron-Core's packed batch fetch, which
+returns a finished `PackedSeqParams`. The scheduler's exact per-step token
+statistics feed the FLOPs accounting, and the logged MoE and MTP auxiliary
+losses are averaged over the microbatches that actually ran. The code lives in
+`megatron.bridge.data.packing.global_batch` for the sample contract and
+`megatron.bridge.training.global_batch_packing` for the training-loop glue.
+
+### Datasets That Yield Unpacked Samples
+
+The scheduler consumes **unpacked** per-sample dictionaries, one sample per
+`micro_batch_size = 1` microbatch, delivered as a list rather than stacked into a
+batch. Each sample carries `tokens`, `labels`, and `position_ids` as
+`int64 [L]`, `loss_mask` as `float32 [L]`, and `original_seq_len` and
+`padded_seq_len` as `int32 [1]`. Every `padded_seq_len` is a multiple of the
+context-parallel alignment, which is `2 x context_parallel_size`, times the
+tensor-parallel size under sequence parallelism.
+
+Global-batch packing is available for SFT through
+`GPTSFTDatasetConfig(enable_global_batch_packing=True)`. Its per-sample collate
+shifts labels, builds the loss mask, and pads each sequence to the alignment
+multiple. Use a `single` or `cyclic` dataloader. Dataset configs declare the
+capability through `yields_unpacked_samples`, which validation checks.
+
+### Configuration
+
+```python
+from megatron.bridge.recipes.utils.dataset_utils import default_coderforge_config
+
+cfg.dataset = default_coderforge_config(seq_length=16384)
+cfg.dataset.enable_global_batch_packing = True
+cfg.dataset.dataloader_type = "single"
+cfg.model.context_parallel_size = 2
+cfg.model.max_seqlen_per_dp_cp_rank = 8192  # tokens per rank in one packed microbatch
+cfg.model.calculate_per_token_loss = True
+cfg.ddp.average_in_collective = False
+cfg.train.micro_batch_size = 1
+```
+
+`ConfigContainer.validate` enforces the runtime THD constraints shared with
+Energon online packing: micro batch size 1, per-token loss with
+`average_in_collective=False`, no CUDA graphs, and no pipeline parallelism. It
+also requires:
+
+- a `single` or `cyclic` dataloader;
+- an explicit `model.max_seqlen_per_dp_cp_rank` whose product with
+  `context_parallel_size` covers the longest sample;
+- no virtual pipeline parallelism, Mamba hybrid models, or Megatron FSDP;
+- no other packing path on the same dataset;
+- a dataset config that declares `yields_unpacked_samples`.
+
+Validation also checks that the pinned Megatron-Core registers the requested
+scheduler, and reports what is missing before training starts.
+
+### When It Helps
+
+Balancing across ranks matters when there is more than one data-parallel rank.
+Per-rank packing can hand one rank several long samples while another gets short
+ones, and the lighter ranks then wait at the gradient all-reduce. The scheduler
+sees every rank's samples, so it can spread that work. With a single
+data-parallel rank there is nothing to balance, and the mode reduces to per-step
+packing of the local samples.
+
+Evaluation uses the same scheduler, so each validation pass pulls a fixed number
+of samples inside collective calls. The loader therefore checks up front that
+the validation set holds enough samples for every evaluation in the run.
 
 ## Relationship to Long-Sequence Training
 

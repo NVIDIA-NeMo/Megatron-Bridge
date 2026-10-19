@@ -13,12 +13,11 @@ summary: >
   reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A
   2-GPU structural MoE/MTP proxy also completed three
   finite optimizer steps and saved checkpoints, but does not substitute for a
-  full-model training item. A memory-bounded reference forward processed all
-  78 Hugging Face decoder layers for a Korean prompt; Megatron matched its
-  next token with 0.999993 cosine similarity. Historical complete-model
-  deterministic
-  inference generated and independently confirmed exactly 16 new tokens, but
-  the portable inference launcher still requires verification. The
+  full-model training item. The manual forward comparison against a
+  memory-bounded Hugging Face reference that applies the configured SwiGLU
+  limits matched the next token with 0.999997 cosine similarity on 48 GB200
+  GPUs. Deterministic inference through the public launcher produced the
+  expected 16-token Korean completion on 48 H100 GPUs. The
   implementation fixes are committed; GPU export remains unverified pending
   its own clean-commit rerun and exact audit.
 verification_index:
@@ -26,8 +25,8 @@ verification_index:
     verified:
       - hf_to_megatron_gpu
       - manual_forward_pass
-    unverified:
       - inference
+    unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
@@ -111,7 +110,7 @@ items:
   manual_forward_pass:
     status: verified
     precision: bf16
-    bridge_commit: 68d7e875d3bcfad5cd0e7e7d18770cc7e5630034  # pragma: allowlist secret
+    bridge_commit: caf97c2a5860994b5670c918d1996a85cee56225  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=48
       examples/conversion/compare_hf_and_megatron/compare.py
@@ -121,47 +120,47 @@ items:
       --hf-logits-path work/model-verification/k-exaone-2/full-forward/hf_logits_korean.pt
       --model_class ExaoneMoeForCausalLM --prompt "대한민국의 수도는"
       --tp 1 --pp 3 --ep 16 --etp 1
-    last_verified: 2026-07-31
+    last_verified: 2026-10-14
     expected_result: >
-      The memory-bounded Hugging Face reference processed all 78 decoder
-      layers for the shared Korean prompt. Hugging Face and Megatron processed
-      identical input IDs; the next-token matches at token 392 (literal "?").
-      Cosine similarity is 0.999993; maximum and mean absolute logit
-      differences are 7.500000 and 1.621717.
+      On 48 GB200 GPUs (TP1/PP3/EP16/ETP1), both models processed identical
+      input IDs for the Korean prompt and the next token matched at token 2879
+      (" 서울"). The cosine similarity is 0.999997, and the maximum and mean
+      absolute logit differences are 0.500000 and 0.067168. The
+      hf_logits_korean.pt reference is a memory-bounded Hugging Face forward
+      of all 78 decoder layers with the config's swiglu_limits applied (gate
+      clamped to at most 7.0 and up projection to [-7.0, 7.0] in the routed and
+      shared experts of layers 62-77), matching the Megatron SwiGLU clamp;
+      the transformers ExaoneMoe implementation does not read swiglu_limits,
+      so an unclamped reference predicts token 392 ("?") instead.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 27cacee9bfa562a00ed6b93ce7bbe88ce0cffdba  # pragma: allowlist secret
     command: >
       ./scripts/inference/infer.sh --nodes 6 --gpus-per-node 8
       --task text-generation
       --hf-model-path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
       --megatron-model-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000
       --prompt "대한민국의 수도는" --max_new_tokens 16 --temperature 0
-      --top_k 1 --termination-id -1 --tp 1 --pp 3 --ep 16 --etp 1
+      --top_k 1 --tp 1 --pp 3 --ep 16 --etp 1
       --dtype bf16 --max_seq_length 128 --max_batch_size 1
+      --kv_cache_buffer_size_gb 20
       --use-coordinator --inference-moe-token-dispatcher-type nccl
       --distributed-timeout-minutes 180
-    last_verified: null
+    last_verified: 2026-10-18
     expected_result: |-
-      The command is a pending 6-node, 8-GPU-per-node verification candidate
-      using the card's default Bridge revision and the imported checkpoint.
-      This layout matches the documented 48-H100 import allocation; it does
-      not claim to recover the historical inference launcher. Validate the
-      complete model, deterministic completion, and reachable source provenance
-      before recording a new verification commit and date.
-      Historical evidence from 2026-07-31 at Bridge
-      bd56432512613a88ceae9ecb05654b63955f6dcb reported exactly 16 new tokens.
-      That revision could not be retrieved from the public upstream repository,
-      and the recorded worker command omitted its launcher, so the old result
-      does not verify the candidate.
-      Historical result: generates an exact 16-token result. Literal completion: '?
+      On 48 H100 GPUs (TP1/PP3/EP16/ETP1), deterministic greedy generation
+      completed with the original 20 GiB KV-cache budget and natural EOS
+      stopping enabled. The Korean prompt produced exactly 16 new tokens,
+      identifying Seoul as the capital and largest city of South Korea.
+      Inference environment: NeMo Framework 26.10 release-candidate runtime.
+      The card-level 26.08 base records earlier checks.
+      Literal completion: ' 서울입니다.
 
-      Answer: Seoul
+      서울은 대한민국의 수도이자 최대 도시입니다.
 
-      What is the most pop song in the world?
-
-      Answer: "'
+      서울은'
 
   pretrain:
     H100:
