@@ -74,14 +74,14 @@ def test_vision_rope_correction_is_version_gated_and_idempotent(monkeypatch):
     assert patch_minimax_m3_vision_rope() is active
     assert getattr(modeling, symbol) is original
     assert bool(getattr(original, "_bridge_3d_rope", False)) is active
-    for version in ("5.15.1", "5.16.1", "5.17.1", "5.18.0"):
+    for version in ("5.15.1", "5.16.1", "5.17.1", "5.18.0", "5.18.1", "5.19.0", "5.19.1", "5.20.0", "5.20.1"):
         monkeypatch.setattr(transformers, "__version__", version)
         assert patch_minimax_m3_vision_rope() is False
         assert getattr(modeling, symbol) is original
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-def test_hf_vision_rope_keeps_fp32_frequencies_after_dtype_conversion(dtype):
+def test_hf_vision_rope_dtype_conversion_matches_version_contract(dtype):
     config = MiniMaxM3VLVisionConfig(
         hidden_size=160,
         num_attention_heads=2,
@@ -98,6 +98,16 @@ def test_hf_vision_rope_keeps_fp32_frequencies_after_dtype_conversion(dtype):
         expected = rotary(inputs, positions)
         rotary.to(dtype=dtype)
         actual = rotary(inputs, positions)
+        if transformers.__version__ in ("5.18.0", "5.19.0", "5.20.0", "5.20.1"):
+            # These releases include #49164's geometry fix and remain unpatched.
+            # Accept native buffer rounding, rather than requiring the 5.17
+            # workaround's FP32-per-forward precision after explicit casts.
+            assert not getattr(type(rotary), "_bridge_3d_rope", False)
+            axis_dim = 26
+            frequencies = 1.0 / (10000.0 ** (torch.arange(0, axis_dim, 2).float() / axis_dim))
+            frequencies = frequencies.to(dtype).float()
+            angles = (positions.float()[..., None] * frequencies).flatten(1).repeat(1, 2)
+            expected = (angles.cos().to(dtype), angles.sin().to(dtype))
     else:
         expected = rotary(grid, device=torch.device("cpu"), dtype=dtype)
         rotary.to(dtype=dtype)
