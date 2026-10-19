@@ -5760,7 +5760,7 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-ultra-550b-a55b-sft-h100",
-          "expected_result": "The public 384-H100 packed OpenMathInstruct-2 full-SFT recipe must use the pinned dataset revision and bounded train_1M first-ten-percent selection, complete 100 optimizer steps at sequence length 4096 and GBS/MBS 128/1, and preserve pad_seq_to_mult 2. This published Ultra contract is support verification rather than the 8K/GBS8 qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite with no skipped or NaN iterations, all five metrics, a persisted post-setup configuration, audited supervised-token counts, and a complete reloadable final checkpoint.\n",
+          "expected_result": "The public 384-H100 packed OpenMathInstruct-2 full-SFT recipe must use the pinned dataset revision and bounded train_1M first-ten-percent selection, complete 100 optimizer steps at sequence length 4096 and GBS/MBS 128/1, and preserve pad_seq_to_mult 2. This published Ultra contract is support verification rather than the 8K/GBS8 qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite with no skipped or NaN iterations, all five metrics, a persisted post-setup configuration, audited supervised-token counts, and a complete reloadable final checkpoint. Launches must export TORCHINDUCTOR_COMPILE_THREADS=1 before Python starts: on Python 3.12 before 3.12.8, Inductor's forked compile-worker pool can deadlock in the long first step (pytorch/pytorch#200848).\n",
           "hardware": "H100",
           "last_verified": null,
           "metrics": {
