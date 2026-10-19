@@ -427,9 +427,9 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         if legacy_config is not None:
             return legacy_config
         text_config = getattr(hf_config, "text_config", None)
-        if text_config is not None and Version(transformers.__version__) < Version("5.19.0"):
+        if text_config is not None and Version(transformers.__version__) < Version("5.18.0"):
             raise ValueError(
-                "Native Nemotron 3.5 Super VL conversion requires Transformers >=5.19.0; "
+                "Native Nemotron 3.5 Super VL conversion requires Transformers >=5.18.0; "
                 "use trust_remote_code=True with the original checkpoint on older versions."
             )
         return text_config

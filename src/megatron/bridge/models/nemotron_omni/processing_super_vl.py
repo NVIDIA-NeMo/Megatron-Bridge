@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bridge-local loading adapter for Transformers 5.19.0's native VL processor.
+"""Bridge-local loading adapter for the native VL processor in Transformers 5.18.0 through 5.20.1.
 
 Imported lazily only by the version-guarded Super-VL pretrained wrapper. Image,
 video and text processing use the upstream implementation without monkey patches
-or changes to the source checkpoint. Loading these exports on unpatched HF 5.19.0
-still requires this Bridge adapter because HF insists on an audio extractor.
+or changes to the source checkpoint. Loading these exports on unpatched HF 5.18.0
+through 5.20.1 still requires this Bridge adapter because HF insists on an audio extractor.
 """
 
 import copy
@@ -37,7 +37,7 @@ class Nemotron35VLProcessor(NemotronH_Omni_Reasoning_V3Processor):
 
     @classmethod
     def get_attributes(cls) -> list[str]:
-        # HF 5.19's ProcessorMixin binds constructor arguments to these modality
+        # HF 5.18-5.20 ProcessorMixin binds constructor arguments to these modality
         # attributes. The native constructor's trailing feature_extractor=None
         # is deliberately not bound or serialized for this audio-free model.
         return [name for name in super().get_attributes() if name != "feature_extractor"]

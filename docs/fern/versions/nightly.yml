@@ -46,6 +46,10 @@ navigation:
       path: ./nightly/pages/models/bailing/ling-2.mdx
     section: Bailing
   - contents:
+    - page: Beam
+      path: ./nightly/pages/models/beam/beam.mdx
+    section: Beam
+  - contents:
     - page: DeepSeek V3
       path: ./nightly/pages/models/deepseek/deepseek-v3.mdx
     - page: DeepSeek V4
