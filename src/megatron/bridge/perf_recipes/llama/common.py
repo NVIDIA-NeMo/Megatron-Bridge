@@ -184,3 +184,4 @@ def _llama2_benchmark_common(cfg: ConfigContainer) -> None:
     cfg.checkpoint.load_rng = False
     cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
     cfg.tokenizer.tensor_model_parallel_size = 1
+    cfg.tokenizer.use_tokenizer_vocab_size = False

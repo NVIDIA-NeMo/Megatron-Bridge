@@ -271,6 +271,7 @@ def test_llama2_70b_lora_perf_recipes_apply_common_defaults(
     assert cfg.dataset.seq_length == 8192
     assert cfg.dataset.enable_offline_packing is True
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
     assert cfg.peft is not None
     assert cfg.peft.dim == 16
     assert cfg.peft.alpha == 32
