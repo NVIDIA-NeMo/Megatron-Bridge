@@ -1711,6 +1711,9 @@ def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_fun
 
     config.dataset.path = "prepared-clevr2-energon"
     config.dataset.validate()
+    # Mirror runtime_config_update: mixed precision sets the parameter dtype before validation.
+    config.mixed_precision.finalize()
+    config.mixed_precision.setup(config.model, config.optimizer, config.ddp)
     config.validate()
     config.comm_overlap.finalize()
     config.comm_overlap.setup(config.model, config.optimizer, config.ddp)

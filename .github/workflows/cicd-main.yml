@@ -304,6 +304,7 @@ jobs:
           .github/scripts/test_cache_keys.sh
           .github/scripts/test_docker_dependency_layers.sh
           .github/scripts/test_queue_bypass.sh
+          .github/scripts/test_workflow_result.sh
 
       - name: Check lint
         run: |
@@ -1248,48 +1249,7 @@ jobs:
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
           DISABLE_GB200_TESTS: ${{ vars.DISABLE_GB200_TESTS }}
         run: |
-          # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
-          # any failure (e.g. "failed to determine base repo" when git context is
-          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
-          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
-          # repository, and `set -e -o pipefail` makes any failure here abort the job.
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length')
-
-          UNEXPECTED_SKIPS=0
-          check_tier_skips() {
-            local tier="$1" expect="$2"
-            [ "$expect" != "true" ] && return
-            local n
-            n=$(gh run view $GITHUB_RUN_ID --json jobs \
-              | jq --arg p "${tier}_" '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
-            if [ "${n:-0}" -gt 0 ]; then
-              echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
-              gh run view $GITHUB_RUN_ID --json jobs \
-                | jq -r --arg p "${tier}_" '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
-              UNEXPECTED_SKIPS=$((UNEXPECTED_SKIPS + n))
-            fi
-          }
-
-          check_tier_skips "L0" "$EXPECT_L0"
-          check_tier_skips "L1" "$EXPECT_L1"
-          check_tier_skips "L2" "$EXPECT_L2"
-          if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
-            check_tier_skips "gb200_L0" "$EXPECT_L0"
-            check_tier_skips "gb200_L1" "$EXPECT_L1"
-            check_tier_skips "gb200_L2" "$EXPECT_L2"
-          fi
-
-          if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
-            echo "❌ Found $FAILED_JOBS failed job(s):"
-            gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name'
-          fi
-
-          if [ "${FAILED_JOBS:-0}" -gt 0 ] || [ "${UNEXPECTED_SKIPS:-0}" -gt 0 ]; then
-            exit 1
-          fi
-
-          echo "✅ All previous jobs completed successfully"
-          exit 0
+          .github/scripts/check_workflow_result.sh
 
   Coverage_Fake:
     runs-on: ubuntu-latest
@@ -1388,7 +1348,7 @@ jobs:
   notify-nightly-failure:
     name: Notify scheduled CI failure
     runs-on: ubuntu-latest
-    environment: main
+    environment: public
     needs:
       - ephemeral-runner-routing
       - pre-flight

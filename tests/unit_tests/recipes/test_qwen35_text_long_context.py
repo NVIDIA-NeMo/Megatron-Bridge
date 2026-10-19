@@ -63,6 +63,9 @@ def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch
     )
 
     cfg = recipe_func()
+    # Mirror runtime_config_update: mixed precision sets the parameter dtype before validation.
+    cfg.mixed_precision.finalize()
+    cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
     cfg.validate()
 
     assert config.to_dict() == original
