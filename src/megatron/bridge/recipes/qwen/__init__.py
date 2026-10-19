@@ -20,8 +20,10 @@ from .gb200.qwen3_moe import (
 # Qwen3.5 GB200 models
 from .gb200.qwen35 import (
     qwen35_text_9b_pretrain_8gpu_gb200_bf16_config,
+    qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config,
     qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config,
     qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config,
+    qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_bf16_config,
     qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config,
 )
 
@@ -86,6 +88,7 @@ from .qwen3 import (
 
 # Qwen3 MoE models
 from .qwen3_moe import (
+    qwen3_30b_a3b_dpo_config,
     qwen3_30b_a3b_peft_config,
     qwen3_30b_a3b_pretrain_config,
     qwen3_30b_a3b_sft_config,
@@ -165,6 +168,7 @@ __all__ = [
     "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
     "qwen3_30b_a3b_sft_config",
     "qwen3_30b_a3b_peft_config",
+    "qwen3_30b_a3b_dpo_config",
     "qwen3_235b_a22b_pretrain_config",
     "qwen3_235b_a22b_sft_config",
     "qwen3_235b_a22b_peft_config",
@@ -175,8 +179,10 @@ __all__ = [
     # Qwen3.5 text models
     "qwen35_text_9b_pretrain_config",
     "qwen35_text_9b_pretrain_8gpu_gb200_bf16_config",
+    "qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config",
     "qwen35_text_35b_a3b_pretrain_config",
     "qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config",
     "qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config",
+    "qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_bf16_config",
     "qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config",
 ]

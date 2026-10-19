@@ -74,10 +74,6 @@ def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
 def _nemotron_3_ultra_nvfp4_precision() -> MixedPrecisionConfig:
     """Return the NVFP4 precision config used by Nemotron 3 Ultra perf recipes."""
     cfg = nemotron_3_ultra_bf16_with_nvfp4_mixed()
-    # Although MCore PR 4358 is merged,
-    # Megatron-FSDP's ParamAndGradBuffer has no NVFP4 packed-storage support, unlike the
-    # legacy DDP buffer, so FP4 primary weights fault during buffer init.
-    cfg.fp4_param_gather = False
     return cfg
 
 

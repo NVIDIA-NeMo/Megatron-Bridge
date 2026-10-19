@@ -446,3 +446,123 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
         "NVTE_DPA_FP8_FORMAT": "E4M3",
     }
     return cfg
+
+
+def _apply_deepseek_v3_4gpu_vrnvl72_proxy(cfg: ConfigContainer) -> None:
+    """Shrink a 256-GPU VRNVL72 DeepSeek V3 recipe onto one 4-GPU VRNVL72 node.
+
+    Both 4-GPU proxies go through this helper so that every model, parallelism and batch
+    setting matches and only the quantization recipe differs between their profiles.
+    """
+    # Three leading dense layers and ten MoE layers plus one MTP layer, as in the 64-GPU proxies.
+    cfg.model.num_layers = 13
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    # EP=4 over 32 experts keeps the parent's per-rank expert work (256 experts over EP=32):
+    # 8 local experts, each receiving 4096 tokens per microbatch under forced load balancing.
+    cfg.model.num_moe_experts = 32
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+    # Dense DP=4 and expert DP=1; 32 microbatches per rank, as in the 256-GPU parent.
+    cfg.train.global_batch_size = 128
+
+    # The parents differ in these two knobs; pin both so the proxies share one graph structure.
+    # MXFP8 is the only recipe with a quantized LM head, so keep the LM head in BF16 for both.
+    cfg.model.fp8_output_proj = False
+    # Fused input LayerNorm and q/kv down-projection works with either recipe (NVFP4 parent setting).
+    cfg.model.mla_down_proj_fusion = True
+
+
+def deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 MXFP8 profiling proxy: 13 decoder layers and 32 experts on one 4-GPU VRNVL72 node.
+
+    Matches ``deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config`` in everything except the
+    quantization recipe, so the two profiles can be compared directly. Per-layer shapes and
+    per-rank expert work follow the 256-GPU parent: TP=1, PP=1, EP=4, MBS=1, GBS=128, one MTP
+    layer, full-iteration CUDA graphs, HybridEP and combined-1F1B MoE overlap. Attention and all
+    GEMMs run in MXFP8; the LM head stays in BF16. This proxy does not reproduce at-scale
+    communication, convergence or memory use.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config()
+    _apply_deepseek_v3_4gpu_vrnvl72_proxy(cfg)
+
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    # Identical to the NVFP4 proxy apart from the NVFP4-only entries at the end of that recipe.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology: the whole EP=4 group sits in one node.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm in both 4-GPU proxies.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # Keep DeepSeek kernel selection aligned with the 256-GPU parent recipes.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 NVFP4 profiling proxy: 13 decoder layers and 32 experts on one 4-GPU VRNVL72 node.
+
+    Matches ``deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config`` in everything except the
+    quantization recipe, so the two profiles can be compared directly. Per-layer shapes and
+    per-rank expert work follow the 256-GPU parent: TP=1, PP=1, EP=4, MBS=1, GBS=128, one MTP
+    layer, full-iteration CUDA graphs, HybridEP and combined-1F1B MoE overlap. GEMMs run in
+    NVFP4, attention in MXFP8 E4M3 as in the MXFP8 proxy, and the LM head in BF16. This proxy
+    does not reproduce at-scale communication, convergence or memory use.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config()
+    _apply_deepseek_v3_4gpu_vrnvl72_proxy(cfg)
+
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    # Identical to the MXFP8 proxy apart from the NVFP4-only entries at the end.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology: the whole EP=4 group sits in one node.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm in both 4-GPU proxies.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # Keep DeepSeek kernel selection aligned with the 256-GPU parent recipes.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+        # Run attention in MXFP8 E4M3, as the MXFP8 proxy does natively.
+        "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
+        "NVTE_DPA_FP8_FORMAT": "E4M3",
+    }
+    return cfg

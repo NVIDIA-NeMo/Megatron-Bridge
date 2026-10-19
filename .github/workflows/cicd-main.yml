@@ -304,6 +304,7 @@ jobs:
           .github/scripts/test_cache_keys.sh
           .github/scripts/test_docker_dependency_layers.sh
           .github/scripts/test_queue_bypass.sh
+          .github/scripts/test_workflow_result.sh
 
       - name: Check lint
         run: |
@@ -729,7 +730,9 @@ jobs:
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+              entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+                '{script: $script, timeout: $timeout, runner: $runner}')
+              entries="${entries}${entry},"
             done
             matrix="{\"include\":[${entries%,}]}"
             echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
@@ -740,7 +743,9 @@ jobs:
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+            entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+              '{script: $script, timeout: $timeout, runner: $runner}')
+            entries="${entries}${entry},"
           done
           echo "matrix_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -978,7 +983,9 @@ jobs:
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+              entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+                '{script: $script, timeout: $timeout, runner: $runner}')
+              entries="${entries}${entry},"
             done
             echo "matrix_gb200_${tier,,}={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
           done
@@ -988,7 +995,9 @@ jobs:
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+            entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+              '{script: $script, timeout: $timeout, runner: $runner}')
+            entries="${entries}${entry},"
           done
           echo "matrix_gb200_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -1240,48 +1249,7 @@ jobs:
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
           DISABLE_GB200_TESTS: ${{ vars.DISABLE_GB200_TESTS }}
         run: |
-          # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
-          # any failure (e.g. "failed to determine base repo" when git context is
-          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
-          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
-          # repository, and `set -e -o pipefail` makes any failure here abort the job.
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length')
-
-          UNEXPECTED_SKIPS=0
-          check_tier_skips() {
-            local tier="$1" expect="$2"
-            [ "$expect" != "true" ] && return
-            local n
-            n=$(gh run view $GITHUB_RUN_ID --json jobs \
-              | jq --arg p "${tier}_" '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
-            if [ "${n:-0}" -gt 0 ]; then
-              echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
-              gh run view $GITHUB_RUN_ID --json jobs \
-                | jq -r --arg p "${tier}_" '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
-              UNEXPECTED_SKIPS=$((UNEXPECTED_SKIPS + n))
-            fi
-          }
-
-          check_tier_skips "L0" "$EXPECT_L0"
-          check_tier_skips "L1" "$EXPECT_L1"
-          check_tier_skips "L2" "$EXPECT_L2"
-          if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
-            check_tier_skips "gb200_L0" "$EXPECT_L0"
-            check_tier_skips "gb200_L1" "$EXPECT_L1"
-            check_tier_skips "gb200_L2" "$EXPECT_L2"
-          fi
-
-          if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
-            echo "❌ Found $FAILED_JOBS failed job(s):"
-            gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name'
-          fi
-
-          if [ "${FAILED_JOBS:-0}" -gt 0 ] || [ "${UNEXPECTED_SKIPS:-0}" -gt 0 ]; then
-            exit 1
-          fi
-
-          echo "✅ All previous jobs completed successfully"
-          exit 0
+          .github/scripts/check_workflow_result.sh
 
   Coverage_Fake:
     runs-on: ubuntu-latest
@@ -1376,3 +1344,44 @@ jobs:
           path: |
             .coverage
           include-hidden-files: true
+
+  notify-nightly-failure:
+    name: Notify scheduled CI failure
+    runs-on: ubuntu-latest
+    environment: public
+    needs:
+      - ephemeral-runner-routing
+      - pre-flight
+      - configure
+      - lint-check
+      - cicd-wait-in-queue
+      - cicd-compute-build-matrix
+      - cicd-container-build
+      - cicd-import-check
+      - cicd-unit-tests-core
+      - cicd-unit-tests-diffusion
+      - generate-test-matrix
+      - cicd-functional-tests-l0
+      - cicd-functional-tests-l1
+      - cicd-functional-tests-l2
+      - cicd-functional-tests-flaky
+      - generate-gb200-test-matrix
+      - cicd-functional-tests-gb200-l0
+      - cicd-functional-tests-gb200-l1
+      - cicd-functional-tests-gb200-l2
+      - cicd-functional-tests-gb200-flaky
+      - Nemo_CICD_Test
+      - Coverage
+    permissions: {}
+    # Keep setup failures visible even when downstream jobs are skipped.
+    if: >-
+      ${{ always() && !cancelled() && failure() &&
+          github.repository == 'NVIDIA-NeMo/Megatron-Bridge' &&
+          github.event_name == 'schedule' &&
+          github.ref_name == github.event.repository.default_branch }}
+    steps:
+      - name: Notify CI alerts channel
+        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/notify-ci-failure@631c404d00a9e60afc591cd071d35d2e18f82fc6
+        with:
+          needs-json: ${{ toJSON(needs) }}
+          webhook: ${{ secrets.SLACK_WEBHOOK }}

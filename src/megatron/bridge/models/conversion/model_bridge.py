@@ -80,6 +80,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
 )
 from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.transformers_compat import (
+    partial_rotary_factor_from_hf,
     rope_theta_from_hf,
 )
 from megatron.bridge.models.conversion.utils import (
@@ -627,6 +628,14 @@ class MegatronModelBridge(
         ("mscale_all_dim", "yarn_mscale_all_dim"),
     ]
 
+    # Hugging Face YaRN defaults (transformers' _compute_yarn_parameters) for keys a
+    # checkpoint omits: (megatron_param, default)
+    YARN_HF_DEFAULTS = [
+        ("yarn_beta_fast", 32.0),
+        ("yarn_beta_slow", 1.0),
+        ("yarn_correction_range_round_to_int", True),
+    ]
+
     # MLA rope scaling field mapping: (hf_rope_scaling_key, megatron_mla_param)
     # These are applied for MLA models (DeepSeek, Kimi, etc.) which use MLATransformerConfig
     # Uses direct field names without yarn_ prefix (e.g., mscale, rotary_scaling_factor)
@@ -689,6 +698,12 @@ class MegatronModelBridge(
             else:
                 value = getattr(hf_config, hf_name, None)
                 has_value = hasattr(hf_config, hf_name)
+                if not has_value and hf_name == "partial_rotary_factor":
+                    # Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters.
+                    try:
+                        value, has_value = partial_rotary_factor_from_hf(hf_config), True
+                    except ValueError:
+                        pass
             if (
                 has_value
                 and megatron_name not in provider_kwargs
@@ -736,6 +751,10 @@ class MegatronModelBridge(
                         provider_kwargs[megatron_key] = value
                 if "truncate" in rope_scaling:
                     provider_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+                # Apply Hugging Face YaRN defaults for omitted keys. Megatron Core passes these
+                # fields to YarnRotaryEmbedding explicitly, so None would override its defaults.
+                for megatron_key, default in self.YARN_HF_DEFAULTS:
+                    provider_kwargs.setdefault(megatron_key, default)
         elif is_mla_provider:
             if rope_type not in (None, "default"):
                 logger.warning(
@@ -1856,7 +1875,7 @@ class MegatronModelBridge(
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrapped_model_list[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
         tied_mapping_registry = self.mapping_registry() if embeddings_are_tied else None
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
@@ -2099,12 +2118,27 @@ class MegatronModelBridge(
         model = unwrap_model(model)
         return model.config
 
-    def _share_embeddings_and_output_weights(
-        self,
-        model_config: TransformerConfig,
-    ) -> bool:
-        """Shared embedding setting."""
-        return getattr(model_config, "share_embeddings_and_output_weights", False)
+    def _share_embeddings_and_output_weights(self, model: MegatronModule) -> bool:
+        """Return whether the model ties its input embeddings and output layer.
+
+        Provider-built models carry the flag on ``model.config``. A builder-backed model's
+        ``config`` is only the nested ``TransformerConfig``, while the flag lives on the outer
+        model config, so fall back to the flag stored on the built language model, which owns
+        the output layer, and then on the model itself.
+
+        Args:
+            model: Unwrapped Megatron model chunk.
+
+        Returns:
+            True when the output layer reuses the input embedding weights.
+        """
+        model_config = getattr(model, "config", None)
+        if hasattr(model_config, "share_embeddings_and_output_weights"):
+            return model_config.share_embeddings_and_output_weights
+        for module in (getattr(model, "language_model", None), model):
+            if module is not None and hasattr(module, "share_embeddings_and_output_weights"):
+                return bool(module.share_embeddings_and_output_weights)
+        return False
 
     def _unwrap_name(self, name: str) -> str:
         """Unwrap name from DDP or other wrappers.
@@ -2149,7 +2183,7 @@ class MegatronModelBridge(
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
-        share_embeddings = self._share_embeddings_and_output_weights(model_config)
+        share_embeddings = self._share_embeddings_and_output_weights(unwrapped_model)
 
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
             is_first_pp_stage or is_last_pp_stage
@@ -2261,7 +2295,7 @@ class MegatronModelBridge(
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
         pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
@@ -2494,7 +2528,7 @@ class MegatronModelBridge(
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
         pp_rank = _get_pp_rank(megatron_model)
         pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)

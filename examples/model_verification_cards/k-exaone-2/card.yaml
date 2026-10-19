@@ -12,9 +12,10 @@ summary: >
   reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A
   2-GPU structural MoE/MTP proxy also completed three
   finite optimizer steps and saved checkpoints, but does not substitute for a
-  full-model training item. A memory-bounded reference forward processed all
-  78 Hugging Face decoder layers for a Korean prompt; Megatron matched its
-  next token with 0.999993 cosine similarity. Complete-model deterministic
+  full-model training item. The manual forward comparison against a
+  memory-bounded Hugging Face reference that applies the configured SwiGLU
+  limits matched the next token with 0.999997 cosine similarity on 48 GB200
+  GPUs. Complete-model deterministic
   inference generated and independently confirmed exactly 16 new tokens. The
   implementation fixes are committed; GPU export remains unverified pending
   its own clean-commit rerun and exact audit.
@@ -108,7 +109,7 @@ items:
   manual_forward_pass:
     status: verified
     precision: bf16
-    bridge_commit: 68d7e875d3bcfad5cd0e7e7d18770cc7e5630034  # pragma: allowlist secret
+    bridge_commit: caf97c2a5860994b5670c918d1996a85cee56225  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=48
       examples/conversion/compare_hf_and_megatron/compare.py
@@ -118,13 +119,18 @@ items:
       --hf-logits-path work/model-verification/k-exaone-2/full-forward/hf_logits_korean.pt
       --model_class ExaoneMoeForCausalLM --prompt "대한민국의 수도는"
       --tp 1 --pp 3 --ep 16 --etp 1
-    last_verified: 2026-07-31
+    last_verified: 2026-10-14
     expected_result: >
-      The memory-bounded Hugging Face reference processed all 78 decoder
-      layers for the shared Korean prompt. Hugging Face and Megatron processed
-      identical input IDs; the next-token matches at token 392 (literal "?").
-      Cosine similarity is 0.999993; maximum and mean absolute logit
-      differences are 7.500000 and 1.621717.
+      On 48 GB200 GPUs (TP1/PP3/EP16/ETP1), both models processed identical
+      input IDs for the Korean prompt and the next token matched at token 2879
+      (" 서울"). The cosine similarity is 0.999997, and the maximum and mean
+      absolute logit differences are 0.500000 and 0.067168. The
+      hf_logits_korean.pt reference is a memory-bounded Hugging Face forward
+      of all 78 decoder layers with the config's swiglu_limits applied (gate
+      clamped to at most 7.0 and up projection to [-7.0, 7.0] in the routed and
+      shared experts of layers 62-77), matching the Megatron SwiGLU clamp;
+      the transformers ExaoneMoe implementation does not read swiglu_limits,
+      so an unclamped reference predicts token 392 ("?") instead.
 
   inference:
     status: verified
