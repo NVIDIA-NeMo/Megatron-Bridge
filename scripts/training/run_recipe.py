@@ -453,7 +453,7 @@ def _apply_benchmark_dataset_defaults(
     if metadata.task in {"sft", "peft"} and recipe_steps_match(recipe_step(metadata.recipe_name), "llm_step"):
         source_dataset = getattr(recipe, "dataset", None)
         mock_dataset = build_dataset_config(recipe, "mock")
-        for field_name in ("num_workers", "pin_memory", "persistent_workers"):
+        for field_name in ("num_workers", "pin_memory", "persistent_workers", "prefetch_factor"):
             if (
                 source_dataset is not None
                 and hasattr(source_dataset, field_name)
