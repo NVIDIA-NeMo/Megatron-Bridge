@@ -91,6 +91,7 @@ DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset(
 )
 MODEL_PAGE_PATHS = {
     "bagel": "models/bagel/bagel.md",
+    "beam": "models/beam/beam.md",
     "deepseek-v3": "models/deepseek/deepseek-v3.md",
     "deepseek-v4-flash": "models/deepseek/deepseek-v4.md",
     "gemma-3-4b-it": "models/gemma/gemma3-vl.md",
@@ -104,6 +105,7 @@ MODEL_PAGE_PATHS = {
     "minimax-m3": "models/minimax/minimax-m3.md",
     "moonlight-16b-a3b": "models/moonlight/moonlight.md",
     "muse-glimmer-30b": "models/muse_glimmer/muse-glimmer.md",
+    "muse-spark-open-816b-a42b": "models/muse_spark_open/muse-spark-open.md",
     "nemotron-3-nano-30b-a3b": "models/nemotron/nemotron3-nano.md",
     "nemotron-3-nano-4b": "models/nemotron/nemotron3-nano-4b.md",
     "nemotron-3-nano-omni-30b-a3b-reasoning": "models/nemotron/nemotron-3-omni.md",

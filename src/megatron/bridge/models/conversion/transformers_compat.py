@@ -87,6 +87,38 @@ def rope_theta_from_hf(config) -> float:
     )
 
 
+def partial_rotary_factor_from_hf(config) -> float:
+    """Extract partial_rotary_factor from a HuggingFace config.
+
+    Transformers 5.19 and earlier expose it as a ``partial_rotary_factor``
+    attribute (and also in ``rope_parameters``). Transformers 5.20+ keeps it
+    only in the flat ``rope_parameters`` dictionary.
+
+    Args:
+        config: HuggingFace configuration object.
+
+    Returns:
+        float: The fraction of each attention head dimension that gets rotary embeddings.
+
+    Raises:
+        ValueError: If partial_rotary_factor is not found in either format.
+    """
+    partial_rotary_factor = getattr(config, "partial_rotary_factor", None)
+    if partial_rotary_factor is not None:
+        return partial_rotary_factor
+
+    rope_parameters = getattr(config, "rope_parameters", None)
+    if isinstance(rope_parameters, dict):
+        partial_rotary_factor = rope_parameters.get("partial_rotary_factor")
+        if partial_rotary_factor is not None:
+            return partial_rotary_factor
+
+    raise ValueError(
+        "partial_rotary_factor not found in config. Expected either a 'partial_rotary_factor' attribute "
+        "(transformers <5.20) or 'rope_parameters[\"partial_rotary_factor\"]' (transformers >=5.20)."
+    )
+
+
 def rope_local_base_freq_from_hf(config) -> float:
     """Extract rope_local_base_freq from a HuggingFace config.
 
