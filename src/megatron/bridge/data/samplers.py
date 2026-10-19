@@ -42,6 +42,7 @@ def build_pretraining_data_loader(
     collate_fn: Optional[Callable] = None,
     pin_memory: bool = True,
     persistent_workers: bool = False,
+    prefetch_factor: int | None = None,
     data_parallel_rank: int = 0,
     data_parallel_size: int = 1,
     drop_last: Optional[bool] = True,
@@ -67,6 +68,8 @@ def build_pretraining_data_loader(
         collate_fn: Optional custom collate function.
         pin_memory: Whether to pin memory for the DataLoader.
         persistent_workers: Whether to use persistent workers.
+        prefetch_factor: Number of batches each worker loads in advance. None keeps PyTorch's
+                         default. Ignored when num_workers is 0.
         data_parallel_rank: Rank of the current GPU in the data parallel group.
         data_parallel_size: Total number of GPUs in the data parallel group.
         drop_last: Whether to drop last incomplete batch.
@@ -136,8 +139,11 @@ def build_pretraining_data_loader(
         raise Exception("{} dataloader type is not supported.".format(dataloader_type))
 
     maybe_worker_init_fn = None
+    worker_kwargs = {}
     if num_workers > 0:
         maybe_worker_init_fn = functools.partial(_initialize_worker, worker_init_fn=worker_init_fn)
+        if prefetch_factor is not None:
+            worker_kwargs["prefetch_factor"] = prefetch_factor
 
     # Torch dataloader.
     return DataLoader(
@@ -148,6 +154,7 @@ def build_pretraining_data_loader(
         collate_fn=collate_fn,
         persistent_workers=persistent_workers,
         worker_init_fn=maybe_worker_init_fn,
+        **worker_kwargs,
     )
 
 

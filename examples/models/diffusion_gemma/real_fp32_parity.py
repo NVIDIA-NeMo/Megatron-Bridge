@@ -22,6 +22,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
+from fp32_precision import disable_tf32
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.utils import unwrap_model
 from real_encoder_parity import compare, device_inputs, encode_cases, native_hf_masks
@@ -106,8 +107,7 @@ def main() -> None:
 
     dist.init_process_group("nccl")
     torch.cuda.set_device(0)
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
+    disable_tf32()
 
     processor = AutoProcessor.from_pretrained(args.model_path, local_files_only=True)
     cases = encode_cases(processor)
