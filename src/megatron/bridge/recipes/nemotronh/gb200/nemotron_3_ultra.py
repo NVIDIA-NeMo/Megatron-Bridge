@@ -62,7 +62,6 @@ def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config() -> ConfigContaine
     cfg.model.recompute_num_layers = None
     cfg.model.recompute_modules = ["core_attn", "layernorm"]
 
-    cfg.dist.use_megatron_fsdp = False
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.num_distributed_optimizer_instances = 1

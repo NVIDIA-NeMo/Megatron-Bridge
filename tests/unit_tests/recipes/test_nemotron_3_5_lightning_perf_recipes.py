@@ -678,7 +678,6 @@ def test_gb_fsdp_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContain
     assert cfg.model.init_model_with_meta_device is True
 
     assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
-    assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.num_distributed_optimizer_instances == 1
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"

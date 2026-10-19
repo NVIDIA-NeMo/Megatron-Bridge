@@ -17,7 +17,6 @@ For stable background and recommendation level, see:
 Minimal Megatron FSDP override in Bridge:
 
 ```python
-cfg.dist.use_megatron_fsdp = True
 cfg.ddp.use_megatron_fsdp = True
 cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 cfg.ddp.average_in_collective = False
@@ -28,7 +27,6 @@ Example recipe fixup:
 
 ```python
 cfg = llama3_8b_pretrain_config()
-cfg.dist.use_megatron_fsdp = True
 cfg.ddp.use_megatron_fsdp = True
 cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 cfg.ddp.average_in_collective = False
@@ -45,22 +43,17 @@ python scripts/performance/launch.py --use_megatron_fsdp true
 
 ## Code Anchors
 
-Bridge config definition:
+Megatron FSDP is selected only by the DDP config (`cfg.ddp`); `cfg.dist` keeps `use_torch_fsdp2`:
 
-```148:154:src/megatron/bridge/training/config.py
+```94:95:3rdparty/Megatron-LM/megatron/core/distributed/distributed_data_parallel_config.py
 use_megatron_fsdp: bool = False
-"""Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2."""
-
-use_torch_fsdp2: bool = False
-"""Use the torch FSDP2 implementation. FSDP2 is not currently working with Pipeline Parallel.
-It is still not in a stable release stage, and may therefore contain bugs or other
-potential issues."""
+"""If true, use the FSDP code path for DDP."""
 ```
 
 Bridge validation:
 
 ```1533:1578:src/megatron/bridge/training/config.py
-if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
+if self.ddp.use_megatron_fsdp and self.dist.use_torch_fsdp2:
     raise ValueError(...)
 ...
 assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"

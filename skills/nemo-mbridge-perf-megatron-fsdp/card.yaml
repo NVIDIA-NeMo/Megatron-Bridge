@@ -23,7 +23,6 @@ feature_meaning:
     Megatron-Core wrapper around PyTorch fully_shard enabled through
     use_torch_fsdp2.
 recommended_path:
-  dist.use_megatron_fsdp: true
   ddp.use_megatron_fsdp: true
   ddp.data_parallel_sharding_strategy: optim_grads_params
   checkpoint.ckpt_format: fsdp_dtensor

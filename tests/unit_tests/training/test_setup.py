@@ -514,8 +514,8 @@ class TestBuildDistributedModel:
         cfg = MagicMock()
         cfg.model = model_cfg
         cfg.ddp = MagicMock()
+        cfg.ddp.use_megatron_fsdp = False
         cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-        cfg.dist.use_megatron_fsdp = False
         cfg.dist.use_torch_fsdp2 = False
         cfg.rng.data_parallel_random_init = False
         return cfg, model_cfg
@@ -551,8 +551,8 @@ class TestBuildDistributedModel:
         cfg = MagicMock()
         cfg.model = mock_provider
         cfg.ddp = MagicMock()
+        cfg.ddp.use_megatron_fsdp = False
         cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-        cfg.dist.use_megatron_fsdp = False
         cfg.dist.use_torch_fsdp2 = False
         cfg.rng.data_parallel_random_init = False
 
