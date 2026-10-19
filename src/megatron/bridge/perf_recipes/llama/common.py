@@ -241,6 +241,7 @@ def _llama31_8b_common(cfg: ConfigContainer) -> None:
     cfg.tokenizer.tokenizer_sentencepiece_legacy = False
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.trust_remote_code = False
+    cfg.tokenizer.use_tokenizer_vocab_size = False
     cfg.tokenizer.vocab_extra_ids = 0
     cfg.rng.data_parallel_random_init = False
     cfg.rng.inference_rng_tracker = False

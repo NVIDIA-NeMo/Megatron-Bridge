@@ -205,6 +205,7 @@ def test_llama31_8b_perf_recipes_apply_common_defaults(
     assert cfg.optimizer.overlap_param_gather is True
     assert cfg.dataset.seq_length == 8192
     assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
 
     gpu_count = _gpu_count_from_recipe_name(recipe_factory.__name__)
     assert data_parallel_size(num_gpus=gpu_count, topology=topology_from_config(cfg.model)) >= 1
