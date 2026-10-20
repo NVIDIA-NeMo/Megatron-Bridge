@@ -1950,6 +1950,60 @@ def _patch_conversion_task_context(monkeypatch, bridge, model, global_names):
     )
 
 
+@pytest.mark.unit
+def test_build_conversion_tasks_preserves_pp_vp_and_expert_ownership(monkeypatch):
+    """Task topology retains global names and live local sources across VP chunks."""
+    config = SimpleNamespace(share_embeddings_and_output_weights=False, num_moe_experts=4)
+    group = SimpleNamespace(size=lambda: 2, rank=lambda: 1)
+    groups = SimpleNamespace(pp=group, ep=group)
+    models = []
+    for layer_number in (2, 4):
+        layer = model_bridge_module.MegatronModule(config)
+        layer.layer_number = layer_number
+        layer.mlp = torch.nn.Module()
+        layer.mlp.experts = torch.nn.Module()
+        layer.mlp.experts.linear_fc1 = torch.nn.Module()
+        layer.mlp.experts.linear_fc1.register_parameter("weight0", torch.nn.Parameter(torch.ones(2, 2)))
+        model = torch.nn.Module()
+        model.config = config
+        model.pg_collection = groups
+        model.decoder = torch.nn.Module()
+        model.decoder.layers = torch.nn.ModuleList([layer])
+        models.append(model)
+
+    local_name = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+    global_names = [f"decoder.layers.{layer}.mlp.experts.linear_fc1.weight2" for layer in (1, 2, 3)]
+    bridge = DummyBridge()
+    monkeypatch.setattr(
+        bridge,
+        "mapping_registry",
+        lambda: MegatronMappingRegistry(
+            DirectMapping(
+                "decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                "model.layers.*.mlp.experts.*.gate_proj.weight",
+            )
+        ),
+    )
+    monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _models: global_names)
+    monkeypatch.setattr(model_bridge_module, "get_pg_size", lambda pg: pg.size())
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda group=None: group.rank() if group is not None else 0)
+
+    tasks = bridge.build_conversion_tasks(PretrainedConfig(), models)
+
+    assert [task.global_param_name for task in tasks] == global_names
+    for vp_stage, task in enumerate((tasks[0], tasks[2])):
+        source_module = models[vp_stage].decoder.layers[0].mlp.experts.linear_fc1
+        assert task.param_name == local_name
+        assert (task.pp_rank, task.vp_stage) == (1, vp_stage)
+        assert task.megatron_module is source_module
+        assert task.param_weight is source_module.weight0
+        assert task.mapping.hf_param == f"model.layers.{2 * vp_stage + 1}.mlp.experts.2.gate_proj.weight"
+    remote = tasks[1]
+    assert remote.param_name == global_names[1]
+    assert (remote.param_weight, remote.megatron_module, remote.vp_stage) == (None, None, None)
+    assert remote.mapping.hf_param == "model.layers.2.mlp.experts.2.gate_proj.weight"
+
+
 @pytest.mark.parametrize("owns_parameter", [True, False])
 def test_build_conversion_tasks_rejects_an_unmapped_parameter(monkeypatch, owns_parameter):
     """A Megatron parameter with no registry entry must stop the conversion by name.
