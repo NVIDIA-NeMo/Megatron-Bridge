@@ -156,7 +156,7 @@ def test_glm52_h100_recipes_use_hybridep(recipe) -> None:
     assert cfg.env_vars["USE_MNNVL"] == 0
     assert COMMON_RECIPE_ENV_VARS.items() <= cfg.env_vars.items()
     # HybridEP and TileLang compile their kernels one pipeline stage after another during the first step.
-    assert cfg.dist.distributed_timeout_minutes == 120
+    assert cfg.dist.distributed_timeout_minutes == 180
 
 
 def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:

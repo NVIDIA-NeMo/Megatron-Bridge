@@ -49,11 +49,13 @@ _H100_HYBRIDEP_ENV_VARS = {
 # kernels for the local GPU instead.
 _H100_DSA_KERNEL_BACKEND = "tilelang"
 # HybridEP and TileLang compile their kernels in every process at the first step, one pipeline stage after
-# another, so a stage can wait on its neighbor far longer than the 10-minute default timeout. With 11 stages the
-# longest wait was about 30 minutes (50 on a busy cluster), and each extra stage adds about 2.5 minutes (4.5): about
-# 35 and 50 minutes for the 13- and 19-stage recipes here (60 and 85 on a busy cluster). The timeout applies to every
-# collective for the whole run; dist.distributed_timeout_seconds_after_init can lower it after the first step.
-_H100_DISTRIBUTED_TIMEOUT_MINUTES = 120
+# another, so the first stage can wait in a pipeline send or receive far longer than the 10-minute default timeout.
+# The wait grows with the stage count and the per-stage compile time, and further when a step has fewer microbatches
+# than stages (2 for PEFT, 13 for the 200K SFT recipe). In an SFT run with one Inductor compile thread per rank and
+# cold kernel caches, compilation took about 5 to 6 minutes per stage on average and the SFT recipe waited at least
+# 85 minutes; at that rate the PEFT and 200K SFT recipes would wait about 2.4 and 2.5 hours. The timeout applies to
+# the whole run; dist.distributed_timeout_seconds_after_init can lower it after the first step.
+_H100_DISTRIBUTED_TIMEOUT_MINUTES = 180
 
 
 def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
