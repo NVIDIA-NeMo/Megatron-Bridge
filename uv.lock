@@ -13,7 +13,10 @@ resolution-markers = [
 prerelease-mode = "allow"
 
 [manifest]
-constraints = [{ name = "tokenizers", specifier = "!=0.23.0rc0" }]
+constraints = [
+    { name = "pillow", specifier = ">=13.0.0" },
+    { name = "tokenizers", specifier = "!=0.23.0rc0" },
+]
 overrides = [
     { name = "apache-tvm-ffi", specifier = "==0.1.11" },
     { name = "av", marker = "sys_platform == 'never'" },
@@ -31,7 +34,6 @@ overrides = [
     { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'" },
     { name = "nvidia-modelopt", specifier = "==0.46.0rc1", index = "https://pypi.nvidia.com/" },
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
-    { name = "pillow", specifier = "==13.0.0" },
     { name = "sqlparse", specifier = ">=0.6.0,<1" },
     { name = "tilelang", specifier = "==0.1.12" },
     { name = "torch", marker = "sys_platform == 'never'" },
