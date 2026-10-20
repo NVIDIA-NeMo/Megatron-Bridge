@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import torch
 
+from megatron.bridge.models.common.base import _DEV_PIN_HINT
+
 
 if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
@@ -58,10 +60,6 @@ __all__ = [
 
 DYNAMIC_CP_SCHEDULERS: tuple[str, ...] = ("default_dynamic_cp",)
 """Scheduler names that form dynamic context-parallel groups per microbatch."""
-
-_DEV_PIN_HINT = (
-    " Dynamic context parallelism needs the Megatron-Core dev pin: `./scripts/switch_mcore.sh dev && uv sync`."
-)
 
 
 def global_batch_packing_enabled(model_config: Any) -> bool:
