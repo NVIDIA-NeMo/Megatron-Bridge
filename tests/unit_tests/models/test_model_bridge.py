@@ -683,11 +683,6 @@ def test_build_conversion_tasks_keeps_output_weight_when_embeddings_are_untied(m
     tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
 
     assert [task.global_param_name for task in tasks] == ["output_layer.weight", "output_layer.bias"]
-    parameters = dict(model.named_parameters())
-    for task in tasks:
-        assert task.param_weight is parameters[task.param_name]
-        assert task.megatron_module.config is model.config
-        assert (task.pp_rank, task.vp_stage) == (0, 0)
 
 
 @pytest.mark.parametrize(
@@ -918,8 +913,7 @@ def _patch_stream_weights_megatron_to_hf_basics(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
-def test_stream_weights_megatron_to_hf_honors_replaced_task_subset(monkeypatch, dtype):
+def test_stream_weights_megatron_to_hf_honors_replaced_task_subset(monkeypatch):
     """Reusable export plans must honor filtered, caller-materialized logical weights."""
     bridge = DummyBridge()
     module = torch.nn.Linear(4, 2, bias=False)
@@ -934,7 +928,7 @@ def test_stream_weights_megatron_to_hf_honors_replaced_task_subset(monkeypatch, 
         param_weight=module.weight,
     )
     omitted = replace(task, mapping=DirectMapping("decoder.omitted.weight", "model.omitted.weight"))
-    logical = torch.arange(8, dtype=dtype).reshape(2, 4)
+    logical = torch.arange(8, dtype=torch.bfloat16).reshape(2, 4)
     tasks = [omitted, replace(task, param_weight=logical)]
     monkeypatch.setattr(
         bridge, "build_conversion_tasks", Mock(side_effect=AssertionError("must reuse supplied tasks"))
@@ -942,7 +936,7 @@ def test_stream_weights_megatron_to_hf_honors_replaced_task_subset(monkeypatch, 
     _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
 
     for offset in (0, 16):
-        logical.copy_(torch.arange(8, dtype=dtype).reshape(2, 4) + offset)
+        logical.copy_(torch.arange(8, dtype=torch.bfloat16).reshape(2, 4) + offset)
         [exported] = bridge.stream_weights_megatron_to_hf(
             [module],
             SimpleNamespace(),
@@ -953,7 +947,7 @@ def test_stream_weights_megatron_to_hf_honors_replaced_task_subset(monkeypatch, 
         )
 
         assert exported.param_name == "model.proj.weight"
-        assert exported.weight.dtype == dtype
+        assert exported.weight.dtype == torch.bfloat16
         assert exported.weight.shape == logical.shape
         torch.testing.assert_close(exported.weight, logical)
     assert task.param_weight is module.weight

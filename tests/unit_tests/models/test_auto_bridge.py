@@ -1871,9 +1871,9 @@ class TestAutoBridge:
         model = [object()]
         tasks = [object(), object()]
         conversion_tasks = iter(tasks)
-        weight_iter = iter([])
+        weights = [("weight", torch.ones(1))]
         model_bridge = Mock()
-        model_bridge.stream_weights_megatron_to_hf.return_value = weight_iter
+        model_bridge.stream_weights_megatron_to_hf.return_value = iter(weights)
         model_bridge.build_export_fp8_tasks.side_effect = AssertionError(
             "Prebuilt tasks must bypass FP8 task construction"
         )
@@ -1885,8 +1885,8 @@ class TestAutoBridge:
         )
 
         assert (
-            bridge.export_hf_weights(model, conversion_tasks=conversion_tasks, current_pp_stage_only=True)
-            is weight_iter
+            list(bridge.export_hf_weights(model, conversion_tasks=conversion_tasks, current_pp_stage_only=True))
+            == weights
         )
         model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
             model,
