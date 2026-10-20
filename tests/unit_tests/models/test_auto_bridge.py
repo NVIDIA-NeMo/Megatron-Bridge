@@ -1807,7 +1807,9 @@ class TestAutoBridge:
                     weight_dtype=None,
                 )
 
-    def test_export_hf_weights(self):
+    @pytest.mark.unit
+    @pytest.mark.parametrize("prebuilt_tasks", [False, True])
+    def test_export_hf_weights(self, monkeypatch, prebuilt_tasks):
         """Test exporting weights from Megatron to HF format."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
@@ -1815,6 +1817,8 @@ class TestAutoBridge:
         mock_hf_model.config.auto_map = None
 
         mock_megatron_model = [object()]
+        tasks = [object(), object()]
+        conversion_tasks = iter(tasks) if prebuilt_tasks else None
 
         with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
             mock_model_bridge = Mock()
@@ -1827,11 +1831,23 @@ class TestAutoBridge:
                 mock_transformers.LlamaForCausalLM = mock_arch_class
 
                 bridge = AutoBridge(mock_hf_model)
+                if prebuilt_tasks:
+                    bridge.export_weight_dtype = "fp8"
+                    monkeypatch.setattr(
+                        bridge,
+                        "_validate_fp8_export_config",
+                        Mock(side_effect=AssertionError("Prebuilt tasks must bypass FP8 validation")),
+                    )
+                    mock_model_bridge.build_export_fp8_tasks.side_effect = AssertionError(
+                        "Prebuilt tasks must bypass FP8 task construction"
+                    )
 
                 # Mock the cached property to avoid accessing transformers
                 with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
                     mock_prop.return_value = mock_arch_class
-                    weights = list(bridge.export_hf_weights(mock_megatron_model, cpu=True))
+                    weights = list(
+                        bridge.export_hf_weights(mock_megatron_model, cpu=True, conversion_tasks=conversion_tasks)
+                    )
 
                     assert len(weights) == 2
                     assert weights[0][0] == "weight1"
@@ -1843,24 +1859,33 @@ class TestAutoBridge:
                         mock_hf_model,
                         cpu=True,
                         show_progress=True,
-                        conversion_tasks=None,
+                        conversion_tasks=conversion_tasks,
                         merge_adapter_weights=True,
                         weight_dtype=None,
                     )
 
                     mock_model_bridge.stream_weights_megatron_to_hf.reset_mock()
                     mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(mock_weight_iter)
-                    list(bridge.export_hf_weights(mock_megatron_model, cpu=False, current_pp_stage_only=True))
+                    list(
+                        bridge.export_hf_weights(
+                            mock_megatron_model,
+                            cpu=False,
+                            conversion_tasks=conversion_tasks,
+                            current_pp_stage_only=True,
+                        )
+                    )
                     mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
                         mock_megatron_model,
                         mock_hf_model,
                         cpu=False,
                         show_progress=True,
-                        conversion_tasks=None,
+                        conversion_tasks=conversion_tasks,
                         merge_adapter_weights=True,
                         weight_dtype=None,
                         current_pp_stage_only=True,
                     )
+                    if prebuilt_tasks:
+                        assert list(conversion_tasks) == tasks
 
     def test_export_with_megatron_names_rejects_streamers_without_the_flag(self):
         """A bridge whose streaming overrides lack ``with_megatron_names`` fails before streaming."""

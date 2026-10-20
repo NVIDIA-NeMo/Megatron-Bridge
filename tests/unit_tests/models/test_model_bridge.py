@@ -36,6 +36,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     DirectMapping,
+    FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
     QKVMapping,
@@ -103,6 +104,53 @@ def test_weight_conversion_task_round_trips_local_hf_views():
         "model.mlp.up_proj.weight",
     )
     assert torch.equal(task.combine_local_hf_weights(local_weights), logical)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("mapping_type", "projection"),
+    [(FusedExpertMapping, "down_proj"), (FusedGatedExpertMapping, "gate_up_proj")],
+)
+@pytest.mark.parametrize("transpose_on_export", [False, True])
+def test_fused_expert_local_views_match_full_export(monkeypatch, mapping_type, projection, transpose_on_export):
+    """Local expert views and normal grouped export must describe the same weights."""
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch, num_moe_experts=2)
+    group = SimpleNamespace(size=lambda: 1, rank=lambda: 0)
+    groups = SimpleNamespace(tp=group, expt_tp=group, pp=group, ep=group)
+    module = torch.nn.Module()
+    module.tensor_model_parallel = True
+    module.partition_dim = 1 if projection == "down_proj" else 0
+    hf_name = f"model.mlp.experts.{projection}"
+    tasks, local_experts = [], {}
+
+    # Export must order experts numerically even when the tasks arrive in reverse.
+    for expert in (1, 0):
+        param_name = f"decoder.mlp.experts.linear_fc{2 if projection == 'down_proj' else 1}.weight{expert}"
+        mapping = mapping_type(param_name, hf_name, transpose_on_export=transpose_on_export)
+        mapping.set_process_groups_from_pg_collection(groups)
+        weight = torch.arange(32, dtype=torch.bfloat16).reshape(8, 4) + expert * 32
+        task = WeightConversionTask(
+            param_name=param_name,
+            global_param_name=param_name,
+            mapping=mapping,
+            megatron_module=module,
+            param_weight=weight,
+        )
+        tasks.append(task)
+        views = {spec.name: spec.select(weight) for spec in task.local_hf_param_specs()}
+        projections = ["down_proj"] if projection == "down_proj" else ["gate_proj", "up_proj"]
+        names = [f"model.mlp.experts.{expert}.{name}.weight" for name in projections]
+        assert list(views) == names
+        local_experts[expert] = torch.cat([views[name] for name in names], dim=0)
+
+    [exported] = DummyBridge().stream_weights_megatron_to_hf(
+        [module], SimpleNamespace(), conversion_tasks=tasks, show_progress=False, merge_adapter_weights=False
+    )
+    expected = torch.stack([local_experts[expert] for expert in range(2)])
+    if transpose_on_export:
+        expected = expected.transpose(-1, -2)
+    assert exported.param_name == hf_name
+    torch.testing.assert_close(exported.weight, expected, rtol=0, atol=0)
 
 
 def test_iter_local_hf_params_yields_identity_bf16_view():
@@ -635,6 +683,11 @@ def test_build_conversion_tasks_keeps_output_weight_when_embeddings_are_untied(m
     tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
 
     assert [task.global_param_name for task in tasks] == ["output_layer.weight", "output_layer.bias"]
+    parameters = dict(model.named_parameters())
+    for task in tasks:
+        assert task.param_weight is parameters[task.param_name]
+        assert task.megatron_module.config is model.config
+        assert (task.pp_rank, task.vp_stage) == (0, 0)
 
 
 @pytest.mark.parametrize(
@@ -862,6 +915,48 @@ def _patch_stream_weights_megatron_to_hf_basics(
         "megatron.bridge.models.conversion.model_bridge.parallel_state.get_expert_model_parallel_world_size",
         lambda: expert_parallel_size,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+def test_stream_weights_megatron_to_hf_honors_replaced_task_subset(monkeypatch, dtype):
+    """Reusable export plans must honor filtered, caller-materialized logical weights."""
+    bridge = DummyBridge()
+    module = torch.nn.Linear(4, 2, bias=False)
+    mapping = DirectMapping("decoder.proj.weight", "model.proj.weight")
+    group = SimpleNamespace(size=lambda: 1, rank=lambda: 0)
+    mapping.set_process_groups_from_pg_collection(SimpleNamespace(pp=group))
+    task = WeightConversionTask(
+        param_name="decoder.proj.weight",
+        global_param_name="decoder.proj.weight",
+        mapping=mapping,
+        megatron_module=module,
+        param_weight=module.weight,
+    )
+    omitted = replace(task, mapping=DirectMapping("decoder.omitted.weight", "model.omitted.weight"))
+    logical = torch.arange(8, dtype=dtype).reshape(2, 4)
+    tasks = [omitted, replace(task, param_weight=logical)]
+    monkeypatch.setattr(
+        bridge, "build_conversion_tasks", Mock(side_effect=AssertionError("must reuse supplied tasks"))
+    )
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+
+    for offset in (0, 16):
+        logical.copy_(torch.arange(8, dtype=dtype).reshape(2, 4) + offset)
+        [exported] = bridge.stream_weights_megatron_to_hf(
+            [module],
+            SimpleNamespace(),
+            cpu=True,
+            show_progress=False,
+            conversion_tasks=(item for item in tasks if item is not omitted),
+            merge_adapter_weights=False,
+        )
+
+        assert exported.param_name == "model.proj.weight"
+        assert exported.weight.dtype == dtype
+        assert exported.weight.shape == logical.shape
+        torch.testing.assert_close(exported.weight, logical)
+    assert task.param_weight is module.weight
 
 
 def test_stream_weights_megatron_to_hf_current_pp_stage_only_filters_non_owned_tasks(monkeypatch):
