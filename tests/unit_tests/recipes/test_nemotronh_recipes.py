@@ -417,13 +417,13 @@ def test_nemotron_3_super_64gpu_b200_uses_topology_compatible_nccl_ep(recipe_nam
         "nemotron_3_super_pretrain_64gpu_b200_fp8mx_config",
     ],
 )
-def test_nemotron_3_super_64gpu_b200_uses_light_selective_recompute(recipe_name):
-    """EP32 retains narrow activation recompute without replaying the whole MoE."""
+def test_nemotron_3_super_64gpu_b200_uses_whole_moe_recompute(recipe_name):
+    """TP1/EP32 uses whole-MoE and layernorm recompute to reduce retained activations."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
     cfg = getattr(module, recipe_name)()
 
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
+    assert cfg.model.recompute_modules == ["moe", "layernorm"]
     assert cfg.model.cuda_graph_impl == "none"
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1

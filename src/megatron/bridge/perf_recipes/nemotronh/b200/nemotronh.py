@@ -50,7 +50,7 @@ def _apply_nemotron_3_5_lightning_defaults(cfg: ConfigContainer) -> ConfigContai
 
 
 def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× B200, BF16, NCCL EP32, light selective recompute."""
+    """Nemotron 3 Super pretrain: 64× B200, BF16, NCCL EP32, whole-MoE recompute."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
@@ -67,7 +67,7 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
-    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    cfg.model.recompute_modules = ["moe", "layernorm"]
     cfg.model.recompute_granularity = "selective"
 
     cfg.model.cuda_graph_impl = "none"
@@ -97,7 +97,7 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× B200, MXFP8, NCCL EP32, light selective recompute."""
+    """Nemotron 3 Super pretrain: 64× B200, MXFP8, NCCL EP32, whole-MoE recompute."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
@@ -115,7 +115,7 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
-    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    cfg.model.recompute_modules = ["moe", "layernorm"]
     cfg.model.recompute_granularity = "selective"
 
     cfg.model.cuda_graph_impl = "none"
