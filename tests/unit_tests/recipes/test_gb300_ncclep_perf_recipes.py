@@ -63,8 +63,12 @@ _ULTRA_NVL8_RECIPES = (
     ("nemotronh.b300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_config"),
 )
 
-# Qwen3 235B NVL8 recipes and MXFP8 large-scale variants.
+# Qwen3 30B BF16/MXFP8, 235B NVL8 recipes, and MXFP8 large-scale variants.
 _QWEN3_NVL8_RECIPES = tuple(
+    (f"qwen.{hardware}.qwen3_moe", f"qwen3_30b_a3b_pretrain_8gpu_{hardware}_{precision}_config")
+    for hardware in ("b200", "b300")
+    for precision in ("bf16", "fp8mx")
+) + tuple(
     (f"qwen.{hardware}.qwen3_moe", f"qwen3_235b_a22b_pretrain_{gpus}gpu_{hardware}_{precision}_config")
     for hardware in ("b200", "b300")
     for gpus, precision in (
@@ -144,6 +148,8 @@ def test_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory
     expected_pull_push = 0 if (module_name, factory_name) in _ULTRA_NVL8_RECIPES else 1
     assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == expected_pull_push
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    if (module_name, factory_name) in _QWEN3_NVL8_RECIPES:
+        assert cfg.model.expert_model_parallel_size == 8
 
 
 def test_gb300_deepseek_hsdp_uses_hybridep() -> None:

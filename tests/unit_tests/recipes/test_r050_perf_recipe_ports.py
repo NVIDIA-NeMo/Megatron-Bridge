@@ -89,19 +89,17 @@ def test_qwen_mxfp8_recipes_match_r050_full_iteration_settings(recipe, expected_
 
 def test_qwen_30b_a3b_b200_fp8mx_uses_partial_cuda_graph() -> None:
     """B200's 180 GB cannot hold the full-iteration graph, so the 8-GPU MXFP8 recipe uses
-    partial (TE-scoped) CUDA graph plus explicit HybridEP a2a/wgrad overlap instead."""
+    partial (TE-scoped) CUDA graph plus explicit NCCL EP a2a/wgrad overlap instead."""
     cfg = qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config()
 
     # Partial (TE-scoped) CUDA graph, not full-iteration.
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
 
-    # Explicit HybridEP expert-parallel overlap + swept SM tuning.
+    # Explicit expert-parallel overlap is retained with the NCCL EP backend.
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert cfg.comm_overlap.delay_wgrad_compute is True
-    assert cfg.model.moe_hybridep_num_sms == 64
-    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_token_dispatcher_type == "flex"
 
     # Partial-CG allocator / env: the full-iteration extras are removed.

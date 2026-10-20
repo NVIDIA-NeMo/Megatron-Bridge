@@ -193,7 +193,7 @@ def qwen3_235b_a22b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
 
 
 def qwen3_30b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
-    """Qwen3 30B-A3B pretrain: 8× B300, BF16, EP=8."""
+    """Qwen3 30B-A3B pretrain: 8× B300, BF16, EP=8, NCCL EP."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
@@ -223,6 +223,9 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    _enable_ncclep(cfg)
+    # Keep per-expert token counts on-device for grouped GEMM.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -234,11 +237,8 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
+        # Pull/push mode requires each EP8 group to stay within one NVL8 domain.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -305,7 +305,7 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_fp8cs_config() -> ConfigContainer:
 
 
 def qwen3_30b_a3b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
-    """Qwen3 30B-A3B pretrain: 8× B300, MXFP8, EP=8."""
+    """Qwen3 30B-A3B pretrain: 8× B300, MXFP8, EP=8, NCCL EP."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
@@ -331,6 +331,9 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    _enable_ncclep(cfg)
+    # Keep per-expert token counts on-device for grouped GEMM.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -342,11 +345,8 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
+        # Pull/push mode requires each EP8 group to stay within one NVL8 domain.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
