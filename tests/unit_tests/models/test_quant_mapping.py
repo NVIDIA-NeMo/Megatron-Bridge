@@ -70,6 +70,23 @@ class TestAmaxFanoutMapping:
         for t in targets:
             assert torch.equal(result[t], weight)
 
+    def test_megatron_to_hf_gathers_sequential_experts_for_every_target(self):
+        prefix = "decoder.layers.0.mlp.experts.local_experts.1.linear_fc1"
+        targets = [f"model.layers.0.mlp.experts.1.{p}_proj.input_quantizer._amax" for p in ("gate", "up")]
+        m = AmaxFanoutMapping(f"{prefix}.input_quantizer._amax", targets)
+        weight = torch.tensor([1.0])
+
+        def gather(_self, weights, _module, hf_name):
+            return {hf_name: weights, hf_name.replace("experts.1.", "experts.3."): weights + 1}
+
+        with (
+            patch.object(ReplicatedMapping, "broadcast_from_pp_rank", side_effect=lambda w, **_: w),
+            patch.object(ReplicatedMapping, "gather_from_ep_ranks", gather),
+        ):
+            result = m.megatron_to_hf(weight, None)
+
+        assert set(result) == {*targets, *(t.replace("experts.1.", "experts.3.") for t in targets)}
+
     def test_megatron_to_hf_empty_base(self):
         m = AmaxFanoutMapping("mcore._amax", ["hf.a._amax", "hf.b._amax"])
         with patch.object(ReplicatedMapping, "megatron_to_hf", return_value={}):

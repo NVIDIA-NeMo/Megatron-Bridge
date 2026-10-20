@@ -47,6 +47,16 @@ class AmaxFanoutMapping(AmaxMapping):
         super().__init__(megatron_param, hf_params[0])
 
     def megatron_to_hf(self, megatron_weights, megatron_module):
+        if self.is_expert:
+            # SequentialMLP experts: gather every EP rank's amax under each target's expert name.
+            megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
+            if megatron_weights is None:
+                return {}
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+            result = {}
+            for target in self.hf_targets:
+                result.update(self.gather_from_ep_ranks(megatron_weights, megatron_module, target))
+            return result
         base = super().megatron_to_hf(megatron_weights, megatron_module)
         if not base:
             return {}
