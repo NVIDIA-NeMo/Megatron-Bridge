@@ -65,7 +65,11 @@ ARG CUDNN_FRONTEND_GIT_REF=8924d4b41fd678ba1b98cd7f98bb78b222637573
 # Sync environment
 COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
 COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
-COPY --chmod=644 docker/common/stubs/ /opt/NeMo-FW/stubs/
+COPY docker/common/stubs/ /opt/NeMo-FW/stubs/
+# Enroot/Pyxis extraction needs traversable directories, including the parent created above.
+RUN chmod 755 /opt/NeMo-FW \
+ && find /opt/NeMo-FW/stubs -type d -exec chmod 755 {} + \
+ && find /opt/NeMo-FW/stubs -type f -exec chmod 644 {} +
 COPY docker/common/preserve_base_runtime.py /opt/preserve_base_runtime.py
 RUN \
     cd /opt/NeMo-FW && \
