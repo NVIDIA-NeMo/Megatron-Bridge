@@ -38,12 +38,6 @@ _GLM52_MODEL_ID = "zai-org/GLM-5.2"
 _GLM52_MODEL_REVISION = "4d67f66cc64d3219133b767c253b2ad1425c6c88"  # pragma: allowlist secret
 _TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist secret
 
-# HybridEP topology on H100: each node is one 8-GPU NVLink domain.
-_H100_HYBRIDEP_ENV_VARS = {
-    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-    "NVLINK_DOMAIN_SIZE": 8,
-    "USE_MNNVL": 0,
-}
 # The cuDNN DSA backend runs FlashMLA kernels, which docker/Dockerfile.ci builds without H100 (sm_90) kernels
 # (FLASH_MLA_DISABLE_SM90=1), so it fails on H100 with "no kernel image is available". TileLang compiles the DSA
 # kernels for the local GPU instead.
@@ -129,7 +123,13 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, **_H100_HYBRIDEP_ENV_VARS}
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -213,7 +213,13 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, **_H100_HYBRIDEP_ENV_VARS}
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -292,7 +298,13 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     block_counts = [6] + [4] * 18
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, **_H100_HYBRIDEP_ENV_VARS}
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -388,7 +400,13 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, **_H100_HYBRIDEP_ENV_VARS}
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
