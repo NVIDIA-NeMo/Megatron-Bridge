@@ -71,6 +71,8 @@ class TestGptOssBridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+        # The mock config has no rope_scaling; GPT-OSS still uses YaRN.
+        assert provider.position_embedding_type == "yarn"
 
     def test_megatron_to_hf_config_preserves_attention_bias(self, mock_pretrained):
         bridge = GPTOSSBridge()
@@ -162,6 +164,48 @@ class TestGptOssBuilderConfig:
         for field_name in sorted(shared):
             assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
         assert model_config.transformer_layer_spec is None
+
+    @pytest.mark.parametrize(
+        "rope_scaling",
+        [
+            "missing",
+            None,
+            {},
+            {"rope_type": "yarn", "factor": 32.0, "original_max_position_embeddings": 4096, "truncate": False},
+        ],
+        ids=["missing", "none", "empty", "hf_yarn"],
+    )
+    def test_both_paths_use_yarn_regardless_of_hf_rope_scaling(self, rope_scaling):
+        config = SimpleNamespace(
+            architectures=["GptOssForCausalLM"],
+            hidden_size=64,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=16,
+            num_local_experts=4,
+            num_experts_per_tok=2,
+            vocab_size=128,
+            max_position_embeddings=4096,
+            sliding_window=32,
+            hidden_act="silu",
+            attention_bias=True,
+            torch_dtype="bfloat16",
+        )
+        if rope_scaling != "missing":
+            config.rope_scaling = rope_scaling
+        bridge = GPTOSSBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = config
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(pretrained)
+
+        for built in (model_config, provider):
+            assert built.position_embedding_type == "yarn"
+            assert built.yarn_rotary_scaling_factor == 32.0
+            assert built.yarn_original_max_position_embeddings == 4096
 
     def test_megatron_to_hf_config_from_model_config(self):
         model_config = GPTOSSBridge().hf_config_to_model_config(_gpt_oss_config())
