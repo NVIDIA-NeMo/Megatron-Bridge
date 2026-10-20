@@ -153,6 +153,32 @@ class TestTrainState:
         assert state.do_valid is True
         assert state.do_test is False
 
+    def test_load_state_dict_without_dataloader_flags(self):
+        """Test loading a train state saved without the dataloader flags.
+
+        Megatron-LM train-state checkpoints no longer persist do_train/do_valid/do_test,
+        so loading them must keep the current flag values instead of failing.
+        """
+        state_dict = {
+            "step": torch.tensor(20, dtype=torch.int64),
+            "consumed_train_samples": torch.tensor(640, dtype=torch.int64),
+            "skipped_train_samples": torch.tensor(0, dtype=torch.int64),
+            "consumed_valid_samples": torch.tensor(64, dtype=torch.int64),
+            "floating_point_operations_so_far": torch.tensor(1234.5, dtype=torch.float64),
+        }
+
+        state = TrainState(do_train=True, do_valid=False, do_test=True)
+        state.load_state_dict(state_dict)
+
+        assert state.step == 20
+        assert state.consumed_train_samples == 640
+        assert state.skipped_train_samples == 0
+        assert state.consumed_valid_samples == 64
+        assert state.floating_point_operations_so_far == 1234.5
+        assert state.do_train is True
+        assert state.do_valid is False
+        assert state.do_test is True
+
     def test_round_trip_serialization(self):
         """Test that state_dict -> load_state_dict preserves all values."""
         # Create original state with various values
