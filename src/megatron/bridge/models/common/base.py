@@ -74,6 +74,15 @@ def deserialize_model_config(data: dict[str, Any]) -> _MegatronModelConfig:
     return result
 
 
+# Megatron-Core declares the dynamic context parallel fields only on its dev pin. Assigning one on
+# another pin names that pin instead of reporting a bare unknown field; global_batch_packing reuses
+# the hint so ConfigContainer.validate reports the same requirement.
+_DYNAMIC_CP_FIELDS = frozenset({"dynamic_context_parallel", "min_dynamic_context_parallel_size"})
+_DEV_PIN_HINT = (
+    " Dynamic context parallelism needs the Megatron-Core dev pin: `./scripts/switch_mcore.sh dev && uv sync`."
+)
+
+
 class ModelConfigOverrideMixin:
     """Route flat overrides to their declared owner and reject unknown fields.
 
@@ -105,8 +114,10 @@ class ModelConfigOverrideMixin:
         elif name == "builder" or name.startswith("_") or hasattr(descriptor, "__set__"):
             object.__setattr__(self, name, value)
         else:
+            hint = _DEV_PIN_HINT if name in _DYNAMIC_CP_FIELDS else ""
             raise AttributeError(
                 f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
+                + hint
             )
 
 
