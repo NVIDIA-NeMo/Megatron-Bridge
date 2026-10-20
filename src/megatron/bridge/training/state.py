@@ -77,9 +77,6 @@ class TrainState(Stateful):
             "floating_point_operations_so_far": torch.tensor(
                 self.floating_point_operations_so_far, dtype=torch.float64
             ),
-            "do_train": torch.tensor(self.do_train, dtype=torch.bool),
-            "do_valid": torch.tensor(self.do_valid, dtype=torch.bool),
-            "do_test": torch.tensor(self.do_test, dtype=torch.bool),
         }
 
     def load_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
@@ -98,9 +95,6 @@ class TrainState(Stateful):
         self.skipped_train_samples = state_dict["skipped_train_samples"].item()
         self.consumed_valid_samples = state_dict["consumed_valid_samples"].item()
         self.floating_point_operations_so_far = state_dict["floating_point_operations_so_far"].item()
-        for flag in ("do_train", "do_valid", "do_test"):
-            if flag in state_dict:
-                setattr(self, flag, state_dict[flag].item())
 
 
 @dataclass
