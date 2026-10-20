@@ -11,6 +11,8 @@ nemotron-3-omni.md
 nemotron3-super.md
 nemotron3-ultra.md
 nemotron3.5-lightning.md
+nemotron3.5-super-vl.md
+nemotron3.5-super-vl-text-only.md
 ```
 
 | Variant | Guide |
@@ -21,6 +23,8 @@ nemotron3.5-lightning.md
 | Nemotron-3 Super | [nemotron3-super.md](nemotron3-super.md) |
 | Nemotron-3 Ultra | [nemotron3-ultra.md](nemotron3-ultra.md) |
 | Nemotron-3.5 Lightning | [nemotron3.5-lightning.md](nemotron3.5-lightning.md) |
+| Nemotron-3.5 Super VL | [nemotron3.5-super-vl.md](nemotron3.5-super-vl.md) |
+| Nemotron-3.5 Super Text-only | [nemotron3.5-super-vl-text-only.md](nemotron3.5-super-vl-text-only.md) |
 
 ## Examples
 

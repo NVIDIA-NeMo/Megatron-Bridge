@@ -34,13 +34,16 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
 
 import copy
 import json
+import logging
 import warnings
 from collections.abc import Iterable
 from dataclasses import fields
 from pathlib import Path
 
 import torch
+import transformers
 from megatron.core.activations import squared_relu
+from packaging.version import Version
 from safetensors.torch import save_file
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -124,6 +127,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         "vision_model.radio_model.input_conditioner.norm_mean",
         "vision_model.radio_model.input_conditioner.norm_std",
     )
+    _HF_VIDEO_EMBEDDER_KEY = "vision_model.radio_model.model.patch_generator.video_embedder.weight"
 
     CONFIG_MAPPING = NemotronVLBridge.CONFIG_MAPPING + [
         # HF public Omni config uses layer_norm_epsilon instead of rms_norm_eps.
@@ -173,6 +177,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
     # Provider translation
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _hf_language_config(hf_config):
+        return getattr(hf_config, "llm_config", None)
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniModelProvider:  # type: ignore[override]
         """Create a NemotronOmniModelProvider from the HF Omni config.
 
@@ -181,7 +189,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         ``sound_config`` is the Hugging Face checkpoint's sound capability.
         """
         hf_config = hf_pretrained.config
-        llm_config = hf_config.llm_config
+        llm_config = self._hf_language_config(hf_config)
 
         provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
 
@@ -326,7 +334,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             mappings.append(copied)
 
         hf_config = getattr(self, "hf_config", None)
-        llm_config = getattr(hf_config, "llm_config", None)
+        llm_config = self._hf_language_config(hf_config)
 
         language_bridge = NemotronHBridge()
         language_bridge.hf_config = llm_config
@@ -344,6 +352,16 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
 
         return MegatronMappingRegistry(*mappings)
 
+    @staticmethod
+    def _hf_requires_video_embedder(config) -> bool:
+        vision_config = getattr(config, "vision_config", None)
+        separate_video_embedder = (
+            vision_config.get("separate_video_embedder", False)
+            if isinstance(vision_config, dict)
+            else getattr(vision_config, "separate_video_embedder", False)
+        )
+        return separate_video_embedder is True
+
     @torch.no_grad()
     def stream_weights_megatron_to_hf(
         self,
@@ -357,8 +375,9 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         with_megatron_names: bool = False,
         current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
-        """Export model weights and preserve immutable source-only buffers."""
-        yield from super().stream_weights_megatron_to_hf(
+        """Export model weights, recovering the unused image-SFT video weight from HF."""
+        video_exported = False
+        for weight in super().stream_weights_megatron_to_hf(
             megatron_model,
             hf_pretrained,
             cpu=cpu,
@@ -368,9 +387,31 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             weight_dtype=weight_dtype,
             with_megatron_names=with_megatron_names,
             current_pp_stage_only=current_pp_stage_only,
-        )
+        ):
+            video_exported |= weight.param_name == self._HF_VIDEO_EMBEDDER_KEY
+            yield weight
         if not self._should_emit_hf_passthrough(megatron_model, current_pp_stage_only=current_pp_stage_only):
             return
+        # A stage-local stream need not contain a video weight owned by another
+        # pipeline stage. Never replace that trained parameter with the reference.
+        video_owned_elsewhere = current_pp_stage_only and any(
+            name.endswith("vision_model.video_embedder.weight") for name in getattr(self, "_cached_param_owners", {})
+        )
+        # MIMO calls this stream once per route. Only the vision route may
+        # recover video weights: an earlier language-route fallback would win
+        # deduplication over the trained weight emitted by the vision route.
+        video_in_registry = any(
+            mapping.hf_param == self._HF_VIDEO_EMBEDDER_KEY for mapping in self.mapping_registry().mappings
+        )
+        recover_video = video_in_registry and not video_exported and not video_owned_elsewhere
+        config = getattr(hf_pretrained, "config", hf_pretrained)
+        video_required = recover_video and self._hf_requires_video_embedder(config)
+        missing_video_error = (
+            f"Cannot export Nemotron Omni: {self._HF_VIDEO_EMBEDDER_KEY} is missing from the Megatron model "
+            "and cannot be recovered from the reference HF checkpoint. Provide the original HF checkpoint "
+            "and revision used for training; exporting without this weight would randomly initialize the "
+            "video embedder on HF reload, even with strict=False."
+        )
         # Passthrough tensors are copied straight from the HF checkpoint and have no
         # Megatron counterpart, so with ``with_megatron_names`` they carry zero sources.
         passthrough_sources = () if with_megatron_names else None
@@ -380,14 +421,38 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         if source is None:
             source_path = getattr(hf_pretrained, "name_or_path", None)
             if not source_path:
+                if video_required:
+                    raise ValueError(missing_video_error)
                 return
-            source = SafeTensorsStateSource(source_path)
+            source = SafeTensorsStateSource(source_path, revision=getattr(config, "_commit_hash", None))
             state = StateDict(source)
-        source_keys = set(source.get_all_keys())
-        for name in self._HF_PASSTHROUGH_KEYS:
+        try:
+            source_keys = set(source.get_all_keys())
+        except (OSError, ValueError) as error:
+            if video_required:
+                raise ValueError(missing_video_error) from error
+            raise
+        passthrough_keys = list(self._HF_PASSTHROUGH_KEYS)
+        if recover_video and self._HF_VIDEO_EMBEDDER_KEY in source_keys:
+            passthrough_keys.append(self._HF_VIDEO_EMBEDDER_KEY)
+            logging.getLogger(__name__).warning(
+                "Recovering %s from the reference HF checkpoint because the Megatron export has no video embedder. "
+                "Use the original HF checkpoint and revision used for training.",
+                self._HF_VIDEO_EMBEDDER_KEY,
+            )
+        elif video_required:
+            raise ValueError(missing_video_error)
+        for name in passthrough_keys:
             if name not in source_keys:
                 continue
-            tensor = state[name]
+            try:
+                tensor = state[name]
+            except (KeyError, OSError, ValueError) as error:
+                if name == self._HF_VIDEO_EMBEDDER_KEY:
+                    raise ValueError(missing_video_error) from error
+                raise
+            if name == self._HF_VIDEO_EMBEDDER_KEY and weight_dtype is not None:
+                tensor = tensor.to(dtype=weight_dtype)
             # These come straight off disk, so they are on CPU while every
             # mapped tensor in the stream above is on the current device when
             # cpu=False. Consumers that batch the whole stream together (RL
@@ -413,6 +478,26 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
 
+    @staticmethod
+    def _hf_requires_video_embedder(config) -> bool:
+        # Super VL uses the top-level temporal size, overriding nested RADIO flags.
+        return int(getattr(config, "video_temporal_patch_size", 1) or 1) > 1
+
+    @staticmethod
+    def _hf_language_config(hf_config):
+        # Remote-code checkpoints retain llm_config, including on older HF
+        # versions. Do not force those customers onto the native implementation.
+        legacy_config = getattr(hf_config, "llm_config", None)
+        if legacy_config is not None:
+            return legacy_config
+        text_config = getattr(hf_config, "text_config", None)
+        if text_config is not None and Version(transformers.__version__) < Version("5.18.0"):
+            raise ValueError(
+                "Native Nemotron 3.5 Super VL conversion requires Transformers >=5.18.0; "
+                "use trust_remote_code=True with the original checkpoint on older versions."
+            )
+        return text_config
+
     @classmethod
     def _validate_shared_mtp_config(cls, llm_config) -> None:
         """Validate the serialized shared block before choosing training depths."""
@@ -429,7 +514,7 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         recipes explicitly set two training prediction depths, independently
         of this checkpoint representation.
         """
-        config = copy.deepcopy(hf_pretrained.config.llm_config)
+        config = copy.deepcopy(self._hf_language_config(hf_pretrained.config))
         self._validate_shared_mtp_config(config)
         config.architectures = ["NemotronHForCausalLM"]
         if hasattr(config, "auto_map"):
@@ -472,7 +557,12 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         return text
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
-        """Require the direct Transformers entrypoint used by Super VL exports."""
+        """Require remote code only for exports that actually reference it."""
+        config_path = path / "config.json"
+        if config_path.is_file():
+            config = json.loads(config_path.read_text())
+            if "text_config" in config and not config.get("auto_map"):
+                return
         modeling_path = path / "modeling_nemotron_h_omni.py"
         if not modeling_path.is_file():
             raise FileNotFoundError(f"Nemotron 3.5 Super VL export is missing required artifact: {modeling_path}")
@@ -486,8 +576,11 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         # Super-VL serializes one shared MTP block in HF. Megatron training applies
         # that block at two prediction depths, with the attention+MoE parameters
         # shared across both applications.
-        self._validate_shared_mtp_config(hf_config.llm_config)
+        self._validate_shared_mtp_config(self._hf_language_config(hf_config))
         provider.mtp_num_layers = self._MCORE_MTP_PREDICTION_DEPTHS
+
+        if getattr(hf_config, "image_token_id", None) is not None:
+            provider.image_token_index = hf_config.image_token_id
 
         provider.temporal_patch_dim = temporal_patch_dim
         provider.separate_video_embedder = temporal_patch_dim > 1
@@ -510,6 +603,10 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         hf_config = super().megatron_to_hf_config(provider)
         hf_config.pop("num_nextn_predict_layers", None)
         hf_config["llm_config"] = {"num_nextn_predict_layers": cls._HF_SHARED_MTP_BLOCKS}
+        # Config synthesis retains only keys present in the reference schema.
+        # Supply both spellings so native and remote-code exports preserve the
+        # same shared-block count without requiring an HF dependency upgrade.
+        hf_config["text_config"] = {"num_nextn_predict_layers": cls._HF_SHARED_MTP_BLOCKS}
         return hf_config
 
     def postprocess_hf_export_weights(self, path: Path) -> None:

@@ -24,7 +24,7 @@ from typing import Callable, Optional
 import torch
 import torch.distributed
 import torch.nn.functional as F
-from megatron.core import parallel_state, tensor_parallel
+from megatron.core import parallel_state, tensor_parallel, tuning
 from megatron.core.datasets.utils import compile_helpers
 from megatron.core.fusions.fused_bias_dropout import bias_dropout_add_fused_train
 from megatron.core.fusions.fused_bias_gelu import bias_gelu
@@ -125,6 +125,12 @@ def initialize_megatron(
 
     # init rerun global state
     init_rerun_state(rerun_state_machine_config)
+
+    # Pin Triton autotune configs before any kernel runs, as Megatron-Core's training initializer does under
+    # --deterministic-mode. Timed autotuning can pick different tilings between ranks and runs, which changes the
+    # floating-point reduction order. Runs without deterministic_mode keep Triton's timed autotuning.
+    if getattr(model_config, "deterministic_mode", False):
+        tuning.install(deterministic=True)
 
     # torch.distributed initialization
     result = torch_dist_init(

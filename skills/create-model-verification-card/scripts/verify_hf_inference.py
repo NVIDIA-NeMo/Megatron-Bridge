@@ -74,6 +74,15 @@ def _parse_args() -> argparse.Namespace:
         help="Use the model's native Hugging Face tensor-parallel plan, with one launcher process per GPU.",
     )
     parser.add_argument(
+        "--max-gpu-memory-gib",
+        type=float,
+        help=(
+            "Per-GPU budget in GiB for --device-map placement; modules that do not fit are offloaded to CPU memory. "
+            "Without it each GPU may be filled up to its free memory, which leaves no room for checkpoints that "
+            "convert weights while loading (for example stacking per-expert MoE tensors on the target GPU)."
+        ),
+    )
+    parser.add_argument(
         "--dtype",
         choices=("bfloat16", "float16", "float32"),
         default="bfloat16",
@@ -92,6 +101,10 @@ def _parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.max_new_tokens <= 0:
         parser.error("--max-new-tokens must be positive")
+    if args.max_gpu_memory_gib is not None and not args.device_map:
+        parser.error("--max-gpu-memory-gib requires --device-map")
+    if args.max_gpu_memory_gib is not None and args.max_gpu_memory_gib <= 0:
+        parser.error("--max-gpu-memory-gib must be positive")
     if args.disable_thinking and not args.chat_template:
         parser.error("--disable-thinking requires --chat-template")
     if args.image and not args.chat_template:
@@ -234,6 +247,19 @@ def _validate_gpu_only_placement(model: Any) -> None:
         raise RuntimeError(f"Model has non-GPU placements: {non_gpu}")
 
 
+def _capped_max_memory(torch: Any, max_gpu_memory_gib: float) -> dict[int | str, int]:
+    """Cap every visible GPU and let the remaining modules use CPU memory.
+
+    The CPU budget is 90% of the available host memory, the share Transformers uses when no budget is given.
+    """
+    import psutil
+
+    gpu_budget = int(max_gpu_memory_gib * 1024**3)
+    max_memory: dict[int | str, int] = {index: gpu_budget for index in range(torch.cuda.device_count())}
+    max_memory["cpu"] = int(psutil.virtual_memory().available * 0.9)
+    return max_memory
+
+
 def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
     """Load torch, the selected HF auto-model, and its tokenizer or processor."""
     import torch
@@ -265,6 +291,8 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
         model_kwargs["config"] = config
     if args.device_map:
         model_kwargs["device_map"] = args.device_map
+        if args.max_gpu_memory_gib is not None:
+            model_kwargs["max_memory"] = _capped_max_memory(torch, args.max_gpu_memory_gib)
     if args.tp_plan:
         model_kwargs["tp_plan"] = args.tp_plan
     model, loading_info = model_cls.from_pretrained(args.hf_model, **model_kwargs)

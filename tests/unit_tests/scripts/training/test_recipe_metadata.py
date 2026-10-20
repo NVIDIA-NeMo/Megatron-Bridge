@@ -194,9 +194,18 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
         ("kimi_k25_vl_sft_config", "vlm_step"),
         ("ministral3_8b_sft_config", "vlm_step"),
         ("muse_glimmer_30b_sft_32gpu_h100_bf16_config", "vlm_step"),
+        ("muse_spark_open_peft_64gpu_gb200_bf16_config", "vlm_step"),
+        ("muse_spark_open_pretrain_192gpu_gb200_bf16_config", "vlm_step"),
+        ("muse_spark_open_pretrain_256gpu_gb200_bf16_config", "vlm_step"),
+        ("muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config", "vlm_step"),
+        ("muse_spark_open_sft_192gpu_gb200_bf16_config", "vlm_step"),
+        ("muse_spark_open_sft_192gpu_gb200_bf16_long_context_config", "vlm_step"),
+        ("muse_spark_open_sft_256gpu_gb200_bf16_config", "vlm_step"),
         ("step37_sft_flickr8k_config", "step37_flickr8k_step"),
         ("flux_12b_pretrain_config", "flux_step"),
         ("wan_14b_pretrain_config", "wan_step"),
+        ("qwen3_30b_a3b_dpo_config", "dpo_step"),
+        ("qwen3_30b_a3b_dpo_8gpu_h100_bf16_config", "dpo_step"),
     ],
 )
 def test_recipe_step_is_source_agnostic(recipe_name, step_name):
