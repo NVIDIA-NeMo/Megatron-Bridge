@@ -1204,13 +1204,8 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
         if self.model.fp4 or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP4.")
-        if self.model.fp8 and self.model.fp8_recipe != "mxfp8":
-            raise ValueError("MFSDP V2 only supports FP8 with the MXFP8 recipe.")
-        if self.model.fp8_param != self.ddp.fp8_param_gather:
-            raise ValueError("MFSDP V2 requires fp8_param and fp8_param_gather to match.")
 
-        # V2 supports distinct dense/expert and inner/outer sharding placements.
-        # Preserve the requested strategy, in particular ZeRO-2 dense HSDP.
+        self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
         self.optimizer.use_distributed_optimizer = False
         self.ddp.overlap_grad_reduce = False

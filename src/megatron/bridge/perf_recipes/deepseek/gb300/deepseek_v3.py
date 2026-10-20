@@ -520,10 +520,11 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_mfsdpv2_config() -> ConfigContainer:
-    """DeepSeek V3 benchmark: 256× GB300, MXFP8, Megatron FSDP v2 hybrid sharding.
+    """DeepSeek V3 benchmark: 256× GB300, MXFP8, MFSDP v2 HSDP with NCCL EP.
 
-    Retain the v1 HSDP recipe's EP=64, four optimizer instances, dense ZeRO-2
-    with outer optimizer sharding, and expert ZeRO-3 with outer replication.
+    Retain the v1 HSDP recipe's EP=64, four optimizer instances, and outer
+    sharding. Use dense ZeRO-3 as required by Bridge's v2 validation, with
+    outer optimizer sharding and expert ZeRO-3 with outer replication.
     Requires a Megatron-Core build with MFSDP v2 MXFP8, hybrid-DP support,
     and row-width-aware MXFP8 buffer grouping to bound large-mesh padding.
     Forced balanced routing and disabled checkpointing make this a throughput
@@ -531,6 +532,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_mfsdpv2_config() -> ConfigConta
     """
     cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config()
     cfg.ddp.megatron_fsdp_version = 2
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    _enable_ncclep(cfg)
     cfg.optimizer.use_distributed_optimizer = False
     cfg.ddp.use_distributed_optimizer = False
 
@@ -562,11 +565,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_mfsdpv2_config() -> ConfigConta
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
