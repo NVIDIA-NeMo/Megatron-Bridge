@@ -43,6 +43,7 @@ except ImportError:
 
 logger: logging.Logger = logging.getLogger(__name__)
 NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
+NSYS_NVCRE_CAPABILITY = "SYS_ADMIN"
 
 
 def _format_list_for_override(values: List | int):
@@ -68,6 +69,29 @@ def _ensure_sqlite_nsys_export(nsys_extra_args: list[str]) -> list[str]:
             return nsys_extra_args
 
     return nsys_extra_args + [NSYS_SQLITE_EXPORT_ARG]
+
+
+def _request_nsys_capability(executor: "NvcreExecutor") -> None:
+    """Ask for the capability nsys needs to trace GPU kernels in the NVCRE training container.
+
+    Args:
+        executor: The NVCRE executor the profiled task will run on.
+
+    Raises:
+        RuntimeError: If the installed nemo_run's ``NvcreExecutor`` has no ``capabilities`` field.
+    """
+    capabilities = getattr(executor, "capabilities", None)
+    if capabilities is None:
+        raise RuntimeError(
+            f"Profiling on NVCRE needs the {NSYS_NVCRE_CAPABILITY} capability so nsys can trace GPU kernels"
+        )
+    if NSYS_NVCRE_CAPABILITY in capabilities:
+        return
+    executor.capabilities = [*capabilities, NSYS_NVCRE_CAPABILITY]
+    logger.info(
+        "Requesting the %s capability for the NVCRE training container so nsys can trace GPU kernels",
+        NSYS_NVCRE_CAPABILITY,
+    )
 
 
 @dataclass
@@ -156,6 +180,7 @@ class NsysPlugin(Plugin):
         elif NvcreExecutor is not None and isinstance(executor, NvcreExecutor):
             # Nvcre pods use PET_* env vars for distributed rank info.
             launcher.nsys_filename = "profile_node%q{PET_NODE_RANK}_rank%p"
+            _request_nsys_capability(executor)
 
         if self.nsys_gpu_metrics:
             if hasattr(launcher, "nsys_gpu_metrics"):
