@@ -53,9 +53,10 @@ _H100_DSA_KERNEL_BACKEND = "tilelang"
 # The wait grows with the stage count and the per-stage compile time, and further when a step has fewer microbatches
 # than stages (2 for PEFT, 13 for the 200K SFT recipe). In an SFT run with one Inductor compile thread per rank and
 # cold kernel caches, compilation took about 5 to 6 minutes per stage on average and the SFT recipe waited at least
-# 85 minutes; at that rate the PEFT and 200K SFT recipes would wait about 2.4 and 2.5 hours. The timeout applies to
-# the whole run; dist.distributed_timeout_seconds_after_init can lower it after the first step.
-_H100_DISTRIBUTED_TIMEOUT_MINUTES = 180
+# 85 minutes; at that rate the PEFT and 200K SFT recipes would wait about 2.4 and 2.5 hours. The timeout below
+# leaves room for compilation about 60% slower than that. It applies to the whole run;
+# dist.distributed_timeout_seconds_after_init can lower it after the first step.
+_H100_DISTRIBUTED_TIMEOUT_MINUTES = 240
 
 
 def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
