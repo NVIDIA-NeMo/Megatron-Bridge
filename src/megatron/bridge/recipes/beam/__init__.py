@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.recipes.beam.gb200 import *  # noqa: F403
 from megatron.bridge.recipes.beam.h200 import *  # noqa: F403
 
 
 __all__ = [
+    "beam_pretrain_64gpu_gb200_bf16_config",
+    "beam_sft_64gpu_gb200_bf16_config",
+    "beam_peft_32gpu_gb200_bf16_config",
     "beam_peft_16gpu_h200_bf16_config",
     "beam_pretrain_128gpu_h200_bf16_config",
     "beam_sft_128gpu_h200_bf16_config",
