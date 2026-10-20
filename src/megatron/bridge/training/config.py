@@ -18,9 +18,9 @@ import os
 import warnings
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
-import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
@@ -41,6 +41,7 @@ from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.determinism import apply_determinism_to_args
 
 from megatron.bridge.data.base import (
     DataloaderConfig,
@@ -50,6 +51,7 @@ from megatron.bridge.data.base import (
     DatasetBuildContext as DatasetBuildContext,
 )
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
+from megatron.bridge.data.builders.dpo import DPODatasetConfig
 from megatron.bridge.data.builders.energon import EnergonDatasetConfig
 
 # Deprecated training.config import compatibility. New code imports dataset
@@ -70,6 +72,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import Megatron
 from megatron.bridge.models.transformer_config import _enable_safe_hybridep_dispatch
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.training.dpo import DPOLossConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -152,6 +155,13 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     (e.g., via CUDA_VISIBLE_DEVICES environment variable). When True, uses device 0
     instead of local rank for CUDA device selection. This is useful when launching
     with external process managers that handle GPU visibility.
+    """
+
+    use_megatron_fsdp: bool = False
+    """Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2.
+
+    Megatron Core no longer declares this field on its ``DistributedInitConfig``; Bridge keeps it
+    so recipes and user configs can continue to enable Megatron FSDP through ``cfg.dist``.
     """
 
     gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
@@ -1016,6 +1026,7 @@ class ConfigContainer(Container):
         | DirectHFSFTDatasetConfig
         | EnergonDatasetConfig
         | MockVLMSFTDatasetConfig
+        | DPODatasetConfig
         | DatasetProvider
     )
     logger: LoggerConfig
@@ -1027,6 +1038,7 @@ class ConfigContainer(Container):
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
     profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
     peft: Optional[PEFT] = None
+    dpo: Optional[DPOLossConfig] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     tensor_inspect: TensorInspectConfig | None = None
@@ -1072,18 +1084,15 @@ class ConfigContainer(Container):
         if not getattr(self.model, "deterministic_mode", False):
             return
 
-        # Disallow cross-entropy loss fusion as it is not deterministic
-        assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
-            "Cross Entropy Fusion is currently not deterministic."
+        # Megatron-Core's --deterministic-mode setup, so both frameworks enforce the same rules.
+        apply_determinism_to_args(
+            SimpleNamespace(
+                cross_entropy_loss_fusion=getattr(self.model, "cross_entropy_loss_fusion", False),
+                tp_comm_overlap=self.comm_overlap.tp_comm_overlap if self.comm_overlap is not None else False,
+                moe_router_fusion=getattr(self.model, "moe_router_fusion", False),
+                moe_router_aux_loss_fusion=getattr(self.model, "moe_router_aux_loss_fusion", None),
+            )
         )
-
-        all_reduce_choices = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
-        assert os.getenv("NCCL_ALGO", -1) != -1 and os.getenv("NCCL_ALGO") in all_reduce_choices, (
-            f"NCCL_ALGO must be one of {all_reduce_choices}."
-        )
-
-        # Enable deterministic algorithms in torch
-        torch.use_deterministic_algorithms(True)
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """Validate and apply configuration required by the selected Megatron-FSDP version."""
@@ -1161,11 +1170,6 @@ class ConfigContainer(Container):
         Checkpointing and tensor/pipeline parallelism remain intentionally unsupported
         upstream and are rejected here before model construction.
         """
-        if not self.model.bf16 or self.model.fp16 or not self.optimizer.bf16 or self.optimizer.fp16:
-            raise ValueError("MFSDP V2 requires BF16 training (model.bf16=True and optimizer.bf16=True).")
-        if self.model.params_dtype != torch.bfloat16:
-            raise ValueError("MFSDP V2 requires model.params_dtype=torch.bfloat16.")
-
         unsupported_parallelisms = (
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
@@ -1175,7 +1179,7 @@ class ConfigContainer(Container):
             for name in unsupported_parallelisms
             if getattr(self.model, name) != 1
         ]
-        if configured_parallelisms:
+        if len(configured_parallelisms) > 0:
             raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
         if self.model.expert_model_parallel_size > 1:
             if self.model.num_moe_experts is None:
@@ -1198,8 +1202,8 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
         if self.model.calculate_per_token_loss:
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
-        if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
-            raise ValueError("MFSDP V2 does not support FP8 or FP4.")
+        if self.model.fp4 or self.ddp.fp4_param_gather:
+            raise ValueError("MFSDP V2 does not support FP4.")
 
         self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
@@ -1391,6 +1395,30 @@ class ConfigContainer(Container):
                 if hasattr(config, field_name):
                     setattr(config, field_name, False)
 
+    def _validate_dpo_contract(self) -> None:
+        """Constraints the DPO loss places on the run."""
+        if self.dpo is None:
+            raise ValueError("DPO requires dpo to be a DPOLossConfig.")
+        if not getattr(self.model, "calculate_per_token_loss", False):
+            raise ValueError("DPO requires model.calculate_per_token_loss=True.")
+        if self.ddp.average_in_collective:
+            raise ValueError("DPO requires ddp.average_in_collective=False.")
+        if getattr(self.model, "context_parallel_size", 1) != 1:
+            raise ValueError("DPO does not support context parallelism (model.context_parallel_size must be 1).")
+        if getattr(self.model, "mtp_num_layers", None):
+            raise ValueError("DPO does not support MTP heads (model.mtp_num_layers must be None).")
+        row_counts = (
+            ("train.micro_batch_size", self.train.micro_batch_size),
+            ("train.global_batch_size", self.train.global_batch_size),
+            ("validation.eval_micro_batch_size", self.validation.eval_micro_batch_size),
+            ("validation.eval_global_batch_size", self.validation.eval_global_batch_size),
+        )
+        for name, value in row_counts:
+            if value is not None and value % 2 != 0:
+                raise ValueError(f"DPO requires an even {name} (one pair is two rows), got {value}.")
+        if self.dist.eval_context_parallel_size is not None:
+            raise ValueError("DPO does not support dist.eval_context_parallel_size.")
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1520,7 +1548,7 @@ class ConfigContainer(Container):
         if (
             isinstance(
                 self.dataset,
-                (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+                (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig, DPODatasetConfig),
             )
             or (isinstance(self.dataset, GPTSFTDatasetConfig) and enable_in_batch_packing)
         ) and self.dataset.seq_length % collate_padding_multiple != 0:
@@ -1546,6 +1574,13 @@ class ConfigContainer(Container):
                 self.dataset.pad_to_multiple_of,
                 collate_padding_multiple,
             )
+        elif isinstance(self.dataset, DPODatasetConfig):
+            self._validate_dpo_contract()
+            self.dataset.pad_seq_length_to_mult = collate_padding_multiple
+            # Pair batches are padded to their own longest row, so the activation width changes per
+            # micro batch and pipeline stages must exchange shapes, as with in-batch packing.
+            if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
+                transformer_config.variable_seq_lengths = True
 
         _enable_safe_hybridep_dispatch(transformer_config, uses_thd=uses_thd)
 
@@ -2096,7 +2131,7 @@ class ConfigContainer(Container):
 def _get_mcore_transformer_parent(model_config: Any) -> type:
     """Determine the correct Mcore TransformerConfig parent class for a model.
 
-    Some models (e.g., DeepSeek v2/v3) inherit from MLATransformerConfig instead of
+    Some models (e.g., DeepSeek v3) inherit from MLATransformerConfig instead of
     the base TransformerConfig. This function checks the inheritance chain to find
     the appropriate Mcore class to use as the baseline for comparison.
 

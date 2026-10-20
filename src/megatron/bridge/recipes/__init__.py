@@ -20,6 +20,8 @@ This module exposes all recipe configurations from all model families.
 
 from megatron.bridge.recipes.bagel import *
 from megatron.bridge.recipes.bagel.h100 import *
+from megatron.bridge.recipes.beam import *
+from megatron.bridge.recipes.beam.h200 import *
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.deepseek.h100 import *
 from megatron.bridge.recipes.diffusion_gemma import *
@@ -55,8 +57,7 @@ from megatron.bridge.recipes.moonlight import *
 from megatron.bridge.recipes.moonlight.h100 import *
 from megatron.bridge.recipes.muse_glimmer import *
 from megatron.bridge.recipes.muse_glimmer.h100 import *
-from megatron.bridge.recipes.nemotron_vl import *
-from megatron.bridge.recipes.nemotron_vl.h100 import *
+from megatron.bridge.recipes.muse_spark_open import *
 from megatron.bridge.recipes.nemotronh import *
 from megatron.bridge.recipes.nemotronh.h100 import *
 from megatron.bridge.recipes.nemotronh_multimodal import *

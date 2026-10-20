@@ -18,6 +18,7 @@ import pytest
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.recipes.qwen.gb200 import qwen35
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -56,3 +57,15 @@ def test_dynamic_cp_sft_recipe_uses_real_data_and_dataset_driven_packing():
     assert cfg.dataset.num_workers == 16
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.validation.eval_iters == 0
+
+
+def test_text_9b_pretrain_deterministic_applies_determinism():
+    base = qwen35.qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
+    cfg = qwen35.qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config()
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.gdn_kernel_backend == "torch"
+    assert cfg.model.tensor_model_parallel_size == base.model.tensor_model_parallel_size == 1
+    assert cfg.train.global_batch_size == base.train.global_batch_size
+    assert cfg.env_vars == DETERMINISM_ENV_VARS

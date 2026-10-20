@@ -239,11 +239,11 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 
 ##### Performance arguments
 
-- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
+- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`, `vrnvl72`). `vr200` is a deprecated alias for `vrnvl72`.
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
 - `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `1200`). Used for silicon simulation correlation studies. Disabled by default.
-- `-lmc/--peak_mem_clk`: Lock GPU memory clock to a fixed peak frequency in MHz (e.g. `2600`). Used for silicon simulation correlation studies. Defaults to `4752` MHz for VR200 and is disabled by default for other GPUs. Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VR200 default.
+- `-lmc/--peak_mem_clk`: Lock GPU memory clock to a fixed peak frequency in MHz (e.g. `2600`). Used for silicon simulation correlation studies. Defaults to `4752` MHz for VRNVL72 and is disabled by default for other GPUs. Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VRNVL72 default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
 - `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.

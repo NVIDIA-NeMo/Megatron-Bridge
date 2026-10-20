@@ -59,7 +59,7 @@ CAPABILITY_TABS = (
         "Pretrain",
         ("pretrain", "pretrain_fsdp", "pretrain_weak_scaling"),
     ),
-    ("benchmark", "Benchmark", ("pretrain_performance",)),
+    ("benchmark", "Benchmark", ("pretrain_performance", "pretrain_performance_hsdp")),
     ("sft", "SFT", ("sft",)),
     ("lora", "LoRA", ("peft",)),
     ("long-context", "Long Context", ("sft_long_context",)),
@@ -91,6 +91,7 @@ DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset(
 )
 MODEL_PAGE_PATHS = {
     "bagel": "models/bagel/bagel.md",
+    "beam": "models/beam/beam.md",
     "deepseek-v3": "models/deepseek/deepseek-v3.md",
     "deepseek-v4-flash": "models/deepseek/deepseek-v4.md",
     "gemma-3-4b-it": "models/gemma/gemma3-vl.md",
@@ -104,6 +105,7 @@ MODEL_PAGE_PATHS = {
     "minimax-m3": "models/minimax/minimax-m3.md",
     "moonlight-16b-a3b": "models/moonlight/moonlight.md",
     "muse-glimmer-30b": "models/muse_glimmer/muse-glimmer.md",
+    "muse-spark-open-816b-a42b": "models/muse_spark_open/muse-spark-open.md",
     "nemotron-3-nano-30b-a3b": "models/nemotron/nemotron3-nano.md",
     "nemotron-3-nano-4b": "models/nemotron/nemotron3-nano-4b.md",
     "nemotron-3-nano-omni-30b-a3b-reasoning": "models/nemotron/nemotron-3-omni.md",
@@ -133,13 +135,6 @@ MODEL_PAGE_TITLES = {
     "qwen3.6-35b-a3b": "Qwen3.6-35B-A3B",
     "qwen3.8-27b": "Qwen3.8-27B",
 }
-# Retain the cards and canonical sources, but do not link unpublished guides.
-UNPUBLISHED_MODEL_DOCS = frozenset(
-    {
-        "models/nemotron/nemotron3.5-super-vl.md",
-        "models/nemotron/nemotron3.5-super-vl-text-only.md",
-    }
-)
 MODEL_INTRO_SOURCES = {
     "glm5-2": "models/glm/glm5.md",
     "gpt-oss-120b": "models/gpt_oss/gpt-oss.md",
@@ -602,6 +597,7 @@ def _entry_option_label(entry: dict[str, object]) -> str:
         "pretrain": "Pretrain",
         "pretrain_fsdp": "Pretrain · FSDP",
         "pretrain_performance": "Benchmark",
+        "pretrain_performance_hsdp": "Benchmark · HSDP",
         "pretrain_weak_scaling": "Pretrain · Weak scaling",
         "sft": "SFT",
         "peft": "LoRA",
@@ -811,7 +807,6 @@ def _model_explorer(entries: list[dict[str, object]], *, heading_level: int = 2,
 def render_supported_models_page(catalog: dict[str, object], repo_root: Path, *, fern: bool) -> str:
     """Render the generated Supported Models directory for Sphinx or Fern."""
     models = [_mapping(model, "catalog model") for model in catalog["models"]]
-    models = [model for model in models if _find_model_doc(repo_root, model) not in UNPUBLISHED_MODEL_DOCS]
     entry_count = sum(len(model["entries"]) for model in models)
     lines = [
         FERN_GENERATED_NOTICE if fern else GENERATED_NOTICE,
@@ -828,7 +823,7 @@ def render_supported_models_page(catalog: dict[str, object], repo_root: Path, *,
         "SFT and immediately see the exact command and expected result for the recorded precision and GPU.",
         "",
     ]
-    lines.extend(_model_directory({**catalog, "models": models}, repo_root, fern=fern))
+    lines.extend(_model_directory(catalog, repo_root, fern=fern))
     lines.extend(
         [
             "## Verification status",

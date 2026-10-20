@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Nemotron Nano v2 models
 # Nemotron 3 Nano and Nemotron 3.5 Lightning models
 from megatron.bridge.recipes.nemotronh.gb200 import (
     nemotron_3_5_lightning_pretrain_8k_config,
@@ -20,8 +19,10 @@ from megatron.bridge.recipes.nemotronh.gb200 import (
     nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config,
     nemotron_3_nano_gb200_pretrain_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config,
     nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_5_lightning_peft_config,
@@ -50,53 +51,9 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_config,
     nemotron_3_ultra_sft_openmathinstruct2_packed_config,
 )
-from megatron.bridge.recipes.nemotronh.nemotron_nano_v2 import (
-    nemotron_nano_9b_v2_peft_config,
-    nemotron_nano_9b_v2_pretrain_config,
-    nemotron_nano_9b_v2_sft_config,
-    nemotron_nano_12b_v2_peft_config,
-    nemotron_nano_12b_v2_pretrain_config,
-    nemotron_nano_12b_v2_sft_config,
-)
-
-# NemotronH models
-from megatron.bridge.recipes.nemotronh.nemotronh import (
-    nemotronh_4b_peft_config,
-    nemotronh_4b_pretrain_config,
-    nemotronh_4b_sft_config,
-    nemotronh_8b_peft_config,
-    nemotronh_8b_pretrain_config,
-    nemotronh_8b_sft_config,
-    nemotronh_47b_peft_config,
-    nemotronh_47b_pretrain_config,
-    nemotronh_47b_sft_config,
-    nemotronh_56b_peft_config,
-    nemotronh_56b_pretrain_config,
-    nemotronh_56b_sft_config,
-)
 
 
 __all__ = [
-    # NemotronH models
-    "nemotronh_4b_pretrain_config",
-    "nemotronh_8b_pretrain_config",
-    "nemotronh_47b_pretrain_config",
-    "nemotronh_56b_pretrain_config",
-    "nemotronh_4b_sft_config",
-    "nemotronh_8b_sft_config",
-    "nemotronh_47b_sft_config",
-    "nemotronh_56b_sft_config",
-    "nemotronh_4b_peft_config",
-    "nemotronh_8b_peft_config",
-    "nemotronh_47b_peft_config",
-    "nemotronh_56b_peft_config",
-    # Nemotron Nano v2 models
-    "nemotron_nano_9b_v2_pretrain_config",
-    "nemotron_nano_12b_v2_pretrain_config",
-    "nemotron_nano_9b_v2_sft_config",
-    "nemotron_nano_12b_v2_sft_config",
-    "nemotron_nano_9b_v2_peft_config",
-    "nemotron_nano_12b_v2_peft_config",
     # Nemotron 3 Nano and Nemotron 3.5 Lightning models
     "nemotron_3_5_lightning_peft_config",
     "nemotron_3_5_lightning_pretrain_8k_config",
@@ -110,6 +67,7 @@ __all__ = [
     "nemotron_3_nano_peft_config",
     "nemotron_3_nano_gb200_pretrain_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config",
     # Nemotron 3 Nano 4B model
     "nemotron_3_nano_4b_pretrain_config",
     "nemotron_3_nano_4b_sft_config",
@@ -122,6 +80,7 @@ __all__ = [
     "nemotron_3_super_peft_config",
     # Nemotron 3 Ultra models
     "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config",
+    "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config",
     "nemotron_3_ultra_pretrain_config",
     "nemotron_3_ultra_sft_openmathinstruct2_packed_config",
     "nemotron_3_ultra_peft_openmathinstruct2_packed_config",

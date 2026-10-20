@@ -42,6 +42,27 @@ index details:
    only the execution/performance mapping. Do not trade convergence semantics
    for throughput without calling it a new experiment.
 
+## Performance Readiness for New Recipes
+
+Before publishing a new **pretraining library recipe** under
+`src/megatron/bridge/recipes/`, measure steady-state model TFLOP/s/GPU on its
+intended workload and GPU allocation. For BF16, aim for roughly **200
+TFLOP/s/GPU on H100** and **400 TFLOP/s/GPU on GB200**. These are approximate
+readiness targets, not exact pass/fail cutoffs. This requirement excludes SFT,
+PEFT, and long-context SFT; it assesses the base pretraining library recipe,
+not a `perf_recipes` benchmark or its result. For other precisions or hardware
+such as B200/GB300, establish a workload-matched measured target rather than
+silently reusing the BF16 H100/GB200 numbers.
+
+If measured performance is severely below the target, either withhold the
+recipe until it is improved or clearly label it **early, unoptimized** in the
+recipe docstring, accompanying public documentation/card, and PR description.
+Record the measured throughput, hardware, precision, workload, and GPU layout
+alongside the limitation. In a card, include the label in both the summary and
+the affected training item's `expected_result` so generated pages display it.
+Do not present it as a tuned recommendation or change the intended training
+workload or convergence settings merely to meet a target.
+
 ## Configuration Layers and Change Control
 
 Separate training semantics from their hardware mapping before recommending or
@@ -261,10 +282,19 @@ For an MoE recipe on a fixed allocation, use this practical order:
    is a common first candidate on one 8-GPU node, and EP=32 is a common first
    candidate on a 32-GPU allocation. These are starting points, not universal
    defaults: EP shards expert weights only, not dense layers or activations.
-3. Prefer architecture-specific selective recompute. For Qwen3.5 GDN layers,
-   verify `gdn_norm_out` on the exact Megatron Core revision instead of
-   assuming `core_attn` covers the GDN peak. Use full-layer recompute only when
-   the targeted boundaries still do not make the complete step fit.
+3. For final library, benchmark, and verification-card recipes, no recompute
+   and selective recompute on cheap supported modules are both appropriate
+   starting choices. Choose by measured memory headroom and steady-state
+   performance; selective recompute does not require a no-recompute OOM first.
+   Full recompute is acceptable temporarily for diagnostic bring-up,
+   but can severely reduce throughput. Retain it only when target-scale
+   measurements show that lighter choices still fail to fit, or matched runs
+   show better end-to-end throughput with full recompute (for example, by
+   enabling larger MBS or lower TP). Keep the workload, GBS, and convergence
+   settings fixed; document layout changes, memory evidence, and steady-state
+   performance for the alternatives tested. For
+   Qwen3.5 GDN layers, verify `gdn_norm_out` on the exact Megatron Core revision
+   instead of assuming `core_attn` covers the GDN peak.
 4. After a stable baseline completes optimizer initialization and several
    steady steps, inspect W&B memory and confirm every rank's peak allocated and
    reserved memory in the runtime logs; rank 0 can miss the hot EP or PP rank.
@@ -275,10 +305,10 @@ For an MoE recipe on a fixed allocation, use this practical order:
    time with healthy loss and no skipped/NaN iterations. Leave headroom for
    checkpointing, evaluation, routing imbalance, and optional CUDA graphs.
 
-On EP=8, a large expert footprint can remain capacity-limited enough to need
-full recompute. EP=32 usually reduces expert-weight pressure substantially,
-making selective recompute a better candidate, but Qwen3.5 GDN coverage and
-the hot rank's measured peak still decide.
+EP=8 can leave less memory headroom than EP=32, but EP size alone does not
+justify full recompute. Measure the hot rank and supported Qwen3.5 GDN
+boundaries; retry no recompute or narrower selective recompute when a larger
+EP reduces expert-weight pressure.
 
 ### Batch Size Tuning
 

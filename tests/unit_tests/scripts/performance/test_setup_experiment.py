@@ -42,10 +42,10 @@ def test_default_experiment_name_uses_only_cli_metadata() -> None:
             task="pretrain",
             compute_dtype="fp8_mx",
             num_gpus=256,
-            gpu="vr200",
+            gpu="vrnvl72",
             config_variant="large_scale",
         )
-        == "pretrain_deepseek_v3_fp8_mx_gpus256_vr200_large_scale"
+        == "pretrain_deepseek_v3_fp8_mx_gpus256_vrnvl72_large_scale"
     )
     assert (
         setup_experiment._default_experiment_name(
@@ -88,8 +88,18 @@ def test_recipe_arguments_are_forwarded_unchanged() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("gpu", "gpus_per_node", "expected_gpu"),
+    [
+        ("h100", "8", "h100"),
+        # The deprecated name must reach main() as vrnvl72, which applies the 4752 MHz memory clock default.
+        ("vr200", "4", "vrnvl72"),
+    ],
+)
 @pytest.mark.parametrize("is_long_convergence_run", [False, True])
-def test_submission_dry_run_does_not_import_bridge_or_mcore(tmp_path: Path, is_long_convergence_run: bool) -> None:
+def test_submission_dry_run_does_not_import_bridge_or_mcore(
+    tmp_path: Path, is_long_convergence_run: bool, gpu: str, gpus_per_node: str, expected_gpu: str
+) -> None:
     blocker_dir = tmp_path / "login_node"
     blocker_dir.mkdir()
     (blocker_dir / "sitecustomize.py").write_text(
@@ -112,6 +122,9 @@ if hasattr(wandb.util, "generate_id"):
 """
     )
     environment = os.environ.copy()
+    # Non-zero ranks skip the deprecated --gpu warning that this test expects from the launcher.
+    environment.pop("RANK", None)
+    environment.pop("SLURM_PROCID", None)
     environment["NEMORUN_HOME"] = str(tmp_path / "nemorun")
     environment["PYTHONPATH"] = os.pathsep.join(
         value for value in (str(blocker_dir), environment.get("PYTHONPATH")) if value
@@ -126,9 +139,9 @@ if hasattr(wandb.util, "generate_id"):
         "--num_gpus",
         "8",
         "--gpus_per_node",
-        "8",
+        gpus_per_node,
         "--gpu",
-        "h100",
+        gpu,
         "--account",
         "test-account",
         "--partition",
@@ -155,7 +168,10 @@ if hasattr(wandb.util, "generate_id"):
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "bootstrap.py" in output
-    assert "pretrain_llama3_8b_bf16_gpus8_h100" in output
+    assert f"pretrain_llama3_8b_bf16_gpus8_{expected_gpu}" in output
+    assert ("--gpu vr200 is deprecated; use --gpu vrnvl72." in output) == (gpu == "vr200")
+    # The dry-run sbatch dump wraps at spaces, so match the clock value as one token.
+    assert ("4752,4752" in output) == (expected_gpu == "vrnvl72")
     assert "WANDB_RUN_ID" in output
     assert "WANDB_RESUME" in output
     assert "login-node import forbidden" not in output

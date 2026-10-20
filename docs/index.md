@@ -36,6 +36,7 @@ bridge-tech-details.md
 models/README.md
 models/bagel/bagel.md
 models/bailing/index.md
+models/beam/beam.md
 models/bert/index.md
 models/deepseek/index.md
 models/ernie/ernie45.md
@@ -52,6 +53,7 @@ models/mistral/index.md
 models/mimo/index.md
 models/moonlight/index.md
 models/muse_glimmer/muse-glimmer.md
+models/muse_spark_open/muse-spark-open.md
 models/nemotron/index.md
 models/olmoe/index.md
 models/qwen/index.md

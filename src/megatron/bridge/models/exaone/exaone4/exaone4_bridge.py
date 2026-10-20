@@ -26,17 +26,21 @@ Key differences from standard GPT-style model bridges:
 - No input_layernorm or pre_feedforward_layernorm weights
 - Has post_attention_layernorm (after self-attention output)
 - Has post_feedforward_layernorm (after MLP output, EXAONE-specific)
-- Post-LN mapping follows Gemma2 pattern: *.post_layernorm.weight
+- Post-LN mapping follows shared post-normalization pattern: *.post_layernorm.weight
 
 References:
 - HuggingFace: LGAI-EXAONE/EXAONE-4.0-1.2B
-- Gemma2 bridge: Post-LN via TERowParallelLinearLayerNorm pattern
+- the shared post-normalization layer: Post-LN via TERowParallelLinearLayerNorm pattern
 - EXAONE bridge: QK layernorm mapping pattern
 """
+
+import logging
+from typing import Any
 
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -46,13 +50,15 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
+
+logger = logging.getLogger(__name__)
 
 # Register custom EXAONE modules for AutoMapping weight distribution
 # TERowParallelLinearLayerNorm is a row-parallel linear with post-layernorm
-# (same pattern as Gemma2 for Post-LN architectures)
+# (same pattern as other Post-LN architectures)
 AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
 
 
@@ -71,7 +77,7 @@ class Exaone4Bridge(MegatronModelBridge):
     Architecture notes:
     - EXAONE 4.0 uses pure Post-LayerNorm (no input_layernorm).
     - Post-LN is implemented via custom layer spec with TERowParallelLinearLayerNorm,
-      following the same pattern established by Gemma2 bridge.
+      following the same pattern established by the shared post-normalization layer.
     - QK RMSNorm is mapped using EXAONE attention norm parameters.
     - 1.2B model uses full attention only (no sliding window / hybrid attention).
     - 32B model introduces hybrid attention (LLLG pattern) — future extension.
@@ -82,51 +88,64 @@ class Exaone4Bridge(MegatronModelBridge):
         ...     "LGAI-EXAONE/EXAONE-4.0-1.2B",
         ...     trust_remote_code=True,
         ... )
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
-        """Convert HuggingFace EXAONE 4.0 config to Megatron GPTModelProvider.
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        Maps HF config fields to Megatron TransformerConfig parameters and sets
-        EXAONE-specific options including Post-LN, QK norm, and RoPE scaling.
+    # Megatron Core applies llama3 RoPE scaling with these fixed values; only the factor is configurable.
+    _MCORE_LLAMA3_ROPE_SCALING = {
+        "low_freq_factor": 1.0,
+        "high_freq_factor": 4.0,
+        "original_max_position_embeddings": 8192,
+    }
 
-        Args:
-            hf_pretrained: HuggingFace PreTrainedCausalLM containing the EXAONE config
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face EXAONE 4.0 config to builder config kwargs.
 
-        Returns:
-            GPTModelProvider configured for EXAONE 4.0 architecture
+        Sets EXAONE-specific options including Post-LN, QK norm, and RoPE scaling.
+        Size-dependent fields are populated by the shared HF config mapping.
         """
-        hf_config = hf_pretrained.config
-
-        provider = super().provider_bridge(hf_pretrained)
-
-        # EXAONE-specific architecture settings. Size-dependent fields are
-        # populated by the shared HF config mapping in the base bridge.
-        provider.normalization = "RMSNorm"
-        provider.activation_func = F.silu
-        provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False
-        provider.qk_layernorm = True
-        provider.hidden_dropout = 0.0
-        provider.attention_dropout = 0.0
-        provider.transformer_layer_spec = exaone4_layer_spec
-        provider.autocast_dtype = torch.bfloat16
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            position_embedding_type="rope",
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            qk_layernorm=True,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            transformer_layer_spec=exaone4_layer_spec,
+            autocast_dtype=torch.bfloat16,
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+        )
 
         # RoPE scaling for EXAONE 4.0 (llama3-style)
         hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
         if hf_rope_scaling is not None and hf_rope_scaling.get("rope_type") == "llama3":
-            provider.rope_scaling = True
-            provider.rope_scaling_factor = hf_rope_scaling.get("factor", 16.0)
-            provider.rope_scaling_low_freq_factor = hf_rope_scaling.get("low_freq_factor", 1.0)
-            provider.rope_scaling_high_freq_factor = hf_rope_scaling.get("high_freq_factor", 4.0)
-            provider.rope_scaling_original_max_position_embeddings = hf_rope_scaling.get(
-                "original_max_position_embeddings", 8192
-            )
+            config_kwargs.update(rope_scaling=True, rope_scaling_factor=hf_rope_scaling.get("factor", 16.0))
+            unsupported = {
+                key: hf_rope_scaling[key]
+                for key, value in self._MCORE_LLAMA3_ROPE_SCALING.items()
+                if key in hf_rope_scaling and hf_rope_scaling[key] != value
+            }
+            if unsupported:
+                logger.warning(
+                    "EXAONE 4.0 llama3 RoPE scaling values %s differ from the fixed values Megatron Core applies (%s).",
+                    unsupported,
+                    self._MCORE_LLAMA3_ROPE_SCALING,
+                )
 
-        return provider
+        return config_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
@@ -149,9 +168,11 @@ class Exaone4Bridge(MegatronModelBridge):
             hf_config["rope_scaling"] = {
                 "rope_type": "llama3",
                 "factor": provider.rope_scaling_factor,
-                "low_freq_factor": provider.rope_scaling_low_freq_factor,
-                "high_freq_factor": provider.rope_scaling_high_freq_factor,
-                "original_max_position_embeddings": provider.rope_scaling_original_max_position_embeddings,
+                # Megatron Core's fixed llama3 values, unless a caller set them explicitly.
+                **{
+                    key: getattr(provider, f"rope_scaling_{key}", value)
+                    for key, value in cls._MCORE_LLAMA3_ROPE_SCALING.items()
+                },
             }
 
         return hf_config
@@ -162,7 +183,7 @@ class Exaone4Bridge(MegatronModelBridge):
         EXAONE 4.0 weight mapping combines patterns from:
         - Llama: Basic GPT structure (embed, QKV, GatedMLP, final_layernorm)
         - EXAONE: QK layernorm (q_norm → q_layernorm, k_norm → k_layernorm)
-        - Gemma2: Post-LN (post_*_layernorm → *.post_layernorm.weight)
+        - Post-LN (post_*_layernorm → *.post_layernorm.weight)
 
         Key difference: No input_layernorm or pre_feedforward_layernorm mappings
         because EXAONE uses pure Post-LN (not Pre-LN or sandwich norm).
@@ -181,11 +202,11 @@ class Exaone4Bridge(MegatronModelBridge):
             # QK RMSNorm
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            # Post-LN: post-attention layernorm (Gemma2 pattern)
+            # Post-LN: post-attention layernorm (shared post-normalization pattern)
             "decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
                 "model.layers.*.post_attention_layernorm.weight"
             ),
-            # Post-LN: post-feedforward layernorm (Gemma2 pattern)
+            # Post-LN: post-feedforward layernorm (shared post-normalization pattern)
             "decoder.layers.*.mlp.linear_fc2.post_layernorm.weight": (
                 "model.layers.*.post_feedforward_layernorm.weight"
             ),
