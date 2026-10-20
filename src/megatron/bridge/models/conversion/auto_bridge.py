@@ -1169,32 +1169,46 @@ class AutoBridge(Generic[MegatronModelT]):
         if dist.is_initialized():
             dist.barrier()
 
-        raw_adapter_weights = [
-            HFWeightTuple(exported_weight.param_name, exported_weight.weight.detach().clone())
-            for exported_weight in self.export_adapter_weights(
-                model,
-                cpu=True,
-                show_progress=show_progress,
-                exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
-                expand_shared_outer=expand_shared_outer,
-            )
-        ]
-        if not raw_adapter_weights:
+        is_rank0 = not dist.is_initialized() or dist.get_rank() == 0
+
+        # Every rank drives the export generator, because gathering the sharded
+        # adapter tensors is collective; only rank 0 writes the adapter, so only
+        # rank 0 keeps the gathered weights. Keeping them on every rank made the
+        # host memory of an export scale with the number of ranks per node
+        # (one full copy of the adapter per rank), which exhausts host memory for
+        # large per-expert MoE adapters.
+        raw_adapter_weights: list[HFWeightTuple] = []
+        exported_count = 0
+        for exported_weight in self.export_adapter_weights(
+            model,
+            cpu=True,
+            show_progress=show_progress,
+            exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+            expand_shared_outer=expand_shared_outer,
+        ):
+            exported_count += 1
+            if is_rank0:
+                raw_adapter_weights.append(
+                    HFWeightTuple(exported_weight.param_name, exported_weight.weight.detach().clone())
+                )
+            del exported_weight
+        if exported_count == 0:
             raise RuntimeError(
                 "No adapter weights were found on the model. "
                 "Ensure the model has PEFT adapters applied before calling save_hf_adapter()."
             )
-        adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
-            raw_adapter_weights,
-            allow_serving_layout=allow_serving_layout,
-        )
-        rank_pattern = infer_rank_pattern_from_adapter_weights(
-            raw_adapter_weights,
-            default_rank=getattr(peft_config, "dim", 32),
-        )
 
-        is_rank0 = not dist.is_initialized() or dist.get_rank() == 0
         if is_rank0:
+            adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
+                raw_adapter_weights,
+                allow_serving_layout=allow_serving_layout,
+            )
+            rank_pattern = infer_rank_pattern_from_adapter_weights(
+                raw_adapter_weights,
+                default_rank=getattr(peft_config, "dim", 32),
+            )
+            del raw_adapter_weights
+
             save_dir = Path(path)
             save_dir.mkdir(parents=True, exist_ok=True)
 
