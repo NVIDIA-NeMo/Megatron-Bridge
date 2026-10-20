@@ -1,0 +1,239 @@
+# OpenTelemetry Observability
+
+Megatron Bridge can export OpenTelemetry spans and metrics through
+[nemo-lens](https://github.com/NVIDIA-NeMo/Lens). They show how a training job spends its time, measured
+separately on every rank: startup, model construction, each iteration and its forward-backward and optimizer
+phases, evaluation, and checkpoint saves and loads.
+
+This is application telemetry, which a collector aggregates across jobs and ranks. It complements the
+experiment tracking described in [Logging](logging.md), which records loss curves and hyperparameters; it
+does not replace it.
+
+## Install the OpenTelemetry Extra
+
+Install the `otel` extra from a source checkout with `uv`:
+
+```bash
+uv sync --extra otel
+```
+
+The extra installs nemo-lens, the OpenTelemetry SDK, and the OTLP exporters. The Megatron Bridge container
+installs every extra, so it already includes them.
+
+```{note}
+Megatron Bridge pins nemo-lens to a Git revision through `[tool.uv]` overrides, which only `uv` applies. A
+plain `pip install` resolves nemo-lens from PyPI instead, and that release is too old for Megatron Bridge, so
+telemetry stays off. Install with `uv`.
+```
+
+## Enable Telemetry
+
+Telemetry is off by default. Turn it on with `logger.otel_enabled`, for example as an override to the recipe
+runner:
+
+```bash
+uv run python -m torch.distributed.run --standalone --nproc_per_node=2 \
+  scripts/training/run_recipe.py --recipe vanilla_gpt_pretrain_1gpu_h100_bf16_config \
+  --mode pretrain --dataset mock \
+  logger.otel_enabled=true logger.otel_span_groups=per_step
+```
+
+In Python, set the field on the configuration before you call `pretrain`:
+
+```python
+config.logger.otel_enabled = True
+config.logger.otel_span_groups = "per_step"
+```
+
+You can also turn telemetry on for every job in an environment, without changing any configuration:
+
+```bash
+export MEGATRON_OTEL_ENABLED=1
+```
+
+`pretrain`, and the `finetune` and `distill` entry points that call it, start telemetry on every rank before
+setup. When `logger.otel_enabled` is `true` and nemo-lens or the OpenTelemetry SDK is not installed, the job
+stops at startup with an error that names the `otel` extra. When only the environment enables telemetry, the
+job logs a warning and trains without telemetry.
+
+### Send Telemetry to a Collector
+
+The default `otlp` exporter sends spans and metrics to an OpenTelemetry collector. Configure the connection
+with the standard OpenTelemetry environment variables, which the OpenTelemetry SDK reads directly:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.example.com:4317
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer <token>"
+```
+
+The exporter uses gRPC by default. Set `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` for an HTTP endpoint. Log
+records, which `MEGATRON_OTEL_LOGS_ENABLED` turns on, are the exception: the nemo-lens version that
+Megatron Bridge pins sends them over gRPC whenever the gRPC exporter is installed, as the `otel` extra does.
+With an HTTP-only collector, leave log export off. To inspect telemetry without a collector, set
+`MEGATRON_OTEL_EXPORTER=console`, which writes one JSON object per span, and one per batch of metrics, to
+standard output.
+
+### Configuration Reference
+
+Megatron Bridge reads the same environment variables as Megatron-LM. Each `MEGATRON_OTEL_<KEY>` variable
+falls back to `NEMO_LENS_<KEY>`. A configuration field that is set takes precedence over its environment
+variable; `logger.otel_enabled=false`, the default, leaves the decision to the environment.
+
+| Configuration field | Environment variable | Default | Description |
+|---|---|---|---|
+| `logger.otel_enabled` | `MEGATRON_OTEL_ENABLED` | `false` | Export telemetry from every rank. |
+| `logger.otel_span_groups` | `MEGATRON_OTEL_SPAN_GROUPS` | `default` | Span groups to record: a preset, a group name, or a comma-separated list of both. |
+| `logger.otel_service_name` | `OTEL_SERVICE_NAME` | `megatron-bridge` | The `service.name` resource attribute. |
+| None | `MEGATRON_OTEL_EXPORTER` | `otlp` | `otlp` or `console`. |
+| None | `MEGATRON_OTEL_RUN_ID` | See below | Identifier shared by every rank of the job, exported as `nemo.run.id`. |
+| None | `MEGATRON_OTEL_TRACES_ENABLED` | `true` | Export spans. |
+| None | `MEGATRON_OTEL_METRICS_ENABLED` | `true` | Export metrics. |
+| None | `MEGATRON_OTEL_LOGS_ENABLED` | `false` | Also export Python log records, correlated with the active span. |
+| None | `OTEL_METRIC_EXPORT_INTERVAL` | `10000` | Milliseconds between metric exports. |
+
+When `MEGATRON_OTEL_RUN_ID` is unset, the run ID is the Slurm job ID. Outside Slurm it is the torchrun run
+ID, which every rank shares when you launch with `torchrun --standalone` or with `--rdzv-id`. Otherwise each
+rank generates its own ID, and Megatron Bridge logs a warning on multi-rank jobs.
+
+## Span Groups and Spans
+
+Every span belongs to a span group, and `span_groups` selects which groups are recorded. The following table
+lists the spans of each group:
+
+| Group | Spans | How often |
+|---|---|---|
+| `job` | `megatron.startup` | Once per `pretrain` call, covering setup |
+| `model_init` | `megatron.bridge.model.build` | Once per model built |
+| `data_loading` | `megatron.startup.dataloader` | Once per `pretrain` call |
+| `load_checkpoint` | `megatron.checkpoint.load`, `megatron.checkpoint.load.io_read` | Once per checkpoint load |
+| `first_iteration` | `megatron.train.first_iteration` | Once: the first iteration the process runs |
+| `step` | `megatron.train.iteration` | Every iteration |
+| `forward_backward` | `megatron.train.iteration.forward_backward` | Every iteration |
+| `optimizer` | `megatron.train.iteration.optimizer` | Every iteration |
+| `evaluate` | `megatron.evaluate` | Once per validation or test pass |
+| `checkpoint` | `megatron.checkpoint.exposed_save`, `megatron.checkpoint.save`, `megatron.checkpoint.save.state_dict`, `megatron.checkpoint.save.io_write`, `megatron.checkpoint.save.schedule`, `megatron.checkpoint.save.finalize`, `megatron.bridge.checkpoint.save.hf_export` | Once per checkpoint |
+| `conversion` | `megatron.bridge.conversion.load_hf_weights`, `.save_hf_pretrained`, `.save_hf_weights`, `.save_hf_adapter`, `.import_ckpt`, `.export_ckpt`, `.export_adapter_ckpt` | Once per call |
+| `communication` | `megatron.grad_sync.start`, `megatron.grad_sync.finish`, `megatron.p2p.send_forward`, `megatron.p2p.recv_forward`, `megatron.p2p.send_backward`, `megatron.p2p.recv_backward` | Every iteration; with pipeline parallelism, the P2P spans every microbatch |
+| `microbatch` | `megatron.microbatch.forward`, `megatron.microbatch.backward` | Every microbatch |
+| `layer` | `megatron.layer.forward`, `megatron.layer.self_attention`, `megatron.layer.mlp`, `megatron.layer.mamba` | Every layer of every microbatch |
+| `activation_offload` | `megatron.activation.offload`, `megatron.activation.reload` | Every offload and reload |
+
+Megatron Bridge records the spans of the first eleven groups. Megatron Core records the spans of the last four,
+from inside the model and the pipeline schedules, so they also nest in the iteration spans.
+
+The presets are:
+
+- `default`: `job`, `checkpoint`, `evaluate`, `first_iteration`, and `conversion`. These groups record a
+  bounded number of spans per job.
+- `per_step`: everything in `default`, plus `model_init`, `load_checkpoint`, `data_loading`, `step`,
+  `forward_backward`, `optimizer`, and `communication`.
+- `all`: every registered group. The `microbatch` and `layer` groups record spans for every microbatch and
+  layer, so use `all` for short diagnostic runs.
+
+`megatron.checkpoint.exposed_save` covers everything the training loop waits for during a checkpoint.
+`megatron.checkpoint.save` and its phases nest in it. With asynchronous saves, `save.io_write` plans the
+write, the checkpoint worker process writes in the background, and `save.finalize` records each
+iteration's check for finished saves while a save is pending, and the blocking finalization at the end of
+training.
+
+Spans carry the following attributes where they apply:
+
+| Attribute | On | Meaning |
+|---|---|---|
+| `dl.iteration` | Iteration, first-iteration, evaluation, and checkpoint-save spans | The iteration number, as the training log numbers it. Evaluation and checkpoint spans carry the last completed iteration. |
+| `megatron.train.num_microbatches` | `megatron.train.iteration.forward_backward` | Microbatches in the iteration |
+| `megatron.evaluate.split` | `megatron.evaluate` | `validation` or `test` |
+| `megatron.checkpoint.format` | `megatron.checkpoint.save` | Checkpoint format, such as `torch_dist` |
+| `megatron.checkpoint.type` | `megatron.checkpoint.save` | `global`, `local`, or `fsdp_dtensor` |
+| `megatron.checkpoint.async` | `megatron.checkpoint.save` | Whether the save is asynchronous |
+| `megatron.checkpoint.non_persistent` | `megatron.checkpoint.save` | Whether the checkpoint is non-persistent |
+| `nvrx.call_idx` | `megatron.checkpoint.save.schedule` | NVIDIA Resiliency Extension index of the scheduled save |
+| `megatron.checkpoint.finalize.blocking` | `megatron.checkpoint.save.finalize` | Whether the finalization waits for pending saves |
+| `megatron.checkpoint.finalize.count` | `megatron.checkpoint.save.finalize` | Saves finalized; `0` when none had finished |
+
+Spans measure time on the host. CUDA work runs asynchronously, so part of the GPU time of a phase can appear
+in a later span, where the host next waits for the GPU.
+
+## Metrics
+
+Megatron Bridge records the following Megatron Core training metrics, under the names Megatron-LM uses, at
+every `logger.log_interval`, on every rank:
+
+| Metric | Type | Description |
+|---|---|---|
+| `megatron.training.step_duration_ms` | Histogram | Average duration of an iteration over the logging interval, in milliseconds |
+| `megatron.training.throughput_tflops` | Gauge | Model TFLOP/s per GPU over the logging interval |
+| `megatron.training.memory_allocated_gb` | Gauge | Peak GPU memory that this rank has allocated, in GiB |
+| `megatron.training.skipped_iters` | Counter | Iterations skipped in the logging interval, recorded only when there are any |
+
+Loss, learning rate, and gradient norm are experiment data. Record them with an experiment tracker, as
+described in [Logging](logging.md).
+
+## Resource Attributes
+
+Every span and metric carries the following attributes, which are fixed for the life of the process:
+
+| Attribute | Value |
+|---|---|
+| `service.name` | `megatron-bridge`, unless `OTEL_SERVICE_NAME` or `logger.otel_service_name` sets it |
+| `service.version` | Megatron Bridge version |
+| `nemo.run.id` | The run ID |
+| `service.instance.id` | `<run ID>-rank<rank>` |
+| `nv.dl.rank`, `nv.dl.world_size`, `nv.dl.local_rank` | Rank, world size, and local rank |
+| `dl.data_parallel.size`, `dl.tensor_parallel.size`, `dl.pipeline_parallel.size`, `dl.context_parallel.size`, `dl.expert_parallel.size` | Parallel layout |
+| `megatron_bridge.model.provider` | Class of the model configuration, such as `GPTModelProvider` |
+
+nemo-lens adds host, process, Slurm, and Kubernetes attributes when they apply.
+
+## When Telemetry Is Exported
+
+The exporters send spans in batches, by default every 5 seconds (`OTEL_BSP_SCHEDULE_DELAY`), and metrics
+every 10 seconds. Megatron Bridge also exports what is buffered at the following points:
+
+- When `pretrain` returns or fails. The OpenTelemetry providers stay open, so a later `pretrain` call in the
+  same process records as well.
+- At process exit, when the providers shut down.
+- On `SIGTERM`, before the previous handler runs. That handler is either the graceful stop of
+  `train.exit_signal_handler` or the default action, which ends the process.
+
+Data buffered when a process is killed with `SIGKILL` is lost.
+
+## Distributed Runs
+
+Every rank exports its own spans and metrics. To narrow the data to some ranks, filter on `nv.dl.rank` in the
+collector. With the `console` exporter, every rank writes to the same standard output, one line per span.
+The following command counts the spans each rank recorded:
+
+```bash
+grep '^{"name"' run.log | jq -r '[.resource.attributes["nv.dl.rank"], .name] | @tsv' | sort | uniq -c
+```
+
+Use the `otlp` exporter for larger jobs.
+
+## Use Megatron Bridge Inside Another Application
+
+When another application, such as NeMo RL, calls Megatron Bridge functions directly, Megatron Bridge never
+installs OpenTelemetry providers; the application owns them. Model construction, checkpoint saves and loads,
+and the `AutoBridge` conversion methods then record under the application's providers whenever the
+application enables a group of the same name, such as `checkpoint`.
+
+Importing Megatron Bridge registers its span groups and presets with nemo-lens. Presets merge across the
+libraries in a process, so an application's `default` and `per_step` presets also enable the groups of
+Megatron Bridge's presets of the same name.
+
+## Limitations
+
+- `pretrain_megatron_mimo` does not start telemetry.
+- The asynchronous checkpoint worker process exports nothing. The schedule, write-planning, and finalize
+  spans show what the training loop pays for an asynchronous save.
+- The conversion scripts do not start telemetry, so their conversion spans are recorded only when an
+  application has started it.
+- With Megatron Core builds that have no telemetry module, such as its development branch, the
+  `logger.otel_*` fields do not exist, so use the environment variables. Megatron Core's spans and the
+  training metrics are then unavailable.
+
+## Overhead
+
+When a span group is disabled, an instrumentation site creates no span and costs about 0.2 µs, measured on
+an AMD Ryzen Threadripper PRO 5975WX with Python 3.12. The training loop runs four sites per iteration.
+Importing nemo-lens adds about 35 ms to startup.

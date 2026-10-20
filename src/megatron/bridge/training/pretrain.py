@@ -18,7 +18,9 @@ import os
 import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
 
+from megatron.bridge import telemetry
 from megatron.bridge.data.utils import get_dataset_provider
+from megatron.bridge.telemetry.lifecycle import flush_telemetry, init_telemetry
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
@@ -77,6 +79,8 @@ def pretrain(
     # Create a single GlobalState instance regardless of restart path
     state = GlobalState()
     state.cfg = config
+    # Before setup, so that setup is traced. Installs providers only when telemetry is enabled.
+    init_telemetry(config)
 
     # Normalize callbacks to CallbackManager
     callback_manager = normalize_callbacks(callbacks)
@@ -134,7 +138,8 @@ def _pretrain(
     config = state.cfg
     dataset_provider = get_dataset_provider(config.dataset)
     try:
-        setup_output = setup(state, dataset_provider, restart_store=store, callback_manager=callback_manager)
+        with telemetry.span(telemetry.JOB, "megatron.startup"):
+            setup_output = setup(state, dataset_provider, restart_store=store, callback_manager=callback_manager)
         state = setup_output.state
         model = setup_output.model
         optimizer = setup_output.optimizer
@@ -212,6 +217,8 @@ def _pretrain(
             except BaseException:
                 logger.exception("Unexpected failure while cleaning up after pretrain failure")
         raise
+    finally:
+        flush_telemetry()
 
     _maybe_destroy_process_group(should_destroy_process_group)
 
