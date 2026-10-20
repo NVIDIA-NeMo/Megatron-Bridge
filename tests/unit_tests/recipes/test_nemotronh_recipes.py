@@ -434,14 +434,14 @@ def test_nemotron_3_super_64gpu_b200_uses_whole_moe_recompute(recipe_name):
 
 
 def test_nemotron_3_super_64gpu_b200_nvfp4_keeps_cuda_graphs_with_light_recompute():
-    """B200 NVFP4 retains CUDA graphs with graph-compatible recompute."""
+    """B200 NVFP4 captures Mamba and attention while leaving MoE routing outside capture."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
     cfg = module.nemotron_3_super_pretrain_64gpu_b200_nvfp4_config()
 
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
     assert cfg.model.cuda_graph_impl == "transformer_engine"
-    assert cfg.model.cuda_graph_scope == ["mamba", "attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.cuda_graph_scope == ["mamba", "attn"]
 
 
 def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_policy():

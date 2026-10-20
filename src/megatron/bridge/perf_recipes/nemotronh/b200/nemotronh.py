@@ -168,7 +168,8 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.model.quant_recipe = load_quantization_recipe(str(_TE_QUANT_CFG_PATH))
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
+    # Router auxiliary-loss CPU-to-CUDA copies are not capture-compatible in this runtime.
+    cfg.model.cuda_graph_scope = ["mamba", "attn"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     _enable_ncclep(cfg)
