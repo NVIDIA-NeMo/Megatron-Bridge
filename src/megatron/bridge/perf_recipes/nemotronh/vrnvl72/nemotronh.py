@@ -241,6 +241,9 @@ def nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config(*, num_gpus: int = 256
         # NCCL user-buffer and launch settings.
         # NVLS backs the symmetric GTP wgrad reduce-scatter enabled by set_up_symm_mem_collectives.
         "NCCL_NVLS_ENABLE": 1,
+        # # NVLS by default uses too much memory on VRNVL72, so need to bump down the chunk size and channels to reduce the buffer size.
+        "NCCL_NVLS_CHUNKSIZE": 131072,
+        "NCCL_NVLS_NCHANNELS": 24,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.

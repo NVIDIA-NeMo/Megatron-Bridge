@@ -244,7 +244,8 @@ def set_up_symm_mem_collectives(cfg: ConfigContainer) -> None:
     cfg.dist.gtp_remat_reduce_scatter_with_fp32_accumulation = True
 
     # DDP
-    cfg.ddp.nccl_ub = True
+    # Symm-mem based GIN collectives are slower than RING kernels for DDP comms, so keep it disabled.
+    cfg.ddp.nccl_ub = False
     # GTP pools always register symmetric windows; Megatron-LM rejects GTP NCCL UB combined with
     # local (non-symmetric) registration.
     cfg.ddp.disable_symmetric_registration = False
