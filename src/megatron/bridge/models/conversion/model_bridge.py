@@ -1207,6 +1207,8 @@ class MegatronModelBridge(
                 if buffers:
                     unsupported.append(f"{global_name} (unexported tensors {buffers})")
                 state = module.get_modelopt_state(properties_only=True)
+                # build_conversion_tasks attaches the model config to modules lacking one; not quantizer state.
+                state.pop("config", None)
                 recipe.update((hf_name.removesuffix("._amax"), state) for hf_name in hf_names)
 
         per_rank = [(recipe, unsupported)]

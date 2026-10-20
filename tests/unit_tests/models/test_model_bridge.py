@@ -1972,7 +1972,6 @@ def test_fake_refit_excludes_weight_quantizer_state_before_validation(monkeypatc
         "projection.k_bmm_quantizer._amax",
         "projection.v_bmm_quantizer._amax",
     }
-    monkeypatch.setenv("ENABLE_BRIDGE_QUANT_MAPPING", "0")
     monkeypatch.setattr(
         implementation,
         "mapping_registry",

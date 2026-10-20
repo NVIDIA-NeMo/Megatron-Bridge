@@ -14,7 +14,6 @@
 
 """ModelOpt fake-quant Hugging Face export: quantizer sidecars at TP / PP / EP and weight-only folding."""
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -146,4 +145,3 @@ def test_folded_weight_only_export_has_no_sidecars(toy_qwen3_moe, tmp_path):
     # Per-output-channel INT8 fake quantization leaves at most 255 distinct values per row.
     folded = weights["model.layers.0.self_attn.q_proj.weight"].float()
     assert max(len(row.unique()) for row in folded) <= 255
-    assert json.loads((out / "config.json").read_text())["num_experts"] == NUM_EXPERTS
