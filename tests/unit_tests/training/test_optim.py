@@ -1106,15 +1106,66 @@ class TestLoraPlusWarmupValidation:
             None,
             {},
             {ParamKey(name="*.other.weight"): ParamGroupOverride(max_lr=0.1)},
-            {ParamKey(name="*.linear_out.weight"): ParamGroupOverride(max_lr=0.1)},
-            {
-                ParamKey(name="*.linear_in.weight", attr="custom"): ParamGroupOverride(max_lr=0.01),
-                ParamKey(name="*.linear_out.weight", attr="custom"): ParamGroupOverride(max_lr=0.1),
-            },
+            {ParamKey(attr="custom"): ParamGroupOverride(max_lr=0.1)},
         ],
     )
     def test_unrelated_overrides_are_not_rejected(self, overrides):
         self._setup(lambda cfg: overrides, initial_lr=3e-5)
+
+    @pytest.mark.parametrize("initial_lr", [0.0, 3e-5])
+    @pytest.mark.parametrize("key_form", ["a_only", "b_only", "tuple", "name_and_attr"])
+    def test_equivalent_named_overrides(self, key_form, initial_lr):
+        overrides = {}
+        for group, lr in [("in", 3e-4), ("out", 4.8e-3)]:
+            if (key_form == "a_only" and group == "out") or (key_form == "b_only" and group == "in"):
+                continue
+            name = f"*.linear_{group}.weight"
+            if key_form == "tuple":
+                key = ParamKey(name=("*.unrelated.weight", name))
+            elif key_form == "name_and_attr":
+                key = ParamKey(name=name, attr="custom")
+            else:
+                key = ParamKey(name=name)
+            overrides[key] = ParamGroupOverride(max_lr=lr if key_form != "a_only" else 1e-4)
+        if initial_lr:
+            with pytest.raises(ValueError, match=r"LoRA\+.*lr_warmup_init=0"):
+                self._setup(lambda cfg: overrides, initial_lr=initial_lr)
+        else:
+            self._setup(lambda cfg: overrides, initial_lr=initial_lr)
+
+    @pytest.mark.parametrize("different_min_lr", [False, True])
+    def test_combines_matching_name_overrides(self, different_min_lr):
+        overrides = {
+            ParamKey(name="*.weight"): ParamGroupOverride(max_lr=3e-4),
+            ParamKey(name="*.linear_in.weight"): ParamGroupOverride(min_lr=3e-5),
+            ParamKey(name=("*.linear_out.weight",)): ParamGroupOverride(min_lr=1e-5 if different_min_lr else 3e-5),
+        }
+        if different_min_lr:
+            with pytest.raises(ValueError, match=r"LoRA\+.*lr_warmup_init=0"):
+                self._setup(lambda cfg: overrides, initial_lr=3e-5)
+        else:
+            self._setup(lambda cfg: overrides, initial_lr=3e-5)
+
+    @pytest.mark.parametrize(
+        "name,max_lr",
+        [
+            ("*.linear_in.weight", 3e-4),
+            ("*.linear_out.weight", 3e-4),
+            (("*.linear_in.weight", "*.linear_out.weight"), 1e-3),
+            ("*.weight", 1e-3),
+        ],
+    )
+    def test_equal_named_bounds_are_allowed(self, name, max_lr):
+        overrides = {ParamKey(name=name): ParamGroupOverride(max_lr=max_lr)}
+        self._setup(lambda cfg: overrides, initial_lr=3e-5)
+
+    def test_conflicting_matching_overrides_keep_native_error(self):
+        overrides = {
+            ParamKey(name="*.weight"): ParamGroupOverride(max_lr=3e-4),
+            ParamKey(name="*.linear_out.weight"): ParamGroupOverride(max_lr=1e-3),
+        }
+        with pytest.raises(ValueError, match="Conflicting overrides for max_lr"):
+            self._setup(lambda cfg: overrides, initial_lr=3e-5)
 
     def test_distinct_minimum_rates_are_rejected(self):
         overrides = {

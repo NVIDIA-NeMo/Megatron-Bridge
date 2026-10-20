@@ -15,6 +15,7 @@
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from fnmatch import fnmatch
 from types import MethodType
 from typing import Optional, Union, cast
 
@@ -22,12 +23,11 @@ import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
-    ParamKey,
     get_megatron_optimizer,
     get_mup_config_overrides,
 )
 from megatron.core.optimizer.muon import get_megatron_muon_optimizer
-from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, combine_param_group_overrides
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_model_config
@@ -86,19 +86,23 @@ def setup_optimizer(
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
             )
 
-    # The LoRA+ helper emits these two overrides. MCore scales their peak and
-    # minimum rates, but uses one shared initial rate during warmup.
+    # Check name-based LoRA+ overrides without depending on rank-local parameters.
+    # MCore scales peak/minimum rates but uses one shared initial rate during warmup.
     if config_overrides and scheduler_config.lr_warmup_init != 0:
-        lora_a = config_overrides.get(ParamKey(name="*.linear_in.weight"))
-        lora_b = config_overrides.get(ParamKey(name="*.linear_out.weight"))
-        if (
-            lora_a is not None
-            and lora_b is not None
-            and (
-                lora_a.get("max_lr", optimizer_config.lr) != lora_b.get("max_lr", optimizer_config.lr)
-                or lora_a.get("min_lr", optimizer_config.min_lr) != lora_b.get("min_lr", optimizer_config.min_lr)
+
+        def effective_lr_bounds(param_name: str) -> tuple[float | None, float | None]:
+            override = combine_param_group_overrides(
+                [
+                    value
+                    for key, value in config_overrides.items()
+                    if any(
+                        fnmatch(param_name, name) for name in ((key.name,) if isinstance(key.name, str) else key.name)
+                    )
+                ]
             )
-        ):
+            return override.get("max_lr", optimizer_config.lr), override.get("min_lr", optimizer_config.min_lr)
+
+        if effective_lr_bounds("adapter.linear_in.weight") != effective_lr_bounds("adapter.linear_out.weight"):
             raise ValueError(
                 "LoRA+ with different A/B learning rates requires SchedulerConfig.lr_warmup_init=0. "
                 "A nonzero warmup initial learning rate breaks the LoRA+ ratio. "
