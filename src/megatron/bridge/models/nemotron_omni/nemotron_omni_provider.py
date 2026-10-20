@@ -16,12 +16,10 @@ import copy
 import warnings
 from abc import ABC
 from dataclasses import dataclass
-from types import MethodType
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Callable, Literal, Optional
 
 import torch.nn.functional as F
-from torch.nn.attention import SDPBackend, sdpa_kernel
 from megatron.core import parallel_state
 from megatron.core.activations import squared_relu
 from megatron.core.models.gpt.gpt_layer_specs import get_mlp_module_spec
@@ -30,6 +28,7 @@ from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.tensor_parallel.mappings import reduce_from_tensor_model_parallel_region
 from megatron.core.transformer.spec_utils import get_submodules
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
@@ -301,10 +300,7 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
         if self.vision_qkv_impl == "transformer_engine":
             return
         if self.vision_qkv_impl != "torch":
-            raise ValueError(
-                "vision_qkv_impl must be 'transformer_engine' or 'torch', "
-                f"got {self.vision_qkv_impl!r}."
-            )
+            raise ValueError(f"vision_qkv_impl must be 'transformer_engine' or 'torch', got {self.vision_qkv_impl!r}.")
         if model.vision_model is None:
             return
         for layer in model.vision_model.decoder.layers:
@@ -334,10 +330,7 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
         if self.vision_mlp_impl == "transformer_engine":
             return
         if self.vision_mlp_impl != "torch":
-            raise ValueError(
-                "vision_mlp_impl must be 'transformer_engine' or 'torch', "
-                f"got {self.vision_mlp_impl!r}."
-            )
+            raise ValueError(f"vision_mlp_impl must be 'transformer_engine' or 'torch', got {self.vision_mlp_impl!r}.")
         if model.vision_model is None:
             return
         for layer in model.vision_model.decoder.layers:

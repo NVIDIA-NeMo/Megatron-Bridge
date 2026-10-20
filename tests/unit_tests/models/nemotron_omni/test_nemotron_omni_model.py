@@ -429,12 +429,8 @@ def test_torch_sdpa_mode_patches_radio_core_and_output_projection():
 def test_torch_mlp_mode_patches_radio_fc1_and_fc2():
     linear_fc1 = SimpleNamespace(forward=Mock())
     linear_fc2 = SimpleNamespace(forward=Mock())
-    layer = SimpleNamespace(
-        mlp=SimpleNamespace(linear_fc1=linear_fc1, linear_fc2=linear_fc2)
-    )
-    model = SimpleNamespace(
-        vision_model=SimpleNamespace(decoder=SimpleNamespace(layers=[layer]))
-    )
+    layer = SimpleNamespace(mlp=SimpleNamespace(linear_fc1=linear_fc1, linear_fc2=linear_fc2))
+    model = SimpleNamespace(vision_model=SimpleNamespace(decoder=SimpleNamespace(layers=[layer])))
     provider = NemotronOmniModelProvider(vision_mlp_impl="torch")
 
     provider._configure_vision_mlp_impl(model)
@@ -1114,6 +1110,21 @@ def test_vision_dp_over_cp_is_disabled_when_cp_is_one(single_rank_model_parallel
 
     assert provider.vision_dp_over_cp is True
     assert model.vision_dp_over_cp is False
+
+
+@pytest.mark.parametrize("compute_mtp_loss", [None, False, True])
+def test_image_forward_preserves_mtp_runtime_control(compute_mtp_loss):
+    image_features = torch.tensor([[101.0, 102.0, 103.0], [201.0, 202.0, 203.0]])
+    model = _BoundaryModel(image_features)
+    model.config.mtp_num_layers = 2
+    input_ids = torch.tensor([[7, 18, 18, 9]])
+    control = {} if compute_mtp_loss is None else {"compute_mtp_loss": compute_mtp_loss}
+
+    output = model(input_ids=input_ids, images=torch.ones(1), **control)
+
+    assert model.language_model.last_kwargs["compute_mtp_loss"] is (compute_mtp_loss is not False)
+    assert torch.equal(model.language_model.last_kwargs["input_ids"], input_ids)
+    assert torch.equal(output[1:3, 0], image_features)
 
 
 def test_image_forward_replaces_expanded_placeholders_without_changing_length():

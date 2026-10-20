@@ -521,9 +521,7 @@ class NemotronOmniModel(MegatronModule):
         vision_packed_seq_params = _build_vision_packed_seq_params(imgs_sizes, self.patch_dim)
         from nemo_rl.models.vision_parity_dump import vision_parity_layer_hooks
 
-        with vision_parity_layer_hooks(
-            self.vision_model, "policy", images, imgs_sizes
-        ):
+        with vision_parity_layer_hooks(self.vision_model, "policy", images, imgs_sizes):
             vision_output = self.vision_model(
                 images,
                 imgs_sizes=imgs_sizes,
@@ -577,28 +575,20 @@ class NemotronOmniModel(MegatronModule):
                     features, height=grid_height, width=grid_width
                 )
             shuffled.append(
-                _pixel_shuffle_dynamic_resolution(
-                    features, height=grid_height, width=grid_width
-                ).squeeze(0)
+                _pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0)
             )
 
         from nemo_rl.models.vision_parity_dump import dump_vision_features
 
         radio_output = torch.cat(radio_features, dim=1)
-        dump_vision_features(
-            "policy", images, radio_output, imgs_sizes, stage="radio"
-        )
+        dump_vision_features("policy", images, radio_output, imgs_sizes, stage="radio")
         shuffled_output = torch.cat(shuffled, dim=0)
-        dump_vision_features(
-            "policy", images, shuffled_output, imgs_sizes, stage="shuffle"
-        )
+        dump_vision_features("policy", images, shuffled_output, imgs_sizes, stage="shuffle")
         projected = _project_multimodal_embeddings(
             self.vision_projection,
             shuffled_output,
         )
-        dump_vision_features(
-            "policy", images, projected, imgs_sizes, stage="projected"
-        )
+        dump_vision_features("policy", images, projected, imgs_sizes, stage="projected")
         return projected
 
     def _encode_images(
@@ -957,10 +947,16 @@ class NemotronOmniModel(MegatronModule):
         sound_length: Optional[torch.Tensor] = None,
         *,
         media_token_validity_mask: torch.Tensor | None = None,
+        compute_mtp_loss: bool = True,
         inference_params=None,
         **kwargs,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """Insert media into the expanded sequence, shard for CP, then call NemotronH.
+
+        Args:
+            compute_mtp_loss: Whether to run the non-inference MTP auxiliary
+                branch. Disabling it leaves the MTP parameters loaded and does
+                not control speculative decoding.
 
         Returns:
             Model output, or ``(output, local_loss_mask)`` when this model
@@ -1129,6 +1125,7 @@ class NemotronOmniModel(MegatronModule):
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=language_packed_seq_params,
             padding_mask=padding_mask,
+            compute_mtp_loss=compute_mtp_loss,
         )
         if return_sliced_loss_mask:
             return output, loss_mask
