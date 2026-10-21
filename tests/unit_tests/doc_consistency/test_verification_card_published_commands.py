@@ -213,16 +213,19 @@ def test_published_card_commands_do_not_repeat_a_flag() -> None:
 def test_published_checkpoint_loads_come_from_the_same_card() -> None:
     """Every non-null load override reads a path that a command in the same card writes."""
     loads = ("checkpoint.load", "dataset.dataloader_load")
-    producers = ("checkpoint.save", "dataset.dataloader_save", "--megatron-path", "--save_dir", "--hf-path")
+    producers = ("checkpoint.save", "dataset.dataloader_save", "--save_dir")
+    conversion_outputs = {"import": "--megatron-path", "export": "--hf-path"}
     produced: dict[str, set[str]] = {}
     consumed = []
     for leaf, tokens in _published_commands():
         card = leaf.split("/", 1)[0]
+        is_conversion = len(tokens) > 1 and Path(tokens[0]).name == "convert.sh"
+        output_flag = conversion_outputs.get(tokens[1]) if is_conversion else None
         for index, token in enumerate(tokens):
             name, _, value = token.partition("=")
             if not value and index + 1 < len(tokens):
                 value = tokens[index + 1]
-            if name in producers:
+            if name in producers or name == output_flag:
                 produced.setdefault(card, set()).add(value.rstrip("/"))
             elif name in loads and "=" in token and value != "null":
                 consumed.append((card, leaf, name, value.rstrip("/")))
@@ -290,3 +293,50 @@ def test_published_command_checks_reject_original_errors(
     monkeypatch.setattr(module, "_published_commands", lambda: iter([("regression", shlex.split(command))]))
     with pytest.raises(AssertionError, match=message):
         getattr(module, check_name)()
+
+
+def _check_loads(monkeypatch: pytest.MonkeyPatch, *commands: tuple[str, str]) -> None:
+    module = sys.modules[__name__]
+    monkeypatch.setattr(
+        module, "_published_commands", lambda: iter((leaf, shlex.split(cmd)) for leaf, cmd in commands)
+    )
+    module.test_published_checkpoint_loads_come_from_the_same_card()
+
+
+def test_checkpoint_load_rejects_export_only_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(AssertionError, match="checkpoint.load=work/unproduced"):
+        _check_loads(
+            monkeypatch,
+            (
+                "card/export",
+                "./scripts/conversion/convert.sh export --megatron-path work/unproduced --hf-path work/hf",
+            ),
+            ("card/train", "./scripts/training/train.sh checkpoint.load=work/unproduced"),
+        )
+
+
+def test_checkpoint_load_rejects_import_hf_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(AssertionError, match="checkpoint.load=work/hf"):
+        _check_loads(
+            monkeypatch,
+            ("card/import", "./scripts/conversion/convert.sh import --hf-path work/hf --megatron-path work/mcore"),
+            ("card/train", "./scripts/training/train.sh checkpoint.load=work/hf"),
+        )
+
+
+@pytest.mark.parametrize("load", ["work/mcore", "work/mcore/iter_0000000"])
+def test_checkpoint_load_accepts_import_output_and_iteration_child(load: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _check_loads(
+        monkeypatch,
+        ("card/import", "./scripts/conversion/convert.sh import --hf-path work/hf --megatron-path work/mcore"),
+        ("card/train", f"./scripts/training/train.sh checkpoint.load={load} dataset.dataloader_load=null"),
+    )
+
+
+def test_checkpoint_load_rejects_import_from_another_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(AssertionError, match="checkpoint.load=work/mcore"):
+        _check_loads(
+            monkeypatch,
+            ("other/import", "./scripts/conversion/convert.sh import --hf-path work/hf --megatron-path work/mcore"),
+            ("card/train", "./scripts/training/train.sh checkpoint.load=work/mcore"),
+        )
