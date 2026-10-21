@@ -15,6 +15,7 @@
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from fnmatch import fnmatch
 from types import MethodType
 from typing import Optional, Union, cast
 
@@ -25,7 +26,7 @@ from megatron.core.optimizer import (
     get_megatron_optimizer,
     get_mup_config_overrides,
 )
-from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, combine_param_group_overrides
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_model_config
@@ -88,6 +89,29 @@ def setup_optimizer(
             G_LOGGER.info(
                 f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
+            )
+
+    # Check name-based LoRA+ overrides without depending on rank-local parameters.
+    # MCore scales peak/minimum rates but uses one shared initial rate during warmup.
+    if config_overrides and scheduler_config.lr_warmup_init != 0:
+
+        def effective_lr_bounds(param_name: str) -> tuple[float | None, float | None]:
+            override = combine_param_group_overrides(
+                [
+                    value
+                    for key, value in config_overrides.items()
+                    if any(
+                        fnmatch(param_name, name) for name in ((key.name,) if isinstance(key.name, str) else key.name)
+                    )
+                ]
+            )
+            return override.get("max_lr", optimizer_config.lr), override.get("min_lr", optimizer_config.min_lr)
+
+        if effective_lr_bounds("adapter.linear_in.weight") != effective_lr_bounds("adapter.linear_out.weight"):
+            raise ValueError(
+                "LoRA+ with different A/B learning rates requires SchedulerConfig.lr_warmup_init=0. "
+                "A nonzero warmup initial learning rate breaks the LoRA+ ratio. "
+                "Set lr_warmup_init=0 or lora_plus_ratio=1."
             )
 
     if hasattr(optimizer_config, "provide"):

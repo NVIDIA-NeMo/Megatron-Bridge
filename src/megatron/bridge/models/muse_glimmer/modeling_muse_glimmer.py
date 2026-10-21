@@ -57,8 +57,8 @@ if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
 
 
-class MuseGlimmerSelfAttention(SelfAttention):
-    """MCore self-attention with Muse's residual-branch post norm."""
+class MuseSelfAttention(SelfAttention):
+    """MCore self-attention with Muse's parameter-free Q/K normalization."""
 
     def __init__(self, config: TransformerConfig, *args: Any, **kwargs: Any) -> None:
         super().__init__(config, *args, **kwargs)
@@ -74,6 +74,13 @@ class MuseGlimmerSelfAttention(SelfAttention):
             eps=config.layernorm_epsilon,
             elementwise_affine=False,
         )
+
+
+class MuseGlimmerSelfAttention(MuseSelfAttention):
+    """Muse self-attention with Glimmer's residual-branch post norm."""
+
+    def __init__(self, config: TransformerConfig, *args: Any, **kwargs: Any) -> None:
+        super().__init__(config, *args, **kwargs)
         self.post_layernorm = TENorm(
             config,
             config.hidden_size,
