@@ -105,6 +105,12 @@ class _TiedReplicatedMapping(ReplicatedMapping):
 class DiffusionGemmaBridge(Gemma4VLBridge):
     """Convert the tied DiffusionGemma checkpoint into one Megatron text stack."""
 
+    # DiffusionGemma has not migrated to builder-backed configs: restore the base rejection
+    # instead of inheriting the Gemma 4 text builder config.
+    MODEL_CONFIG_CLASS = None
+    USE_MODEL_CONFIG_FOR_CONVERSION = False
+    hf_config_to_model_config = MegatronModelBridge.hf_config_to_model_config
+
     def provider_bridge(self, hf_pretrained) -> DiffusionGemmaModelProvider:
         hf_config = _normalized_diffusion_config(hf_pretrained.config)
         self.hf_config = hf_config
