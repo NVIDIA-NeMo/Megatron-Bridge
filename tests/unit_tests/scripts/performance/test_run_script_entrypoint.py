@@ -42,6 +42,28 @@ else:
     import setup_experiment
 
 
+@pytest.mark.parametrize("backend", ["ncclep", "hybridep", None])
+def test_bootstrap_unsets_explicit_net_plugin_only_for_nccl_ep(monkeypatch, backend):
+    recipe = SimpleNamespace(env_vars={}, model=SimpleNamespace(moe_flex_dispatcher_backend=backend))
+    monkeypatch.setenv("NCCL_NET_PLUGIN", "external-plugin")
+
+    bootstrap._apply_recipe_environment(recipe)
+
+    if backend == "ncclep":
+        assert "NCCL_NET_PLUGIN" not in bootstrap.os.environ
+    else:
+        assert bootstrap.os.environ["NCCL_NET_PLUGIN"] == "external-plugin"
+
+
+def test_bootstrap_nccl_ep_accepts_missing_net_plugin(monkeypatch):
+    recipe = SimpleNamespace(env_vars={}, model=SimpleNamespace(moe_flex_dispatcher_backend="ncclep"))
+    monkeypatch.delenv("NCCL_NET_PLUGIN", raising=False)
+
+    bootstrap._apply_recipe_environment(recipe)
+
+    assert "NCCL_NET_PLUGIN" not in bootstrap.os.environ
+
+
 def test_nemo_ci_legacy_variants_select_the_default_flat_recipe_name():
     assert utils._recipe_variant_suffix("v1") == ""
     assert utils._recipe_variant_name("v1") is None
