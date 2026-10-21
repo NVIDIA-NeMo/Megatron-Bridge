@@ -82,14 +82,15 @@ them. Megatron Core passes `None` through to its YaRN embedding and fails at mod
 
 ### HybridModel families
 
-A `HybridModel` LLM (Mamba, GDN or MoE layer patterns) sets
-`MODEL_CONFIG_CLASS = BridgeHybridModelConfig` from `megatron.bridge.models.hybrid`, the hybrid
+A `HybridModel` LLM built from a Mamba, attention, MLP and MoE layer pattern, such as Nemotron-H,
+sets `MODEL_CONFIG_CLASS = BridgeHybridModelConfig` from `megatron.bridge.models.hybrid`, the hybrid
 counterpart of `BridgeGPTModelConfig`. It keeps the `HybridModelProvider` contract:
 `hybrid_layer_pattern` and `mamba_chunk_size` are declared fields, a separate
 `mtp_hybrid_override_pattern` is appended to the pattern once per MTP depth in `finalize()`, and
 stack-spec factories resolve as on the provider path. Map the provider's defaults that differ from
 the builder config's (for example `normalization`, `apply_rope_fusion` and `attention_backend`)
-explicitly. Follow Nemotron-H (`src/megatron/bridge/models/nemotronh/nemotron_h_bridge.py`).
+explicitly. A family that also needs MLA subclasses it and sets `transformer_config_class` to an MLA
+transformer config. Follow Nemotron-H (`src/megatron/bridge/models/nemotronh/nemotron_h_bridge.py`).
 
 ### When you need a custom config class
 
