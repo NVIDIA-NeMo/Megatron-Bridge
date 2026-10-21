@@ -563,10 +563,11 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.model.extra_checkpoint_metadata.update(
+        hf_model_id=_NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+        hf_model_revision=_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+    )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     cfg.env_vars = {
@@ -594,10 +595,11 @@ def _build_nemotron_3_5_lightning_gb200_mxfp8() -> ConfigContainer:
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.model.extra_checkpoint_metadata.update(
+        hf_model_id=_NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+        hf_model_revision=_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+    )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     return cfg
@@ -681,10 +683,11 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.model.extra_checkpoint_metadata.update(
+        hf_model_id=_NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+        hf_model_revision=_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+    )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     cfg.env_vars = {

@@ -26,10 +26,15 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import (
-    NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
+    NemotronHBuilderOnlyBridge,
+    NemotronHUltraBuilderOnlyBridge,
+    discover_recipe_factories,
     patch_recipe_module_global,
+    recipe_factory_id,
 )
 
 
@@ -40,6 +45,9 @@ _NEMOTRONH_RECIPE_FUNCS = [
     for name in getattr(_nemotronh_module, "__all__", [])
     if callable(getattr(_nemotronh_module, name, None))
 ]
+_NEMOTRONH_PERF_RECIPE_FUNCS = discover_recipe_factories(
+    importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
+)
 
 
 def test_nemotron_3_5_lightning_library_recipe_names_are_hardware_agnostic():
@@ -52,65 +60,33 @@ def test_nemotron_3_5_lightning_library_recipe_names_are_hardware_agnostic():
     assert library_names.isdisjoint(perf_names)
 
 
-class _FakeModelProvider:
-    """Lightweight mutable provider for recipe construction without HF Hub access."""
-
-    def __init__(self) -> None:
-        self.vocab_size = 256
-        self.high_priority_a2a_comm_stream = False
-        self.moe_hybridep_num_sms_preprocessing = 108
-
-    def finalize(self) -> None:
-        return None
-
-
-class _FakeAutoBridge:
-    """Return a local model provider without loading a Hugging Face config."""
-
-    @classmethod
-    def from_hf_pretrained(cls, *args, **kwargs):
-        return cls()
-
-    def to_megatron_provider(self, *args, **kwargs):
-        return _FakeModelProvider()
-
-
-class _FakeUltraModelProvider(_FakeModelProvider):
-    """Fake provider with Nemotron 3 Ultra's decoder pattern, which the SFT recipe splits into stages."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.hybrid_layer_pattern = NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
-
-
-class _FakeUltraAutoBridge(_FakeAutoBridge):
-    """Return the Nemotron 3 Ultra fake provider."""
-
-    def to_megatron_provider(self, *args, **kwargs):
-        return _FakeUltraModelProvider()
-
-
 @pytest.fixture(autouse=True)
-def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep AutoBridge-backed recipe construction deterministic and offline."""
+def _patch_hf_backed_recipe_model_configs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build strict Nemotron-H model configs offline instead of reading Hugging Face configs."""
     for module_name in (
         "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano",
+        "megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano_4b",
         "megatron.bridge.recipes.nemotronh.h100.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
     ):
         module = importlib.import_module(module_name)
-        patch_recipe_module_global(monkeypatch, module, "AutoBridge", _FakeAutoBridge)
+        patch_recipe_module_global(monkeypatch, module, "AutoBridge", NemotronHBuilderOnlyBridge)
     ultra_module = importlib.import_module("megatron.bridge.recipes.nemotronh.nemotron_3_ultra")
-    patch_recipe_module_global(monkeypatch, ultra_module, "AutoBridge", _FakeUltraAutoBridge)
+    patch_recipe_module_global(monkeypatch, ultra_module, "AutoBridge", NemotronHUltraBuilderOnlyBridge)
+
+
+def _model_fields(model) -> dict:
+    """Return the outer and nested transformer fields of a builder-backed model config."""
+    return {**vars(model.transformer), **{key: value for key, value in vars(model).items() if key != "transformer"}}
 
 
 def _assert_basic_config(cfg):
     from megatron.bridge.training.config import ConfigContainer
 
     assert isinstance(cfg, ConfigContainer)
-    assert cfg.model is not None
+    assert isinstance(cfg.model, BridgeHybridModelConfig)
     assert cfg.train is not None
     assert cfg.validation is not None
     assert cfg.optimizer is not None
@@ -164,6 +140,15 @@ def test_each_nemotronh_recipe_builds_config(recipe_func: Callable):
         assert cfg.peft is not None
     else:
         assert cfg.peft is None
+
+
+@pytest.mark.parametrize("recipe_func", _NEMOTRONH_PERF_RECIPE_FUNCS, ids=recipe_factory_id)
+def test_each_nemotronh_perf_recipe_uses_strict_builder_config(recipe_func: Callable):
+    """Perf recipes only set fields that the builder-backed model config declares."""
+    cfg = recipe_func()
+
+    assert isinstance(cfg.model, BridgeHybridModelConfig)
+    assert cfg.model.as_dict()["_builder_"] == BridgeHybridModelConfig.builder
 
 
 def test_nemotronh_recipe_rejects_unknown_cli_override():
@@ -279,13 +264,7 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
     ):
         assert getattr(training_cfg.model, field_name) == getattr(benchmark_cfg.model, field_name)
 
-    training_scopes = [
-        scope.name if hasattr(scope, "name") else scope for scope in training_cfg.model.cuda_graph_scope
-    ]
-    benchmark_scopes = [
-        scope.name if hasattr(scope, "name") else scope for scope in benchmark_cfg.model.cuda_graph_scope
-    ]
-    assert training_scopes == benchmark_scopes
+    assert cuda_graph_module_names(training_cfg.model) == cuda_graph_module_names(benchmark_cfg.model)
 
     assert training_cfg.train.global_batch_size == benchmark_cfg.train.global_batch_size == 512
     assert training_cfg.train.micro_batch_size == benchmark_cfg.train.micro_batch_size == 1
@@ -433,7 +412,6 @@ def test_nemotron_3_super_64gpu_b200_nvfp4_keeps_cuda_graphs_with_light_recomput
 def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_policy():
     """The H100 convergence recipe keeps safety checks while using the measured fast path."""
     from megatron.bridge.recipes.nemotronh import nemotron_3_5_lightning_pretrain_config
-    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
     cfg = nemotron_3_5_lightning_pretrain_config()
 
@@ -471,8 +449,8 @@ def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_poli
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.model.extra_checkpoint_metadata["hf_model_id"] == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.extra_checkpoint_metadata["hf_model_revision"] == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
@@ -515,8 +493,8 @@ def test_nemotron_3_5_lightning_8k_convergence_recipe_uses_perf_execution_policy
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.model.extra_checkpoint_metadata["hf_model_id"] == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.extra_checkpoint_metadata["hf_model_revision"] == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
@@ -604,8 +582,8 @@ def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.model.extra_checkpoint_metadata["hf_model_id"] == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.extra_checkpoint_metadata["hf_model_revision"] == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
 
     assert cfg.dataset.seq_length == 4096
@@ -656,8 +634,10 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
         "recompute_method",
         "recompute_num_layers",
     }
-    h100_model = {key: value for key, value in vars(h100.model).items() if key not in model_execution_fields}
-    gb200_model = {key: value for key, value in vars(gb200.model).items() if key not in model_execution_fields}
+    h100_model = {key: value for key, value in _model_fields(h100.model).items() if key not in model_execution_fields}
+    gb200_model = {
+        key: value for key, value in _model_fields(gb200.model).items() if key not in model_execution_fields
+    }
     assert gb200_model == h100_model
 
     gb200.model = h100.model

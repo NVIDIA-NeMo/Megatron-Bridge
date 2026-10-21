@@ -44,37 +44,16 @@ from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import (
     NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
+    NemotronHUltraBuilderOnlyBridge,
     patch_recipe_module_global,
 )
 
 
-class _FakeUltraProvider:
-    """Fake model provider for testing recipe field overrides without HF Hub I/O."""
-
-    def __init__(self) -> None:
-        self.vocab_size = 256
-        self.hybrid_layer_pattern = NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
-
-    def finalize(self) -> None:
-        return None
-
-
-class _FakeAutoBridge:
-    """Fake AutoBridge that returns an Ultra provider without loading a model."""
-
-    @classmethod
-    def from_hf_pretrained(cls, *args, **kwargs):
-        return cls()
-
-    def to_megatron_provider(self, *args, **kwargs):
-        return _FakeUltraProvider()
-
-
 @pytest.fixture(autouse=True)
 def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch AutoBridge in the recipe module to avoid Hugging Face access."""
+    """Build strict Ultra-pattern model configs in the recipe module without Hugging Face access."""
     mod = importlib.import_module("megatron.bridge.recipes.nemotronh.nemotron_3_ultra")
-    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", NemotronHUltraBuilderOnlyBridge)
 
 
 @pytest.mark.unit

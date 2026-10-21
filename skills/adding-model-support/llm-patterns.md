@@ -80,6 +80,17 @@ dict whose type is `"yarn"`. Hugging Face YaRN configs often omit `beta_fast`, `
 `truncate`; check that the mapped config carries Hugging Face's defaults (32, 1 and `True`) for
 them. Megatron Core passes `None` through to its YaRN embedding and fails at model construction.
 
+### HybridModel families
+
+A `HybridModel` LLM (Mamba, GDN or MoE layer patterns) sets
+`MODEL_CONFIG_CLASS = BridgeHybridModelConfig` from `megatron.bridge.models.hybrid`, the hybrid
+counterpart of `BridgeGPTModelConfig`. It keeps the `HybridModelProvider` contract:
+`hybrid_layer_pattern` and `mamba_chunk_size` are declared fields, a separate
+`mtp_hybrid_override_pattern` is appended to the pattern once per MTP depth in `finalize()`, and
+stack-spec factories resolve as on the provider path. Map the provider's defaults that differ from
+the builder config's (for example `normalization`, `apply_rope_fusion` and `attention_backend`)
+explicitly. Follow Nemotron-H (`src/megatron/bridge/models/nemotronh/nemotron_h_bridge.py`).
+
 ### When you need a custom config class
 
 Create a `ModelConfig` subclass and a `ModelBuilder` only when:
