@@ -97,23 +97,24 @@ items:
       --task model-comparison
       --hf_model_path work/model-verification/nemotron-3.5-super-vl-text-only/hf
       --megatron_model_path work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000
-      --hf-logits-path work/model-verification/nemotron-3.5-super-vl-text-only/hf-reference.pt
+      --hf-device cpu
       --prompt $'<|im_start|>system\n<|im_end|>\n<|im_start|>user\nWhat is two plus two?<|im_end|>\n<|im_start|>assistant\n<think></think>'
       --tp 1 --pp 1 --ep 4 --etp 1 --trust-remote-code
-    last_verified: 2026-09-27
+    last_verified: 2026-10-20
     expected_result: >
       The maintained public comparison passed on four GB200 GPUs with the
-      native 22-token chat prompt and a separately saved native-VL HF
-      no-media reference for the identical source weights and input. This
-      compares that reference with the saved text-only Megatron checkpoint;
-      standalone text HF reload is verified separately below.
+      native 22-token chat prompt. Rank 0 runs the Hugging Face reference
+      forward of the exported text-only checkpoint in-process on CPU, so the
+      item needs no separately saved reference; the host must hold the BF16
+      checkpoint in memory. This compares that exported HF checkpoint with
+      the saved text-only Megatron checkpoint.
       The next token matches: 16489 (Two).
       Cosine similarity is 0.999996; maximum and mean absolute logit
-      differences are 0.500000 and 0.063002. Bash ANSI-C quoting preserves
+      differences are 0.500000 and 0.071173. Bash ANSI-C quoting preserves
       the native prompt's newline characters.
       This is single-prompt forward correlation, not strict probability
-      equality, generation, or MTP forward verification. Regenerate the HF
-      reference if the checkpoint changes. The public revision remains unbound.
+      equality, generation, or MTP forward verification. The public revision
+      remains unbound.
   inference:
     status: verified
     precision: bf16
