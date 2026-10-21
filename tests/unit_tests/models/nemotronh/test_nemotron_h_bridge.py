@@ -1481,7 +1481,7 @@ class TestNemotronHBuilderConfig:
 
     def test_get_model_config_records_hf_source(self):
         hf_config = _native_hf_config()
-        hf_config._name_or_path = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
+        hf_config._name_or_path = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"  # pragma: allowlist secret
 
         model_config = AutoBridge.from_hf_config(hf_config).get_model_config()
 
