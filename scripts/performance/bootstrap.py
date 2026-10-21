@@ -45,13 +45,16 @@ def _prepare_recipe_and_target(args, cli_overrides: list[str]):
 
 
 def _apply_recipe_environment(recipe) -> None:
-    """Install recipe defaults while preserving explicit process values."""
+    """Install recipe defaults, dropping explicit NET plugin selection for NCCL EP."""
     for name, value in recipe.env_vars.items():
         if not isinstance(name, str) or not name:
             raise ValueError("Environment variable names must be non-empty strings.")
         if not isinstance(value, (str, int, float, bool)):
             raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
         os.environ.setdefault(name, str(value))
+    if uses_ncclep(recipe):
+        # Let NCCL select its network backend instead of forcing an external plugin.
+        os.environ.pop("NCCL_NET_PLUGIN", None)
 
 
 def uses_ncclep(recipe) -> bool:
