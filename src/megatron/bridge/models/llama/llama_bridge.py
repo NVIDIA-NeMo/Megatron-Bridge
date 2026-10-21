@@ -48,6 +48,7 @@ class LlamaBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Convert a Hugging Face Llama config to builder config kwargs."""

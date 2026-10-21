@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import tempfile
+from contextlib import nullcontext
 from dataclasses import fields
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -20,6 +21,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.nn.functional as F
+from megatron.training.models.gpt import default_layer_spec as mcore_default_layer_spec
 from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 
 from megatron.bridge.models import AutoBridge
@@ -96,6 +98,24 @@ class TestLlamaBridgeConfigConverter:
     def test_provider_bridge_is_inherited_compatibility_only(self):
         """Llama should not maintain a separate provider construction path."""
         assert "provider_bridge" not in LlamaBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        """Checkpoint conversion builds Llama through ModelBuilder instead of the legacy provider."""
+        assert LlamaBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_builder_default_layer_spec_matches_provider(self, mock_pretrained_llama, llama_config):
+        """The builder's default layer spec matches the spec the provider path builds with."""
+        bridge = LlamaBridge()
+        model_config = bridge.hf_config_to_model_config(llama_config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained_llama)
+
+        # The builder resolves Megatron Core's default spec when the config leaves it unset.
+        assert model_config.transformer_layer_spec is None
+        builder_spec = mcore_default_layer_spec(model_config, vp_stage=None)
+        # functools.partial (used for the MLP submodule) compares by identity, so compare structure.
+        assert repr(builder_spec) == repr(provider.transformer_layer_spec(provider))
 
     def test_provider_bridge_stores_rope_scaling_for_llama31(self, mock_pretrained_llama):
         """Test that provider_bridge enables rope_scaling for Llama 3.1/3.2."""
@@ -931,6 +951,51 @@ class TestAutoBridgeIntegration:
 
             # Verify kwargs were passed through
             mock_pretrained.assert_called_once_with(temp_dir, **kwargs)
+
+    def test_import_ckpt_builds_through_model_builder(self, tmp_path):
+        """Checkpoint import builds Llama through get_model() and keeps RoPE scaling and tied embeddings."""
+        hf_path = tmp_path / "hf"
+        LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            max_position_embeddings=131072,
+            vocab_size=128,
+            rope_theta=500000.0,
+            rope_scaling={
+                "rope_type": "llama3",
+                "factor": 32.0,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+            },
+            tie_word_embeddings=True,
+        ).save_pretrained(hf_path)
+        megatron_model = [Mock()]
+
+        with (
+            patch(
+                "megatron.bridge.training.model_load_save.temporary_distributed_context",
+                return_value=nullcontext(),
+            ),
+            patch.object(AutoBridge, "get_model", return_value=megatron_model) as mock_get_model,
+            patch.object(AutoBridge, "to_megatron_model", side_effect=AssertionError("provider path used")),
+            patch.object(AutoBridge, "save_megatron_model") as mock_save_megatron_model,
+        ):
+            AutoBridge.import_ckpt(hf_path, tmp_path / "megatron")
+
+        (model_config,), build_kwargs = mock_get_model.call_args
+        assert build_kwargs == {"wrap_with_ddp": False, "mixed_precision_wrapper": None}
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.use_cpu_initialization is True
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.rope_scaling is True
+        assert model_config.rope_scaling_factor == 32.0
+        assert model_config.share_embeddings_and_output_weights is True
+        assert mock_save_megatron_model.call_args.args[0] is megatron_model
 
     def test_supports_llama_architectures(self, llama_configs):
         """Test that AutoBridge.supports correctly identifies Llama models."""
