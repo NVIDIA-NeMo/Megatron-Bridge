@@ -110,49 +110,6 @@ def llama2_70b_peft_8gpu_gb200_fp8ds_config() -> ConfigContainer:
     return cfg
 
 
-def llama2_70b_peft_8gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """Llama 2 70B LoRA: 8× GB200, NVFP4, GBS=8, seq_length=2048."""
-    cfg = llama2_70b_peft_config(peft_scheme="lora")
-    cfg.mixed_precision = _llama2_70b_precision_config("nvfp4")
-    _llama2_benchmark_common(cfg)
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 2
-    cfg.train.global_batch_size = 8
-    cfg.train.micro_batch_size = 1
-    cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_scope = ["full_iteration"]
-    cfg.optimizer.lr = 0.0006
-    cfg.validation.eval_global_batch_size = 4
-    cfg.validation.eval_interval = 48
-    cfg.validation.eval_iters = 44
-    cfg.validation.start_at_eval_iter = 192
-    cfg.scheduler.lr_decay_iters = 700
-    cfg.scheduler.lr_decay_steps = 5600
-    cfg.scheduler.wd_incr_steps = 5600
-    cfg.dataset.max_train_samples = 5628
-    cfg.dataset.num_workers = 4
-    cfg.dataset.seed = 23829
-    cfg.rng.seed = 23829
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 1,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-    }
-    return cfg
-
-
 def llama2_70b_peft_72gpu_gb200_fp8ds_config() -> ConfigContainer:
     """Llama 2 70B LoRA: 72× GB200, FP8 DS, GBS=8, seq_length=2048."""
     cfg = llama2_70b_peft_config(peft_scheme="lora")
