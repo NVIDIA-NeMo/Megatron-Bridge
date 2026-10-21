@@ -210,3 +210,104 @@ class TestWan1_3BText2ImageText2VideoConfigs:
 
         assert batch["grid_sizes"][0, 0].item() == 1
         assert canonical_wan_1_3b_text2video_pretrain_config().dataset.F_latents > 1
+
+
+class TestWan14BPerfRecipes:
+    """Tests for Wan 14B GB200, GB300, and H100 performance recipes."""
+
+    def test_gb200_16gpu_perf_recipe_aligned_with_dfm(self):
+        from megatron.bridge.perf_recipes.wan.gb200.wan import wan_14b_pretrain_16gpu_gb200_bf16_config
+
+        cfg = wan_14b_pretrain_16gpu_gb200_bf16_config()
+
+        assert cfg.model.tensor_model_parallel_size == 1
+        assert cfg.model.pipeline_model_parallel_size == 1
+        assert cfg.model.context_parallel_size == 2
+        assert cfg.model.sequence_parallel is False
+        assert cfg.train.global_batch_size == 64
+        assert cfg.train.micro_batch_size == 1
+        assert cfg.dataset.global_batch_size == 64
+        assert cfg.dataset.micro_batch_size == 1
+        assert cfg.model.recompute_granularity == "full"
+        assert cfg.model.recompute_method == "block"
+        assert cfg.model.recompute_num_layers == 1
+        assert cfg.dist.use_megatron_fsdp is True
+        assert cfg.ddp.use_megatron_fsdp is True
+        assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+        assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
+        assert cfg.optimizer.lr == 5e-6
+        assert cfg.optimizer.min_lr == 5e-6
+        assert cfg.optimizer.use_precision_aware_optimizer is False
+        assert cfg.scheduler.lr_decay_style == "constant"
+        assert cfg.scheduler.lr_warmup_iters == 0
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+        assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+        assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_FUSED_ATTN"] == 1
+
+    def test_gb300_16gpu_perf_recipe_aligned_with_dfm(self):
+        from megatron.bridge.perf_recipes.wan.gb300.wan import wan_14b_pretrain_16gpu_gb300_bf16_config
+
+        cfg = wan_14b_pretrain_16gpu_gb300_bf16_config()
+
+        assert cfg.model.tensor_model_parallel_size == 1
+        assert cfg.model.pipeline_model_parallel_size == 1
+        assert cfg.model.context_parallel_size == 2
+        assert cfg.model.sequence_parallel is False
+        assert cfg.train.global_batch_size == 64
+        assert cfg.train.micro_batch_size == 1
+        assert cfg.dataset.global_batch_size == 64
+        assert cfg.dataset.micro_batch_size == 1
+        assert cfg.model.recompute_granularity is None
+        assert cfg.model.recompute_method is None
+        assert cfg.model.recompute_num_layers is None
+        assert cfg.dist.use_megatron_fsdp is False
+        assert cfg.ddp.use_megatron_fsdp is False
+        assert cfg.optimizer.lr == 5e-6
+        assert cfg.optimizer.min_lr == 5e-6
+        assert cfg.optimizer.use_precision_aware_optimizer is False
+        assert cfg.scheduler.lr_decay_style == "constant"
+        assert cfg.scheduler.lr_warmup_iters == 0
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+        assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+        assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_FUSED_ATTN"] == 1
+
+    def test_h100_32gpu_perf_recipe_aligned_with_dfm(self):
+        from megatron.bridge.perf_recipes.wan.h100.wan import wan_14b_pretrain_32gpu_h100_bf16_config
+
+        cfg = wan_14b_pretrain_32gpu_h100_bf16_config()
+
+        assert cfg.model.tensor_model_parallel_size == 2
+        assert cfg.model.pipeline_model_parallel_size == 1
+        assert cfg.model.context_parallel_size == 4
+        assert cfg.model.sequence_parallel is True
+        assert cfg.train.global_batch_size == 64
+        assert cfg.train.micro_batch_size == 1
+        assert cfg.dataset.global_batch_size == 64
+        assert cfg.dataset.micro_batch_size == 1
+        assert cfg.train.empty_unused_memory_level == 0
+        assert cfg.model.recompute_granularity == "full"
+        assert cfg.model.recompute_method == "block"
+        assert cfg.model.recompute_num_layers == 8
+        assert cfg.optimizer.lr == 5e-6
+        assert cfg.optimizer.min_lr == 5e-6
+        assert cfg.optimizer.use_precision_aware_optimizer is False
+        assert cfg.scheduler.lr_decay_style == "constant"
+        assert cfg.scheduler.lr_warmup_iters == 0
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+        assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
+        assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_FUSED_ATTN"] == 1
