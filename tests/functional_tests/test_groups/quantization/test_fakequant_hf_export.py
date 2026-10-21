@@ -18,13 +18,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import modelopt.torch.quantization as mtq
 import pytest
 import torch
 import yaml
 from safetensors import safe_open
 from transformers import Qwen3MoeConfig, Qwen3MoeForCausalLM
 
-from tests.functional_tests.test_groups.quantization.fakequant_hf_export import expected_amax
+from tests.functional_tests.test_groups.quantization.fakequant_hf_export import WEIGHT_INT8, expected_amax
 
 
 NUM_LAYERS, NUM_EXPERTS = 2, 4
@@ -134,14 +135,19 @@ def test_activation_quantizer_sidecars(toy_qwen3_moe, tmp_path, parallelism, gro
 
 @pytest.mark.run_only_on("GPU")
 def test_folded_weight_only_export_has_no_sidecars(toy_qwen3_moe, tmp_path):
-    """Folded weight-only quantization leaves a plain checkpoint with INT8-grid weights."""
+    """Folded weight-only quantization leaves a plain checkpoint with the fake-quantized weights."""
     out = tmp_path / "export"
     _export(toy_qwen3_moe, out, "--mode", "weights")
 
     assert not (out / "quantizer_state.pth").exists()
     assert not (out / "quant_recipe.yaml").exists()
-    weights = _weights(out)
-    assert weights.keys() == _weights(toy_qwen3_moe).keys()
-    # Per-output-channel INT8 fake quantization leaves at most 255 distinct values per row.
-    folded = weights["model.layers.0.self_attn.q_proj.weight"].float()
-    assert max(len(row.unique()) for row in folded) <= 255
+    weights, source = _weights(out), _weights(toy_qwen3_moe)
+    assert weights.keys() == source.keys()
+    # Per-output-channel ranges make the fold of a q_proj row independent of its QKV fusion.
+    name = "model.layers.0.self_attn.q_proj.weight"
+    reference = torch.nn.Sequential(torch.nn.Linear(64, 64, bias=False)).to("cuda", torch.bfloat16)
+    reference[0].weight.data.copy_(source[name])
+    mtq.quantize(reference, WEIGHT_INT8)
+    mtq.fold_weight(reference)
+    assert not torch.equal(reference[0].weight.cpu(), source[name])
+    torch.testing.assert_close(weights[name], reference[0].weight.cpu(), rtol=0, atol=0)

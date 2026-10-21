@@ -79,6 +79,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
     MegatronPeftBridge,
 )
 from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
+from megatron.bridge.models.conversion.quant_mapping import AmaxMapping, amax_mapping_hf_names
 from megatron.bridge.models.conversion.transformers_compat import (
     partial_rotary_factor_from_hf,
     rope_theta_from_hf,
@@ -1184,8 +1185,6 @@ class MegatronModelBridge(
         """
         from modelopt.torch.quantization.nn import TensorQuantizer
 
-        from megatron.bridge.models.conversion.quant_mapping import amax_mapping_hf_names
-
         models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
         model_config = unwrap_model(models_list)[0].config
         self.hf_pretrained = hf_pretrained
@@ -2083,7 +2082,9 @@ class MegatronModelBridge(
             )  # dict will be none except for one expert;
             # Finalize the converted tensor for the current export rank
             converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
-            converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
+            # Quantizer ranges keep their precision; ``weight_dtype`` applies to the weights only.
+            if not isinstance(task.mapping, AmaxMapping):
+                converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             tied_output_hf_name = None
             if tied_mapping_registry is not None:

@@ -1577,9 +1577,10 @@ class AutoBridge(Generic[MegatronModelT]):
             for filename in previous_weight_files - saved_filenames:
                 (output_path / filename).unlink(missing_ok=True)
 
-        # Save the quantizer sidecars after the main generator is consumed (rank 0 only).
-        if rank == 0 and quantizer_recipe is not None:
-            _save_modelopt_quantizer_sidecars(output_path, quantizer_recipe, quant_tensors)
+        # Save the quantizer sidecars after the main generator is consumed (rank 0 only). A model
+        # without quantizers still removes stale ones, so they never describe other weights.
+        if rank == 0:
+            _save_modelopt_quantizer_sidecars(output_path, quantizer_recipe or {}, quant_tensors or {})
 
         if is_distributed:
             dist.barrier()

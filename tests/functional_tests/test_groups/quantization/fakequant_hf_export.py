@@ -34,6 +34,13 @@ from megatron.bridge.models.decorators import torchrun_main
 
 NVFP4 = {"num_bits": (2, 1), "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)}, "axis": None}
 FP8 = {"num_bits": (4, 3), "axis": None}
+WEIGHT_INT8 = {
+    "quant_cfg": [
+        {"quantizer_name": "*", "enable": False},
+        {"quantizer_name": "*weight_quantizer", "cfg": {"num_bits": 8, "axis": 0}},
+    ],
+    "algorithm": "max",
+}
 KIND_IDS = {"linear_qkv": 1, "linear_proj": 2, "linear_fc1": 3, "linear_fc2": 4, "k_bmm": 5, "v_bmm": 6}
 
 
@@ -72,16 +79,12 @@ def main(hf_model_path: str, out: str, mode: str, tp: int, pp: int, ep: int, gro
     model = provider.provide_distributed_model(wrap_with_ddp=False)
     chunks = [unwrap_model(chunk) for chunk in model]
 
-    disable_all = {"quantizer_name": "*", "enable": False}
     if mode == "weights":
-        config = {
-            "quant_cfg": [disable_all, {"quantizer_name": "*weight_quantizer", "cfg": {"num_bits": 8, "axis": 0}}],
-            "algorithm": "max",
-        }
+        config = WEIGHT_INT8
     else:
         config = {
             "quant_cfg": [
-                disable_all,
+                {"quantizer_name": "*", "enable": False},
                 {"quantizer_name": "*input_quantizer", "cfg": NVFP4},
                 {"quantizer_name": "*[kv]_bmm_quantizer", "cfg": FP8},
                 {"quantizer_name": "*router*", "enable": False},
@@ -96,7 +99,8 @@ def main(hf_model_path: str, out: str, mode: str, tp: int, pp: int, ep: int, gro
         else:
             ep_rank = torch.distributed.get_rank(provider._pg_collection.ep) if ep > 1 else 0
             _pin_ranges(chunk, provider.num_moe_experts, ep_rank, ep)
-    bridge.save_hf_pretrained(model, out)
+    # ``weight_dtype`` casts the weights only; the ranges keep float32.
+    bridge.save_hf_pretrained(model, out, weight_dtype=torch.bfloat16)
 
     if mode == "activations" and tp == pp == ep == 1:
         # Quantizer state the export cannot carry must fail it rather than be dropped: an enabled

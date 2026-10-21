@@ -2773,9 +2773,9 @@ class TestAutoBridge:
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.get_rank", return_value=0)
     def test_save_hf_weights_no_sidecar_when_not_quantized(
-        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier
+        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier, tmp_path
     ):
-        """Test that save_hf_weights skips sidecar logic when model is not quantized."""
+        """A model without quantizers writes no sidecars and removes those of an earlier export."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
@@ -2809,7 +2809,10 @@ class TestAutoBridge:
             mock_model_bridge_prop.return_value = mock_model_bridge
 
             mock_source.save_generator = Mock(return_value=set())
-            bridge.save_hf_weights(mock_megatron_model, "/tmp/output")
+            stale_sidecars = [tmp_path / "quantizer_state.pth", tmp_path / "quant_recipe.yaml"]
+            for sidecar in stale_sidecars:
+                sidecar.touch()
+            bridge.save_hf_weights(mock_megatron_model, tmp_path)
 
             mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
                 mock_megatron_model,
@@ -2820,6 +2823,7 @@ class TestAutoBridge:
                 weight_dtype=None,
             )
             mock_torch_save.assert_not_called()
+            assert not any(sidecar.exists() for sidecar in stale_sidecars)
 
     @patch("torch.distributed.barrier")
     @patch("torch.distributed.is_available", return_value=True)
