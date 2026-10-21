@@ -96,7 +96,7 @@ RUN pip install "fastapi==0.139.1" \
     "pillow>=13.0.0" \
     "protobuf==6.33.5" \
     "xgrammar>=0.1.32" \
-    "tornado==6.5.6" \
+    "tornado==6.5.8" \
     "black==26.3.1" \
     "onnx==1.21.0" \
     "notebook>=7.5.6" \
