@@ -5,19 +5,19 @@ title: beam
 summary: >
   Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
 
-  Beam verification runs on H200 through the builder-backed BeamModelConfig (native Megatron-Core HybridModel). The
-  full 501B-parameter BF16 checkpoint imports on 2 nodes at EP16 and exports back to Hugging Face with keys, dtypes,
-  shapes, and values exactly equal to the pinned source. The imported checkpoint matches the Hugging Face reference on
-  the forward pass (same next token, cosine similarity 0.999692) and generates deterministically through the
-  non-cached legacy full-prefix path. CPU import and CPU export run single-process on a host with well over 1 TB of
-  memory and their round trip is exact as well; each requests one runtime GPU because Transformer Engine constructs
-  Beam's attention layers only when CUDA is available, so the launcher's GPU-less distributed CPU export does not
-  work for Beam. In the historical verification, the CPU items ran on a B300 host and the other items ran on H200. Loading the full fine-tuned export
-  in Transformers on one 8x H200 node needs the HF inference verifier's --max-gpu-memory-gib cap: device_map auto
-  otherwise fills each GPU with seven decoder layers, and the load-time stacking of per-expert tensors then runs out
-  of GPU memory. These historical verification runs used the recorded checkpoint revision, which is no longer
-  publicly resolvable. Current recipes pin the public release revision instead; the historical metrics do not
-  establish identical results for those weights.
+  Beam verification uses the builder-backed BeamModelConfig (native Megatron-Core HybridModel). The model-level
+  items ran at their per-item Bridge commit with the public release revision, in NeMo 26.10 RC5 with Transformers
+  5.20.1 installed without dependencies and the Megatron-Core commit pinned by that Bridge commit; other image
+  packages were retained. The full 501B-parameter BF16 checkpoint imports on 4 x 4 GB200 at EP16 and exports back to
+  Hugging Face with keys, dtypes, shapes, and values exactly equal to the pinned source. The imported checkpoint
+  matches the Hugging Face reference on the forward pass (same next token, cosine similarity 0.999526) and generates
+  through deterministic greedy decoding on the non-cached legacy full-prefix path. CPU import and CPU export run
+  single-process on an H100 host with 2 TB of memory and their round trip is exact as well; each requests one runtime
+  GPU because Transformer Engine constructs Beam's attention layers only when CUDA is available. Loading the full
+  fine-tuned export in Transformers on one 8x H200 node needs the HF inference verifier's --max-gpu-memory-gib cap:
+  device_map auto otherwise fills each GPU with seven decoder layers, and the load-time stacking of per-expert tensors
+  then runs out of GPU memory. The H200 training runs used a recorded checkpoint revision that is no longer publicly resolvable;
+  the historical metrics do not establish identical results for the public weights.
 
   Full SFT and PEFT follow qwen3_30b_a3b_convergence_v2 (Tulu 3 train[:10000], 8K offline packs, GBS 8, 100 steps,
   FP32 optimizer state); Beam's chat template packs that split into 499 packs, so 100 steps take about 1.6 passes.
@@ -28,8 +28,8 @@ summary: >
   GB200 pretraining, full SFT and LoRA each completed 100 updates at the per-item Bridge commit, using the public
   release revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8. These runs used NeMo 26.10 RC5 with Transformers
   5.20.1 installed without dependencies and Megatron-Core 8442db193ced81584c2e94faa352ec7307d18d83; other image
-  packages were retained. The top-level HF revision, base container and default Bridge commit describe the historical
-  H200/B300 evidence only. The public base image underlying RC5 has not been confirmed; these GB200 results do not
+  packages were retained. The base container and default Bridge commit describe the historical H200 evidence
+  only. The public base image underlying RC5 has not been confirmed; these GB200 results do not
   establish verification on the top-level PyTorch image. GB200 commands below retain the tested workload with portable
   storage aliases and the public training launcher. All three use HybridEP within one NVLink domain, natural routing,
   and FP32 gradients, master parameters and Adam moments. Checkpoint writes and evaluation were disabled; GB200
@@ -60,11 +60,11 @@ verification_index:
 
 model:
   hf_id: reflection/Beam-1.0-501B-A23B
-  hf_revision: "3ea13c81833d9a523ed4bdc4152a33edd16bbd30"  # pragma: allowlist secret
+  hf_revision: "06641076793dad51b8907f7eb2a14f4e08fd3ec8"  # pragma: allowlist secret
   architecture: BeamForCausalLM
   min_transformers_version: "5.20.1"
 
-# Historical H200/B300 defaults; GB200 environment differences are recorded above.
+# Historical H200 defaults; model-level and GB200 environment differences are recorded above.
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.08-py3
   bridge_commit: dd861860b018d84b360cf13e87cc73b640c9b193  # pragma: allowlist secret
@@ -73,72 +73,69 @@ items:
   hf_to_megatron_cpu:
     status: verified
     precision: bf16
-    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
+    bridge_commit: 21af081ccee873e882aa77d5d7b0b234dec7ab9e  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1
       --hf-model reflection/Beam-1.0-501B-A23B
-      --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
+      --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8
       --megatron-path work/model-verification/beam/cpu-megatron --torch-dtype bfloat16
-    last_verified: 2026-10-13
+    last_verified: 2026-10-21
     expected_result: >
-      The single-process CPU import materializes the full BF16 model on one B300 host with 3 TB of memory (the run
-      requested 2000 GiB) and completes in 2607 s. It requests one runtime GPU because Beam's attention layers are
-      Transformer Engine modules and Transformer Engine refuses to construct them without CUDA; the GPU held only the
-      CUDA context (at most 800 MiB) while every weight stayed on CPU, and a GPU-less run fails with
-      "TransformerEngine needs CUDA". The CPU export below reloads the resulting checkpoint and reproduces the pinned
-      source exactly.
+      The single-process CPU import materializes the full BF16 model on one H100 host with 2 TB of memory (peak host
+      memory use about 1.9 TiB). It requests one runtime GPU because Beam's attention layers are Transformer Engine
+      modules and Transformer Engine refuses to construct them without CUDA; the GPU held only the CUDA context (under
+      1 GiB) while every weight stayed on CPU. The CPU export below reloads the resulting checkpoint and reproduces the
+      pinned source exactly.
 
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
-    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
+    bridge_commit: 21af081ccee873e882aa77d5d7b0b234dec7ab9e  # pragma: allowlist secret
     command: >
-      ./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2
-      --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B
-      --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4
+      --gpus-per-node 4 --hf-model reflection/Beam-1.0-501B-A23B
+      --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8
       --megatron-path work/model-verification/beam/imported-megatron --torch-dtype bfloat16
       --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --low-memory-save
-    last_verified: 2026-10-13
+    last_verified: 2026-10-21
     expected_result: >
-      On 2 nodes x 8 H200 at TP1/PP1/EP16/ETP1 the import completes in 685 s and writes a complete 16-shard,
-      934 GiB iter_0000000 checkpoint (about 75 GiB per GPU during the import; EP8 on one node would leave too
-      little headroom). The checkpoint reloads in the GPU export, whose output matches the pinned source exactly,
-      and in the inference and forward-pass items.
+      On 4 nodes x 4 GB200 at TP1/PP1/EP16/ETP1 the import completes and writes a complete 16-shard, 934 GiB
+      iter_0000000 checkpoint. The checkpoint reloads in the GPU export, whose output matches the pinned source
+      exactly, and in the inference and forward-pass items.
 
   megatron_to_hf_cpu:
     status: verified
     precision: bf16
-    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
+    bridge_commit: 21af081ccee873e882aa77d5d7b0b234dec7ab9e  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 1
       --hf-model reflection/Beam-1.0-501B-A23B
-      --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
+      --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8
       --megatron-path work/model-verification/beam/cpu-megatron/iter_0000000
       --hf-path work/model-verification/beam/cpu-hf-export --torch-dtype bfloat16
-    last_verified: 2026-10-13
+    last_verified: 2026-10-21
     expected_result: >
-      The single-process CPU export of the CPU-imported checkpoint completes in 2853 s on the same host, again with one
+      The single-process CPU export of the CPU-imported checkpoint completes on the same H100 host, again with one
       runtime GPU that holds only the CUDA context while the weights stay on CPU. Reloading every exported safetensors
       shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes,
       shapes, and values for all 501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json
-      differs only in transformers_version. The launcher's distributed CPU export requests no GPU resources and
-      therefore fails for Beam on GPU-less hosts with "TransformerEngine needs CUDA".
+      differs only in transformers_version.
 
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
-    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
+    bridge_commit: 21af081ccee873e882aa77d5d7b0b234dec7ab9e  # pragma: allowlist secret
     command: >
-      ./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2
-      --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B
-      --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4
+      --gpus-per-node 4 --hf-model reflection/Beam-1.0-501B-A23B
+      --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8
       --megatron-path work/model-verification/beam/imported-megatron/iter_0000000
       --hf-path work/model-verification/beam/hf-export-gpu --torch-dtype bfloat16 --tp 1 --pp 1
       --ep 16 --etp 1 --distributed-timeout-minutes 110 --distributed-save
       --save-every-n-ranks 1 --no-progress
-    last_verified: 2026-10-13
+    last_verified: 2026-10-21
     expected_result: >
-      The 2-node EP16 export completes in 1530 s. Reloading every exported safetensors shard and comparing it with
+      The 4-node x 4 GB200 EP16 export completes. Reloading every exported safetensors shard and comparing it with
       the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes, shapes, and values for all
       501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json differs only in
       transformers_version.
@@ -146,44 +143,43 @@ items:
   manual_forward_pass:
     status: verified
     precision: bf16
-    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
+    bridge_commit: 21af081ccee873e882aa77d5d7b0b234dec7ab9e  # pragma: allowlist secret
     command: >
-      ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 8 --task model-comparison
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4 --task model-comparison
       --hf_model_path reflection/Beam-1.0-501B-A23B
-      --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
+      --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8
       --megatron_model_path work/model-verification/beam/imported-megatron/iter_0000000
       --hf-logits-path work/model-verification/beam/hf-reference-france.pt
       --tp 1 --pp 1 --ep 16 --etp 1 --prompt 'The capital of France is the city of'
-    last_verified: 2026-10-13
+    last_verified: 2026-10-21
     expected_result: >
-      Compares pinned Hugging Face reference logits (a BF16 forward of the same revision, placed over 8 H200 with CPU
-      overflow because the 1 TB model cannot co-reside with the distributed Megatron model) with the imported Megatron
-      checkpoint at EP16 on the 8-token prompt "The capital of France is the city of". Both predict next token 12095
-      (' Paris'); token match is true, cosine similarity is 0.999692, maximum absolute logit difference is 0.922523,
-      and mean absolute logit difference is 0.142654.
+      Compares pinned Hugging Face reference logits (a BF16 forward of the same revision, placed over 8 H100 with CPU
+      overflow on a host with 2 TB of memory because the 1 TB model cannot co-reside with the distributed Megatron
+      model) with the imported Megatron checkpoint at EP16 on 4 x 4 GB200 on the 8-token prompt "The capital of
+      France is the city of". Both predict next token 12095 (' Paris'); token match is true, cosine similarity is
+      0.999526, maximum absolute logit difference is 1.118409, and mean absolute logit difference is 0.175229.
 
   inference:
     status: verified
     precision: bf16
-    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
+    bridge_commit: 21af081ccee873e882aa77d5d7b0b234dec7ab9e  # pragma: allowlist secret
     command: >
-      ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 8
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4
       --task legacy-full-prefix-generation
       --hf_model_path reflection/Beam-1.0-501B-A23B
-      --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
+      --hf-revision 06641076793dad51b8907f7eb2a14f4e08fd3ec8
       --megatron_model_path work/model-verification/beam/imported-megatron/iter_0000000 --tp 1
       --pp 1 --ep 16 --etp 1 --prompt 'Explain why the sky appears blue in one sentence.'
       --max_new_tokens 32 --apply-chat-template --legacy-full-prefix
-    last_verified: 2026-10-13
+    last_verified: 2026-10-21
     expected_result: |
       Completes one synchronous deterministic greedy generation through the non-cached legacy full-prefix path on
-      2 nodes x 8 H200 (TP1/PP1/EP16). Generated exactly 32 new tokens under the 32-token maximum: Beam's chat
+      4 nodes x 4 GB200 (TP1/PP1/EP16). Generated exactly 32 new tokens under the 32-token maximum: Beam's chat
       template opens the response in the analysis channel, so the bound ends generation before the final channel.
       With the two channel-delimiter special tokens omitted, the literal completion is
       'analysisThe user asks: "Explain why the sky appears blue in one sentence."
 
       We need to answer in one sentence. Need to be accurate.'
-      A second independent run produced the identical completion.
 
   pretrain:
     H200:
