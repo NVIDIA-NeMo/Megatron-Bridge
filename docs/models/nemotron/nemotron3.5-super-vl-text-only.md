@@ -159,7 +159,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-23</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-20</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -168,12 +168,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 4 --etp 1 --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed GPU import and paired export passed on H100 and GB200. All 42,683 language tensors, including 1,040 MTP tensors, matched in keys, shapes, dtypes and values across the saved round trip. Compared 247,222,108,160 source tensor bytes; no media tensors were exported. This establishes weight conversion, not forward or training parity.
+        <p>Two-node, eight-GPU distributed import and paired export passed on H100 and GB200. All 42,683 language tensors, including 1,040 MTP tensors, matched in keys, shapes, dtypes and values across the saved round trip. Compared 247,222,108,160 source tensor bytes; no media tensors were exported. This establishes weight conversion, not forward or training parity.
 </p>
       </section>
     </article>
@@ -205,7 +205,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-23</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-20</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -214,7 +214,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --distributed-save --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron --hf-path work/model-verification/nemotron-3.5-super-vl-text-only/hf</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 4 --etp 1 --distributed-save --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron --hf-path work/model-verification/nemotron-3.5-super-vl-text-only/hf</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
