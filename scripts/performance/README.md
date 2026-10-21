@@ -37,17 +37,27 @@ performance launcher, together with your normal Slurm/container arguments.
 This mock-data debugging benchmark has 3 dense + 10 MoE decoder layers and one
 additional MTP layer. It uses PP=1 with no virtual pipeline or explicit stage
 layout, TP=CP=ETP=1, EP=32, GBS=4096 and MBS=1. Thus dense DP=64, expert DP=2,
-and there are 64 microbatches per iteration. It retains the 256-GPU GB300 MXFP8
-parent's per-layer shapes, full-iteration CUDA graphs, cuTeDSL fusion, MoE overlap,
-precision, optimizer and process environment, including NCCL EP and device-side
-expert token counts. It does not inherit the Rubin proxy's HybridEP environment.
+and there are 64 microbatches per iteration. Its configuration matches the
+64-GPU VRNVL72 MXFP8 proxy, including per-layer shapes, full-iteration CUDA graphs,
+cuTeDSL fusion, MoE overlap, precision, optimizer and process environment. Both
+use the shared HybridEP base, without the production GB300 recipe's NCCL EP or
+`moe_use_grouped_tensor=True` overrides. HybridEP uses 32 ranks per NVLink domain,
+128-token combine chunks, `NVLINK_DOMAIN_SIZE=72`, and `USE_MNNVL=1`.
+
+Both 64-GPU MXFP8 proxies explicitly set `NVTE_ALLOW_NONDETERMINISTIC_ALGO=1`:
+the fused SwiGLU scale-gradient reduction uses atomics, and TE versions that
+enforce determinism reject this path with the setting at zero. This changes the
+VRNVL72 proxy's previous kernel policy; rerun its baseline for a matched comparison.
+The 256-GPU recipes and NVFP4 proxies are unchanged.
 
 All 13 decoder layers and MTP reside on each PP=1 rank; there is no pipeline
 communication. Memory fit, graph capture/replay and performance require a new GPU
 run. The reduced depth, different dense/MoE proportions, DP group sizes and
 microbatch schedule mean this proxy is not convergence-equivalent to the full
-model or a direct predictor of its end-to-end throughput. Revalidate improvements
-on the 256-GPU parent with matching software and runtime settings.
+model or a direct predictor of its end-to-end throughput. Use matched software,
+launch settings and measurement windows for GB300/VRNVL72 comparisons, and
+revalidate improvements at scale. The production GB300 parent uses NCCL EP, so
+the proxy does not validate that dispatcher's behavior or performance.
 
 ## Setup Instructions
 

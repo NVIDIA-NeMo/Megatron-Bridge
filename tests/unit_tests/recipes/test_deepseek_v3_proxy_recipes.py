@@ -60,13 +60,13 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-@pytest.mark.parametrize(("gpu", "precision"), [("vrnvl72", "fp8mx"), ("vrnvl72", "nvfp4"), ("gb300", "fp8mx")])
-def test_proxy_preserves_parent_except_depth_and_layout(gpu: str, precision: str) -> None:
+@pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
+def test_proxy_preserves_parent_except_depth_layout_and_kernel_policy(precision: str) -> None:
     parent_fn: Callable[[], ConfigContainer] = getattr(
-        deepseek, f"deepseek_v3_pretrain_256gpu_{gpu}_{precision}_config"
+        deepseek, f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config"
     )
     proxy_fn: Callable[[], ConfigContainer] = getattr(
-        deepseek, f"deepseek_v3_pretrain_64gpu_{gpu}_{precision}_proxy_config"
+        deepseek, f"deepseek_v3_pretrain_64gpu_vrnvl72_{precision}_proxy_config"
     )
     parent = parent_fn()
     proxy = proxy_fn()
@@ -87,8 +87,13 @@ def test_proxy_preserves_parent_except_depth_and_layout(gpu: str, precision: str
         key: value for key, value in vars(parent.model).items() if key not in depth_fields
     }
     for field in fields(parent):
-        if field.name != "model":
+        if field.name not in {"model", "env_vars"}:
             assert getattr(proxy, field.name) == getattr(parent, field.name), field.name
+    expected_env = dict(parent.env_vars)
+    if precision == "fp8mx":
+        # The matched 64-GPU MXFP8 proxies allow the fused SwiGLU dprob atomic reduction.
+        expected_env["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = 1
+    assert proxy.env_vars == expected_env
 
     model = proxy.model
     assert model.num_layers == 13
@@ -121,7 +126,7 @@ def test_proxy_preserves_parent_except_depth_and_layout(gpu: str, precision: str
     assert proxy.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert proxy.comm_overlap.delay_wgrad_compute is True
     assert proxy.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert model.moe_flex_dispatcher_backend == ("ncclep" if gpu == "gb300" else "hybridep")
+    assert model.moe_flex_dispatcher_backend == "hybridep"
     assert model.mtp_num_layers == 1
     assert model.recompute_modules == []
 
@@ -132,6 +137,26 @@ def test_proxy_preserves_parent_except_depth_and_layout(gpu: str, precision: str
         )
         is forward_backward_no_pipelining
     )
+
+
+def test_gb300_mxfp8_proxy_matches_vrnvl72() -> None:
+    gb300 = deepseek.deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config()
+    vrnvl72 = deepseek.deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config()
+
+    assert vars(gb300.model) == vars(vrnvl72.model)
+    for field in fields(vrnvl72):
+        if field.name != "model":
+            assert getattr(gb300, field.name) == getattr(vrnvl72, field.name), field.name
+
+    assert gb300.model.moe_token_dispatcher_type == "flex"
+    assert gb300.model.moe_flex_dispatcher_backend == "hybridep"
+    assert not getattr(gb300.model, "moe_use_grouped_tensor", False)
+    assert "NCCL_EP_HT_EM_PULL_PUSH" not in gb300.env_vars
+    assert gb300.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert gb300.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert gb300.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert gb300.env_vars["USE_MNNVL"] == 1
+    assert gb300.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
 
 
 @pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
