@@ -225,6 +225,12 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             if function_name.endswith("_deterministic_config"):
                 # Bit-exact recipes pin deterministic TE kernels.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
+            elif function_name in {
+                "deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config",
+                "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
+            }:
+                # Match the kernel policy across systems; fused SwiGLU dprob uses atomic reductions.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
             elif path.parent.name == "gb300" and path.stem == "deepseek_v3":
                 # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale
                 # gradient is accumulated with atomics; TE raises when bit-exact execution is requested,

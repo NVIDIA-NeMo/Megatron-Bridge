@@ -339,8 +339,10 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     Keep GBS=4096, per-layer shapes, EP=32 and one MTP layer. PP=1 without
     virtual pipelining gives dense DP=64, expert DP=2 and 64 microbatches.
     Retain full-iteration graphs and the non-pipelined combined-1F1B MoE
-    overlap path. This reduced-depth model does not reproduce at-scale
-    pipeline traffic, convergence or memory use; GPU validation is required.
+    overlap path. Allow nondeterministic kernels for the fused SwiGLU scale
+    gradient, matching the GB300 proxy. This reduced-depth model does not
+    reproduce at-scale pipeline traffic, convergence or memory use;
+    GPU validation is required.
     """
     cfg = deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config()
     cfg.model.num_layers = 13
@@ -351,7 +353,7 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
-    # Keep this explicit environment identical to the 256-GPU parent.
+    # Match the GB300 proxy's kernel policy; retain the 256-GPU parent's other settings.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -369,7 +371,8 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # The fused SwiGLU scale gradient uses atomics; match the GB300 proxy.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg
 
