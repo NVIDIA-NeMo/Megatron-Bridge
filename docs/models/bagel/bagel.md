@@ -143,7 +143,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-01</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-21</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -157,7 +157,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The public GPU importer consumed the pinned official EMA state, reported 1,223 source tensors consumed and 943 target tensors verified, and wrote a standalone torch_dist checkpoint. A clean one-GPU reload completed without missing or unexpected checkpoint keys; all 56 MoT language-layer input-norm tensors used as regression sentinels exactly matched the official EMA values.
+        <p>The public GPU importer loads the pinned official EMA state, reports every source tensor consumed and every target tensor verified, and writes a standalone torch_dist checkpoint. Reloading the saved checkpoint returns every converted tensor in BF16 with finite values.
 </p>
       </section>
     </article>
@@ -209,38 +209,38 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-01</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-21</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.9585528</dd>
+            <dd>0.9580548</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.242196</dd>
+            <dd>1.242584</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>16,383.960 ms</dd>
+            <dd>13,032.040 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>195.540 TFLOP/s/GPU</dd>
+            <dd>183.170 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>2,250.005 tokens/s/GPU</dd>
+            <dd>2,828.721 tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>57.060 GiB</dd>
+            <dd>57.227 GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>70.154 GiB</dd>
+            <dd>70.196 GiB</dd>
           </div>
         </dl>
       </section>
@@ -256,7 +256,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The clean public-data run completes 10 BF16 optimizer steps on 8 H100s at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and total loss with no skipped or NaN iterations. The final step reports CE 0.9156674, MSE 0.3265290, and total loss 1.242196. The final-10 averages include first-step compilation and are 16,383.960 ms and 195.540 model TFLOP/s/GPU; 2,250.005 token slots/GPU/s uses the fixed 36,864 maximum packed sequence slots rather than variable logical tokens. The post-setup configuration and iteration-10 model, optimizer, RNG, and per-DP dataloader state are persisted. A separate same-topology public-launcher load restored step 10 and exited without executing an additional optimizer step.
+        <p>The clean public-data run completes 10 BF16 optimizer steps on 8 H100s at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and total loss with no skipped or NaN iterations. The final-10 averages include first-step compilation, and token slots/GPU/s uses the fixed maximum packed sequence slots rather than variable logical tokens. The post-setup configuration and the iteration-10 checkpoint are persisted.
 </p>
       </section>
     </article>
@@ -403,38 +403,38 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-31</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-21</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>14.68331</dd>
+            <dd>14.63695</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>10.809916</dd>
+            <dd>10.48961</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>7,697.160 ms</dd>
+            <dd>8,362.810 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>234.268 TFLOP/s/GPU</dd>
+            <dd>215.750 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>4,789.299 tokens/s/GPU</dd>
+            <dd>4,408.088 tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>58.594 GiB</dd>
+            <dd>58.371 GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>62.919 GiB</dd>
+            <dd>60.828 GiB</dd>
           </div>
         </dl>
       </section>
@@ -450,7 +450,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations. Steps 21-30 average 7,697.160 ms, 234.268 model TFLOP/s/GPU, 23.687% MFU, and 4,789.299 token slots/GPU/s using 36,864 maximum packed sequence slots and GBS 32 across 32 GPUs. The separately measured logical throughput is 4,428.810 tokens/GPU/s from 1,090,856.3 logical tokens per step. Logical tokens include text, ViT, VAE-latent, and special tokens and exclude physical padding. The variable packed sequence length averages 34,070.15 tokens/GPU over steps 6-30. Peak allocated/reserved memory is 58.594/62.919 GiB. The same steps 6-30 workload reports standalone raw metrics of 10,167.941 ms, 176.936 model TFLOP/s/GPU, and 17.890% MFU under official BAGEL. Do not compute a relative speedup: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.
+        <p>The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations. Token slots/GPU/s uses the fixed maximum packed sequence slots rather than variable logical tokens. Do not compare this run with official BAGEL: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.
 </p>
       </section>
     </article>
