@@ -355,7 +355,9 @@ def _save_modelopt_quantizer_sidecars(
     import yaml
 
     class _RecipeDumper(yaml.SafeDumper):
-        pass
+        # Spell out every entry: anchors would make an edit of one quantizer change all its aliases.
+        def ignore_aliases(self, data):
+            return True
 
     # Quantizer states can record runtime dtypes and shapes; store dtypes by name, shapes as lists.
     _RecipeDumper.add_representer(torch.dtype, lambda dumper, dtype: dumper.represent_str(str(dtype)))
@@ -367,21 +369,15 @@ def _save_modelopt_quantizer_sidecars(
         state_path.unlink(missing_ok=True)
         recipe_path.unlink(missing_ok=True)
         return
-    # Share identical states so the YAML stores each distinct quantizer config once (as an anchor).
-    shared_states = {}
-    quantizers = {
-        name: shared_states.setdefault(yaml.dump(state, Dumper=_RecipeDumper, sort_keys=True), state)
-        for name, state in quantizer_recipe.items()
-    }
     path.mkdir(parents=True, exist_ok=True)
     torch.save(
-        {name: tensor for name, tensor in quant_tensors.items() if name.rpartition(".")[0] in quantizers},
+        {name: tensor for name, tensor in quant_tensors.items() if name.rpartition(".")[0] in quantizer_recipe},
         state_path,
     )
     recipe = {
         "format": MODELOPT_QUANTIZER_RECIPE_FORMAT,
         "version": MODELOPT_QUANTIZER_RECIPE_VERSION,
-        "quantizers": quantizers,
+        "quantizers": quantizer_recipe,
     }
     recipe_path.write_text(yaml.dump(recipe, Dumper=_RecipeDumper, sort_keys=False))
 

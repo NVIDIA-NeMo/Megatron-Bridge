@@ -2867,7 +2867,7 @@ class TestAutoBridge:
         mock_source.has_glob.assert_called_once_with("mtp.*")
 
 
-def test_save_modelopt_quantizer_sidecars_shares_states_and_drops_stale_files(tmp_path):
+def test_save_modelopt_quantizer_sidecars_spells_out_states_and_drops_stale_files(tmp_path):
     nvfp4 = {
         "_disabled": False,
         "_num_bits": (2, 1),
@@ -2875,7 +2875,7 @@ def test_save_modelopt_quantizer_sidecars_shares_states_and_drops_stale_files(tm
         "_input_dtype": torch.bfloat16,
         "_shape": torch.Size([2, 3]),
     }
-    recipe = {f"model.layers.0.self_attn.{p}_proj.input_quantizer": dict(nvfp4) for p in "qkv"}
+    recipe = {f"model.layers.0.self_attn.{p}_proj.input_quantizer": nvfp4 for p in "qkv"}
     tensors = {f"{name}._amax": torch.tensor(1.5) for name in recipe}
     tensors["model.layers.0.mlp.down_proj.input_quantizer._amax"] = torch.tensor(2.0)
 
@@ -2884,9 +2884,11 @@ def test_save_modelopt_quantizer_sidecars_shares_states_and_drops_stale_files(tm
     state = torch.load(tmp_path / "quantizer_state.pth")
     assert state.keys() == {f"{name}._amax" for name in recipe}
     recipe_text = (tmp_path / "quant_recipe.yaml").read_text()
-    assert recipe_text.count("_block_sizes") == 1  # equal states are stored once
+    # Every entry is written out, without YAML anchors, so editing one never changes another.
+    assert recipe_text.count("_block_sizes") == len(recipe)
     quantizers = yaml.safe_load(recipe_text)["quantizers"]
     assert quantizers.keys() == recipe.keys()
+    assert len({id(entry) for entry in quantizers.values()}) == len(recipe)
     assert all(entry["_input_dtype"] == "torch.bfloat16" for entry in quantizers.values())
     assert all(entry["_shape"] == [2, 3] for entry in quantizers.values())
 
