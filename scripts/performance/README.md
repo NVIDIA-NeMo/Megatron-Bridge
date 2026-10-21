@@ -27,6 +27,28 @@ Each training entrypoint therefore executes only once.
 - Prefer command-line overrides for one-off changes.
 - Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
 
+### DeepSeek V3 GB300 MXFP8 proxy
+
+Use `deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config` with the training launcher,
+or select `--model_family_name deepseek --model_recipe_name deepseek_v3 --task pretrain
+--gpu gb300 --compute_dtype fp8_mx --num_gpus 64 --config_variant proxy` in the
+performance launcher, together with your normal Slurm/container arguments.
+
+This mock-data debugging benchmark has 3 dense + 10 MoE decoder layers and one
+additional MTP layer. It uses PP=1 with no virtual pipeline or explicit stage
+layout, TP=CP=ETP=1, EP=32, GBS=4096 and MBS=1. Thus dense DP=64, expert DP=2,
+and there are 64 microbatches per iteration. It retains the 256-GPU GB300 MXFP8
+parent's per-layer shapes, full-iteration CUDA graphs, cuTeDSL fusion, MoE overlap,
+precision, optimizer and process environment, including NCCL EP and device-side
+expert token counts. It does not inherit the Rubin proxy's HybridEP environment.
+
+All 13 decoder layers and MTP reside on each PP=1 rank; there is no pipeline
+communication. Memory fit, graph capture/replay and performance require a new GPU
+run. The reduced depth, different dense/MoE proportions, DP group sizes and
+microbatch schedule mean this proxy is not convergence-equivalent to the full
+model or a direct predictor of its end-to-end throughput. Revalidate improvements
+on the 256-GPU parent with matching software and runtime settings.
+
 ## Setup Instructions
 
 Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.

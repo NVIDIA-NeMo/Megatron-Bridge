@@ -33,6 +33,7 @@ _SSM_DETERMINISM_ENV = {"MAMBA_DETERMINISTIC": "1", "CAUSAL_CONV1D_DETERMINISTIC
 _GB300_NCCLEP_RECIPES = (
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_bf16_config"),
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config"),
+    ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config"),
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_nvfp4_config"),
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config"),
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config"),

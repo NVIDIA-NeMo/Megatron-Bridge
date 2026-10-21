@@ -199,6 +199,43 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 GB300 GPUs.
+
+    Keep the parent's per-layer shapes, three leading dense layers, ten MoE
+    layers, one MTP layer, EP=32 and GBS=4096/MBS=1. PP=1 without virtual
+    pipelining gives dense DP=64, expert DP=2 and 64 microbatches. Retain
+    NCCL EP, full-iteration graphs, cuTeDSL and combined-1F1B MoE overlap.
+    This reduced-depth benchmark does not establish at-scale throughput,
+    memory fit or convergence; GPU validation is required.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+    cfg.model.num_layers = 13
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    # Keep this explicit environment identical to the 256-GPU GB300 parent.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, deterministic.
 
