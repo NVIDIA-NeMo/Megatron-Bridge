@@ -512,3 +512,99 @@ class TestTransformerConfigYarnFields:
 
         expected = yarn_module._yarn_get_concentration_factor(4.0, 1.0, 1.0)
         assert attention_module._yarn_get_concentration_factor_from_config(cfg) == expected
+
+
+def _dev_post_init(config) -> None:
+    """Stand-in for the newer MCore post-init that fills linear CP fields but cannot re-run on them."""
+    config._linear_cp_mode_was_default = config.linear_cp_mode is None
+    if config.linear_cp_mode is None:
+        config.linear_cp_mode = "chunkwise"
+    config._linear_cp_layout_explicit = config.linear_cp_layout is not None
+    if config.linear_cp_layout is None:
+        config.linear_cp_layout = "zigzag"
+    if (
+        config.linear_cp_mode == "chunkwise"
+        and config.linear_cp_layout != "contiguous"
+        and config._linear_cp_layout_explicit
+    ):
+        raise ValueError("linear_cp_mode='chunkwise' requires linear_cp_layout='contiguous'.")
+
+
+_LINEAR_CP_CONFIG_CASES = [
+    pytest.param(TransformerConfig, _FINALIZE_PATCH, id="transformer"),
+    pytest.param(MLATransformerConfig, _MLA_FINALIZE_PATCH, id="mla"),
+    pytest.param(HeterogeneousTransformerConfig, _HETERO_FINALIZE_PATCH, id="heterogeneous"),
+]
+
+
+def _make_linear_cp_config(config_cls, *, linear_cp_mode=None, linear_cp_layout=None):
+    cfg = config_cls(num_layers=2, hidden_size=64, num_attention_heads=4)
+    # These fields only exist on newer MCore pins, so set them directly for the stand-in post-init.
+    cfg.linear_cp_mode = linear_cp_mode
+    cfg.linear_cp_layout = linear_cp_layout
+    return cfg
+
+
+@pytest.mark.parametrize("config_cls, post_init_path", _LINEAR_CP_CONFIG_CASES)
+class TestRepeatedFinalizeLinearCP:
+    """finalize() must give the same result however many times it runs."""
+
+    def test_unset_fields_are_derived_once_and_stay_derived(self, config_cls, post_init_path):
+        cfg = _make_linear_cp_config(config_cls)
+        with patch(post_init_path, side_effect=_dev_post_init):
+            cfg.finalize()
+            cfg.finalize()
+            cfg.finalize()
+        assert (cfg.linear_cp_mode, cfg.linear_cp_layout) == ("chunkwise", "zigzag")
+        assert cfg._linear_cp_mode_was_default is True
+        assert cfg._linear_cp_layout_explicit is False
+
+    def test_explicit_fields_are_preserved(self, config_cls, post_init_path):
+        cfg = _make_linear_cp_config(config_cls, linear_cp_mode="chunkwise", linear_cp_layout="contiguous")
+        with patch(post_init_path, side_effect=_dev_post_init):
+            cfg.finalize()
+            cfg.finalize()
+        assert (cfg.linear_cp_mode, cfg.linear_cp_layout) == ("chunkwise", "contiguous")
+        assert cfg._linear_cp_mode_was_default is False
+        assert cfg._linear_cp_layout_explicit is True
+
+    def test_layout_set_between_finalizes_is_kept_as_explicit(self, config_cls, post_init_path):
+        cfg = _make_linear_cp_config(config_cls)
+        with patch(post_init_path, side_effect=_dev_post_init):
+            cfg.finalize()
+            cfg.linear_cp_layout = "contiguous"
+            cfg.finalize()
+        assert cfg.linear_cp_layout == "contiguous"
+        assert cfg._linear_cp_layout_explicit is True
+
+    def test_mode_set_between_finalizes_is_kept_and_layout_stays_derived(self, config_cls, post_init_path):
+        cfg = _make_linear_cp_config(config_cls)
+        with patch(post_init_path, side_effect=_dev_post_init):
+            cfg.finalize()
+            cfg.linear_cp_mode = "headwise"
+            cfg.finalize()
+        assert (cfg.linear_cp_mode, cfg.linear_cp_layout) == ("headwise", "zigzag")
+        assert cfg._linear_cp_mode_was_default is False
+        assert cfg._linear_cp_layout_explicit is False
+
+    def test_explicit_invalid_combination_still_raises(self, config_cls, post_init_path):
+        cfg = _make_linear_cp_config(config_cls, linear_cp_mode="chunkwise", linear_cp_layout="zigzag")
+        with patch(post_init_path, side_effect=_dev_post_init):
+            with pytest.raises(ValueError, match="requires linear_cp_layout='contiguous'"):
+                cfg.finalize()
+
+    def test_pins_without_unset_fields_record_nothing(self, config_cls, post_init_path):
+        cfg = _make_linear_cp_config(config_cls, linear_cp_mode="headwise", linear_cp_layout="zigzag")
+        with patch(post_init_path):
+            cfg.finalize()
+            cfg.finalize()
+        assert cfg._mcore_derived_defaults == {}
+        assert (cfg.linear_cp_mode, cfg.linear_cp_layout) == ("headwise", "zigzag")
+
+    def test_derived_record_is_not_a_dataclass_field(self, config_cls, post_init_path):
+        """The record must stay out of serialization, equality and config diffs."""
+        cfg = _make_linear_cp_config(config_cls)
+        with patch(post_init_path, side_effect=_dev_post_init):
+            cfg.finalize()
+        assert "_mcore_derived_defaults" in cfg.__dict__
+        assert "_mcore_derived_defaults" not in {f.name for f in fields(cfg)}

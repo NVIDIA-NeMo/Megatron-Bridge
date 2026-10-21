@@ -19,6 +19,7 @@ override system while maintaining compatibility with Megatron Core's post_init b
 """
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields, is_dataclass
 
 from megatron.core.transformer.enums import AttnBackend
@@ -97,6 +98,33 @@ def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> N
     """
     if config.expert_tensor_parallel_size is None and config.expert_model_parallel_size > 1:
         config.expert_tensor_parallel_size = 1
+
+
+# Fields that newer Megatron Core post-init fills in when they are None and then reads back as user input.
+_MCORE_DERIVED_DEFAULT_FIELDS = ("linear_cp_mode", "linear_cp_layout")
+_MISSING = object()
+
+
+def _run_mcore_post_init(config: MCoreTransformerConfig, post_init: Callable[[MCoreTransformerConfig], None]) -> None:
+    """Run Megatron Core's post-init so that repeated ``finalize()`` calls agree with the first.
+
+    On newer Megatron Core pins, ``__post_init__`` replaces an unset ``linear_cp_mode`` or
+    ``linear_cp_layout`` with a default and records whether the caller set it. A second pass
+    cannot tell that default from user input: it treats the derived ``linear_cp_layout='zigzag'``
+    as explicit, which raises for ``linear_cp_mode='chunkwise'`` (GDN, KDA and hybrid models) and
+    changes the layout choice MCore reads later from ``_linear_cp_layout_explicit``.
+
+    This remembers which fields were unset going in and restores them to ``None`` before the next
+    pass, unless the caller has changed them since. Fields that a pin does not define are skipped.
+    """
+    derived = config.__dict__.get("_mcore_derived_defaults", {})
+    for name, value in derived.items():
+        if getattr(config, name, _MISSING) == value:
+            setattr(config, name, None)
+
+    unset = [name for name in _MCORE_DERIVED_DEFAULT_FIELDS if getattr(config, name, _MISSING) is None]
+    post_init(config)
+    config._mcore_derived_defaults = {name: getattr(config, name) for name in unset}
 
 
 def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig, *, uses_thd: bool) -> None:
@@ -245,7 +273,7 @@ class TransformerConfig(MCoreTransformerConfig):
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
         self._finalize_gtp_weight_shards()
-        MCoreTransformerConfig.__post_init__(self)
+        _run_mcore_post_init(self, MCoreTransformerConfig.__post_init__)
 
         # In-batch packing produces variable-length packed sequences across microbatches,
         # so PP stages must communicate tensor shapes dynamically instead of using static
@@ -344,7 +372,7 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
         self._finalize_gtp_weight_shards()
-        MCoreMLATransformerConfig.__post_init__(self)
+        _run_mcore_post_init(self, MCoreMLATransformerConfig.__post_init__)
 
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
@@ -402,7 +430,7 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
         self._finalize_gtp_weight_shards()
-        MCoreHeterogeneousTransformerConfig.__post_init__(self)
+        _run_mcore_post_init(self, MCoreHeterogeneousTransformerConfig.__post_init__)
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
 
