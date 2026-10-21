@@ -16,8 +16,9 @@
 Every verification card publishes literal shell commands a reader is meant to
 copy and run. These tests check the published argv against the launchers that
 own it: GPU conversion topologies must decompose over the published world size,
-and an inference command must not carry a flag that belongs to the conversion
-launcher's namespace.
+an inference command must not carry a flag that belongs to the conversion
+launcher's namespace, and a checkpoint a command loads must be written by a
+command in the same card.
 
 Uses only pytest, PyYAML and the standard library (no torch / megatron import) so it
 scans source files directly and runs anywhere, including without the GPU stack.
@@ -209,6 +210,31 @@ def test_published_card_commands_do_not_repeat_a_flag() -> None:
     assert not offenders, "published commands repeat a flag: " + "; ".join(offenders)
 
 
+def test_published_checkpoint_loads_come_from_the_same_card() -> None:
+    """Every non-null load override reads a path that a command in the same card writes."""
+    loads = ("checkpoint.load", "dataset.dataloader_load")
+    producers = ("checkpoint.save", "dataset.dataloader_save", "--megatron-path", "--save_dir", "--hf-path")
+    produced: dict[str, set[str]] = {}
+    consumed = []
+    for leaf, tokens in _published_commands():
+        card = leaf.split("/", 1)[0]
+        for index, token in enumerate(tokens):
+            name, _, value = token.partition("=")
+            if not value and index + 1 < len(tokens):
+                value = tokens[index + 1]
+            if name in producers:
+                produced.setdefault(card, set()).add(value.rstrip("/"))
+            elif name in loads and "=" in token and value != "null":
+                consumed.append((card, leaf, name, value.rstrip("/")))
+    offenders = [
+        f"{leaf}: {name}={value}"
+        for card, leaf, name, value in consumed
+        if value not in produced.get(card, set())
+        and not (Path(value).name.startswith("iter_") and str(Path(value).parent) in produced.get(card, set()))
+    ]
+    assert not offenders, "published commands load a path no command in their card produces: " + "; ".join(offenders)
+
+
 def test_declared_options_follow_only_called_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
     helper = tmp_path / "src/megatron/bridge/arguments.py"
@@ -249,6 +275,11 @@ def test_declared_options_follow_only_called_helpers(tmp_path: Path, monkeypatch
             "./scripts/inference/infer.sh --task model-comparison --ep 4 --ep 4",
             "test_published_card_commands_do_not_repeat_a_flag",
             "repeat a flag",
+        ),
+        (
+            "./scripts/training/train.sh --mode pretrain checkpoint.load=work/unproduced",
+            "test_published_checkpoint_loads_come_from_the_same_card",
+            "checkpoint.load=work/unproduced",
         ),
     ],
 )
