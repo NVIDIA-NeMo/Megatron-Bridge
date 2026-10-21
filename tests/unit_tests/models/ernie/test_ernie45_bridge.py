@@ -23,11 +23,13 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.ernie.ernie_45_bridge import (
     Ernie45Bridge,
+    _ernie45_decoder_block_spec,
     _PPSafeAutoMapping,
     _PPSafeGatedMLPMapping,
     _PPSafeReplicatedMapping,
     _SqueezeBiasMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -221,6 +223,74 @@ class TestErnie45BridgeProviderBridge:
         bridge = Ernie45Bridge()
         provider = bridge.provider_bridge(mock_pretrained)
         assert provider.moe_aux_loss_coeff == 0.001
+
+
+class TestErnie45BuilderConfig:
+    """Builder-backed ModelConfig path for ERNIE 4.5."""
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in Ernie45Bridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert Ernie45Bridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert Ernie45Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self, ernie45_config):
+        bridge = Ernie45Bridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(ernie45_config)
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.rotary_base == 500000.0
+        assert model_config.rotary_interleaved is True
+        assert model_config.num_moe_experts == 64
+        assert model_config.moe_router_topk == 6
+        assert model_config.moe_ffn_hidden_size == 1408
+        assert model_config.moe_shared_expert_intermediate_size == 2816
+        assert model_config.moe_router_score_function == "sigmoid"
+        assert model_config.moe_layer_freq == [0] + [1] * 27
+        assert model_config.mtp_num_layers is None
+        # The builder's default MoE spec already honors moe_layer_freq.
+        assert model_config.transformer_layer_spec is None
+
+    @pytest.mark.parametrize("config_fixture", ["ernie45_config", "ernie45_config_list_format"])
+    def test_model_config_matches_provider_runtime_config(self, config_fixture, request):
+        from dataclasses import fields
+
+        config = request.getfixturevalue(config_fixture)
+        bridge = Ernie45Bridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock()
+        pretrained.config = config
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(pretrained)
+
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
+        for field_name in sorted(shared):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+        assert provider.transformer_layer_spec is _ernie45_decoder_block_spec
+
+    def test_provider_era_checkpoint_spec_target_resolves(self):
+        """Checkpoints imported through the provider path serialized the private decoder block spec."""
+        from megatron.bridge.utils.instantiate_utils import _resolve_target
+
+        target = "megatron.bridge.models.ernie.ernie_45_bridge._ernie45_decoder_block_spec"
+
+        assert _resolve_target(target, full_key="model.transformer_layer_spec") is _ernie45_decoder_block_spec
+
+    def test_megatron_to_hf_config_from_model_config(self, ernie45_config):
+        model_config = Ernie45Bridge().hf_config_to_model_config(ernie45_config)
+
+        hf_config = Ernie45Bridge.megatron_to_hf_config(model_config)
+
+        assert hf_config["num_hidden_layers"] == 28
+        assert hf_config["model_type"] == "ernie4_5_moe"
 
 
 class TestErnie45BridgeMappingRegistry:
