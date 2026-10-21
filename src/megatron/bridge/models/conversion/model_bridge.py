@@ -969,7 +969,8 @@ class MegatronModelBridge(
         provider = provider_class(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
         # Determine position_embedding_type from HF rope_scaling.
-        # For GPT providers: rope_type=="yarn" → "yarn"; everything else → "rope".
+        # For GPT providers: rope_type=="yarn" → "yarn"; everything else → "rope",
+        # unless the bridge's kwargs select YaRN explicitly (e.g. GPT-OSS).
         # For MLA providers: always "rope" — YaRN scaling parameters are applied
         # separately via mla_rope_params (rotary_scaling_factor, mscale, etc.) and
         # position_embedding_type="yarn" is not a valid MLA config value.
@@ -977,7 +978,7 @@ class MegatronModelBridge(
         rope_type = None
         if hf_rope_scaling:
             rope_type = hf_rope_scaling.get("type") or hf_rope_scaling.get("rope_type")
-        if rope_type == "yarn" and not is_mla_provider:
+        if not is_mla_provider and (rope_type == "yarn" or provider_kwargs.get("position_embedding_type") == "yarn"):
             provider.position_embedding_type = "yarn"
         else:
             provider.position_embedding_type = "rope"
