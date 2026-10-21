@@ -152,6 +152,8 @@ class _OfflineModelProvider:
         self.gradient_accumulation_fusion = True
         self.hidden_size = 2048
         self.make_vocab_size_divisible_by = 128
+        self.moe_combine_bwd_dtype = "bf16"
+        self.moe_dispatch_fwd_dtype = "bf16"
         self.moe_flex_dispatcher_backend = None
         self.moe_ffn_hidden_size = 768
         self.mtp_num_layers = 1
