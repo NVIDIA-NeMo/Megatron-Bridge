@@ -1,9 +1,9 @@
 # OpenTelemetry Observability
 
-Megatron Bridge can export OpenTelemetry spans and metrics through
-[nemo-lens](https://github.com/NVIDIA-NeMo/Lens). They show how a training job spends its time, measured
-separately on every rank: startup, model construction, each iteration and its forward-backward and optimizer
-phases, evaluation, and checkpoint saves and loads.
+Megatron Bridge can export OpenTelemetry spans and metrics through the
+[NeMo Lens](https://github.com/NVIDIA-NeMo/Lens) package. They show how a training job spends its time,
+measured separately on every rank: startup, model construction, each iteration and its forward-backward and
+optimizer phases, evaluation, and checkpoint saves and loads.
 
 This is application telemetry, which a collector aggregates across jobs and ranks. It complements the
 experiment tracking described in [Logging](logging), which records loss curves and hyperparameters; it
@@ -126,9 +126,9 @@ The presets are:
 
 - `default`: `job`, `checkpoint`, `evaluate`, `first_iteration`, and `conversion`. These groups record a
   bounded number of spans per job.
-- `per_step`: everything in `default`, plus `model_init`, `load_checkpoint`, `data_loading`, `step`,
+- `per_step`: Everything in `default`, plus `model_init`, `load_checkpoint`, `data_loading`, `step`,
   `forward_backward`, `optimizer`, and `communication`.
-- `all`: every registered group. The `microbatch` and `layer` groups record spans for every microbatch and
+- `all`: Every registered group. The `microbatch` and `layer` groups record spans for every microbatch and
   layer, so use `all` for short diagnostic runs.
 
 `megatron.checkpoint.exposed_save` covers everything the training loop waits for during a checkpoint.
