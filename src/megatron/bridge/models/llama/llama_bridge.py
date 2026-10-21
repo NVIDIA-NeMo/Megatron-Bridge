@@ -49,8 +49,19 @@ class LlamaBridge(MegatronModelBridge):
 
     MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
+    # Megatron Core applies llama3 RoPE scaling with these fixed values; only the factor is configurable.
+    _MCORE_LLAMA3_ROPE_SCALING = {
+        "low_freq_factor": 1.0,
+        "high_freq_factor": 4.0,
+        "original_max_position_embeddings": 8192,
+    }
+
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
-        """Convert a Hugging Face Llama config to builder config kwargs."""
+        """Convert a Hugging Face Llama config to builder config kwargs.
+
+        Raises:
+            ValueError: If llama3 RoPE scaling uses values that Megatron Core cannot apply.
+        """
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
             normalization="RMSNorm",
@@ -62,14 +73,26 @@ class LlamaBridge(MegatronModelBridge):
             bias_dropout_fusion=True,
             apply_rope_fusion=True,
             rotary_percent=1.0,
-            position_embedding_type="rope",
             rope_scaling=False,
             rope_scaling_factor=1.0,
         )
+        # The shared mapping already selects "yarn" and its Hugging Face defaults for YaRN-scaled checkpoints.
+        config_kwargs.setdefault("position_embedding_type", "rope")
 
         rope_scaling = getattr(hf_config, "rope_scaling", None) or {}
         rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
         if rope_type == "llama3":
+            unsupported = {
+                key: rope_scaling[key]
+                for key, value in self._MCORE_LLAMA3_ROPE_SCALING.items()
+                if key in rope_scaling and rope_scaling[key] != value
+            }
+            if unsupported:
+                raise ValueError(
+                    f"Unsupported llama3 RoPE scaling values {unsupported}. Megatron Core applies llama3 RoPE "
+                    f"scaling with the fixed values {self._MCORE_LLAMA3_ROPE_SCALING} and only the factor is "
+                    "configurable, so converting this checkpoint would change its rotary frequencies."
+                )
             config_kwargs["rope_scaling"] = True
             config_kwargs["rope_scaling_factor"] = rope_scaling.get("factor", 8.0)
         elif rope_type == "linear":
@@ -85,7 +108,7 @@ class LlamaBridge(MegatronModelBridge):
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
         """Convert Megatron GPTModelProvider config to HuggingFace Llama config dict.
 
-        Uses base class implementation, then adds supported Llama RoPE scaling.
+        Uses the base class implementation, which exports YaRN, then adds llama3 or linear RoPE scaling.
 
         Args:
             provider: GPTModelProvider with Llama configuration
@@ -100,10 +123,7 @@ class LlamaBridge(MegatronModelBridge):
             hf_config["rope_scaling"] = {
                 "rope_type": "llama3",
                 "factor": provider.rope_scaling_factor,
-                # Use Megatron Core defaults for these values
-                "low_freq_factor": 1.0,
-                "high_freq_factor": 4.0,
-                "original_max_position_embeddings": 8192,
+                **cls._MCORE_LLAMA3_ROPE_SCALING,
             }
         elif provider.seq_len_interpolation_factor is not None:
             hf_config["rope_scaling"] = {
