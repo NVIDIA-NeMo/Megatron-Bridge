@@ -66,10 +66,10 @@ items:
       --torch-dtype bfloat16
     last_verified: 2026-10-21
     expected_result: >
-      The public GPU importer loads the pinned official EMA state, reports every
-      source tensor consumed and every target tensor verified, and writes a
-      standalone torch_dist checkpoint. Reloading the saved checkpoint returns
-      every converted tensor in BF16 with finite values.
+      The public GPU importer consumed the pinned official EMA state, reported
+      1,223 source tensors consumed and 943 target tensors verified, and wrote
+      a standalone torch_dist checkpoint. Reloading the saved checkpoint
+      returns all 943 tensors in BF16 with finite values.
 
   megatron_to_hf_cpu:
     status: unsupported
@@ -162,10 +162,13 @@ items:
       expected_result: >
         The clean public-data run completes 10 BF16 optimizer steps on 8 H100s
         at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and
-        total loss with no skipped or NaN iterations. The final-10 averages
-        include first-step compilation, and token slots/GPU/s uses the fixed
-        maximum packed sequence slots rather than variable logical tokens. The
-        post-setup configuration and the iteration-10 checkpoint are persisted.
+        total loss with no skipped or NaN iterations. The final step reports
+        CE 0.9161252, MSE 0.3264586, and total loss 1.242584. The final-10
+        averages include first-step compilation and are 13,032.040 ms and
+        183.170 model TFLOP/s/GPU; 2,828.721 token slots/GPU/s uses the fixed
+        36,864 maximum packed sequence slots rather than variable logical
+        tokens. The post-setup configuration and the iteration-10 checkpoint
+        are persisted.
 
   sft:
     H100:
@@ -295,8 +298,10 @@ items:
         The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16
         steps at GBS/MBS 32/1 with one microbatch, block-23 language-model
         recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total
-        losses, and no skipped or NaN iterations. Token slots/GPU/s uses the
-        fixed maximum packed sequence slots rather than variable logical
-        tokens. Do not compare this run with official BAGEL: that run uses full
-        language-model recompute and performs an EMA update, while the Bridge
-        run uses block-23 recompute without EMA.
+        losses, and no skipped or NaN iterations. Steps 21-30 average
+        8,362.810 ms, 215.750 model TFLOP/s/GPU, 21.815% MFU, and 4,408.088
+        token slots/GPU/s using 36,864 maximum packed sequence slots and
+        GBS 32 across 32 GPUs. Peak allocated/reserved memory is
+        58.371/60.828 GiB. Do not compare this run with official BAGEL: that
+        run uses full language-model recompute and performs an EMA update,
+        while the Bridge run uses block-23 recompute without EMA.
