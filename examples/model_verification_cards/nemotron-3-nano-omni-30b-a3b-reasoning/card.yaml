@@ -222,7 +222,11 @@ items:
         is skipped or NaN. Complete optimizer and RNG checkpoints are saved at
         steps 50 and 100. Direct step-50 resume loads the complete state and
         reaches step 100 at 197.07 final-ten TFLOP/s/GPU with finite loss and
-        zero skipped or NaN iterations.
+        zero skipped or NaN iterations. Keep CUDA expandable segments off for
+        this item: leave PYTORCH_CUDA_ALLOC_CONF unset or set it to
+        expandable_segments:False. The verified run used PyTorch's default
+        allocator; with expandable segments enabled, rank 0 runs out of memory
+        on the step after the step-50 checkpoint save on 80 GB H100s.
 
   sft_export_inference:
     H100:
