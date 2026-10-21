@@ -321,30 +321,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-27</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-20</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.6722764</dd>
+            <dd>0.6108999</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.5672588</dd>
+            <dd>0.5677204</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>3,792.220 ms</dd>
+            <dd>5,013.440 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>23.570 TFLOP/s/GPU</dd>
+            <dd>18.620 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>270.027 tokens/s/GPU</dd>
+            <dd>204.251 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -355,12 +355,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --seq_length 2048 --max_steps 500 --save_interval 250 --load_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft checkpoint.ckpt_step=250 checkpoint.finetune=false --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false model.expert_model_parallel_size=64 model.moe_token_dispatcher_type=flex model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false model.moe_router_force_load_balancing=false optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32 optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32 mixed_precision.grad_reduce_in_fp32=true ddp.grad_reduce_in_fp32=true dataset.hf_dataset=null dataset.hf_validation_proportion=null dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true ++dataset.dataset_kwargs.index_mapping_dir=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery-indices &#x27;dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}&#x27; scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery-config/ConfigContainer.yaml ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --seq_length 2048 --max_steps 500 --save_interval 250 --pretrained_checkpoint work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false model.expert_model_parallel_size=64 model.moe_token_dispatcher_type=flex model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false model.moe_router_force_load_balancing=false optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32 optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32 mixed_precision.grad_reduce_in_fp32=true ddp.grad_reduce_in_fp32=true dataset.hf_dataset=null dataset.hf_validation_proportion=null dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true ++dataset.dataset_kwargs.index_mapping_dir=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-indices &#x27;dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}&#x27; scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-config/ConfigContainer.yaml ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed a fresh-root continuation from the original complete step-250 checkpoint through step 500 after the reference run failed at final save. All 1250 loss comparisons across steps 251-500 passed the unchanged 1% plus 1e-6 bound. Metrics below describe only that continuation, not an uninterrupted 500-step execution. Uses the native Nemotron 3 Super SFT recipe on 64 H100 GPUs with this model&#x27;s converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+        <p>Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super SFT recipe on 64 H100 GPUs with this model&#x27;s converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export and native HF reload passed; they do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
 </p>
       </section>
     </article>
