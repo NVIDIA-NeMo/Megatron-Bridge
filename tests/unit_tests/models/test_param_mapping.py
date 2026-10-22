@@ -29,7 +29,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    GDNConv1dMapping,
     KVMapping,
+    MambaConv1dMapping,
+    MambaInProjMapping,
     MegatronParamMapping,
     QKVMapping,
     ReplicatedMapping,
@@ -106,7 +109,8 @@ def transformer_config():
     )
 
 
-def test_local_hf_param_specs_cover_gated_and_expert_views():
+@pytest.mark.parametrize("transpose_on_export", [False, True])
+def test_local_hf_param_specs_cover_gated_and_expert_views(transpose_on_export):
     logical = torch.arange(32).reshape(8, 4)
     gated = GatedMLPMapping(
         "decoder.mlp.linear_fc1.weight",
@@ -126,12 +130,14 @@ def test_local_hf_param_specs_cover_gated_and_expert_views():
     down = FusedExpertMapping(
         "decoder.mlp.experts.linear_fc2.weight3",
         "model.mlp.experts.down_proj",
+        transpose_on_export=transpose_on_export,
     )
     assert [spec.name for spec in down.local_hf_param_specs()] == ["model.mlp.experts.3.down_proj.weight"]
 
     gate_up = FusedGatedExpertMapping(
         "decoder.mlp.experts.linear_fc1.weight3",
         "model.mlp.experts.gate_up_proj",
+        transpose_on_export=transpose_on_export,
     )
     assert [spec.name for spec in gate_up.local_hf_param_specs()] == [
         "model.mlp.experts.3.gate_proj.weight",
@@ -139,8 +145,8 @@ def test_local_hf_param_specs_cover_gated_and_expert_views():
     ]
 
 
-def test_local_hf_param_specs_reject_grouped_or_transformed_views():
-    """Mappings that need export transforms must use the normal Bridge path."""
+def test_local_hf_param_specs_reject_unsupported_local_transforms():
+    """Canonical local specs do not support arbitrary mapping transforms."""
 
     class GroupedAutoMapping(AutoMapping):
         is_grouped_export = True
@@ -180,17 +186,7 @@ def test_local_hf_param_specs_reject_grouped_or_transformed_views():
     assert not FusedExpertMapping(
         "decoder.mlp.experts.linear_fc2.weight3",
         "model.mlp.experts.down_proj",
-        transpose_on_export=True,
-    ).local_hf_param_specs()
-    assert not FusedExpertMapping(
-        "decoder.mlp.experts.linear_fc2.weight3",
-        "model.mlp.experts.down_proj",
         permute_dims=(1, 0),
-    ).local_hf_param_specs()
-    assert not FusedGatedExpertMapping(
-        "decoder.mlp.experts.linear_fc1.weight3",
-        "model.mlp.experts.gate_up_proj",
-        transpose_on_export=True,
     ).local_hf_param_specs()
     assert not FusedGatedExpertMapping(
         "decoder.mlp.experts.linear_fc1.weight3",
@@ -800,6 +796,45 @@ class TestKVMapping:
         assert result["v.weight"].shape == (16, 32)
         assert torch.equal(result["k.weight"], k)
         assert torch.equal(result["v.weight"], v)
+
+
+class TestSSMMappings:
+    config = SimpleNamespace(
+        hidden_size=8,
+        mamba_num_heads=4,
+        mamba_head_dim=2,
+        mamba_state_dim=2,
+        mamba_num_groups=1,
+        linear_key_head_dim=2,
+        linear_num_key_heads=2,
+        linear_value_head_dim=2,
+        linear_num_value_heads=2,
+    )
+
+    @pytest.mark.parametrize(
+        "mapping, hf_weight",
+        [
+            (MambaInProjMapping("mixer.in_proj.weight", "hf.in_proj.weight"), torch.randn(24, 8)),
+            (MambaConv1dMapping("mixer.conv1d.weight", "hf.conv1d.weight"), torch.randn(12, 1, 4)),
+            (MambaConv1dMapping("mixer.conv1d.bias", "hf.conv1d.bias"), torch.randn(12)),
+            (GDNConv1dMapping("mixer.conv1d.weight", "hf.conv1d.weight"), torch.randn(12, 1, 4)),
+        ],
+    )
+    def test_round_trip_builds_shard_idx_on_input_device(self, mock_distributed_env, mapping, hf_weight):
+        mock_distributed_env()
+        megatron_module = MockModule(self.config, weight_shape=hf_weight.shape)
+
+        with (
+            patch.object(mapping._tp_mapping, "hf_to_megatron", side_effect=lambda weight, module: weight),
+            patch("torch.arange", wraps=torch.arange) as mock_arange,
+        ):
+            megatron_weight = mapping.hf_to_megatron(hf_weight, megatron_module)
+            result = mapping.megatron_to_hf(megatron_weight, megatron_module)
+
+        assert torch.equal(result[mapping.hf_param], hf_weight)
+        assert mock_arange.call_count > 0
+        for call in mock_arange.call_args_list:
+            assert call.kwargs.get("device") == hf_weight.device
 
 
 class TestGatedMLPMapping:

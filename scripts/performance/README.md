@@ -27,6 +27,38 @@ Each training entrypoint therefore executes only once.
 - Prefer command-line overrides for one-off changes.
 - Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
 
+### DeepSeek V3 GB300 MXFP8 proxy
+
+Use `deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config` with the training launcher,
+or select `--model_family_name deepseek --model_recipe_name deepseek_v3 --task pretrain
+--gpu gb300 --compute_dtype fp8_mx --num_gpus 64 --config_variant proxy` in the
+performance launcher, together with your normal Slurm/container arguments.
+
+This mock-data debugging benchmark has 3 dense + 10 MoE decoder layers and one
+additional MTP layer. It uses PP=1 with no virtual pipeline or explicit stage
+layout, TP=CP=ETP=1, EP=32, GBS=4096 and MBS=1. Thus dense DP=64, expert DP=2,
+and there are 64 microbatches per iteration. Its configuration matches the
+64-GPU VRNVL72 MXFP8 proxy, including per-layer shapes, full-iteration CUDA graphs,
+cuTeDSL fusion, MoE overlap, precision, optimizer and process environment. Both
+use the shared HybridEP base, without the production GB300 recipe's NCCL EP or
+`moe_use_grouped_tensor=True` overrides. HybridEP uses 32 ranks per NVLink domain,
+128-token combine chunks, `NVLINK_DOMAIN_SIZE=72`, and `USE_MNNVL=1`.
+
+Both 64-GPU MXFP8 proxies explicitly set `NVTE_ALLOW_NONDETERMINISTIC_ALGO=1`:
+the fused SwiGLU scale-gradient reduction uses atomics, and TE versions that
+enforce determinism reject this path with the setting at zero. This changes the
+VRNVL72 proxy's previous kernel policy; rerun its baseline for a matched comparison.
+The 256-GPU recipes and NVFP4 proxies are unchanged.
+
+All 13 decoder layers and MTP reside on each PP=1 rank; there is no pipeline
+communication. Memory fit, graph capture/replay and performance require a new GPU
+run. The reduced depth, different dense/MoE proportions, DP group sizes and
+microbatch schedule mean this proxy is not convergence-equivalent to the full
+model or a direct predictor of its end-to-end throughput. Use matched software,
+launch settings and measurement windows for GB300/VRNVL72 comparisons, and
+revalidate improvements at scale. The production GB300 parent uses NCCL EP, so
+the proxy does not validate that dispatcher's behavior or performance.
+
 ## Setup Instructions
 
 Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.
@@ -239,11 +271,11 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 
 ##### Performance arguments
 
-- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
+- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`, `vrnvl72`). `vr200` is a deprecated alias for `vrnvl72`.
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
 - `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `1200`). Used for silicon simulation correlation studies. Disabled by default.
-- `-lmc/--peak_mem_clk`: Lock GPU memory clock to a fixed peak frequency in MHz (e.g. `2600`). Used for silicon simulation correlation studies. Defaults to `4752` MHz for VR200 and is disabled by default for other GPUs. Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VR200 default.
+- `-lmc/--peak_mem_clk`: Lock GPU memory clock to a fixed peak frequency in MHz (e.g. `2600`). Used for silicon simulation correlation studies. Defaults to `4752` MHz for VRNVL72 and is disabled by default for other GPUs. Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VRNVL72 default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
 - `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.

@@ -324,7 +324,7 @@ def apply_target_topology_environment(
             "NVLINK_DOMAIN_SIZE": 8,
             "USE_MNNVL": 0,
         }
-    elif normalized_gpu in {"gb200", "gb300", "vr200", "r100"}:
+    elif normalized_gpu in {"gb200", "gb300", "vrnvl72", "r100"}:
         if expert_model_parallel_size > 72:
             raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
         topology = {

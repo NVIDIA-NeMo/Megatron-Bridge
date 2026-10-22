@@ -16,6 +16,7 @@
 
 import dataclasses
 import importlib
+import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -25,6 +26,7 @@ import pytest
 import torch
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
 
+from megatron.bridge.models.qwen_vl.data.collate_fn import QWEN_VL_MAX_PIXELS, QWEN_VL_MIN_PIXELS
 from megatron.bridge.perf_recipes.qwen_vl.common import _select_gdn_kernel_backend
 from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config,
@@ -32,6 +34,7 @@ from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
+    _build_qwen35_vl_35b_a3b_gb300_bf16,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
@@ -46,13 +49,13 @@ from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config,
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config,
 )
-from megatron.bridge.perf_recipes.qwen_vl.vr200.qwen35_vl import (
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_bf16_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8cs_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8mx_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+from megatron.bridge.perf_recipes.qwen_vl.vrnvl72.qwen35_vl import (
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
 )
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import (
@@ -364,15 +367,15 @@ def test_qwen35_vl_122b_gb300_keeps_cuda_graphs_disabled(monkeypatch: pytest.Mon
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
     ],
 )
 def test_qwen35_vl_397b_hybridep_domain_matches_expert_parallel_size(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The VR200 aliases inherit EP from GB300 but restate the HybridEP env inline.
+    """The VRNVL72 397B recipes inherit EP from GB300 but restate the HybridEP env inline.
 
     HybridEP asserts that the EP group size is divisible by
     ``NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN``, and the launcher only re-derives
@@ -386,6 +389,203 @@ def test_qwen35_vl_397b_hybridep_domain_matches_expert_parallel_size(
     assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == config.model.expert_model_parallel_size
 
 
+# Qwen3.5-VL vision patching (``patch_size`` and ``merge_size`` in the HF preprocessor config).
+_QWEN35_VL_PATCH_SIZE = 16
+_QWEN35_VL_MERGE_SIZE = 2
+
+
+def _vision_patches_per_mock_image(config) -> int:
+    """Vision patches that one mock image becomes on the Qwen-VL data path.
+
+    The collate resizes every image twice: ``qwen_vl_utils.process_vision_info`` first snaps it to a multiple of
+    ``image_patch_size * SPATIAL_MERGE_SIZE`` (28) within its default pixel bounds, then the HF processor resizes it
+    with transformers' ``smart_resize`` at factor 32 within QWEN_VL_MIN_PIXELS and QWEN_VL_MAX_PIXELS. The collate
+    passes no ``image_patch_size``, so the default of ``process_vision_info`` applies.
+    """
+    from qwen_vl_utils import vision_process
+    from transformers.models.qwen2_vl.image_processing_qwen2_vl import smart_resize
+
+    image_patch_size = inspect.signature(vision_process.process_vision_info).parameters["image_patch_size"].default
+    # The mock builder reads ``image_size`` as (width, height).
+    width, height = config.dataset.image_size
+    height, width = vision_process.smart_resize(
+        height, width, factor=image_patch_size * vision_process.SPATIAL_MERGE_SIZE
+    )
+    height, width = smart_resize(
+        height,
+        width,
+        factor=_QWEN35_VL_PATCH_SIZE * _QWEN35_VL_MERGE_SIZE,
+        min_pixels=QWEN_VL_MIN_PIXELS,
+        max_pixels=QWEN_VL_MAX_PIXELS,
+    )
+    return (height // _QWEN35_VL_PATCH_SIZE) * (width // _QWEN35_VL_PATCH_SIZE)
+
+
+def _assert_vision_graph_covers_one_microbatch(config) -> None:
+    """The vision CUDA graph cap must equal the vision patches per microbatch of the recipe's mock data.
+
+    A longer vision sequence than the cap stops the run, and a shorter one is padded to the cap on every graph replay.
+    """
+    assert config.model.vision_cuda_graph_impl == "transformer_engine"
+    assert config.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    assert config.model.max_vision_cuda_graph_seq_length == (
+        config.train.micro_batch_size * config.dataset.num_images * _vision_patches_per_mock_image(config)
+    )
+
+
+def _assert_cutedsl_grouped_mlp(config) -> None:
+    """The op fuser, the 32-wide GLU interleaving and the env gate only take effect together, under MXFP8."""
+    assert config.model.use_transformer_engine_op_fuser is True
+    assert config.model.moe_mlp_glu_interleave_size == 32
+    assert config.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert config.mixed_precision.fp8 == "e4m3"
+    assert config.mixed_precision.fp8_recipe == "mxfp8"
+
+
+def test_qwen35_vl_35b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The VRNVL72 35B MXFP8 benchmark runs EP 4 with the kernel settings measured there, under forced balancing."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config()
+
+    assert config.model.tensor_model_parallel_size == 1
+    assert config.model.pipeline_model_parallel_size == 1
+    assert config.model.context_parallel_size == 1
+    assert config.model.expert_model_parallel_size == 4
+    assert config.model.expert_tensor_parallel_size == 1
+    assert config.train.micro_batch_size == 4
+    assert config.train.global_batch_size == 1024
+    assert config.model.moe_router_force_load_balancing is True
+    assert config.dataset.num_workers == 8
+
+    _assert_cutedsl_grouped_mlp(config)
+    # No recompute, like the GB300 base.
+    assert getattr(config.model, "recompute_granularity", None) is None
+    assert config.model.recompute_modules == []
+    assert config.model.use_grouped_gemm_for_shared_expert is True
+    assert config.model.moe_shared_expert_glu_interleave_size == 32
+
+    assert config.model.moe_flex_dispatcher_backend == "hybridep"
+    assert config.model.moe_permute_fusion_into_hybridep is False
+    assert config.model.moe_hybridep_num_sms_preprocessing == 16
+    assert config.model.overlap_dispatch_backward_with_experts_wgrad is True
+    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == config.model.expert_model_parallel_size
+
+    assert config.model.cuda_graph_impl == "transformer_engine"
+    assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
+    _assert_vision_graph_covers_one_microbatch(config)
+
+    assert config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 0
+    assert config.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 0
+    assert config.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+    assert config.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+    assert (
+        config.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True,graph_capture_record_stream_reuse:True"
+    )
+    assert config.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
+
+
+def test_qwen35_vl_397b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The VRNVL72 397B MXFP8 benchmark adds the CuTe DSL grouped MLP and the kernel settings measured on VRNVL72."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config()
+
+    assert config.model.expert_model_parallel_size == 32
+    assert config.train.micro_batch_size == 1
+    assert config.train.global_batch_size == 1024
+    assert config.model.moe_router_force_load_balancing is True
+
+    _assert_cutedsl_grouped_mlp(config)
+    assert config.model.recompute_granularity == "selective"
+    assert config.model.recompute_modules == ["gdn_norm_out"]
+    assert config.model.moe_permute_fusion_into_hybridep is False
+    assert getattr(config.model, "use_grouped_gemm_for_shared_expert", False) is False
+    assert getattr(config.model, "overlap_dispatch_backward_with_experts_wgrad", False) is False
+
+    assert config.model.cuda_graph_impl == "transformer_engine"
+    assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
+    _assert_vision_graph_covers_one_microbatch(config)
+
+    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert config.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 128
+    assert config.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 128
+    assert config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
+    assert config.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
+    assert "NVTE_NORM_FWD_USE_CUDNN" not in config.env_vars
+
+
+@pytest.mark.parametrize(
+    ("recipe_fn", "gb300_recipe_fn"),
+    [
+        (qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config, _build_qwen35_vl_35b_a3b_gb300_bf16),
+        (qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config, qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config),
+        (qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config, qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config),
+        (
+            qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
+            qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
+        ),
+    ],
+    ids=recipe_factory_id,
+)
+def test_qwen35_vl_vrnvl72_bf16_fp8cs_aliases_skip_the_vrnvl72_mxfp8_settings(
+    recipe_fn: Callable, gb300_recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the MXFP8 VRNVL72 recipes were measured; the BF16 and FP8-CS aliases keep their GB300 layout and FLA."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+    gb300_config = gb300_recipe_fn()
+
+    assert config.model.expert_model_parallel_size == gb300_config.model.expert_model_parallel_size
+    assert config.train.micro_batch_size == gb300_config.train.micro_batch_size
+    assert config.train.global_batch_size == gb300_config.train.global_batch_size
+    assert config.model.recompute_modules == gb300_config.model.recompute_modules
+    assert config.model.use_transformer_engine_op_fuser == gb300_config.model.use_transformer_engine_op_fuser
+    assert getattr(config.model, "vision_cuda_graph_impl", "none") == "none"
+    assert config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in config.env_vars
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("recipe_fn", "gb300_recipe_fn"),
+    [
+        (qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config, qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config),
+        (
+            qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
+            qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
+        ),
+    ],
+    ids=recipe_factory_id,
+)
+def test_qwen35_vl_vrnvl72_fp8mx_model_settings_exist_on_the_provider(
+    recipe_fn: Callable, gb300_recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every model field the VRNVL72 MXFP8 recipes change from GB300 exists on the real Qwen3.5-VL MoE provider.
+
+    The tests above read the fields back from ``_OfflineModelProvider``, which accepts any attribute. A field that
+    Megatron-Core or the provider renamed would leave the recipe on the old path while those tests pass.
+    """
+    from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
+
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    model = recipe_fn().model
+    gb300_model = gb300_recipe_fn().model
+    changed = {
+        name
+        for name in vars(model).keys() | vars(gb300_model).keys()
+        if getattr(model, name, _MISSING) != getattr(gb300_model, name, _MISSING)
+    }
+
+    assert "max_vision_cuda_graph_seq_length" in changed
+    provider_fields = {field.name for field in dataclasses.fields(Qwen35VLMoEModelProvider)}
+    assert changed <= provider_fields, sorted(changed - provider_fields)
+
+
 # GB300 recipes that run GatedDeltaNet on cuDNN once Megatron-Core exposes gdn_kernel_backend.
 _GB300_CUDNN_GDN_RECIPES = (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
@@ -395,14 +595,19 @@ _GB300_CUDNN_GDN_RECIPES = (
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
 )
-# VR200 aliases built from those recipes; they keep FLA until cuDNN GDN is measured on VR200.
-_VR200_CUDNN_GDN_ALIASES = (
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_bf16_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8cs_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8mx_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+# VRNVL72 MXFP8 recipes; they keep the GB300 base's cuDNN GDN (measured against FLA on VRNVL72 at 35B, and used in the
+# measured 397B run).
+_VRNVL72_CUDNN_GDN_RECIPES = (
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
+)
+# VRNVL72 aliases of the GB300 BF16 and FP8-CS recipes; they keep FLA until cuDNN GDN is measured on VRNVL72 at those
+# precisions.
+_VRNVL72_FLA_ALIASES = (
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
 )
 _QWEN35_VL_PERF_RECIPES = tuple(
     factory
@@ -434,23 +639,29 @@ def test_qwen35_vl_gb300_runs_gdn_on_cudnn(recipe_fn: Callable, monkeypatch: pyt
 
 @pytest.mark.usefixtures("megatron_core_with_gdn_kernel_backend")
 @pytest.mark.parametrize("recipe_fn", _QWEN35_VL_PERF_RECIPES, ids=recipe_factory_id)
-def test_qwen35_vl_cudnn_gdn_is_limited_to_gb300_35b_397b(
+def test_qwen35_vl_cudnn_gdn_is_limited_to_measured_recipes(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only the measured GB300 35B/397B recipes leave FLA.
+    """Only these recipes leave FLA: the GB300 35B/397B recipes and the VRNVL72 35B/397B MXFP8 recipes.
 
-    122B, B200, B300, GB200 and VR200 were not measured (the VR200 aliases inherit the GB300 model config and reset
-    to FLA), and H100 is SM90, outside cuDNN's fast GDN engine.
+    On GB300, cuDNN GDN was measured with MXFP8; the BF16 and FP8-CS recipes inherit the shared builder's setting.
+
+    122B, B200, B300 and GB200 were not measured, the VRNVL72 BF16 and FP8-CS aliases inherit the GB300 model config
+    and reset to FLA, and H100 is SM90, outside cuDNN's fast GDN engine.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
     config = recipe_fn()
 
-    expected = "transformer_engine" if recipe_fn in _GB300_CUDNN_GDN_RECIPES else "fla"
+    expected = "transformer_engine" if recipe_fn in _GB300_CUDNN_GDN_RECIPES + _VRNVL72_CUDNN_GDN_RECIPES else "fla"
     assert config.model.gdn_kernel_backend == expected
 
 
-@pytest.mark.parametrize("recipe_fn", _GB300_CUDNN_GDN_RECIPES + _VR200_CUDNN_GDN_ALIASES, ids=recipe_factory_id)
+@pytest.mark.parametrize(
+    "recipe_fn",
+    _GB300_CUDNN_GDN_RECIPES + _VRNVL72_CUDNN_GDN_RECIPES + _VRNVL72_FLA_ALIASES,
+    ids=recipe_factory_id,
+)
 def test_qwen35_vl_gdn_kernel_backend_not_invented_on_older_core(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -522,7 +733,7 @@ def test_megatron_core_gdn_kernel_backend_contract() -> None:
 def test_qwen35_vl_perf_recipe_discovery_covers_the_cudnn_gdn_recipes() -> None:
     """The recipe matrix above must keep finding every recipe the cuDNN GDN tests reason about."""
     discovered = set(_QWEN35_VL_PERF_RECIPES)
-    assert set(_GB300_CUDNN_GDN_RECIPES + _VR200_CUDNN_GDN_ALIASES) <= discovered
+    assert set(_GB300_CUDNN_GDN_RECIPES + _VRNVL72_CUDNN_GDN_RECIPES + _VRNVL72_FLA_ALIASES) <= discovered
     platforms = {factory.__module__.split(".")[-2] for factory in discovered}
-    assert {"b200", "b300", "gb200", "gb300", "h100", "vr200"} <= platforms
+    assert {"b200", "b300", "gb200", "gb300", "h100", "vrnvl72"} <= platforms
     assert any("122b" in factory.__name__ for factory in discovered)

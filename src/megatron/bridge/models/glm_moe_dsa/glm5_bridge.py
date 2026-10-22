@@ -60,10 +60,6 @@ class GLM5Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    # Until the declarative Hybrid builder supports the GLM adapters, fail clearly
-    # rather than returning the inherited GPT builder configuration.
-    MODEL_CONFIG_CLASS = None
-
     @classmethod
     def megatron_to_hf_config(cls, provider: GLM5ModelProvider) -> dict:
         """Export HF block counts and preserve the reference model's context length."""
