@@ -102,3 +102,57 @@ def test_batch_loader_does_not_supervise_custom_dataset_padding(_mock_rank, _moc
         assert batch["loss_mask"].sum().item() == dataset_size, (
             "The padded batch must not supervise a duplicated real sample"
         )
+
+
+@pytest.mark.unit
+@mock.patch("torch.distributed.broadcast")
+@mock.patch("torch.distributed.get_world_size", return_value=1)
+@mock.patch("torch.distributed.get_rank", return_value=0)
+def test_dataset_prefetch_factor_reaches_train_loader(_mock_rank, _mock_world_size, _mock_broadcast):
+    @dataclass
+    class RangeDatasetProvider(DatasetProvider):
+        def build_datasets(self, context: DatasetBuildContext):
+            return list(range(context.train_samples)), None, None
+
+    provider = RangeDatasetProvider(
+        dataloader_type="single",
+        num_workers=2,
+        persistent_workers=False,
+        prefetch_factor=6,
+    )
+    provider.finalize()
+    cfg = SimpleNamespace(
+        model=object(),
+        dataset=provider,
+        train=SimpleNamespace(
+            train_samples=4,
+            train_iters=1,
+            global_batch_size=4,
+            micro_batch_size=1,
+            num_epochs=None,
+            exit_signal=None,
+            exit_signal_handler_for_dataloader=False,
+        ),
+        validation=SimpleNamespace(
+            eval_interval=0,
+            eval_iters=0,
+            eval_global_batch_size=None,
+            eval_micro_batch_size=None,
+            skip_train=False,
+        ),
+    )
+    real_torch_tensor = torch.tensor
+
+    def tensor_on_cpu(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_torch_tensor(*args, **kwargs)
+
+    with mock.patch("megatron.bridge.data.loaders.torch.tensor", side_effect=tensor_on_cpu):
+        train_dataloader, _, _ = build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=get_dataset_provider(provider),
+            dp_group=object(),
+        )
+
+    assert train_dataloader.prefetch_factor == 6

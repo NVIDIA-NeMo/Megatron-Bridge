@@ -16,7 +16,12 @@ import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetConfig,
+    DPODatasetConfig,
+    HFDatasetSourceConfig,
+)
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -32,6 +37,7 @@ from megatron.bridge.training.config import (
     TrainingConfig,
     ValidationConfig,
 )
+from megatron.bridge.training.dpo import DPOLossConfig
 
 
 def _pretrain_common() -> ConfigContainer:
@@ -232,6 +238,37 @@ def _sft_common() -> ConfigContainer:
         peft=None,
     )
 
+    return cfg
+
+
+def _dpo_common() -> ConfigContainer:
+    """Create a base DPO ConfigContainer with common defaults for any language model.
+
+    Returns:
+        ConfigContainer: Base configuration template for DPO.
+    """
+    # Default sequence length for DPO pairs
+    seq_length = 4096
+
+    cfg = _sft_common()
+
+    cfg.ddp.average_in_collective = False
+
+    cfg.dataset = DPODatasetConfig(
+        seq_length=seq_length,
+        source=HFDatasetSourceConfig(path_or_dataset="HuggingFaceH4/ultrafeedback_binarized", split="train_prefs"),
+        ref_artifact=None,  # Must be set by each run
+    )
+    cfg.dpo = DPOLossConfig()
+
+    # Batch sizes are row-denominated (one pair == two rows) and must be even.
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 4
+    cfg.validation.eval_iters = 0  # enable via dataset.validation_* + validation.eval_*
+
+    cfg.optimizer.lr = 1e-6
+    cfg.optimizer.min_lr = 0.0
+    cfg.scheduler.lr_warmup_iters = 0
     return cfg
 
 

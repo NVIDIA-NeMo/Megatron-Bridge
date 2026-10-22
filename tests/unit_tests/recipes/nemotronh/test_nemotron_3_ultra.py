@@ -18,12 +18,16 @@ import pytest
 import torch
 
 import megatron.bridge.recipes as recipes
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
+    nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config,
+    nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config,
     nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config,
     nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
     _split_hybrid_layer_pattern,
@@ -36,6 +40,8 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_config,
     nemotron_3_ultra_sft_openmathinstruct2_packed_config,
 )
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import (
     NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
     patch_recipe_module_global,
@@ -166,6 +172,23 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
 
 
 @pytest.mark.unit
+def test_gb200_ep16_deterministic_pretrain_applies_determinism() -> None:
+    assert recipes.nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config is (
+        nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config
+    )
+
+    base = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config()
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config()
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size
+    for key, value in DETERMINISM_ENV_VARS.items():
+        assert cfg.env_vars[key] == value
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+
+
+@pytest.mark.unit
 def test_vrnvl72_perf_recipe_uses_nvl72_ultra_topology() -> None:
     """VRNVL72 Ultra preserves the GB300 execution layout with explicit NVL72 settings."""
     cfg = nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config()
@@ -177,17 +200,17 @@ def test_vrnvl72_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.cuda_graph_impl == "local"
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
-    assert cfg.ddp.use_megatron_fsdp is True
-    assert cfg.ddp.num_distributed_optimizer_instances == 4
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.ddp.use_megatron_fsdp is False
+    assert cfg.model.tensor_parallel_num_weight_shards == 64
+    assert cfg.model.expert_tensor_parallel_num_weight_shards == 1
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
-    assert cfg.env_vars["USE_MNNVL"] == 1
 
 
 @pytest.mark.unit
@@ -202,23 +225,69 @@ def test_vrnvl72_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.model.moe_router_padding_for_quantization is True
-    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_impl == "local"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
     assert cfg.mixed_precision.fp4 == "e2m1"
-    assert cfg.mixed_precision.fp4_param_gather is False
+    assert cfg.mixed_precision.fp4_param_gather is True
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
-    assert cfg.ddp.use_megatron_fsdp is True
-    assert cfg.ddp.num_distributed_optimizer_instances == 4
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.dist.use_megatron_fsdp is False
+    assert cfg.ddp.use_megatron_fsdp is False
+    assert cfg.model.tensor_parallel_num_weight_shards == 64
+    assert cfg.model.expert_tensor_parallel_num_weight_shards == 1
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
-    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("recipe_factory", "tensor_model_parallel_size", "sequence_parallel"),
+    [
+        (nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config, 2, True),
+        (nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config, 1, False),
+    ],
+    ids=["gb200", "gb300"],
+)
+def test_nvfp4_perf_recipes_use_gtp_partial_cuda_graphs_and_nccl_ep(
+    recipe_factory, tensor_model_parallel_size: int, sequence_parallel: bool
+) -> None:
+    """GB200 and GB300 Ultra NVFP4 shard dense weights rack-locally with GTP instead of HSDP."""
+    cfg = recipe_factory()
+
+    assert cfg.model.tensor_model_parallel_size == tensor_model_parallel_size
+    assert cfg.model.sequence_parallel is sequence_parallel
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.mixed_precision.fp4 == "e2m1"
+    assert cfg.mixed_precision.fp4_param_gather is True
+
+    assert cfg.dist.use_megatron_fsdp is False
+    assert cfg.ddp.use_megatron_fsdp is False
+    assert cfg.model.tensor_parallel_num_weight_shards == 64
+    assert cfg.model.expert_tensor_parallel_num_weight_shards == 1
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
+
+    assert cfg.model.cuda_graph_impl == "local"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
 
 
 @pytest.mark.unit

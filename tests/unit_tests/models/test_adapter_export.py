@@ -359,7 +359,7 @@ class TestSaveHfAdapter:
 
         names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
         tensors = [torch.randn(2, 4), torch.randn(4, 2)]
-        bridge = MagicMock(text_only=False)
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
         bridge.hf_pretrained = SimpleNamespace(model_name_or_path="org/text-base")
         bridge.export_adapter_weights.return_value = iter(
             [_adapter_export(name, tensor) for name, tensor in zip(names, tensors)]
@@ -599,7 +599,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.v_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -643,7 +643,7 @@ class TestSaveHfAdapter:
             ),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -672,7 +672,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -701,7 +701,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -739,7 +739,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -777,7 +777,7 @@ class TestSaveHfAdapter:
                 ]
             )
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
         with patch("torch.distributed.is_initialized", return_value=False):
@@ -821,7 +821,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -843,7 +843,7 @@ class TestSaveHfAdapter:
         assert "target_parameters" not in cfg
 
     def test_save_raises_on_empty_adapter(self, tmp_path):
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter([])
 
         with patch("torch.distributed.is_initialized", return_value=False):
@@ -869,7 +869,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.gate_proj.lora_B.weight", torch.randn(32, 4)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="inferred/model-id")
 
@@ -935,7 +935,7 @@ class TestSaveHfAdapter:
             ),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(
             model_name_or_path="test/normalized-expert-model",
@@ -1006,7 +1006,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.experts.gate_up_proj.lora_B.weight", gate_up_b),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(
             model_name_or_path="test/packed-experts",
@@ -1080,6 +1080,8 @@ class TestExportAdapterCkpt:
         mock = MagicMock(spec=AutoBridge)
         mock.export_adapter_ckpt = AutoBridge.export_adapter_ckpt.__get__(mock, AutoBridge)
         mock.hf_pretrained = SimpleNamespace(model_name_or_path="test-org/test-model")
+
+        mock._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=False)
 
         fake_provider = MagicMock()
         fake_provider.provide_distributed_model.return_value = [MagicMock()]
@@ -1205,6 +1207,25 @@ class TestExportAdapterCkpt:
         assert peft_config.dim == 8
         assert peft_config.alpha == 16
         assert not hasattr(peft_config, "freeze_language_model")
+
+    def test_builder_backed_family_uses_model_config(self, bridge, ckpt_dir, tmp_path):
+        """Builder-backed bridges build through get_model() with fp32 params, never the provider."""
+        bridge._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=True)
+        model_config = SimpleNamespace(transformer=SimpleNamespace(), pre_wrap_hooks=[])
+        bridge.get_model_config.return_value = model_config
+        bridge.get_model.return_value = [MagicMock()]
+
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out", show_progress=False)
+
+        bridge.to_megatron_provider.assert_not_called()
+        bridge.get_model.assert_called_once()
+        assert bridge.get_model.call_args.args[0] is model_config
+        assert bridge.get_model.call_args.kwargs["wrap_with_ddp"] is False
+        assert model_config.transformer.params_dtype == torch.float32
+        assert model_config.transformer.pipeline_dtype == torch.float32
+        assert model_config.transformer.use_cpu_initialization is True
+        assert len(model_config.pre_wrap_hooks) == 1  # the LoRA hook
+        bridge.save_hf_adapter.assert_called_once()
 
     def test_missing_checkpoint_raises(self, bridge, tmp_path):
         with pytest.raises(FileNotFoundError, match="PEFT checkpoint not found"):

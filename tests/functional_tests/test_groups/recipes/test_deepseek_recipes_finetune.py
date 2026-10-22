@@ -15,10 +15,10 @@
 """Functional smoke tests for DeepSeek-V4-Flash SFT (finetune) recipe configurations.
 
 Mirrors ``test_deepseek_recipes_pretrain.py`` (toy HF model + DSv4-in-mcore guard) but
-exercises the *finetune* path: build the SFT recipe on a 2-layer toy model, swap in a
-mock dataset, and run 5 finetune iterations. Like the pretrain functional test, this
-skips unless the synthetic DSv4 toy model is available and mcore ships the DSv4
-prerequisites.
+covers the *SFT* recipes: build each one on the toy model, swap in a mock dataset, and
+run 5 training iterations from the toy model's initialization. Like the pretrain
+functional test, this skips unless the synthetic DSv4 toy model is available and mcore
+ships the DSv4 prerequisites.
 """
 
 import importlib.util
@@ -42,15 +42,22 @@ DEEPSEEK_V4_TEST_MODEL_PATH = Path("/home/TestData/megatron_bridge/models/deepse
 
 def _has_dsv4_in_mcore() -> bool:
     try:
-        return all(
+        if not all(
             importlib.util.find_spec(mod) is not None
             for mod in (
                 "megatron.core.transformer.hyper_connection",
                 "megatron.core.transformer.experimental_attention_variant.csa",
                 "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
             )
-        )
-    except ModuleNotFoundError:
+        ):
+            return False
+        # The DSv4 HybridModel stack spec ships in the "Enable DeepSeek-v4 hybrid_model"
+        # megatron-core series; older cores have the attention modules above but not this,
+        # so the DSv4 hybrid model cannot be built. Skip rather than fail on such cores.
+        from megatron.core.models.hybrid import hybrid_layer_specs
+
+        return hasattr(hybrid_layer_specs, "hybrid_dsv4_stack_spec")
+    except (ImportError, ValueError):
         return False
 
 
@@ -64,16 +71,15 @@ def _deepseek_v4_toy_model_path() -> str:
     return str(model_path)
 
 
-# Shrink the Flash architecture to a 2-layer toy. Keep the validated SFT path
-# (unfused mHC/rope); MTP off and recompute off for a fast smoke.
+# On HybridModel, DeepSeek-V4's layer count, per-layer compression ratios, and MoE
+# placement are all derived from the toy HF config via the hybrid layer pattern, so we
+# must NOT override num_layers / csa_compress_ratios / moe_layer_freq here (they would
+# conflict with the pattern-derived values and trip finalize()'s consistency check).
+# Keep the validated SFT path (unfused mHC/rope); MTP off and recompute off for a fast
+# smoke, on a single rank.
 DEEPSEEK_V4_SFT_MODEL_OVERRIDES = {
-    "num_layers": 2,
     "mtp_num_layers": None,
     "pipeline_model_parallel_layout": None,
-    "num_moe_experts": 8,
-    "moe_router_topk": 1,
-    "moe_layer_freq": [0, 1],
-    "csa_compress_ratios": [0, 0],
     "dsa_kernel_backend": "none",
     "use_fused_mhc": False,
     "apply_rope_fusion": False,
@@ -101,7 +107,7 @@ class TestDeepSeekV4FinetuneRecipes:
     @pytest.mark.skipif(not _has_dsv4_in_mcore(), reason="megatron-core does not yet ship DSv4 prerequisites.")
     @pytest.mark.parametrize("config_func,recipe_name,requires_blackwell", DEEPSEEK_V4_SFT_RECIPES)
     def test_deepseek_v4_sft_recipes(self, config_func, recipe_name, requires_blackwell, tmp_path):
-        """Build the SFT recipe on a toy model and run 5 finetune iters on mock data."""
+        """Build the SFT recipe on a toy model and run 5 training iters on mock data."""
         if requires_blackwell and torch.cuda.get_device_capability()[0] < 10:
             pytest.skip("DeepSeek-V4 MXFP8 recipe requires Blackwell GPUs.")
 
@@ -128,6 +134,8 @@ class TestDeepSeekV4FinetuneRecipes:
         )
 
         for attribute_name, attribute_value in DEEPSEEK_V4_SFT_MODEL_OVERRIDES.items():
+            if not hasattr(config.model, attribute_name):
+                raise ValueError(f"Attempted to test a foreign attribute ({attribute_name}) in {config.model}.")
             setattr(config.model, attribute_name, attribute_value)
 
         config.model.seq_length = seq_length
@@ -151,12 +159,14 @@ class TestDeepSeekV4FinetuneRecipes:
         total = train_samples + eval_samples + test_samples
         config.dataset.split = [train_samples / total, eval_samples / total, test_samples / total]
 
-        from megatron.bridge.training.finetune import finetune
         from megatron.bridge.training.gpt_step import forward_step
+        from megatron.bridge.training.pretrain import pretrain
         from tests.functional_tests.utils import clear_directories, initialize_distributed
 
         initialize_distributed()
         try:
-            finetune(config, forward_step)
+            # finetune() requires a checkpoint to load, and this smoke test starts from the
+            # toy model's initialization, so drive the SFT recipe through pretrain().
+            pretrain(config, forward_step)
         finally:
             clear_directories(tmp_path)

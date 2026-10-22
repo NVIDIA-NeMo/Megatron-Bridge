@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Every GB300 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the VRNVL72
-aliases built on the shared HybridEP bases stay on HybridEP."""
+aliases built on the shared HybridEP bases stay on HybridEP. VRNVL72 aliases built on an NCCL EP base
+carry the same NCCL EP stack."""
 
 import importlib
 
 import pytest
+from megatron.training.determinism import DETERMINISM_ENV_VAR_DEFAULTS
 
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
@@ -25,6 +27,7 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction
 pytestmark = pytest.mark.unit
 
 _NCCL_EP_ENV = {"NCCL_EP_HT_EM_PULL_PUSH": 1}
+_SSM_DETERMINISM_ENV = {"MAMBA_DETERMINISTIC": "1", "CAUSAL_CONV1D_DETERMINISTIC": "1"}
 
 # (module under megatron.bridge.perf_recipes, recipe factory) for the GB300 recipes defaulted to NCCL EP.
 _GB300_NCCLEP_RECIPES = (
@@ -39,6 +42,7 @@ _GB300_NCCLEP_RECIPES = (
     ("nemotronh.gb300.nemotronh", "nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config"),
@@ -53,6 +57,12 @@ _GB300_NCCLEP_RECIPES = (
     ("qwen_vl.gb300.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"),
 )
 
+# VRNVL72 aliases that share the GB300 NCCL EP builder instead of a HybridEP base.
+_VRNVL72_NCCLEP_RECIPES = (
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config"),
+)
+
 # VRNVL72 aliases of the same recipes: they reuse the shared HybridEP builders and must not pick up NCCL EP.
 _VRNVL72_ALIASES = (
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config"),
@@ -63,11 +73,12 @@ _VRNVL72_ALIASES = (
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config"),
@@ -94,7 +105,9 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-@pytest.mark.parametrize(("module_name", "factory_name"), _GB300_NCCLEP_RECIPES, ids=lambda value: value)
+@pytest.mark.parametrize(
+    ("module_name", "factory_name"), (*_GB300_NCCLEP_RECIPES, *_VRNVL72_NCCLEP_RECIPES), ids=lambda value: value
+)
 def test_gb300_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory_name: str) -> None:
     cfg = _build(module_name, factory_name)
 
@@ -131,3 +144,22 @@ def test_vrnvl72_aliases_do_not_inherit_nccl_ep(module_name: str, factory_name: 
         assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
     else:
         assert cfg.model.moe_token_dispatcher_type == "alltoall"
+
+
+def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_overrides() -> None:
+    module = "deepseek.gb300.deepseek_v3"
+    base = _build(module, "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config")
+    cfg = _build(module, "deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config")
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    assert cfg.model.moe_router_fusion == base.model.moe_router_fusion
+    # HybridEP with the legacy grouped MLP until the NCCL EP path is deterministic.
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_use_grouped_tensor is False
+    assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
+    expected_env = {name: value for name, value in base.env_vars.items() if name not in _NCCL_EP_ENV}
+    expected_env.update({name: cfg.env_vars[name] for name in HYBRID_EP_ENV_NAMES})
+    assert cfg.env_vars == {**expected_env, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
