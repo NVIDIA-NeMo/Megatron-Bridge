@@ -49,7 +49,6 @@ from megatron.bridge.perf_recipes.llama.b300.llama31 import (
 from megatron.bridge.perf_recipes.llama.gb200.llama2 import (
     llama2_70b_peft_4gpu_gb200_fp8ds_config,
     llama2_70b_peft_8gpu_gb200_fp8ds_config,
-    llama2_70b_peft_8gpu_gb200_nvfp4_config,
     llama2_70b_peft_72gpu_gb200_fp8ds_config,
     llama2_70b_peft_512gpu_gb200_fp8ds_config,
 )
