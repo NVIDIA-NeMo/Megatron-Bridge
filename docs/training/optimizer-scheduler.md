@@ -49,6 +49,12 @@ layer-wise Muon. The current Core implementation requires one distributed
 optimizer instance and does not support `overlap_param_gather_with_optimizer_step`
 or either FSDP implementation with Muon.
 
+Runtime setup applies explicit communication-overlap overrides before validating
+the effective optimizer settings. For LayerWise optimizers, an unspecified
+`CommOverlapConfig.bucket_size` preserves `ddp.bucket_size`; when that is also
+unset, Core selects its DP-dependent bucket size. An explicit overlap bucket size
+still takes precedence. Adam/SGD retain the ordinary distributed-optimizer presets.
+
 By default, `use_layer_wise_param_layout=False` retains compact DDP buffers and
 LayerWise's variable-size parameter synchronization path. This preserves the
 optimizer representation of existing Muon checkpoints while retaining the
@@ -66,6 +72,9 @@ optimizer representation is not supported.
 Existing Kimi recipes keep the compact layout and parameter-gather overlap
 disabled until their MoE and pipeline-parallel configurations are validated
 with the shard-aligned layout; other recipes can opt in independently.
+For their multi-rank DP configurations, they also retain Core-selected bucket
+sizes and gradient-reduce overlap, including the H100 Kimi K2 performance recipes.
+Explicit user overrides remain supported.
 
 Resuming Muon training restores Muon optimizer state. When changing optimization
 algorithms between runs, load model weights with fresh optimizer state using

@@ -17,6 +17,7 @@ import importlib
 import pytest
 import torch
 
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.kimi.kimi_k2 import (
     _apply_kimi_k2_optimizer,
     _get_kimi_k2_pipeline_layout,
@@ -56,6 +57,51 @@ def _patch_autobridge(monkeypatch):
     """Monkeypatch AutoBridge in the kimi_k2 recipe module to avoid HF Hub access."""
     mod = importlib.import_module("megatron.bridge.recipes.kimi.kimi_k2")
     patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "hardware,factory_name",
+    [(None, None)]
+    + [
+        (hardware, f"kimi_k2_pretrain_{gpus}gpu_{hardware}_{precision}_config")
+        for hardware, gpus, precisions in [
+            ("h100", 1024, ("bf16", "fp8cs", "fp8sc")),
+            ("b200", 256, ("bf16", "fp8cs", "fp8mx")),
+            ("gb200", 256, ("bf16", "fp8cs", "fp8mx")),
+            ("gb300", 256, ("bf16", "fp8cs", "fp8mx", "nvfp4")),
+        ]
+        for precision in precisions
+    ],
+)
+def test_kimi_resolved_overlap_preserves_legacy_execution(monkeypatch, hardware, factory_name):
+    """Check actual overlap setup for the library recipe and every perf recipe."""
+    monkeypatch.setattr(
+        _FakeAutoBridge,
+        "to_megatron_provider",
+        lambda *args, **kwargs: GPTModelProvider(
+            num_layers=64, hidden_size=128, num_attention_heads=4, vocab_size=163840, apply_rope_fusion=False
+        ),
+    )
+    factory = (
+        kimi_k2_pretrain_config
+        if hardware is None
+        else getattr(importlib.import_module(f"megatron.bridge.perf_recipes.kimi.{hardware}.kimi_k2"), factory_name)
+    )
+    cfg = factory()
+    assert cfg.ddp.bucket_size is None
+    assert cfg.ddp.overlap_grad_reduce is True
+    cfg.comm_overlap.data_parallel_size = 8
+    cfg.comm_overlap.finalize()
+    cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+    _validate_and_sync_distributed_optimizer_settings(cfg)
+    assert cfg.ddp.bucket_size is None  # Core still selects its DP-dependent default.
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather is False
+    assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+    assert cfg.optimizer.use_layer_wise_param_layout is False
+    assert cfg.ddp.use_distributed_optimizer is False
 
 
 class TestKimiK2PipelineLayout:

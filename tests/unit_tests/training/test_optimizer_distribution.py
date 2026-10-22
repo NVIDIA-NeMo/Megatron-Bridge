@@ -290,3 +290,80 @@ def test_reject_emerging_optimizer_fsdp_before_model_construction(name, backend)
     cfg.ddp.use_megatron_fsdp = backend == "megatron_ddp"
     with pytest.raises(ValueError, match="do not support Megatron-FSDP or Torch-FSDP2"):
         cfg.validate()
+
+
+@pytest.mark.parametrize("name", ["muon", "dist_muon", "adam", "sgd"])
+@pytest.mark.parametrize("source", ["optimizer", "ddp", "both"])
+@pytest.mark.parametrize("override", [False, True, None])
+def test_runtime_overlap_override_precedes_layerwise_validation(name, source, override):
+    """Validate resolved overlap settings, not the inherited recipe value."""
+    from megatron.bridge.recipes.gpt.vanilla_gpt import vanilla_gpt_pretrain_config
+    from megatron.bridge.training.config import runtime_config_update
+
+    cfg = vanilla_gpt_pretrain_config()
+    cfg.optimizer.optimizer = name
+    cfg.train.global_batch_size = 4
+    cfg.model.num_layers = 2
+    cfg.model.hidden_size = 128
+    cfg.model.num_attention_heads = 4
+    cfg.optimizer.use_distributed_optimizer = source in ("optimizer", "both")
+    cfg.ddp.use_distributed_optimizer = source in ("ddp", "both")
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = True
+    cfg.comm_overlap = (
+        CommOverlapConfig(tp_comm_overlap=False, overlap_param_gather_with_optimizer_step=override)
+        if override is not None
+        else None
+    )
+    layerwise = name in ("muon", "dist_muon")
+    with patch("megatron.bridge.training.config.get_world_size_safe", return_value=2):
+        if layerwise and override is not False:
+            with pytest.raises(ValueError, match="overlap_param_gather_with_optimizer_step"):
+                runtime_config_update(cfg)
+            return
+        runtime_config_update(cfg)
+
+    assert cfg.optimizer.optimizer == name.removeprefix("dist_")
+    assert cfg.optimizer.use_layer_wise_distributed_optimizer is layerwise
+    assert cfg.optimizer.use_distributed_optimizer is not layerwise
+    assert cfg.ddp.use_distributed_optimizer is not layerwise
+    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is (override is not False)
+
+
+@pytest.mark.parametrize(
+    "name,source",
+    [
+        (name, source)
+        for name in ("muon", "dist_muon", "adaptive_muon", "soap", "lion", "adam", "sgd")
+        for source in ("optimizer", "ddp", "layerwise")
+        if source != "layerwise" or name not in ("adam", "sgd")
+    ],
+)
+@pytest.mark.parametrize("dp_size", [1, 8])
+@pytest.mark.parametrize("ddp_bucket", [None, 40000000])
+@pytest.mark.parametrize("bucket_override", [None, 16000000])
+def test_overlap_bucket_policy(name, source, dp_size, ddp_bucket, bucket_override):
+    """LayerWise retains Core/DDP buckets; ordinary DistOpt applies its overlap preset."""
+    ordinary = name in ("adam", "sgd")
+    optimizer = OptimizerConfig(
+        optimizer=name,
+        use_distributed_optimizer=source == "optimizer",
+        use_layer_wise_distributed_optimizer=source == "layerwise",
+    )
+    ddp = DistributedDataParallelConfig(use_distributed_optimizer=source == "ddp", bucket_size=ddp_bucket)
+    overlap = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=dp_size, bucket_size=bucket_override)
+    overlap.finalize()
+    model = GPTModelProvider(num_layers=2, hidden_size=128, num_attention_heads=4)
+    overlap.setup(model, optimizer, ddp)
+    expected = (128 * 1024 * 1024 if dp_size > 1 else None) if ordinary else ddp_bucket
+    assert ddp.bucket_size == (bucket_override if bucket_override is not None else expected)
+
+
+@pytest.mark.parametrize("name", ["muon", "dist_muon"])
+@pytest.mark.parametrize("overlap_grad_reduce", [False, True])
+def test_layerwise_explicit_gradient_overlap_is_honored(name, overlap_grad_reduce):
+    optimizer = OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=True)
+    ddp = DistributedDataParallelConfig(overlap_grad_reduce=not overlap_grad_reduce)
+    overlap = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=8, overlap_grad_reduce=overlap_grad_reduce)
+    overlap.finalize()
+    overlap.setup(GPTModelProvider(num_layers=2, hidden_size=128, num_attention_heads=4), optimizer, ddp)
+    assert ddp.overlap_grad_reduce is overlap_grad_reduce

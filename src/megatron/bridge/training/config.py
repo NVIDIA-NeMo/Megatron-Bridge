@@ -2298,15 +2298,13 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     # user-facing copy before CommOverlapConfig can apply the requested value to the model.
     cfg._disable_native_energon_packing_moe_overlap()
 
-    # Resolve optimizer mode before selecting communication overlap capabilities.
-    _validate_and_sync_distributed_optimizer_settings(cfg)
-
     # Apply communication overlap configuration if provided
     if cfg.comm_overlap is not None:
         cfg.comm_overlap.finalize()
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
-    # Validate configuration after all modifications
+    # Normalize distribution and validate only after explicit overlap overrides
+    # have replaced inherited recipe settings, and before model construction.
     cfg.validate()
 
 

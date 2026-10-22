@@ -640,5 +640,11 @@ class CommOverlapConfig:
             and (ddp_config.use_distributed_optimizer or uses_distributed_optimizer(optimizer_config))
         ):
             comm_overlap_cfg = self._get_optimizer_overlap_cfgs(model_config)
+            if optimizer_config.optimizer not in ("adam", "sgd") and self.user_comm_overlap_cfg.bucket_size is None:
+                # Emerging optimizers use LayerWise distribution, including raw
+                # aliases/DDP-only requests before ConfigContainer normalization.
+                # Preserve their existing Core/DDP bucket policy unless explicitly
+                # overridden instead of adopting the ordinary DistOpt preset.
+                comm_overlap_cfg.bucket_size = ddp_config.bucket_size
             self._apply_cfgs(comm_overlap_cfg, optimizer_config)
             self._apply_cfgs(comm_overlap_cfg, ddp_config)
