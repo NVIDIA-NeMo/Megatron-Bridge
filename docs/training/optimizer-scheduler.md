@@ -53,7 +53,10 @@ Runtime setup applies explicit communication-overlap overrides before validating
 the effective optimizer settings. For LayerWise optimizers, an unspecified
 `CommOverlapConfig.bucket_size` preserves `ddp.bucket_size`; when that is also
 unset, Core selects its DP-dependent bucket size. An explicit overlap bucket size
-still takes precedence. Adam/SGD retain the ordinary distributed-optimizer presets.
+still takes precedence. Likewise, an unspecified `overlap_grad_reduce` preserves
+the DDP setting, including at DP=1 where CP ranks may still reduce gradients.
+Explicit gradient-overlap overrides take precedence. Adam/SGD retain the ordinary
+distributed-optimizer presets.
 
 By default, `use_layer_wise_param_layout=False` retains compact DDP buffers and
 LayerWise's variable-size parameter synchronization path. This preserves the
@@ -72,8 +75,8 @@ optimizer representation is not supported.
 Existing Kimi recipes keep the compact layout and parameter-gather overlap
 disabled until their MoE and pipeline-parallel configurations are validated
 with the shard-aligned layout; other recipes can opt in independently.
-For their multi-rank DP configurations, they also retain Core-selected bucket
-sizes and gradient-reduce overlap, including the H100 Kimi K2 performance recipes.
+They also retain Core-selected bucket sizes and gradient-reduce overlap, including
+DP=1 with CP>1 and the H100 Kimi K2 performance recipes.
 Explicit user overrides remain supported.
 
 Resuming Muon training restores Muon optimizer state. When changing optimization

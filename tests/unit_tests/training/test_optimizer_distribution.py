@@ -367,3 +367,33 @@ def test_layerwise_explicit_gradient_overlap_is_honored(name, overlap_grad_reduc
     overlap.finalize()
     overlap.setup(GPTModelProvider(num_layers=2, hidden_size=128, num_attention_heads=4), optimizer, ddp)
     assert ddp.overlap_grad_reduce is overlap_grad_reduce
+
+
+@pytest.mark.parametrize(
+    "name,source",
+    [
+        (name, source)
+        for name in ("muon", "dist_muon", "adaptive_muon", "soap", "lion", "adam", "sgd")
+        for source in ("optimizer", "ddp", "layerwise")
+        if source != "layerwise" or name not in ("adam", "sgd")
+    ],
+)
+@pytest.mark.parametrize("dp_size,cp_size", [(1, 1), (1, 2), (8, 1)])
+@pytest.mark.parametrize("ddp_overlap", [False, True])
+@pytest.mark.parametrize("overlap_override", [None, False, True])
+def test_gradient_overlap_preserves_layerwise_defaults(name, source, dp_size, cp_size, ddp_overlap, overlap_override):
+    """DP1 can still reduce across CP ranks; unset LayerWise options retain DDP settings."""
+    optimizer = OptimizerConfig(
+        optimizer=name,
+        use_distributed_optimizer=source == "optimizer",
+        use_layer_wise_distributed_optimizer=source == "layerwise",
+    )
+    ddp = DistributedDataParallelConfig(use_distributed_optimizer=source == "ddp", overlap_grad_reduce=ddp_overlap)
+    overlap = CommOverlapConfig(
+        tp_comm_overlap=False, data_parallel_size=dp_size, overlap_grad_reduce=overlap_override
+    )
+    overlap.finalize()
+    model = GPTModelProvider(num_layers=2, hidden_size=128, num_attention_heads=4, context_parallel_size=cp_size)
+    overlap.setup(model, optimizer, ddp)
+    expected = dp_size > 1 if name in ("adam", "sgd") else ddp_overlap
+    assert ddp.overlap_grad_reduce is (expected if overlap_override is None else overlap_override)

@@ -60,6 +60,7 @@ def _patch_autobridge(monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("use_context_parallel", [False, True])
 @pytest.mark.parametrize(
     "hardware,factory_name",
     [(None, None)]
@@ -74,7 +75,7 @@ def _patch_autobridge(monkeypatch):
         for precision in precisions
     ],
 )
-def test_kimi_resolved_overlap_preserves_legacy_execution(monkeypatch, hardware, factory_name):
+def test_kimi_resolved_overlap_preserves_legacy_execution(monkeypatch, hardware, factory_name, use_context_parallel):
     """Check actual overlap setup for the library recipe and every perf recipe."""
     monkeypatch.setattr(
         _FakeAutoBridge,
@@ -91,7 +92,15 @@ def test_kimi_resolved_overlap_preserves_legacy_execution(monkeypatch, hardware,
     cfg = factory()
     assert cfg.ddp.bucket_size is None
     assert cfg.ddp.overlap_grad_reduce is True
-    cfg.comm_overlap.data_parallel_size = 8
+    tp_size = cfg.model.tensor_model_parallel_size
+    expert_mp_size = cfg.model.expert_tensor_parallel_size * cfg.model.expert_model_parallel_size
+    assert expert_mp_size % tp_size == 0
+    replica_size = expert_mp_size // tp_size
+    dp_size, cp_size = (1, max(16, replica_size)) if use_context_parallel else (max(8, replica_size), 1)
+    cfg.model.context_parallel_size = cp_size
+    world_size = tp_size * cfg.model.pipeline_model_parallel_size * cp_size * dp_size
+    assert world_size % (expert_mp_size * cfg.model.pipeline_model_parallel_size) == 0
+    cfg.comm_overlap.data_parallel_size = cfg.get_data_parallel_size(world_size)
     cfg.comm_overlap.finalize()
     cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
     _validate_and_sync_distributed_optimizer_settings(cfg)

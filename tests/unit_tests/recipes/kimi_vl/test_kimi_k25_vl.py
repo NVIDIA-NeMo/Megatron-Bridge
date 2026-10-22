@@ -75,7 +75,8 @@ def _patch_autobridge(monkeypatch):
 
 
 @pytest.mark.unit
-def test_kimi_vl_resolved_overlap_preserves_legacy_execution(monkeypatch):
+@pytest.mark.parametrize("use_context_parallel", [False, True])
+def test_kimi_vl_resolved_overlap_preserves_legacy_execution(monkeypatch, use_context_parallel):
     """Exercise shared overlap setup without downloading a pretrained provider."""
     monkeypatch.setattr(
         _FakeAutoBridge,
@@ -86,7 +87,15 @@ def test_kimi_vl_resolved_overlap_preserves_legacy_execution(monkeypatch):
     )
     cfg = kimi_k25_vl_sft_config()
     assert cfg.ddp.bucket_size is None
-    cfg.comm_overlap.data_parallel_size = 16
+    tp_size = cfg.model.tensor_model_parallel_size
+    expert_mp_size = cfg.model.expert_tensor_parallel_size * cfg.model.expert_model_parallel_size
+    assert expert_mp_size % tp_size == 0
+    replica_size = expert_mp_size // tp_size
+    dp_size, cp_size = (1, max(16, replica_size)) if use_context_parallel else (max(16, replica_size), 1)
+    cfg.model.context_parallel_size = cp_size
+    world_size = tp_size * cfg.model.pipeline_model_parallel_size * cp_size * dp_size
+    assert world_size % (expert_mp_size * cfg.model.pipeline_model_parallel_size) == 0
+    cfg.comm_overlap.data_parallel_size = cfg.get_data_parallel_size(world_size)
     cfg.comm_overlap.finalize()
     cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
     _validate_and_sync_distributed_optimizer_settings(cfg)
