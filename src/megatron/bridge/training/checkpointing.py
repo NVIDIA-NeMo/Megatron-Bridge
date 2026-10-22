@@ -3098,7 +3098,8 @@ def _load_checkpoint_from_path(
             gen_sd_rerun_state = rerun_state_machine.state_dict(
                 data_iterator=None, ckpt_format=ckpt_format, force=True
             )
-            ignore_rerun_state = False
+            # Request idle shards for strict loading, but preserve the current run's mode.
+            ignore_rerun_state = not rerun_state_machine.validate_state_dict(state_dict["rerun_state_machine"])
         else:
             gen_sd_rerun_state = None
             if not tp_pp_match:

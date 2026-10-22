@@ -32,6 +32,7 @@ from megatron.core.dist_checkpointing.strategies.torch import (
 )
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.optimizer import distrib_optimizer
+from megatron.core.rerun_state_machine import RerunMode, RerunState, RerunStateMachine
 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
 from megatron.bridge.training.checkpointing import (
@@ -2456,6 +2457,8 @@ class TestLoadCheckpoint:
     @patch("torch.cuda.empty_cache")
     @patch("os.path.exists")  # Add patch for train state file existence check
     @pytest.mark.parametrize("saved_version", [3.0, 3.1])
+    @pytest.mark.parametrize("saved_rerun_state", [RerunState.NOT_RUNNING_YET, RerunState.WILL_RERUN_FROM_CHECKPOINT])
+    @pytest.mark.parametrize("runtime_rerun_mode", list(RerunMode))
     def test_load_checkpoint_found(
         self,
         mock_exists_os,
@@ -2486,8 +2489,10 @@ class TestLoadCheckpoint:
         load_checkpoint_fixtures,
         optimizer_load_error,
         saved_version,
+        saved_rerun_state,
+        runtime_rerun_mode,
     ):
-        """Direct loading syncs HDO only after a successful restore and context cleanup."""
+        """Restore active reruns while retaining runtime mode for ordinary checkpoints."""
         # Setup mocks
         mock_dist_init.return_value = False  # Disable distributed for simpler testing
         mock_is_last_rank.return_value = False
@@ -2537,8 +2542,17 @@ class TestLoadCheckpoint:
         mock_dist_ckpt.load_tensors_metadata.return_value = {legacy_key: Mock()}
         mock_dist_ckpt.load.return_value = {}
 
-        # Mock rerun state machine
-        mock_rerun_machine.return_value.load_state_dict = Mock()
+        # Use the real Core producer and consumer; mock only checkpoint I/O and ranks.
+        saving_rerun_machine = RerunStateMachine(mode=RerunMode.VALIDATE_RESULTS)
+        saving_rerun_machine.state = saved_rerun_state
+        with (
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.get_world_size", return_value=1),
+        ):
+            saved_rerun_payload = saving_rerun_machine.state_dict(data_iterator=None, ckpt_format="torch_dist")
+        saved_rerun_payload["sharded"] = saved_rerun_payload["sharded"].data
+        loading_rerun_machine = RerunStateMachine(mode=runtime_rerun_mode)
+        mock_rerun_machine.return_value = loading_rerun_machine
 
         # Mock run config to avoid file I/O
         mock_run_config = {
@@ -2559,7 +2573,7 @@ class TestLoadCheckpoint:
             "model": {"param": "value"},
             "optimizer": {"param_groups": []},  # Mock optimizer state
             "opt_param_scheduler": {"scheduler_state": "test"},  # Mock scheduler state
-            "rerun_state_machine": {"state": "test"},  # Mock rerun state
+            "rerun_state_machine": saved_rerun_payload,
             "rng_state": [
                 {
                     "random_rng_state": ("test", [1, 2, 3]),
@@ -2593,6 +2607,8 @@ class TestLoadCheckpoint:
 
         optimizer.load_state_dict.side_effect = load_optimizer
         with (
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.get_world_size", return_value=1),
             patch(
                 "megatron.bridge.training.checkpointing.hybrid_optimizer_state_loading",
                 side_effect=partial(load_context, "hybrid"),
@@ -2629,6 +2645,14 @@ class TestLoadCheckpoint:
             return
         assert events[5:] == ["sync optimizer"]
         sync_optimizer.assert_called_once_with(optimizer)
+
+        # Idle shards are still requested for strict loading, but must not restore
+        # the previous job's validation mode. Active reruns retain their mode.
+        assert mock_generate_state_dict.call_args.kwargs["rerun_state"] is not None
+        expected_rerun_mode = runtime_rerun_mode
+        if saved_rerun_state != RerunState.NOT_RUNNING_YET and runtime_rerun_mode != RerunMode.DISABLED:
+            expected_rerun_mode = RerunMode.VALIDATE_RESULTS
+        assert loading_rerun_machine.get_mode() == expected_rerun_mode
 
         # Verify results
         assert result[0] == 1000  # iteration
