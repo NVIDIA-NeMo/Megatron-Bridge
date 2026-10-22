@@ -117,6 +117,8 @@ def _validate_args(args: argparse.Namespace) -> None:
                 worker_values.append(args.megatron_path)
             if args.command == "export":
                 worker_values.append(args.hf_path)
+            if args.command == "import" and args.bagel_repo is not None:
+                worker_values.append(args.bagel_repo)
             if any(shlex.quote(value) != value for value in worker_values):
                 raise ValueError(
                     "Local GPU execution cannot pass model IDs or paths containing whitespace or shell "
