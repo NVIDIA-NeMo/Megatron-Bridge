@@ -1198,44 +1198,60 @@ class AutoBridge(Generic[MegatronModelT]):
                 "Ensure the model has PEFT adapters applied before calling save_hf_adapter()."
             )
 
+        # Rank 0 converts and writes alone, so a failure there has to reach every
+        # rank: the others would otherwise wait forever at the final collective.
+        # As in prepare_hf_dataset_sources, rank 0 broadcasts a status string,
+        # re-raises its own exception, and the other ranks raise a RuntimeError
+        # that names it.
+        write_error: Exception | None = None
         if is_rank0:
-            adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
-                raw_adapter_weights,
-                allow_serving_layout=allow_serving_layout,
-            )
-            rank_pattern = infer_rank_pattern_from_adapter_weights(
-                raw_adapter_weights,
-                default_rank=getattr(peft_config, "dim", 32),
-            )
-            del raw_adapter_weights
+            try:
+                adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
+                    raw_adapter_weights,
+                    allow_serving_layout=allow_serving_layout,
+                )
+                rank_pattern = infer_rank_pattern_from_adapter_weights(
+                    raw_adapter_weights,
+                    default_rank=getattr(peft_config, "dim", 32),
+                )
+                del raw_adapter_weights
 
-            save_dir = Path(path)
-            save_dir.mkdir(parents=True, exist_ok=True)
+                save_dir = Path(path)
+                save_dir.mkdir(parents=True, exist_ok=True)
 
-            if base_model_name_or_path is None:
-                base_model_name_or_path = str(
-                    getattr(self.hf_pretrained, "model_name_or_path", "")
-                    or getattr(self.hf_pretrained, "name_or_path", "")
+                if base_model_name_or_path is None:
+                    base_model_name_or_path = str(
+                        getattr(self.hf_pretrained, "model_name_or_path", "")
+                        or getattr(self.hf_pretrained, "name_or_path", "")
+                    )
+
+                target_modules = self._model_bridge._adapter_target_modules(module_adapter_keys)
+                adapter_config = build_adapter_config_dict(
+                    peft_config,
+                    target_modules=target_modules,
+                    target_parameters=target_parameters,
+                    base_model_name_or_path=base_model_name_or_path,
+                    rank_pattern=rank_pattern,
                 )
 
-            target_modules = self._model_bridge._adapter_target_modules(module_adapter_keys)
-            adapter_config = build_adapter_config_dict(
-                peft_config,
-                target_modules=target_modules,
-                target_parameters=target_parameters,
-                base_model_name_or_path=base_model_name_or_path,
-                rank_pattern=rank_pattern,
-            )
+                config_path = save_dir / "adapter_config.json"
+                with open(config_path, "w") as f:
+                    json.dump(adapter_config, f, indent=2)
 
-            config_path = save_dir / "adapter_config.json"
-            with open(config_path, "w") as f:
-                json.dump(adapter_config, f, indent=2)
-
-            weights_path = save_dir / "adapter_model.safetensors"
-            save_file(adapter_state, str(weights_path))
+                weights_path = save_dir / "adapter_model.safetensors"
+                save_file(adapter_state, str(weights_path))
+            except Exception as error:
+                write_error = error
 
         if dist.is_initialized():
-            dist.barrier()
+            status = [None if write_error is None else f"{type(write_error).__name__}: {write_error}"]
+            dist.broadcast_object_list(status, src=0)
+            if status[0] is not None:
+                if write_error is not None:
+                    raise write_error
+                raise RuntimeError(f"Rank zero failed to write the HF adapter: {status[0]}")
+        elif write_error is not None:
+            raise write_error
 
     def save_hf_pretrained(
         self,
