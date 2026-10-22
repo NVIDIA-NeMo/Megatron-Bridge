@@ -203,10 +203,8 @@ def test_gb200_fp8mx_deterministic_perf_recipe_keeps_nccl_ep() -> None:
     assert cfg.model.moe_flex_dispatcher_backend == base.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_use_grouped_tensor is base.model.moe_use_grouped_tensor
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
-    for key, value in base.env_vars.items():
-        assert cfg.env_vars[key] == value
-    for key, value in DETERMINISM_ENV_VARS.items():
-        assert cfg.env_vars[key] == value
+    # The inline env copy must stay in sync with the base recipe.
+    assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VARS}
 
 
 @pytest.mark.unit
