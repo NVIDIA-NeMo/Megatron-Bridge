@@ -294,7 +294,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Target layout: 128 H200 (16 nodes x 8), TP2/PP1/EP128/ETP1, DP64. Unverified at a public revision. An earlier H200 run of this command used a Bridge commit and an HF checkpoint revision that are not publicly available, so its results are not recorded; the command now names the public revision and has not been rerun on H200.
+        <p>Unverified at a public revision. The figures below come from an earlier H200 run of this command at a Bridge commit and an HF checkpoint revision that are not publicly available; the command now names the public revision and has not been rerun on H200. On 128 H200 (16 nodes x 8), TP2/PP1/EP128/ETP1, DP64, SP on, full recompute, GBS/MBS 256/1 (4 micro-batches per step) at 4,096 tokens and natural routing (fixed expert bias, no auxiliary loss), with BF16 gradient reduction and a precision-aware distributed optimizer (FP32 master weights, BF16 Adam moments). The run warm starts from the imported checkpoint on Beam-tokenized wikitext-103 with LR 1e-4 cosine to 1e-5 after 40 warmup steps and weight decay 0.1. All 100 steps are finite with no skipped or NaN iterations. Single-step LM loss varies by batch between 0.63 and 0.78, so the first and last steps are close; the 10-step mean falls from 0.734 (steps 1-10) to 0.685 (steps 91-100) while the gradient norm settles from 0.72 to about 0.2. All five metrics are recorded and the post-setup configuration persists. The full-state checkpoints at steps 50 and 100 are complete (128 distcp shards, 5.01 TB and 45,711 entries each); step 50 feeds the resume item.
 </p>
       </section>
     </article>
@@ -396,7 +396,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Target layout: 128 H200 (16 nodes x 8), TP8/PP2/EP64/ETP1, DP8. Unverified at a public revision. An earlier H200 run of this command used a Bridge commit and an HF checkpoint revision that are not publicly available, so its results are not recorded; the command now names the public revision and has not been rerun on H200.
+        <p>Unverified at a public revision. The figures below come from an earlier H200 run of this command at a Bridge commit and an HF checkpoint revision that are not publicly available; the command now names the public revision and has not been rerun on H200. On 128 H200 (16 nodes x 8), TP8/PP2/EP64/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2 with FP32 gradient reduction, FP32 master weights and FP32 Adam moments. Pad-8 offline packing is 99.59% efficient; Tulu 3 train[:10000] packs into 503 8K packs, so the 100 steps sample 800 packs (501 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,952,199 supervised tokens after label masking. LM loss is finite from 1.04323 to 0.7587349 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 128-shard weights-only iter_0000100 checkpoint (1.0 TB, 26,131 entries, model state only) is the one the export item consumes. An earlier run of the same command on the same packed data started from the same loss, ended at 0.7583156 and matched these throughput figures within 0.2%. The 120-minute collective timeout covers rank 0&#x27;s offline packing while the other ranks wait.
 </p>
       </section>
     </article>
@@ -498,7 +498,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Target layout: 128 H200 (16 nodes x 8), TP1/PP2/CP8/EP64/ETP1, DP8. Unverified at a public revision. An earlier H200 run of this command used a Bridge commit and an HF checkpoint revision that are not publicly available, so its results are not recorded; the command now names the public revision and has not been rerun on H200.
+        <p>Unverified at a public revision. The figures below come from an earlier H200 run of this command at a Bridge commit and an HF checkpoint revision that are not publicly available; the command now names the public revision and has not been rerun on H200. On 128 H200 (16 nodes x 8), TP1/PP2/CP8/EP64/ETP1 with all-to-all context parallelism, DP8, SP off, full recompute, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), with the SFT recipe&#x27;s FP32 gradient reduction, FP32 master weights and FP32 Adam moments. This item is outside the 8K v2 cohort: 65,536-token packs need more data, so it reads Tulu 3 train[:100000]. Pad-16 offline packing (2 x CP) is 99.96% efficient and yields 580 packs; the 30 steps sample 240 distinct packs whose 15,728,640 token slots contain 2,701,436 supervised tokens after label masking. LM loss is finite from 1.659422 to 0.7725405 with no skipped or NaN iterations, all five metrics are recorded and the post-setup configuration persists; the run saves no checkpoint.
 </p>
       </section>
     </article>
@@ -600,7 +600,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Target layout: 16 H200 (2 nodes x 8), TP2/PP1/EP16/ETP1, DP8. Unverified at a public revision. An earlier H200 run of this command used a Bridge commit and an HF checkpoint revision that are not publicly available, so its results are not recorded; the command now names the public revision and has not been rerun on H200.
+        <p>Unverified at a public revision. The figures below come from an earlier H200 run of this command at a Bridge commit and an HF checkpoint revision that are not publicly available; the command now names the public revision and has not been rerun on H200. On 16 H200 (2 nodes x 8), TP2/PP1/EP16/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2. Pad-2 offline packing is 99.65% efficient; Tulu 3 train[:10000] packs into 499 8K packs with Beam&#x27;s chat template, so the 100 steps sample 800 packs (497 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,992,654 supervised tokens after label masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_qkv (fused Q/K/V and attention output gate) and linear_proj is trainable. LM loss is finite from 1.190599 to 0.8183495 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 16-shard iter_0000100 adapter checkpoint holds all 208 expected adapter entries (52 attention layers x 2 projections x 2 LoRA matrices).
 </p>
       </section>
     </article>
