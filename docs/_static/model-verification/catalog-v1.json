@@ -6930,13 +6930,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-manual-forward-pass",
-          "expected_result": "Not verified at the pinned public revision. The published comparison read a separately saved native HF reference logits file that no card step produces, and the earlier pre-release-checkpoint comparison does not carry over to this revision.\n",
+          "expected_result": "The maintained comparison passed for this rectangular-image prompt on four GB200 GPUs using a separately saved native HF reference from the same checkpoint and inputs. The next token matches: 1784 (The). Cosine similarity is 0.999980. Maximum and mean absolute logit differences are 1.250000 and 0.216821. The input had 314 text tokens and 1160 vision patches. This establishes single-prompt functional correlation, not strict probability equality or comprehensive visual parity. Stronger image/video diagnostics are not all passing. The reference must be regenerated for any changed checkpoint; the blank public revision does not bind these results to a public release commit.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-09-23",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.manual_forward_pass",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "manual_forward_pass"
         },
@@ -7048,7 +7048,7 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-sft-h100",
-          "expected_result": "Completed 200 finite optimizer steps on 64 H100 GPUs with zero skipped or NaN iterations and complete checkpoints at steps 100 and 200, starting from the card's GPU import of the pinned revision. DataComp image-caption training uses sequence length 4096, GBS/MBS 1280/1, TP2/PP2/EP32/ETP1, natural (not forced) HybridEP routing with the recipe's expert capacity factor 1.1 and padded expert inputs (token dropping), full recompute, FP32 optimizer state and two shared MTP prediction depths at loss scale 0.3. The vision encoder is frozen; the language model and projection are trainable. Losses are the logged LM loss. Token rates are padded slots, not supervised-token counts. This verifies image-caption training, not video training, post-SFT export or full convergence.\n",
+          "expected_result": "Completed 200 finite optimizer steps on 64 H100 GPUs with zero skipped or NaN iterations and complete checkpoints at steps 100 and 200, starting from the card's GPU import of the pinned revision. DataComp image-caption training uses sequence length 4096, GBS/MBS 1280/1, TP2/PP2/EP32/ETP1, natural (not forced) HybridEP routing with the recipe's expert capacity factor 1.1 and padded expert inputs (token dropping), full recompute, FP32 optimizer state and two shared MTP prediction depths at loss scale 0.3. The vision encoder is frozen; the language model and projection are trainable. Losses are the logged LM loss. Token rates are padded slots, not supervised-token counts. Post-SFT export is checked separately. This verifies image-caption training, not video training or full convergence.\n",
           "hardware": "H100",
           "last_verified": "2026-10-21",
           "metrics": {
@@ -7099,7 +7099,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "2449c2fcd49741cfe5c112542b901d0c46a90d34",
+          "bridge_commit": "fb082ba947e6edfe0318587bdf2fd8679608aeac",
           "command_topologies": [
             {
               "expert_parallel": "2",
@@ -7123,13 +7123,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-sft-export-inference-h100",
-          "expected_result": "The H100 SFT dependency is verified at the pinned public revision. An export of its final checkpoint with this command ran out of GPU memory on four H100 GPUs, so export and the HF inference that follows are not verified at that revision.\n",
+          "expected_result": "Exported the final step-200 full-SFT checkpoint, retaining the native model package and reasoning-parser file. Strict Transformers reload checked missing, unexpected and mismatched keys, covered 1453 modules, and passed GPU-only placement on four H100 GPUs. Greedy generation stopped at EOS after exactly 7 tokens under the 32-token maximum. The literal completion was \"Losses of the two models\". Export used the leaf Bridge commit; subsequent HF inference used e2cf6cbb30f3c93d99e727f8a12c143324308012. This verifies export and one native HF image completion, not HF/Bridge numerical equality. Separate stronger post-SFT visual forward diagnostics have failures and are not reclassified as passing.\n",
           "hardware": "H100",
-          "last_verified": null,
+          "last_verified": "2026-09-23",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.H100",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft_export_inference"
         },
@@ -7340,7 +7340,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "nemotron-3.5-super-vl-120b-a12b",
       "source_card": "examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Model-level conversion and inference, H100 pretraining, SFT, PEFT and checkpoint resume, and GB200 SFT, post-SFT export and PEFT are verified at the public revision below. H100 post-SFT export and GB200 pretraining and resume are not verified at that revision. The model reuses the Omni image/video stack without audio and retains a separate temporal embedder. Training uses fixed-resolution images; inference exercises dynamic-resolution processing. This is bounded support verification, not a cross-model convergence comparison. The GB200 resume comparison is not passing. CPU conversion and long-context training are deferred. The companion card separately covers text-only workflows.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Refreshed verification uses the release-facing model name and the official container below. Model-level conversion and inference, H100 pretraining, SFT, PEFT and checkpoint resume, and GB200 SFT, post-SFT export and PEFT are re-verified at the public revision below. The model reuses the Omni image/video stack without audio and retains a separate temporal embedder. Training uses fixed-resolution images; inference exercises dynamic-resolution processing. This is bounded support verification, not a cross-model convergence comparison. Stronger visual parity diagnostics and the GB200 resume comparison are not all passing. CPU conversion and long-context training are deferred. The companion card separately covers text-only workflows.\n",
       "title": "nemotron_3_5_super_vl_120b_a12b"
     },
     {
@@ -7459,13 +7459,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-manual-forward-pass",
-          "expected_result": "Not verified at the pinned public revision. The published comparison read a separately saved native HF reference logits file that no card step produces, and the earlier pre-release-checkpoint comparison does not carry over to this revision.\n",
+          "expected_result": "The maintained public comparison passed on four GB200 GPUs with the native 22-token chat prompt and a separately saved native-VL HF no-media reference for the identical source weights and input. This compares that reference with the saved text-only Megatron checkpoint; standalone text HF reload is verified separately below. The next token matches: 16489 (Two). Cosine similarity is 0.999996; maximum and mean absolute logit differences are 0.500000 and 0.063002. Bash ANSI-C quoting preserves the native prompt's newline characters. This is single-prompt forward correlation, not strict probability equality, generation, or MTP forward verification. Regenerate the HF reference if the checkpoint changes. The public revision remains unbound.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-09-27",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.manual_forward_pass",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "manual_forward_pass"
         },
@@ -7565,19 +7565,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-sft-h100",
-          "expected_result": "An earlier run used a pre-release checkpoint that is not bound to the pinned public revision; it is not re-verified at that revision.\n",
+          "expected_result": "Completed a fresh-root continuation from the original complete step-250 checkpoint through step 500 after the reference run failed at final save. All 1250 loss comparisons across steps 251-500 passed the unchanged 1% plus 1e-6 bound. Metrics below describe only that continuation, not an uninterrupted 500-step execution. Uses the native Nemotron 3 Super SFT recipe on 64 H100 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.\n",
           "hardware": "H100",
-          "last_verified": null,
+          "last_verified": "2026-09-27",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.5672588,
+            "initial_loss": 0.6722764,
+            "last_10_steps_model_tflops_per_gpu_avg": 23.57,
+            "last_10_steps_step_time_ms_avg": 3792.22,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 270.02652799679345
           },
           "precision": "bf16",
           "source_pointer": "items.sft.H100",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft"
         },
@@ -7602,19 +7602,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-sft-gb200",
-          "expected_result": "Not verified at the pinned public revision. On 64 GB200 GPUs the published command stops while HybridEP initializes, before the first optimizer step: the reused Nemotron 3 Super H100 recipe sets an eight-rank HybridEP NVLink domain with multi-node NVLink disabled, which does not match four-GPU GB200 nodes. An earlier run used a pre-release checkpoint that is not bound to the pinned public revision.\n",
+          "expected_result": "Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super SFT recipe on 64 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-09-27",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.5676602,
+            "initial_loss": 0.5975891,
+            "last_10_steps_model_tflops_per_gpu_avg": 14.42,
+            "last_10_steps_step_time_ms_avg": 6013.67,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 170.2787149943379
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft"
         },
@@ -7643,13 +7643,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-sft-export-inference-h100",
-          "expected_result": "Its SFT dependency was trained from a pre-release checkpoint that is not bound to the pinned public revision; it is not re-verified at that revision.\n",
+          "expected_result": "Exported the final step-500 language checkpoint through its standalone native text source, retaining 42,683 language tensors including 1,040 MTP tensors and zero media tensors. The only config differences from the pretrained text source were initializer_range=0.014 and max_position_embeddings=2048, both checked against the saved training config. Strict native Transformers reload covered 862 modules and generated exactly 7 tokens, stopping at EOS before the 32-token maximum. The literal completion was \"Two plus two equals four.\". This validates full-model export and one greedy completion, not native HF MTP execution or broad numerical equivalence. The separate matched six-position forward comparison also passed without changing numerical tolerances.\n",
           "hardware": "H100",
-          "last_verified": null,
+          "last_verified": "2026-09-27",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.H100",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft_export_inference"
         },
@@ -7678,13 +7678,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-sft-export-inference-gb200",
-          "expected_result": "Not verified at the pinned public revision: its GB200 SFT dependency does not complete at that revision. An earlier run started from a pre-release checkpoint that is not bound to the pinned public revision.\n",
+          "expected_result": "Exported the final step-500 language checkpoint through its standalone native text source, retaining 42,683 language tensors including 1,040 MTP tensors and zero media tensors. The only config differences from the pretrained text source were initializer_range=0.014 and max_position_embeddings=2048, both checked against the saved training config. Strict native Transformers reload covered 862 modules and generated exactly 7 tokens, stopping at EOS before the 32-token maximum. The literal completion was \"Two plus two equals four.\". This validates full-model export and one greedy completion, not native HF MTP execution or broad numerical equivalence. The separate matched six-position forward comparison also passed without changing numerical tolerances.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-09-27",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft_export_inference"
         },
@@ -7792,19 +7792,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-peft-gb200",
-          "expected_result": "Not verified at the pinned public revision. On 16 GB200 GPUs the published command stops while HybridEP initializes, before the first optimizer step: the reused Nemotron 3 Super H100 recipe sets an eight-rank HybridEP NVLink domain with multi-node NVLink disabled, which does not match four-GPU GB200 nodes. An earlier run used a pre-release checkpoint that is not bound to the pinned public revision.\n",
+          "expected_result": "Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super PEFT recipe on 16 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. LoRA rank/alpha 32/32 targets native language projections with zero dropout. Native adapter and trained router-bias buffers reloaded exactly; full merge, strict HF reload and one matched numerical fixture passed. Standalone HF adapter export does not preserve trained router-bias buffers. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-09-27",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.6631947,
+            "initial_loss": 0.6392546,
+            "last_10_steps_model_tflops_per_gpu_avg": 12.72,
+            "last_10_steps_step_time_ms_avg": 13720.5,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 149.26569731423783
           },
           "precision": "bf16",
           "source_pointer": "items.peft.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "peft"
         },
@@ -7860,7 +7860,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "nemotron-3.5-super-vl-120b-a12b-text-only",
       "source_card": "examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b-text-only/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This companion card covers importing only language and MTP weights from the VL checkpoint, reusing Nemotron 3 Super text recipes, and exporting a standalone NemotronHForCausalLM checkpoint. It excludes all media encoders, projectors, and video embedding weights. The full-VL card is separate. Model-level conversion and inference, and H100 PEFT, are verified at the public revision below. At that revision the published GB200 SFT and PEFT commands stop while HybridEP initializes, so they and GB200 post-SFT export remain unverified. H100 SFT and its export remain unverified because earlier runs used a pre-release checkpoint that is not bound to that revision.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This companion card covers importing only language and MTP weights from the VL checkpoint, reusing Nemotron 3 Super text recipes, and exporting a standalone NemotronHForCausalLM checkpoint. It excludes all media encoders, projectors, and video embedding weights. The full-VL card is separate. SFT and PEFT use the prepared full Tulu 3 training split: 892,375 examples after the native 95/5 split, data and packing seed 5678, model seed 1234, 2048-token offline packs aligned to eight tokens, and assistant-only loss. H100 and GB200 use byte-identical packed training and validation files; their training metrics count padded token slots, not supervised tokens. Model-level conversion and inference, and H100 PEFT, are re-verified at the public revision below. Refreshed SFT and PEFT, dependent export, merge, and reload checks are recorded for H100 and GB200.\n",
       "title": "nemotron_3_5_super_vl_120b_a12b_text_only"
     },
     {

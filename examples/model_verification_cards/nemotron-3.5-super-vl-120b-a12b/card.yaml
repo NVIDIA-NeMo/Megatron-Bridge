@@ -6,15 +6,15 @@ summary: >
   Performance disclaimer: this card does not record a canonical pretrain
   performance result; reported timing and throughput metrics are functional
   verification observations, not standalone optimized performance results.
-  Model-level conversion and inference, H100 pretraining, SFT, PEFT and
-  checkpoint resume, and GB200 SFT, post-SFT export and PEFT are verified at
-  the public revision below. H100 post-SFT export and GB200 pretraining and
-  resume are not verified at that revision.
+  Refreshed verification uses the release-facing model name and the official
+  container below. Model-level conversion and inference, H100 pretraining,
+  SFT, PEFT and checkpoint resume, and GB200 SFT, post-SFT export and PEFT
+  are re-verified at the public revision below.
   The model reuses the Omni image/video stack without audio and retains a
   separate temporal embedder. Training uses fixed-resolution images;
   inference exercises dynamic-resolution processing. This is bounded support
-  verification, not a cross-model convergence comparison. The GB200 resume
-  comparison is not passing.
+  verification, not a cross-model convergence comparison. Stronger visual
+  parity diagnostics and the GB200 resume comparison are not all passing.
   CPU conversion and long-context training are deferred. The companion card
   separately covers text-only workflows.
 verification_index:
@@ -22,15 +22,15 @@ verification_index:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
+      - manual_forward_pass
       - inference
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - manual_forward_pass
   training:
     H100:
-      verified: [pretrain, sft, peft, checkpoint_resume]
-      unverified: [sft_export_inference, sft_long_context]
+      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [sft_long_context]
     GB200:
       verified: [sft, sft_export_inference, peft]
       unverified: [pretrain, sft_long_context, checkpoint_resume]
@@ -104,7 +104,7 @@ items:
       Exact conversion is separate from forward-logit correlation.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4
@@ -115,12 +115,18 @@ items:
       --hf-logits-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/hf-reference.pt
       --image_path docs/images/mtp_loss.png --prompt "Describe this image."
       --tp 1 --pp 1 --ep 4 --etp 1 --trust-remote-code
-    last_verified: null
+    last_verified: 2026-09-23
     expected_result: >
-      Not verified at the pinned public revision. The published comparison
-      read a separately saved native HF reference logits file that no card
-      step produces, and the earlier pre-release-checkpoint comparison does
-      not carry over to this revision.
+      The maintained comparison passed for this rectangular-image prompt on
+      four GB200 GPUs using a separately saved native HF reference from the
+      same checkpoint and inputs. The next token matches: 1784 (The).
+      Cosine similarity is 0.999980. Maximum and mean absolute logit
+      differences are 1.250000 and 0.216821. The input had 314 text tokens
+      and 1160 vision patches. This establishes single-prompt functional
+      correlation, not strict probability equality or comprehensive visual
+      parity. Stronger image/video diagnostics are not all passing. The
+      reference must be regenerated for any changed checkpoint; the blank
+      public revision does not bind these results to a public release commit.
 
   inference:
     status: verified
@@ -255,8 +261,8 @@ items:
         0.3. The vision encoder is
         frozen; the language model and projection are trainable. Losses are the
         logged LM loss. Token rates are padded slots, not supervised-token
-        counts. This verifies image-caption training, not video training,
-        post-SFT export or full convergence.
+        counts. Post-SFT export is checked separately. This verifies
+        image-caption training, not video training or full convergence.
 
     GB200:
       status: verified
@@ -302,8 +308,9 @@ items:
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: fb082ba947e6edfe0318587bdf2fd8679608aeac  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -322,12 +329,19 @@ items:
           --max-new-tokens 32 --chat-template --disable-thinking
           --separate-image-processing --trust-remote-code
           --device cuda --device-map balanced --dtype bfloat16 --require-gpu-only
-      last_verified: null
+      last_verified: 2026-09-23
       expected_result: >
-        The H100 SFT dependency is verified at the pinned public revision. An
-        export of its final checkpoint with this command ran out of GPU memory
-        on four H100 GPUs, so export and the HF inference that follows are not
-        verified at that revision.
+        Exported the final step-200 full-SFT checkpoint, retaining the native
+        model package and reasoning-parser file. Strict Transformers reload
+        checked missing, unexpected and mismatched keys, covered 1453 modules,
+        and passed GPU-only placement on four H100 GPUs. Greedy generation
+        stopped at EOS after exactly 7 tokens under the 32-token maximum.
+        The literal completion was "Losses of the two models". Export used
+        the leaf Bridge commit; subsequent HF inference used
+        e2cf6cbb30f3c93d99e727f8a12c143324308012.
+        This verifies export and one native HF image completion, not
+        HF/Bridge numerical equality. Separate stronger post-SFT visual
+        forward diagnostics have failures and are not reclassified as passing.
 
     GB200:
       status: verified
