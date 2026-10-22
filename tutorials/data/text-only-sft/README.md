@@ -73,12 +73,15 @@ The generic launcher has a local-data preset:
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_sft_1gpu_h100_bf16_config \
     --dataset local-jsonl \
+    train.global_batch_size=4 \
     dataset.dataset_root=/tmp/bridge-text-only-sft \
     dataset.seq_length=4096 \
     checkpoint.pretrained_checkpoint=/checkpoints/base-model
 ```
 
 `model.seq_length` and `dataset.seq_length` must match. SFT and PEFT also need pretrained weights unless resuming a complete native checkpoint.
+
+The example data has four training rows, so the command lowers the recipe's global batch size of 8 to 4. Drop that override for larger datasets.
 
 ## Blend local JSONL sources
 
