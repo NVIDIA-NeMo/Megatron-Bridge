@@ -353,15 +353,20 @@ def _save_modelopt_quantizer_sidecars(
     stays a plain checkpoint.
     """
     import yaml
+    from pydantic import BaseModel
 
     class _RecipeDumper(yaml.SafeDumper):
         # Spell out every entry: anchors would make an edit of one quantizer change all its aliases.
         def ignore_aliases(self, data):
             return True
 
-    # Quantizer states can record runtime dtypes and shapes; store dtypes by name, shapes as lists.
+    # Quantizer states can record runtime dtypes and shapes; store dtypes by name, shapes as lists,
+    # and config objects (e.g. a disabled RotateConfig) as plain mappings.
     _RecipeDumper.add_representer(torch.dtype, lambda dumper, dtype: dumper.represent_str(str(dtype)))
     _RecipeDumper.add_representer(torch.Size, lambda dumper, size: dumper.represent_list(list(size)))
+    _RecipeDumper.add_multi_representer(
+        BaseModel, lambda dumper, config: dumper.represent_dict(config.model_dump(mode="json"))
+    )
 
     state_path = path / MODELOPT_QUANTIZER_STATE_FILE
     recipe_path = path / MODELOPT_QUANTIZER_RECIPE_FILE
@@ -1505,7 +1510,14 @@ class AutoBridge(Generic[MegatronModelT]):
         # registers its Megatron-Bridge plugin hooks.
         from modelopt.torch.quantization.utils import is_quantized
 
-        if is_quantized(model_instance):
+        # Building the recipe is collective, so decide on every rank from all chunks: a pipeline
+        # stage can hold no quantizers (e.g. only the embedding).
+        quantized = any(is_quantized(chunk) for chunk in model)
+        if is_distributed:
+            per_rank = [None] * dist.get_world_size()
+            dist.all_gather_object(per_rank, quantized)
+            quantized = any(per_rank)
+        if quantized:
             quantizer_recipe = bridge.build_modelopt_quantizer_recipe(self.hf_pretrained, model)
             quant_tensors = {}
 

@@ -2768,14 +2768,31 @@ class TestAutoBridge:
 
             assert call_kwargs["additional_files"] is None
 
+    @pytest.mark.parametrize("other_rank_quantized", [False, True])
     @patch("torch.distributed.barrier")
     @patch("torch.distributed.is_available", return_value=True)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.get_rank", return_value=0)
+    @patch("torch.distributed.get_world_size", return_value=2)
     def test_save_hf_weights_no_sidecar_when_not_quantized(
-        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier, tmp_path
+        self,
+        mock_world_size,
+        mock_get_rank,
+        mock_is_init,
+        mock_is_avail,
+        mock_barrier,
+        other_rank_quantized,
+        tmp_path,
     ):
-        """A model without quantizers writes no sidecars and removes those of an earlier export."""
+        """A model without quantizers writes no sidecars and removes those of an earlier export.
+
+        The recipe is still built (a collective) when another rank, e.g. a later pipeline stage,
+        holds quantizers.
+        """
+
+        def all_gather_object(per_rank, quantized):
+            per_rank[:] = [quantized, other_rank_quantized]
+
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
@@ -2803,9 +2820,11 @@ class TestAutoBridge:
                 return_value=False,
             ),
             patch("torch.save") as mock_torch_save,
+            patch("torch.distributed.all_gather_object", side_effect=all_gather_object),
         ):
             mock_model_bridge = Mock()
             mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
+            mock_model_bridge.build_modelopt_quantizer_recipe.return_value = {}
             mock_model_bridge_prop.return_value = mock_model_bridge
 
             mock_source.save_generator = Mock(return_value=set())
@@ -2824,6 +2843,7 @@ class TestAutoBridge:
             )
             mock_torch_save.assert_not_called()
             assert not any(sidecar.exists() for sidecar in stale_sidecars)
+            assert mock_model_bridge.build_modelopt_quantizer_recipe.called == other_rank_quantized
 
     @patch("torch.distributed.barrier")
     @patch("torch.distributed.is_available", return_value=True)
@@ -2863,6 +2883,8 @@ class TestAutoBridge:
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
+            patch("torch.distributed.get_world_size", return_value=1),
+            patch("torch.distributed.all_gather_object", side_effect=lambda out, obj: out.__setitem__(0, obj)),
         ):
             mock_model_bridge_prop.return_value = mock_model_bridge
             bridge.save_hf_weights([wrapper], tmp_path)
@@ -2872,12 +2894,15 @@ class TestAutoBridge:
 
 
 def test_save_modelopt_quantizer_sidecars_spells_out_states_and_drops_stale_files(tmp_path):
+    from modelopt.torch.quantization.config import RotateConfig
+
     nvfp4 = {
         "_disabled": False,
         "_num_bits": (2, 1),
         "_block_sizes": {-1: 16, "scale_bits": (4, 3)},
         "_input_dtype": torch.bfloat16,
         "_shape": torch.Size([2, 3]),
+        "_rotate": RotateConfig(enable=False),
     }
     recipe = {f"model.layers.0.self_attn.{p}_proj.input_quantizer": nvfp4 for p in "qkv"}
     tensors = {f"{name}._amax": torch.tensor(1.5) for name in recipe}
@@ -2895,6 +2920,7 @@ def test_save_modelopt_quantizer_sidecars_spells_out_states_and_drops_stale_file
     assert len({id(entry) for entry in quantizers.values()}) == len(recipe)
     assert all(entry["_input_dtype"] == "torch.bfloat16" for entry in quantizers.values())
     assert all(entry["_shape"] == [2, 3] for entry in quantizers.values())
+    assert all(entry["_rotate"]["enable"] is False for entry in quantizers.values())
 
     _save_modelopt_quantizer_sidecars(tmp_path, {}, {})
     assert not (tmp_path / "quantizer_state.pth").exists()
