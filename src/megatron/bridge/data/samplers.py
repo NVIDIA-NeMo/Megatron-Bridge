@@ -43,6 +43,7 @@ def build_pretraining_data_loader(
     pin_memory: bool = True,
     persistent_workers: bool = False,
     prefetch_factor: int | None = None,
+    multiprocessing_context: str | None = None,
     data_parallel_rank: int = 0,
     data_parallel_size: int = 1,
     drop_last: Optional[bool] = True,
@@ -70,6 +71,8 @@ def build_pretraining_data_loader(
         persistent_workers: Whether to use persistent workers.
         prefetch_factor: Number of batches each worker loads in advance. None keeps PyTorch's
                          default. Ignored when num_workers is 0.
+        multiprocessing_context: Start method for worker processes ("fork", "spawn", "forkserver").
+                                 None keeps PyTorch's default. Ignored when num_workers is 0.
         data_parallel_rank: Rank of the current GPU in the data parallel group.
         data_parallel_size: Total number of GPUs in the data parallel group.
         drop_last: Whether to drop last incomplete batch.
@@ -144,6 +147,8 @@ def build_pretraining_data_loader(
         maybe_worker_init_fn = functools.partial(_initialize_worker, worker_init_fn=worker_init_fn)
         if prefetch_factor is not None:
             worker_kwargs["prefetch_factor"] = prefetch_factor
+        if multiprocessing_context is not None:
+            worker_kwargs["multiprocessing_context"] = multiprocessing_context
 
     # Torch dataloader.
     return DataLoader(
