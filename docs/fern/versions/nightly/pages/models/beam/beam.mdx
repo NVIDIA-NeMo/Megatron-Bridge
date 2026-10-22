@@ -301,7 +301,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-21</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-22</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
@@ -316,15 +316,15 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>14,780.810 ms</dd>
+            <dd>7,899.670 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>154.330 TFLOP/s/GPU</dd>
+            <dd>288.030 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,108.464 tokens/s/GPU</dd>
+            <dd>2,074.011 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -335,12 +335,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe beam_pretrain_64gpu_gb200_bf16_config --mode pretrain --max_steps 100 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --dataset megatron-indexed --seq_length 4096 --warmup_iters 40 model.transformer.cuda_graph_impl=none &#x27;model.transformer.recompute_modules=[moe]&#x27; &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_beam_text_document&quot;],null]&#x27; &#x27;dataset.split=&quot;100,0,0&quot;&#x27; dataset.random_seed=1234 rng.seed=1234 dataset.path_to_cache=work/cache/beam-gb200/wikitext103 dataset.num_workers=8 tokenizer.tokenizer_model=reflection/Beam-1.0-501B-A23B &#x27;tokenizer.hf_tokenizer_kwargs=&#123;revision:&quot;06641076793dad51b8907f7eb2a14f4e08fd3ec8&quot;&#125;&#x27; checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false --save_dir work/model-verification/beam/gb200-pretrain/checkpoints --save_interval 50 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=1000 logger.log_interval=1 logger.log_throughput=true logger.log_throughput_to_tensorboard=true logger.wandb_project=null logger.tensorboard_dir=work/model-verification/beam/gb200-pretrain/tensorboard logger.save_config_filepath=work/model-verification/beam/gb200-pretrain/ConfigContainer.yaml dist.distributed_timeout_minutes=30</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe beam_pretrain_64gpu_gb200_bf16_config --mode pretrain --max_steps 100 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --dataset megatron-indexed --seq_length 4096 --warmup_iters 40 +env_vars.NCCL_MAX_P2P_NCHANNELS=1 &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_beam_text_document&quot;],null]&#x27; &#x27;dataset.split=&quot;100,0,0&quot;&#x27; dataset.random_seed=1234 rng.seed=1234 dataset.path_to_cache=work/cache/beam-gb200/wikitext103 dataset.num_workers=8 tokenizer.tokenizer_model=reflection/Beam-1.0-501B-A23B &#x27;tokenizer.hf_tokenizer_kwargs=&#123;revision:&quot;06641076793dad51b8907f7eb2a14f4e08fd3ec8&quot;&#125;&#x27; checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false --save_dir work/model-verification/beam/gb200-pretrain/checkpoints --save_interval 50 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=1000 logger.log_interval=1 logger.log_throughput=true logger.log_throughput_to_tensorboard=true logger.wandb_project=null logger.tensorboard_dir=work/model-verification/beam/gb200-pretrain/tensorboard logger.save_config_filepath=work/model-verification/beam/gb200-pretrain/ConfigContainer.yaml dist.distributed_timeout_minutes=30</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Using NeMo 26.10 RC5 with Transformers 5.20.1 at the recorded Bridge commit. On 64 GB200 (16 nodes x 4) in one NVLink domain, TP4/PP1/CP1/EP64/ETP1, DP16, SP on, GBS/MBS 256/1 and 16 micro-batches per update. HybridEP uses 32 communication and preprocessing SMs. The command turns off the recipe&#x27;s attention/router CUDA graphs and recomputes whole MoE layers: with the recipe defaults, the step-50 checkpoint save leaves rank 0 without GPU memory for step 51. These are execution-only changes; every one of the 100 logged losses equals the recipe-default run of the same workload. Warm-starts from the card&#x27;s GPU-imported checkpoint of the public revision on Beam-tokenized WikiText-103 (125,410,048 tokens, 1,165,029 documents), with LR 1e-4 cosine to 1e-5, 40 warmup steps and effective weight decay 0.033. This is bounded support verification outside the default RP2/GBS1024 convergence cohort. All 100 updates are finite with zero skipped/NaN updates; first/last ten-update mean losses are 1.1827501/1.0397604. The post-setup configuration persists, and the full-state checkpoints at steps 50 and 100 are complete (64 distcp shards and 6.4 TB each); step 50 feeds the resume item. Throughput is well below the approximate 400 model TFLOP/s/GPU BF16 GB200 guidance; this is not a performance benchmark.</p>
+        <p>Using NeMo 26.10 RC5 with Transformers 5.20.1 at the recorded Bridge commit. On 64 GB200 (16 nodes x 4) in one NVLink domain, TP4/PP1/CP1/EP64/ETP1, DP16, SP on, GBS/MBS 256/1 and 16 micro-batches per update. HybridEP uses 32 communication and preprocessing SMs. Attention/router CUDA graphs and selective moe_act recomputation are active. The command sets NCCL_MAX_P2P_NCHANNELS=1 through the config&#x27;s env_vars: with NCCL&#x27;s default point-to-point channel count, the step-50 checkpoint save&#x27;s rank-0 coordination allocates NCCL buffers that leave rank 0 without GPU memory for step 51. This is an execution-only change; every one of the 100 logged losses equals a recipe-default run of the same workload without checkpoint saves. Warm-starts from the card&#x27;s GPU-imported checkpoint of the public revision on Beam-tokenized WikiText-103 (125,410,048 tokens, 1,165,029 documents), with LR 1e-4 cosine to 1e-5, 40 warmup steps and effective weight decay 0.033. This is bounded support verification outside the default RP2/GBS1024 convergence cohort. All 100 updates are finite with zero skipped/NaN updates; first/last ten-update mean losses are 1.1827501/1.0397604. The post-setup configuration persists, and the full-state checkpoints at steps 50 and 100 are complete (64 distcp shards and 6.4 TB each); step 50 feeds the resume item. Throughput is well below the approximate 400 model TFLOP/s/GPU BF16 GB200 guidance; this is not a performance benchmark.</p>
       </section>
     </article>
     <article id="beam-sft-h200" class="verification-model-detail" data-entry-detail="beam-sft-h200" tabindex="-1">

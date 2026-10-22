@@ -24,9 +24,11 @@ summary: >
   environment with Megatron-Core 8442db193ced81584c2e94faa352ec7307d18d83, and every warm-started training leaf loads
   the checkpoint written by the card's GPU import. Pretraining, full SFT and LoRA use the GB200 library recipes with
   HybridEP within one NVLink domain and FP32 gradients, master parameters and Adam moments. The pretrain reference
-  saves full-state checkpoints at steps 50 and 100 and resumes exactly from step 50; to leave room for the save it
-  runs without the recipe's CUDA graphs and recomputes whole MoE layers, and its losses equal the recipe-default run's
-  at every step. Long-context SFT runs the H200 SFT recipe's long-context layout unchanged on 32 x 4 GB200. The SFT
+  saves full-state checkpoints at steps 50 and 100 and resumes exactly from step 50. It keeps the recipe's CUDA graphs
+  and selective recompute and sets NCCL_MAX_P2P_NCHANNELS=1 through the config's env_vars so that the save's rank-0
+  coordination leaves memory for the next step; its losses equal those of a recipe-default run without checkpoint
+  saves at every step. Long-context SFT runs the H200 SFT recipe's long-context layout unchanged on 32 x 4 GB200.
+  The SFT
   export reloads in Transformers only with the model's tensor-parallel plan across 2 x 4 GB200; one 4-GPU node runs
   out of host memory. The H200 training runs used a recorded checkpoint revision that is no longer publicly
   resolvable; the historical metrics do not establish identical results for the public weights. The base container
@@ -216,12 +218,15 @@ items:
       bridge_commit: aedba7f32e8f6bb43105e8710167ed08668ce4c8  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
+        cuda_graph:
+          implementation: transformer_engine
+          scopes: [attn, moe_router]
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
         --recipe beam_pretrain_64gpu_gb200_bf16_config --mode pretrain --max_steps 100
         --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000
         --dataset megatron-indexed --seq_length 4096 --warmup_iters 40
-        model.transformer.cuda_graph_impl=none 'model.transformer.recompute_modules=[moe]'
+        +env_vars.NCCL_MAX_P2P_NCHANNELS=1
         'dataset.blend=[["work/data/wikitext103/wikitext103_beam_text_document"],null]'
         'dataset.split="100,0,0"' dataset.random_seed=1234 rng.seed=1234
         dataset.path_to_cache=work/cache/beam-gb200/wikitext103 dataset.num_workers=8
@@ -235,24 +240,26 @@ items:
         logger.wandb_project=null logger.tensorboard_dir=work/model-verification/beam/gb200-pretrain/tensorboard
         logger.save_config_filepath=work/model-verification/beam/gb200-pretrain/ConfigContainer.yaml
         dist.distributed_timeout_minutes=30
-      last_verified: 2026-10-21
+      last_verified: 2026-10-22
       metrics:
         initial_loss: 1.226944
         final_loss: 1.045373
-        last_10_steps_step_time_ms_avg: 14780.81
-        last_10_steps_model_tflops_per_gpu_avg: 154.33
-        last_10_steps_tokens_per_second_per_gpu_avg: 1108.464286
+        last_10_steps_step_time_ms_avg: 7899.67
+        last_10_steps_model_tflops_per_gpu_avg: 288.03
+        last_10_steps_tokens_per_second_per_gpu_avg: 2074.010687
       expected_result: >
-        Using NeMo 26.10 RC5 with Transformers 5.20.1 at the recorded Bridge commit. On 64 GB200 (16 nodes x
-        4) in one NVLink domain, TP4/PP1/CP1/EP64/ETP1, DP16, SP on, GBS/MBS 256/1 and 16 micro-batches per
-        update. HybridEP uses 32 communication and preprocessing SMs. The command turns off the recipe's
-        attention/router CUDA graphs and recomputes whole MoE layers: with the recipe defaults, the step-50
-        checkpoint save leaves rank 0 without GPU memory for step 51. These are execution-only changes; every
-        one of the 100 logged losses equals the recipe-default run of the same workload. Warm-starts from the
+        Using NeMo 26.10 RC5 with Transformers 5.20.1 at the recorded Bridge commit. On 64 GB200 (16 nodes x 4)
+        in one NVLink domain, TP4/PP1/CP1/EP64/ETP1, DP16, SP on, GBS/MBS 256/1 and 16 micro-batches per update.
+        HybridEP uses 32 communication and preprocessing SMs. Attention/router CUDA graphs and selective moe_act
+        recomputation are active. The command sets NCCL_MAX_P2P_NCHANNELS=1 through the config's env_vars: with
+        NCCL's default point-to-point channel count, the step-50 checkpoint save's rank-0 coordination allocates
+        NCCL buffers that leave rank 0 without GPU memory for step 51. This is an execution-only change; every
+        one of the 100 logged losses equals a recipe-default run of the same workload without checkpoint saves.
+        Warm-starts from the
         card's GPU-imported checkpoint of the public revision on Beam-tokenized WikiText-103 (125,410,048
         tokens, 1,165,029 documents), with LR 1e-4 cosine to 1e-5, 40 warmup steps and effective weight decay
-        0.033. This is bounded support verification outside the default RP2/GBS1024 convergence cohort. All
-        100 updates are finite with zero skipped/NaN updates; first/last ten-update mean losses are
+        0.033. This is bounded support verification outside the default RP2/GBS1024 convergence cohort. All 100
+        updates are finite with zero skipped/NaN updates; first/last ten-update mean losses are
         1.1827501/1.0397604. The post-setup configuration persists, and the full-state checkpoints at steps 50
         and 100 are complete (64 distcp shards and 6.4 TB each); step 50 feeds the resume item. Throughput is
         well below the approximate 400 model TFLOP/s/GPU BF16 GB200 guidance; this is not a performance
@@ -665,7 +672,7 @@ items:
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
         --recipe beam_pretrain_64gpu_gb200_bf16_config --mode pretrain --max_steps 100
         --dataset megatron-indexed --seq_length 4096 --warmup_iters 40
-        model.transformer.cuda_graph_impl=none 'model.transformer.recompute_modules=[moe]'
+        +env_vars.NCCL_MAX_P2P_NCHANNELS=1
         'dataset.blend=[["work/data/wikitext103/wikitext103_beam_text_document"],null]'
         'dataset.split="100,0,0"' dataset.random_seed=1234 rng.seed=1234
         dataset.path_to_cache=work/cache/beam-gb200/wikitext103 dataset.num_workers=8
@@ -679,13 +686,13 @@ items:
         logger.wandb_project=null logger.tensorboard_dir=work/model-verification/beam/gb200-pretrain/tensorboard
         logger.save_config_filepath=work/model-verification/beam/gb200-pretrain-resume/ConfigContainer.yaml
         dist.distributed_timeout_minutes=30
-      last_verified: 2026-10-21
+      last_verified: 2026-10-22
       metrics:
         initial_loss: 1.052693
         final_loss: 1.045373
-        last_10_steps_step_time_ms_avg: 15499.35
-        last_10_steps_model_tflops_per_gpu_avg: 146.4
-        last_10_steps_tokens_per_second_per_gpu_avg: 1057.076587
+        last_10_steps_step_time_ms_avg: 8440.4
+        last_10_steps_model_tflops_per_gpu_avg: 271.4
+        last_10_steps_tokens_per_second_per_gpu_avg: 1941.14023
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
