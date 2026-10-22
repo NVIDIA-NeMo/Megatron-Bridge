@@ -10,9 +10,10 @@ summary: >
   standalone NemotronHForCausalLM checkpoint. It excludes all media encoders,
   projectors, and video embedding weights. The full-VL card is separate.
   Model-level conversion and inference, and H100 PEFT, are verified at the
-  public revision below. Earlier SFT, GB200 PEFT and export runs used a
-  pre-release checkpoint that is not bound to that revision and remain
-  unverified.
+  public revision below. At that revision the published GB200 SFT and PEFT
+  commands stop while HybridEP initializes, so they and GB200 post-SFT export
+  remain unverified. H100 SFT and its export remain unverified because earlier
+  runs used a pre-release checkpoint that is not bound to that revision.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, inference]
@@ -239,8 +240,12 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        An earlier run used a pre-release checkpoint that is not bound to the
-        pinned public revision; it is not re-verified at that revision.
+        Not verified at the pinned public revision. On 64 GB200 GPUs the
+        published command stops while HybridEP initializes, before the first
+        optimizer step: the reused Nemotron 3 Super H100 recipe sets an
+        eight-rank HybridEP NVLink domain with multi-node NVLink disabled,
+        which does not match four-GPU GB200 nodes. An earlier run used a
+        pre-release checkpoint that is not bound to the pinned public revision.
   sft_export_inference:
     H100:
       status: unverified
@@ -289,9 +294,9 @@ items:
           --dtype bfloat16 --require-gpu-only
       last_verified: null
       expected_result: >
-        Its SFT dependency was trained from a pre-release checkpoint that is not
-        bound to the pinned public revision; it is not re-verified at that
-        revision.
+        Not verified at the pinned public revision: its GB200 SFT dependency
+        does not complete at that revision. An earlier run started from a
+        pre-release checkpoint that is not bound to the pinned public revision.
   sft_long_context:
     H100:
       status: unverified
@@ -414,8 +419,12 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        An earlier run used a pre-release checkpoint that is not bound to the
-        pinned public revision; it is not re-verified at that revision.
+        Not verified at the pinned public revision. On 16 GB200 GPUs the
+        published command stops while HybridEP initializes, before the first
+        optimizer step: the reused Nemotron 3 Super H100 recipe sets an
+        eight-rank HybridEP NVLink domain with multi-node NVLink disabled,
+        which does not match four-GPU GB200 nodes. An earlier run used a
+        pre-release checkpoint that is not bound to the pinned public revision.
   checkpoint_resume:
     H100:
       status: unverified

@@ -411,7 +411,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>An earlier run used a pre-release checkpoint that is not bound to the pinned public revision; it is not re-verified at that revision.
+        <p>Not verified at the pinned public revision. On 64 GB200 GPUs the published command stops while HybridEP initializes, before the first optimizer step: the reused Nemotron 3 Super H100 recipe sets an eight-rank HybridEP NVLink domain with multi-node NVLink disabled, which does not match four-GPU GB200 nodes. An earlier run used a pre-release checkpoint that is not bound to the pinned public revision.
 </p>
       </section>
     </article>
@@ -603,7 +603,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>An earlier run used a pre-release checkpoint that is not bound to the pinned public revision; it is not re-verified at that revision.
+        <p>Not verified at the pinned public revision. On 16 GB200 GPUs the published command stops while HybridEP initializes, before the first optimizer step: the reused Nemotron 3 Super H100 recipe sets an eight-rank HybridEP NVLink domain with multi-node NVLink disabled, which does not match four-GPU GB200 nodes. An earlier run used a pre-release checkpoint that is not bound to the pinned public revision.
 </p>
       </section>
     </article>

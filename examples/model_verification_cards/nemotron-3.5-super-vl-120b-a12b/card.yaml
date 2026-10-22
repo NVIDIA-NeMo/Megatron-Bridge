@@ -6,9 +6,10 @@ summary: >
   Performance disclaimer: this card does not record a canonical pretrain
   performance result; reported timing and throughput metrics are functional
   verification observations, not standalone optimized performance results.
-  Model-level conversion and inference, and H100 pretraining, SFT, PEFT and
-  checkpoint resume, are verified at the public revision below. Post-SFT
-  export and the GB200 training leaves are not verified at that revision.
+  Model-level conversion and inference, H100 pretraining, SFT, PEFT and
+  checkpoint resume, and GB200 SFT, post-SFT export and PEFT are verified at
+  the public revision below. H100 post-SFT export and GB200 pretraining and
+  resume are not verified at that revision.
   The model reuses the Omni image/video stack without audio and retains a
   separate temporal embedder. Training uses fixed-resolution images;
   inference exercises dynamic-resolution processing. This is bounded support
@@ -31,7 +32,8 @@ verification_index:
       verified: [pretrain, sft, peft, checkpoint_resume]
       unverified: [sft_export_inference, sft_long_context]
     GB200:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [sft, sft_export_inference, peft]
+      unverified: [pretrain, sft_long_context, checkpoint_resume]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16
   hf_revision: 1f8953f7f0935358e3605150d22bc15df062061c  # pragma: allowlist secret
@@ -257,8 +259,9 @@ items:
         post-SFT export or full convergence.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 19167581c7c25d5b1a582f0b2f3357355b6b1f07  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -277,16 +280,25 @@ items:
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: null
+      last_verified: 2026-10-21
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 3.465676
+        final_loss: 1.938715
+        last_10_steps_step_time_ms_avg: 43286.69
+        last_10_steps_model_tflops_per_gpu_avg: 158.44
+        last_10_steps_tokens_per_second_per_gpu_avg: 1892.4985948336544
       expected_result: >
-        An earlier run used a pre-release checkpoint that is not bound to the
-        pinned public revision; it is not re-verified at that revision.
+        Completed 200 finite optimizer steps on 64 GB200 GPUs with zero skipped
+        or NaN iterations and complete checkpoints at steps 100 and 200, starting
+        from the card's GPU import of the pinned revision. DataComp image-caption
+        training uses sequence length 4096, GBS/MBS 1280/1, TP2/PP1/EP64/ETP1,
+        natural (not forced) HybridEP routing with the recipe's expert capacity
+        factor 1.1 and padded expert inputs (token dropping), FP32 optimizer
+        state and two shared MTP prediction depths at loss scale 0.3. The vision
+        encoder is frozen; the language model and projection are trainable.
+        Losses are the logged LM loss. Token rates are padded slots, not
+        supervised-token counts. Post-SFT export is checked separately. This
+        verifies image-caption training, not video training or full convergence.
 
   sft_export_inference:
     H100:
@@ -318,8 +330,9 @@ items:
         verified at that revision.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 19167581c7c25d5b1a582f0b2f3357355b6b1f07  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -338,11 +351,17 @@ items:
           --max-new-tokens 32 --chat-template --disable-thinking
           --separate-image-processing --trust-remote-code
           --device cuda --device-map balanced --dtype bfloat16 --require-gpu-only
-      last_verified: null
+      last_verified: 2026-10-21
       expected_result: >
-        Its SFT dependency was trained from a pre-release checkpoint that is not
-        bound to the pinned public revision; it is not re-verified at that
-        revision.
+        Exported the final step-200 GB200 full-SFT checkpoint on four GB200 GPUs,
+        retaining the native model package and reasoning-parser file. The export
+        command reads the source package from the Hub default branch, which
+        resolved to the pinned revision. Strict Transformers reload checked
+        missing, unexpected and mismatched keys, covered 1453 modules, and passed
+        GPU-only placement on four GB200 GPUs. Greedy generation stopped at EOS
+        after 10 generated tokens, before the 32-token maximum. The literal completion
+        was "Losses of mtp_1 and Im". This verifies export and one native HF
+        image completion, not HF/Bridge numerical equality.
 
   sft_long_context:
     H100:
@@ -417,8 +436,9 @@ items:
         full convergence.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 19167581c7c25d5b1a582f0b2f3357355b6b1f07  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4
@@ -436,16 +456,24 @@ items:
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-peft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: null
+      last_verified: 2026-10-21
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 3.499214
+        final_loss: 2.041462
+        last_10_steps_step_time_ms_avg: 2941.14
+        last_10_steps_model_tflops_per_gpu_avg: 116.6
+        last_10_steps_tokens_per_second_per_gpu_avg: 1392.657268950135
       expected_result: >
-        An earlier run used a pre-release checkpoint that is not bound to the
-        pinned public revision; it is not re-verified at that revision.
+        Completed 500 finite LoRA optimizer steps on 16 GB200 GPUs with zero
+        skipped or NaN iterations and complete checkpoints at steps 250 and 500,
+        starting from the card's GPU import of the pinned revision. DataComp
+        image-caption training uses sequence length 4096, GBS/MBS 16/1,
+        TP2/PP1/EP16/ETP1, natural all-to-all routing and FP32 optimizer state.
+        LoRA uses rank 32, alpha 32 and zero dropout on language-model
+        projections only; the vision encoder and projection are frozen. Losses
+        are the logged LM loss. Token rates are padded slots, not
+        supervised-token counts. This is bounded support verification, not
+        full convergence.
 
   checkpoint_resume:
     H100:

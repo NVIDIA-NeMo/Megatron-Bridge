@@ -141,10 +141,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-sft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-sft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-sft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -169,10 +169,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-peft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-peft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-peft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-peft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>LoRA · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -413,35 +413,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-5-super-vl-120b-a12b-sft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-sft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-21</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>3.465676</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>1.938715</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>43,286.690 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>158.440 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>1,892.499 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -457,7 +457,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>An earlier run used a pre-release checkpoint that is not bound to the pinned public revision; it is not re-verified at that revision.</p>
+        <p>Completed 200 finite optimizer steps on 64 GB200 GPUs with zero skipped or NaN iterations and complete checkpoints at steps 100 and 200, starting from the card&#x27;s GPU import of the pinned revision. DataComp image-caption training uses sequence length 4096, GBS/MBS 1280/1, TP2/PP1/EP64/ETP1, natural (not forced) HybridEP routing with the recipe&#x27;s expert capacity factor 1.1 and padded expert inputs (token dropping), FP32 optimizer state and two shared MTP prediction depths at loss scale 0.3. The vision encoder is frozen; the language model and projection are trainable. Losses are the logged LM loss. Token rates are padded slots, not supervised-token counts. Post-SFT export is checked separately. This verifies image-caption training, not video training or full convergence.</p>
       </section>
     </article>
     <article id="nemotron-3-5-super-vl-120b-a12b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-sft-long-context-h100" tabindex="-1">
@@ -601,35 +601,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-5-super-vl-120b-a12b-peft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-peft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>LoRA · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-21</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>3.499214</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>2.041462</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>2,941.140 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>116.600 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>1,392.657 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -645,7 +645,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>An earlier run used a pre-release checkpoint that is not bound to the pinned public revision; it is not re-verified at that revision.</p>
+        <p>Completed 500 finite LoRA optimizer steps on 16 GB200 GPUs with zero skipped or NaN iterations and complete checkpoints at steps 250 and 500, starting from the card&#x27;s GPU import of the pinned revision. DataComp image-caption training uses sequence length 4096, GBS/MBS 16/1, TP2/PP1/EP16/ETP1, natural all-to-all routing and FP32 optimizer state. LoRA uses rank 32, alpha 32 and zero dropout on language-model projections only; the vision encoder and projection are frozen. Losses are the logged LM loss. Token rates are padded slots, not supervised-token counts. This is bounded support verification, not full convergence.</p>
       </section>
     </article>
   </div>
