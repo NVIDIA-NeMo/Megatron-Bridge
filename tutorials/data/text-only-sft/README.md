@@ -72,7 +72,7 @@ The generic launcher has a local-data preset:
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_sft_1gpu_h100_bf16_config \
-    --dataset llm-finetune-preloaded \
+    --dataset local-jsonl \
     dataset.dataset_root=/tmp/bridge-text-only-sft \
     dataset.seq_length=4096 \
     checkpoint.pretrained_checkpoint=/checkpoints/base-model
