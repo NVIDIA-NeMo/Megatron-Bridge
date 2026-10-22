@@ -1180,7 +1180,8 @@ class MegatronModelBridge(
 
         Raises:
             ValueError: If an enabled quantizer has no HF mapping or holds tensors other than
-                ``_amax`` (which are not exported), or ranks disagree on the state of a quantizer
+                ``_amax`` (which are not exported), a disabled quantizer still rotates or scales its
+                input (which the recipe cannot carry), or ranks disagree on the state of a quantizer
                 exported under the same HF name.
         """
         from modelopt.torch.quantization.nn import TensorQuantizer
@@ -1193,11 +1194,17 @@ class MegatronModelBridge(
         recipe, unsupported = {}, []
         for vp_stage, model in enumerate(models_list):
             for name, module in model.named_modules():
-                if not isinstance(module, TensorQuantizer) or not module.is_enabled:
+                if not isinstance(module, TensorQuantizer):
                     continue
                 global_name = _megatron_local_name_to_global(
                     models_list, model_config, self._unwrap_name(name), vp_stage
                 )
+                if not module.is_enabled:
+                    # Disabled quantizers are left out of the recipe, so they must leave their input unchanged.
+                    rotates = module.rotate_is_enabled and not module.rotate_back_is_enabled
+                    if rotates or module.pre_quant_scale is not None:
+                        unsupported.append(f"{global_name} (disabled but rotates or scales its input)")
+                    continue
                 mapping = registry.megatron_to_hf_lookup(f"{global_name}._amax")
                 hf_names = amax_mapping_hf_names(mapping, model_config.num_moe_experts) if mapping else []
                 if not hf_names:
@@ -1216,7 +1223,7 @@ class MegatronModelBridge(
             torch.distributed.all_gather_object(per_rank, (recipe, unsupported))
         unsupported = sorted({name for _, names in per_rank for name in names})
         if unsupported:
-            raise ValueError(f"Enabled ModelOpt quantizers cannot be exported: {unsupported}")
+            raise ValueError(f"ModelOpt quantizers cannot be exported: {unsupported}")
         merged = {}
         for rank_recipe, _ in per_rank:
             for hf_name, state in rank_recipe.items():

@@ -196,7 +196,8 @@ Hugging Face names:
   a `format: modelopt_quantizer_recipe`, `version: 1` header.
 
 Neither file is written when no quantizer is enabled, e.g. a weight-only format after folding. The export fails if
-an enabled quantizer has no Hugging Face name or holds tensors other than `_amax`. See the
+an enabled quantizer has no Hugging Face name or holds tensors other than `_amax`, or if a disabled quantizer
+still rotates or scales its input (e.g. the query rotation of rotated KV-cache quantization). See the
 [ModelOpt Megatron-Bridge example](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge)
 for the export and serving commands.
 

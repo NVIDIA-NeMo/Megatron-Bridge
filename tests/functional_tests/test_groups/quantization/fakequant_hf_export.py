@@ -104,15 +104,18 @@ def main(hf_model_path: str, out: str, mode: str, tp: int, pp: int, ep: int, gro
 
     if mode == "activations" and tp == pp == ep == 1:
         # Quantizer state the export cannot carry must fail it rather than be dropped: an enabled
-        # quantizer without a Hugging Face name, and a tensor other than ``_amax``.
+        # quantizer without a Hugging Face name, a tensor other than ``_amax``, and a disabled
+        # quantizer that still rotates its input (the query in rotated KV-cache quantization).
         attention = chunks[0].decoder.layers[0].self_attention
         attention.linear_qkv.output_quantizer.enable()
         attention.linear_proj.input_quantizer.register_buffer("_pre_quant_scale", torch.ones(1, device="cuda"))
+        attention.core_attention.q_bmm_quantizer.set_from_attribute_config({"rotate": True})
         try:
             bridge.save_hf_pretrained(model, f"{out}_rejected")
         except ValueError as error:
             assert "linear_qkv.output_quantizer" in str(error), error
             assert "_pre_quant_scale" in str(error), error
+            assert "q_bmm_quantizer (disabled but rotates" in str(error), error
             print("Unexportable quantizer state rejected")
 
 
