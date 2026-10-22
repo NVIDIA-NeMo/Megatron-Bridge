@@ -63,6 +63,12 @@ def test_text_only_sft_tutorial_uses_standard_distributed_launcher():
     assert "uv run python -m torch.distributed.run" in readme
 
 
+def test_text_only_sft_tutorial_uses_current_dataset_selector():
+    readme = (TEXT_ONLY_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
+    assert "--dataset local-jsonl" in readme
+    assert "--dataset llm-finetune-preloaded" not in readme
+
+
 def test_hf_text_only_tutorial_documents_hosted_native_messages_source():
     readme = (HF_TEXT_ONLY_TUTORIAL / "README.md").read_text(encoding="utf-8")
     assert "HuggingFaceH4/ultrachat_200k" in readme
