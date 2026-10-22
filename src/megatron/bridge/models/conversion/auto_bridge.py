@@ -901,16 +901,28 @@ class AutoBridge(Generic[MegatronModelT]):
 
         if not isinstance(model, list):
             model = [model]
+        bridge = self._model_bridge
         if conversion_tasks is None:
             from modelopt.torch.quantization.nn import AnyQuantizer
 
             # ModelOpt reads quantizer state from each owning weight, not separate HF mappings.
-            conversion_tasks = self._model_bridge.build_conversion_tasks(
+            conversion_tasks = bridge.build_conversion_tasks(
                 self.hf_pretrained, model, exclude_module_types=AnyQuantizer
             )
+        tied_weight_aliases = {}
+        unwrapped_model = model_bridge.unwrap_model(model)[0]
+        if bridge._share_embeddings_and_output_weights(unwrapped_model):
+            registry = bridge.mapping_registry()
+            for task in conversion_tasks:
+                if task is None:
+                    continue
+                alias = bridge._get_tied_output_hf_name(task, registry)
+                if alias is not None:
+                    tied_weight_aliases[alias] = task.mapping.hf_param
         return build_modelopt_export_plan(
             conversion_tasks,
             model=model,
+            tied_weight_aliases=tied_weight_aliases,
         )
 
     def export_hf_weight_groups_modelopt(
