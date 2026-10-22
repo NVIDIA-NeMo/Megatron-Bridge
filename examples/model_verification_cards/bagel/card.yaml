@@ -40,7 +40,7 @@ model:
   architecture: BagelForConditionalGeneration
   min_transformers_version: "5.12.1"
 verification_environment:
-  base_container: nvcr.io/nvidian/nemo:26.10.rc7
+  base_container: nvcr.io/nvidia/nemo:26.10
   bridge_commit: fd8ab826d95fbad72d440248947abe373cfc0b35  # pragma: allowlist secret
 
 items:

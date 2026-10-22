@@ -3,7 +3,7 @@
   "models": [
     {
       "architecture": "BagelForConditionalGeneration",
-      "base_container": "nvcr.io/nvidian/nemo:26.10.rc7",
+      "base_container": "nvcr.io/nvidia/nemo:26.10",
       "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
       "entries": [
         {
