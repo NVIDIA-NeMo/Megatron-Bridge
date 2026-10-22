@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.utils import unwrap_model
 from torch.distributed._tensor import DTensor
-from transformers import GptOssForCausalLM
+from transformers import GptOssForCausalLM, PretrainedConfig
 
 from megatron.bridge.models.conversion.gtp import _get_mapping_shape
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -33,8 +33,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.conversion.peft_bridge import MegatronModel
 from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4 as _dequantize_mxfp4
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
-from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
@@ -55,8 +54,11 @@ class GPTOSSBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("openai/gpt-oss-model")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     def _get_fused_adapter_linear_out_slices(
         self,
@@ -84,53 +86,53 @@ class GPTOSSBridge(MegatronModelBridge):
             megatron_model, base_hf_weight_names, linear_out_tensor, is_expert=is_expert
         )
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
-        """Convert HuggingFace config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face GPT-OSS config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=True,
+            add_qkv_bias=getattr(hf_config, "attention_bias", True),
+            share_embeddings_and_output_weights=False,
+            position_embedding_type="yarn",
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            moe_router_pre_softmax=False,
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_router_load_balancing_type="none",
+            bias_activation_fusion=True,
+            bias_dropout_fusion=False,
+            hidden_dropout=0.0,
+            fp16=False,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            # GPT-OSS specific activation
+            activation_func=quick_gelu,
+            activation_func_clamp_value=7.0,
+            glu_linear_offset=1.0,
+            softmax_type="learnable",
+            window_size=(hf_config.sliding_window - 1, 0),
+            window_attn_skip_freq=2,
+            # GPT-OSS uses intermediate_size for MoE FFN hidden size
+            moe_ffn_hidden_size=hf_config.intermediate_size,
+            # YaRN settings of the released checkpoints
+            yarn_rotary_scaling_factor=32.0,
+            yarn_original_max_position_embeddings=4096,
+            yarn_beta_fast=32.0,
+            yarn_beta_slow=1.0,
+            yarn_correction_range_round_to_int=False,
+            yarn_mscale=None,
+            yarn_mscale_all_dim=None,
+        )
+        return config_kwargs
 
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = True
-        provider.add_qkv_bias = getattr(hf_pretrained.config, "attention_bias", True)
-        provider.share_embeddings_and_output_weights = False
-        provider.position_embedding_type = "yarn"
-
-        provider.moe_router_pre_softmax = False
-        provider.moe_grouped_gemm = True
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
-        provider.moe_router_load_balancing_type = "none"
-
-        provider.bias_activation_fusion = True
-        provider.bias_dropout_fusion = False
-
-        provider.hidden_dropout = 0.0
-        provider.fp16 = False
-        provider.bf16 = True
-        provider.params_dtype = torch.bfloat16
-
-        # GPT-OSS specific activation
-        provider.activation_func = quick_gelu
-        provider.activation_func_clamp_value = 7.0
-        provider.glu_linear_offset = 1.0
-
-        provider.softmax_type = "learnable"
-        provider.window_size = (hf_pretrained.config.sliding_window - 1, 0)
-        provider.window_attn_skip_freq = 2
-
-        # GPT-OSS uses intermediate_size for MoE FFN hidden size
-        provider.moe_ffn_hidden_size = hf_pretrained.config.intermediate_size
-
-        # YARN position embedding settings (now dataclass fields on GPTModelProvider)
-        provider.yarn_rotary_scaling_factor = 32.0
-        provider.yarn_original_max_position_embeddings = 4096
-        provider.yarn_beta_fast = 32.0
-        provider.yarn_beta_slow = 1.0
-        provider.yarn_correction_range_round_to_int = False
-        provider.yarn_mscale = None
-        provider.yarn_mscale_all_dim = None
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:

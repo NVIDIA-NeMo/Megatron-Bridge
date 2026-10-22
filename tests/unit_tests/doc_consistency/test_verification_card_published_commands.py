@@ -16,8 +16,9 @@
 Every verification card publishes literal shell commands a reader is meant to
 copy and run. These tests check the published argv against the launchers that
 own it: GPU conversion topologies must decompose over the published world size,
-and an inference command must not carry a flag that belongs to the conversion
-launcher's namespace.
+an inference command must not carry a flag that belongs to the conversion
+launcher's namespace, and a checkpoint a command loads must be written by a
+command in the same card.
 
 Uses only pytest, PyYAML and the standard library (no torch / megatron import) so it
 scans source files directly and runs anywhere, including without the GPU stack.
@@ -209,6 +210,34 @@ def test_published_card_commands_do_not_repeat_a_flag() -> None:
     assert not offenders, "published commands repeat a flag: " + "; ".join(offenders)
 
 
+def test_published_checkpoint_loads_come_from_the_same_card() -> None:
+    """Every non-null load override reads a path that a command in the same card writes."""
+    loads = ("checkpoint.load", "dataset.dataloader_load")
+    producers = ("checkpoint.save", "dataset.dataloader_save", "--save_dir")
+    conversion_outputs = {"import": "--megatron-path", "export": "--hf-path"}
+    produced: dict[str, set[str]] = {}
+    consumed = []
+    for leaf, tokens in _published_commands():
+        card = leaf.split("/", 1)[0]
+        is_conversion = len(tokens) > 1 and Path(tokens[0]).name == "convert.sh"
+        output_flag = conversion_outputs.get(tokens[1]) if is_conversion else None
+        for index, token in enumerate(tokens):
+            name, _, value = token.partition("=")
+            if not value and index + 1 < len(tokens):
+                value = tokens[index + 1]
+            if name in producers or name == output_flag:
+                produced.setdefault(card, set()).add(value.rstrip("/"))
+            elif name in loads and "=" in token and value != "null":
+                consumed.append((card, leaf, name, value.rstrip("/")))
+    offenders = [
+        f"{leaf}: {name}={value}"
+        for card, leaf, name, value in consumed
+        if value not in produced.get(card, set())
+        and not (Path(value).name.startswith("iter_") and str(Path(value).parent) in produced.get(card, set()))
+    ]
+    assert not offenders, "published commands load a path no command in their card produces: " + "; ".join(offenders)
+
+
 def test_declared_options_follow_only_called_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
     helper = tmp_path / "src/megatron/bridge/arguments.py"
@@ -250,6 +279,11 @@ def test_declared_options_follow_only_called_helpers(tmp_path: Path, monkeypatch
             "test_published_card_commands_do_not_repeat_a_flag",
             "repeat a flag",
         ),
+        (
+            "./scripts/training/train.sh --mode pretrain checkpoint.load=work/unproduced",
+            "test_published_checkpoint_loads_come_from_the_same_card",
+            "checkpoint.load=work/unproduced",
+        ),
     ],
 )
 def test_published_command_checks_reject_original_errors(
@@ -259,3 +293,50 @@ def test_published_command_checks_reject_original_errors(
     monkeypatch.setattr(module, "_published_commands", lambda: iter([("regression", shlex.split(command))]))
     with pytest.raises(AssertionError, match=message):
         getattr(module, check_name)()
+
+
+def _check_loads(monkeypatch: pytest.MonkeyPatch, *commands: tuple[str, str]) -> None:
+    module = sys.modules[__name__]
+    monkeypatch.setattr(
+        module, "_published_commands", lambda: iter((leaf, shlex.split(cmd)) for leaf, cmd in commands)
+    )
+    module.test_published_checkpoint_loads_come_from_the_same_card()
+
+
+def test_checkpoint_load_rejects_export_only_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(AssertionError, match="checkpoint.load=work/unproduced"):
+        _check_loads(
+            monkeypatch,
+            (
+                "card/export",
+                "./scripts/conversion/convert.sh export --megatron-path work/unproduced --hf-path work/hf",
+            ),
+            ("card/train", "./scripts/training/train.sh checkpoint.load=work/unproduced"),
+        )
+
+
+def test_checkpoint_load_rejects_import_hf_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(AssertionError, match="checkpoint.load=work/hf"):
+        _check_loads(
+            monkeypatch,
+            ("card/import", "./scripts/conversion/convert.sh import --hf-path work/hf --megatron-path work/mcore"),
+            ("card/train", "./scripts/training/train.sh checkpoint.load=work/hf"),
+        )
+
+
+@pytest.mark.parametrize("load", ["work/mcore", "work/mcore/iter_0000000"])
+def test_checkpoint_load_accepts_import_output_and_iteration_child(load: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _check_loads(
+        monkeypatch,
+        ("card/import", "./scripts/conversion/convert.sh import --hf-path work/hf --megatron-path work/mcore"),
+        ("card/train", f"./scripts/training/train.sh checkpoint.load={load} dataset.dataloader_load=null"),
+    )
+
+
+def test_checkpoint_load_rejects_import_from_another_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(AssertionError, match="checkpoint.load=work/mcore"):
+        _check_loads(
+            monkeypatch,
+            ("other/import", "./scripts/conversion/convert.sh import --hf-path work/hf --megatron-path work/mcore"),
+            ("card/train", "./scripts/training/train.sh checkpoint.load=work/mcore"),
+        )
