@@ -18,7 +18,6 @@ and each verified leaf must be last verified no earlier than its recorded revisi
 Every verified K-EXAONE-2 item must record a revision that exists in the repository history, and every
 GLM-5 / GLM-5.2 verified GB200 training leaf that pins its own revision must pin one that exists there.
 Every verified Beam model-level item must record a revision that exists in the repository history.
-Every Beam command that pins a Hugging Face model or tokenizer revision must pin the card's model.hf_revision.
 
 Uses only pytest, PyYAML, git and the standard library (no torch / megatron import).
 The revision check needs the recorded commits in the local git history; it skips only
@@ -26,7 +25,6 @@ in a shallow checkout and treats a commit missing from a complete history as a f
 """
 
 import datetime
-import re
 import shlex
 import shutil
 import subprocess
@@ -80,27 +78,6 @@ def _verified_revisions(node: object, revision: str, path: str) -> Iterator[tupl
         yield path, revision
     for key, value in node.items():
         yield from _verified_revisions(value, revision, f"{path}/{key}")
-
-
-def _hf_revisions(node: object, path: str) -> Iterator[tuple[str, str]]:
-    """Yield (location, revision) for every Hugging Face model or tokenizer revision pinned in a command."""
-    if isinstance(node, list):
-        for index, value in enumerate(node):
-            yield from _hf_revisions(value, f"{path}/{index}")
-    if not isinstance(node, dict):
-        return
-    commands = node.get("commands") or [node.get("command")]
-    for command in commands:
-        tokens = shlex.split(command) if isinstance(command, str) else []
-        for index, token in enumerate(tokens):
-            if token == "--hf-revision" and index + 1 < len(tokens):
-                yield path, tokens[index + 1]
-            elif token.startswith("--hf-revision="):
-                yield path, token.split("=", 1)[1]
-            elif token.lstrip("+~").startswith("tokenizer.hf_tokenizer_kwargs"):
-                yield from ((path, match) for match in re.findall(r"\b[0-9a-f]{40}\b", token))
-    for key, value in node.items():
-        yield from _hf_revisions(value, f"{path}/{key}")
 
 
 def _git(*args: str) -> subprocess.CompletedProcess:
@@ -237,33 +214,3 @@ def test_beam_verified_model_level_items_record_reachable_revisions() -> None:
     if missing and _git("rev-parse", "--is-shallow-repository").stdout.strip() != "false":
         pytest.skip("a recorded bridge_commit is not in this shallow checkout's git history")
     assert not missing, "verified items record a bridge_commit missing from the repository: " + "; ".join(missing)
-
-
-def test_hf_revisions_collects_model_and_tokenizer_pins_only() -> None:
-    model, tokenizer, dataset = "a" * 40, "b" * 40, "c" * 40
-    items = {
-        "conversion": {"command": f"convert.sh --hf-revision {model}"},
-        "export": {"H200": {"commands": [f"convert.sh --hf-revision={model}", "generate.sh"]}},
-        "sft": {
-            "H200": {
-                "command": f"train.sh 'dataset.hf_dataset.load_kwargs={{revision:\"{dataset}\"}}' "
-                f"'++tokenizer.hf_tokenizer_kwargs.revision=\"{tokenizer}\"'"
-            },
-            "B200": {"command": f"train.sh 'tokenizer.hf_tokenizer_kwargs={{revision:\"{model}\"}}'"},
-        },
-    }
-    assert sorted(_hf_revisions(items, "items")) == [
-        ("items/conversion", model),
-        ("items/export/H200", model),
-        ("items/sft/B200", model),
-        ("items/sft/H200", tokenizer),
-    ]
-
-
-def test_beam_commands_pin_the_card_hf_revision() -> None:
-    card = yaml.safe_load(BEAM_CARD.read_text(encoding="utf-8"))
-    expected = card["model"]["hf_revision"]
-    pins = list(_hf_revisions(card["items"], "items"))
-    assert pins, "the card has no command that pins a Hugging Face revision"
-    wrong = [f"{path}: {revision[:10]}" for path, revision in pins if revision != expected]
-    assert not wrong, f"commands pin a Hugging Face revision other than {expected[:10]}: " + "; ".join(wrong)

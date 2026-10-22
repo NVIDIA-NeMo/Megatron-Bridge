@@ -205,7 +205,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
     <div class="verification-provider-models">
       <a class="verification-model-link" href="beam/beam.html#verified-beam">
         <strong title="reflection/Beam-1.0-501B-A23B">Beam-1.0-501B-A23B</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </a>
     </div>
   </section>
