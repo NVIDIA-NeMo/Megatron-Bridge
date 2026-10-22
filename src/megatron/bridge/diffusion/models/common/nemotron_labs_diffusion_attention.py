@@ -288,8 +288,8 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             self.beta = config.llama4_scaling_beta
             self.max_position_embeddings = config.yarn_original_max_position_embeddings
 
-        # Causal packed attention has no parameters; construct it on first use.
-        # Keep native RoPE and the existing unpacked SDPA forward unchanged.
+        # CP-capable causal attention has no parameters; construct it on first use.
+        # Keep the CP=1 SDPA path unchanged.
         self._ar_core_attention = None
         self._ar_core_attention_kwargs = dict(
             config=config,
@@ -548,8 +548,8 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             if packed_seq_params.qkv_format != "thd":
                 raise ValueError("Packed AR attention requires qkv_format='thd'")
             return self._packed_causal_forward(query, key, value, packed_seq_params)
-        if self.cp_size > 1:
-            raise ValueError("Context parallelism requires packed sequences for causal AR attention")
+        if self.cp_size > 1 and (not self._inference_causal or self._cache_enabled):
+            raise ValueError("Unpacked CP attention requires causal=True and cache_enabled=False")
         sq = query.shape[0]
 
         # Transpose to [b, np, s, hn]
@@ -559,8 +559,24 @@ class NemotronLabsDiffusionAttention(MegatronModule):
 
         # Position IDs: new tokens start after the cached tokens
         offset = self._kv_cache_seq_len
-        q_position_ids = torch.arange(offset, offset + sq, device=query.device).unsqueeze(0)
-        k_position_ids = torch.arange(offset, offset + sq, device=key.device).unsqueeze(0)
+        if self.cp_size > 1:
+            if sq % 2:
+                raise ValueError("CP-local sequence length must be even for zigzag sharding")
+            cp_group = self._ar_core_attention_kwargs["pg_collection"].cp
+            cp_rank = cp_group.rank()
+            segment = sq // 2
+            positions = torch.arange(segment, device=query.device)
+            # Each rank owns one early and one late segment of every sample.
+            q_position_ids = torch.cat(
+                (
+                    positions + cp_rank * segment,
+                    positions + (2 * self.cp_size - cp_rank - 1) * segment,
+                )
+            ).unsqueeze(0)
+            k_position_ids = q_position_ids
+        else:
+            q_position_ids = torch.arange(offset, offset + sq, device=query.device).unsqueeze(0)
+            k_position_ids = torch.arange(offset, offset + sq, device=key.device).unsqueeze(0)
 
         cos, sin = self.rope_embedding_module(query, q_position_ids)
         cos_k, sin_k = self.rope_embedding_module(key, k_position_ids)
@@ -579,6 +595,17 @@ class NemotronLabsDiffusionAttention(MegatronModule):
                 query.dtype
             )
             query = query * scale  # broadcast [sq, 1] -> [b, np, sq, hn]
+
+        if self.cp_size > 1:
+            # Preserve SBHD batches: TE exchanges K/V across the CP group and
+            # applies global causal masking without any packed-sequence metadata.
+            return self._get_ar_core_attention()(
+                query.permute(2, 0, 1, 3).contiguous(),
+                key.permute(2, 0, 1, 3).contiguous(),
+                value.permute(2, 0, 1, 3).contiguous(),
+                attention_mask=None,
+                attn_mask_type=AttnMaskType.causal,
+            )
 
         # Concatenate with KV cache
         if self._kv_cache_k is not None:

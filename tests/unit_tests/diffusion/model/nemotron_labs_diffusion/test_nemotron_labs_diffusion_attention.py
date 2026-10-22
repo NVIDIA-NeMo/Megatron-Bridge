@@ -586,3 +586,39 @@ def test_text_only_provider_scatters_sequence_parallel_embeddings() -> None:
     config.tensor_model_parallel_size = 2
     config.sequence_parallel = True
     assert config.scatter_embedding_sequence_parallel is True
+
+
+class TestUnpackedContextParallelAttention:
+    @pytest.mark.parametrize("rank", range(8))
+    def test_global_rope_positions_and_sbhd_batch(self, rank):
+        attn = _make_attention(seq_len=128)
+        attn.cp_size = 8
+        attn._ar_core_attention_kwargs["pg_collection"].cp.rank.return_value = rank
+        attn.set_inference_mode(True)
+        attn.set_inference_params(causal=True, cache_enabled=False)
+        q, k, v = torch.randn(16, 2, 4, 8), torch.randn(16, 2, 2, 8), torch.randn(16, 2, 2, 8)
+        core = MagicMock(return_value=torch.zeros(16, 2, 32))
+        with (
+            patch.object(attn, "_get_ar_core_attention", return_value=core),
+            patch.object(attn.rope_embedding_module, "forward", wraps=attn.rope_embedding_module.forward) as rope,
+        ):
+            out = attn(q, k, v)
+        expected = torch.cat(
+            (torch.arange(rank * 8, (rank + 1) * 8), torch.arange((15 - rank) * 8, (16 - rank) * 8))
+        ).unsqueeze(0)
+        torch.testing.assert_close(rope.call_args_list[0].args[1], expected)
+        assert core.call_args.args[0].shape == q.shape
+        assert core.call_args.args[1].shape == k.shape
+        torch.testing.assert_close(core.call_args.args[2], v)
+        assert core.call_args.kwargs["attention_mask"] is None
+        assert "packed_seq_params" not in core.call_args.kwargs
+        assert out.shape == (16, 2, 32)
+
+    @pytest.mark.parametrize("causal,cache", [(False, False), (True, True)])
+    def test_rejects_unsupported_cp_modes(self, causal, cache):
+        attn = _make_attention()
+        attn.cp_size = 8
+        attn.set_inference_mode(True)
+        attn.set_inference_params(causal=causal, cache_enabled=cache)
+        with pytest.raises(ValueError, match="Unpacked CP attention requires"):
+            attn(torch.randn(16, 2, 4, 8), torch.randn(16, 2, 2, 8), torch.randn(16, 2, 2, 8))
