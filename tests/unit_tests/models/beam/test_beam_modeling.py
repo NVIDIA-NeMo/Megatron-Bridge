@@ -308,12 +308,61 @@ class TestApplyOutputGate:
             apply_output_gate(torch.ones(1, 1, 9), torch.zeros(1, 1, 9), torch.zeros(2))
 
     def test_self_attention_gate_uses_its_bias(self):
-        attn = SimpleNamespace(output_gate_bias=SimpleNamespace(bias=torch.tensor([1.0, -1.0])))
+        bias_module = AttentionOutputGateBias(_config(**GATE), 2)
+        with torch.no_grad():
+            bias_module.bias.copy_(torch.tensor([1.0, -1.0]))
+        attn = SimpleNamespace(output_gate_bias=bias_module)
         x, gate = torch.ones(2, 1, 4), torch.zeros(2, 1, 2, 2)
         out = BeamSelfAttention._apply_output_gate(attn, x, gate)
         torch.testing.assert_close(out, apply_output_gate(x, gate, attn.output_gate_bias.bias))
         attn.output_gate_bias = None
         torch.testing.assert_close(BeamSelfAttention._apply_output_gate(attn, x, gate), x * 0.5)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+    @pytest.mark.parametrize("packed", [False, True])
+    def test_self_attention_waits_for_gate_bias_owner_hook(self, dtype, packed):
+        bias_module = AttentionOutputGateBias(_config(**GATE, params_dtype=dtype), 2)
+        attn = SimpleNamespace(output_gate_bias=bias_module)
+        calls = []
+
+        def finish_gather(module, _args):
+            calls.append(module)
+            with torch.no_grad():
+                module.bias.copy_(gathered_bias)
+
+        hook = bias_module.register_forward_pre_hook(finish_gather)
+        try:
+            for bias_values in ([1.0, -1.0], [-0.5, 1.5]):
+                gathered_bias = torch.tensor(bias_values, dtype=dtype)
+                bias_module.zero_grad(set_to_none=True)
+                x = torch.linspace(-1, 1, 8, dtype=dtype).reshape(2, 1, 4).requires_grad_()
+                gate = torch.linspace(-2, 2, 8, dtype=dtype).reshape(2, 2, 2)
+                if not packed:
+                    gate = gate.unsqueeze(1)
+                gate.requires_grad_()
+                ref_x = x.detach().clone().requires_grad_()
+                ref_gate = gate.detach().clone().requires_grad_()
+                ref_bias = gathered_bias.clone().requires_grad_()
+                output = BeamSelfAttention._apply_output_gate(attn, x, gate)
+                expected = (
+                    ref_x.float()
+                    * torch.sigmoid(
+                        ref_gate.float().reshape(2, 1, 2, 2) + ref_bias.float()[None, None, :, None]
+                    ).reshape_as(ref_x)
+                ).to(dtype)
+                torch.testing.assert_close(output, expected)
+                output.sum().backward()
+                expected.sum().backward()
+                for actual, reference in (
+                    (x.grad, ref_x.grad),
+                    (gate.grad, ref_gate.grad),
+                    (bias_module.bias.grad, ref_bias.grad),
+                ):
+                    torch.testing.assert_close(actual, reference)
+        finally:
+            hook.remove()
+        assert calls == [bias_module, bias_module]
+        assert list(bias_module.state_dict()) == ["bias"]
 
 
 class TestAttentionOutputGateBias:
@@ -334,7 +383,7 @@ class TestAttentionOutputGateBias:
         mod = AttentionOutputGateBias(self._cfg(), 4)
         x = torch.ones(3, 2, 16)
         gate = torch.zeros(3, 2, 4, 4)
-        apply_output_gate(x, gate, mod.bias).sum().backward()
+        mod(x, gate).sum().backward()
         # Each head contributes 3 * 2 * 4 terms with sigmoid'(0) = 1/4.
         torch.testing.assert_close(mod.bias.grad, torch.full((4,), 6.0))
 
@@ -496,6 +545,42 @@ def test_absent_sublayer_keeps_its_identity_bda():
     assert isinstance(_mlp_layer(config, 2).self_attn_bda, IdentityFuncOp)
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("factory,scope", [(_attention_layer, "attn"), (_mlp_layer, "mlp"), (_mlp_layer, "moe")])
+@pytest.mark.parametrize("post_norm", [False, True])
+@pytest.mark.parametrize("whole_layer", [False, True])
+def test_graph_replay_hooks_cover_captured_parameters(factory, scope, post_norm, whole_layer):
+    from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
+
+    layer = factory(_layer_config(post_norm, True), 1)
+    if scope == "moe":
+        layer.is_moe_layer = True
+    set_cuda_graph_modules(layer.config, [] if whole_layer else [scope])
+    called = []
+    layer.setup_manual_hooks(lambda: lambda module: called.append(module))
+    for hook, args in layer.cuda_graph_manual_hooks:
+        hook(*args)
+    expected = [module for module in layer.modules() if next(module.parameters(recurse=False), None) is not None]
+    assert {id(module) for module in called} == {id(module) for module in expected}
+    assert len(called) == len(expected)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("scopes", [["moe_router"], ["moe_router", "moe_preprocess"]])
+def test_router_graph_hooks_leave_eager_post_norm_outside_capture(scopes):
+    from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
+
+    layer = _mlp_layer(_layer_config(True, True), 2)
+    # Use the inherited MoE hook selection with real parameter-owning modules.
+    layer.is_moe_layer = True
+    layer.mlp.router = torch.nn.Linear(8, 4, bias=False)
+    set_cuda_graph_modules(layer.config, scopes)
+    layer.setup_manual_hooks(lambda: lambda module: None)
+    covered = [args[0] for _, args in layer.cuda_graph_manual_hooks]
+    assert layer.post_mlp_layernorm not in covered
+    assert layer.mlp.router in covered
+
+
 def test_depth_scaling_rejects_a_layer_with_both_sublayers():
     from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 
@@ -584,11 +669,68 @@ class TestRouterParameters:
         wrapped = Float16Module(cfg, _cpu_router(cfg))
         assert wrapped.module.weight.dtype == wrapped.module.bias.dtype == torch.float32
 
-    def test_fp32_router_installs_the_optimizer_patch(self):
-        from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
-        _cpu_router(_router_config(moe_router_fp32_params=True, moe_router_dtype="fp32"))
-        assert getattr(DistributedOptimizer.__init__, "_beam_group_index_fix", False)
+@pytest.mark.unit
+class TestExpertBiasUpdates:
+    @pytest.fixture(autouse=True)
+    def _cpu_buffers(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+
+    @staticmethod
+    def _router(rate):
+        return _cpu_router(
+            _router_config(
+                moe_router_enable_expert_bias=True,
+                moe_router_bias_update_rate=rate,
+                moe_router_score_function="sigmoid",
+                moe_router_load_balancing_type="none",
+            )
+        )
+
+    def test_fixed_bias_preserves_routing_without_update_collective(self):
+        from megatron.core.distributed.finalize_model_grads import _update_router_expert_bias
+
+        router = self._router(0.0)
+        router.expert_bias.copy_(torch.tensor([0.2, -0.1, 0.3, -0.2]))
+        logits = torch.zeros(3, 4, requires_grad=True)
+        probs, routing = router.routing(logits)
+        expected_routing = torch.tensor([[True, False, True, False]]).expand(3, -1)
+        torch.testing.assert_close(routing, expected_routing)
+        before = router.expert_bias.clone()
+        with mock.patch("torch.distributed.all_reduce", side_effect=AssertionError("Fixed bias needs no collective")):
+            _update_router_expert_bias([router], router.config, tp_dp_cp_group=object())
+        torch.testing.assert_close(router.expert_bias, before, rtol=0, atol=0)
+        after_probs, after_routing = router.routing(logits)
+        torch.testing.assert_close(after_probs, probs, rtol=0, atol=0)
+        torch.testing.assert_close(after_routing, routing)
+
+    def test_nonzero_rate_keeps_native_collective_and_update(self):
+        from megatron.core.distributed.finalize_model_grads import _update_router_expert_bias
+
+        router = self._router(0.1)
+        router.local_tokens_per_expert.copy_(torch.tensor([0, 2, 4, 2]))
+        group = object()
+        with mock.patch("torch.distributed.all_reduce") as reduce:
+            _update_router_expert_bias([router], router.config, tp_dp_cp_group=group)
+        reduce.assert_called_once()
+        assert reduce.call_args.kwargs["group"] is group
+        torch.testing.assert_close(router.expert_bias, torch.tensor([0.1, 0.0, -0.1, 0.0]))
+
+    @pytest.mark.parametrize("rate", [0.0, 0.1])
+    def test_checkpoint_retains_bias_and_reconstructs_update_behavior(self, rate):
+        router = self._router(rate)
+        router.expert_bias.copy_(torch.tensor([0.2, -0.1, 0.3, -0.2]))
+        state = router.state_dict()
+        assert "expert_bias" in state
+        assert "local_tokens_per_expert" not in state
+        restored = self._router(rate)
+        restored.load_state_dict(state, strict=True)
+        torch.testing.assert_close(restored.expert_bias, router.expert_bias, rtol=0, atol=0)
+        assert restored.frozen_expert_bias is (rate == 0.0)
+
+    def test_disabled_bias_keeps_normal_construction(self):
+        router = _cpu_router(_router_config(moe_router_enable_expert_bias=False))
+        assert router.expert_bias is None and not router.frozen_expert_bias
 
 
 class TestGatingTorchPath:
@@ -628,6 +770,41 @@ class TestGatingTorchPath:
         assert logits.dtype == torch.float32
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")),
+    ],
+)
+@pytest.mark.parametrize("router_dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("with_bias", [False, True])
+@pytest.mark.parametrize("backward_autocast", [False, True])
+def test_router_dtype_survives_autocast(device, router_dtype, with_bias, backward_autocast):
+    generator = torch.Generator(device=device).manual_seed(29)
+    inp = torch.randn(17, 12, device=device, generator=generator).bfloat16().requires_grad_(True)
+    weight = torch.randn(4, 12, device=device, generator=generator, requires_grad=True)
+    bias = torch.randn(4, device=device, generator=generator, requires_grad=True) if with_bias else None
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        actual = beam_router_gating_linear(inp, weight, bias, router_dtype)
+    assert actual.dtype == router_dtype
+    with torch.autocast(device_type=device, enabled=False):
+        expected = torch.nn.functional.linear(
+            inp.to(router_dtype), weight.to(router_dtype), bias.to(router_dtype) if bias is not None else None
+        )
+    torch.testing.assert_close(actual, expected)
+    grad = torch.randn(actual.shape, device=device, dtype=router_dtype, generator=generator)
+    params = (inp, weight, bias) if with_bias else (inp, weight)
+    with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=backward_autocast):
+        actual_grads = torch.autograd.grad(actual, params, grad)
+    with torch.autocast(device_type=device, enabled=False):
+        expected_grads = torch.autograd.grad(expected, params, grad)
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        assert actual_grad.dtype == expected_grad.dtype
+        torch.testing.assert_close(actual_grad, expected_grad)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.parametrize(
     "router_dtype,weight_dtype",
@@ -639,24 +816,105 @@ class TestGatingTorchPath:
     ],
 )
 def test_router_gating_linear_matches_reference(router_dtype, weight_dtype):
-    """TE GEMM path (bf16 input) against a float64 reference, including fp32 weights."""
-    torch.manual_seed(0)
-    input_shape, experts = ((3, 2, 12), 4) if weight_dtype == torch.float32 else ((4096, 7168), 256)
-    inp = torch.randn(input_shape, dtype=torch.bfloat16, device="cuda").requires_grad_(True)
-    weight = torch.randn((experts, input_shape[-1]), dtype=weight_dtype, device="cuda").requires_grad_(True)
-    grad = torch.randn((*input_shape[:-1], experts), dtype=router_dtype, device="cuda")
-    out = beam_router_gating_linear(inp, weight, None, router_dtype)
-    assert out.dtype == router_dtype
-    out.backward(grad)
-    assert inp.grad.dtype == inp.dtype and weight.grad.dtype == weight.dtype
+    """Compare against FP64 under an explicit FP32 math policy, including loaded FP32 weights."""
+    precision = torch.get_float32_matmul_precision()
+    try:
+        torch.set_float32_matmul_precision("highest")
+        torch.manual_seed(0)
+        input_shape, experts = ((3, 2, 12), 4) if weight_dtype == torch.float32 else ((4096, 7168), 256)
+        inp = torch.randn(input_shape, dtype=torch.bfloat16, device="cuda").requires_grad_(True)
+        weight = torch.randn((experts, input_shape[-1]), dtype=weight_dtype, device="cuda").requires_grad_(True)
+        grad = torch.randn((*input_shape[:-1], experts), dtype=router_dtype, device="cuda")
+        out = beam_router_gating_linear(inp, weight, None, router_dtype)
+        assert out.dtype == router_dtype
+        out.backward(grad)
+        assert inp.grad.dtype == inp.dtype and weight.grad.dtype == weight.dtype
 
-    ref_inp, ref_weight = inp.detach().double().requires_grad_(True), weight.detach().double().requires_grad_(True)
-    ref = ref_inp @ ref_weight.t()
-    ref.backward(grad.double())
-    tols = dict(rtol=2.0e-2, atol=1.0e-4 if weight_dtype == torch.float32 else 1.0e-3)
-    torch.testing.assert_close(out.double(), ref, **tols)
-    torch.testing.assert_close(inp.grad.double(), ref_inp.grad, rtol=2.0e-2, atol=1.0e-1)
-    torch.testing.assert_close(weight.grad.double(), ref_weight.grad, rtol=2.0e-2, atol=1.0)
+        ref_inp, ref_weight = inp.detach().double().requires_grad_(True), weight.detach().double().requires_grad_(True)
+        ref = ref_inp @ ref_weight.t()
+        ref.backward(grad.double())
+        tols = dict(rtol=2.0e-2, atol=1.0e-4 if weight_dtype == torch.float32 else 1.0e-3)
+        torch.testing.assert_close(out.double(), ref, **tols)
+        torch.testing.assert_close(inp.grad.double(), ref_inp.grad, rtol=2.0e-2, atol=1.0e-1)
+        torch.testing.assert_close(weight.grad.double(), ref_weight.grad, rtol=2.0e-2, atol=1.0)
+    finally:
+        torch.set_float32_matmul_precision(precision)
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize("matmul_precision", ["highest", "high"])
+def test_fp32_router_matches_hf_gating_and_expert_selection(matmul_precision):
+    """Production-width FP32 weights must follow HF's F.linear math policy, including gradients."""
+    precision = torch.get_float32_matmul_precision()
+    teardown = _distributed_context()
+    try:
+        torch.set_float32_matmul_precision(matmul_precision)
+        generator = torch.Generator(device="cuda").manual_seed(1234)
+        router = _cpu_router(
+            _router_config(
+                hidden_size=5120,
+                num_attention_heads=48,
+                num_query_groups=8,
+                kv_channels=128,
+                num_moe_experts=256,
+                moe_router_topk=8,
+                moe_router_num_groups=8,
+                moe_router_group_topk=4,
+                moe_router_topk_scaling_factor=2.5,
+                moe_router_score_function="sigmoid",
+                moe_router_load_balancing_type="none",
+                moe_router_enable_expert_bias=True,
+                moe_router_bias_update_rate=0.0,
+                moe_router_dtype="fp32",
+                moe_router_fp32_params=True,
+                moe_router_fusion=False,
+            )
+        ).cuda()
+        raw_weight = torch.randn(256, 5120, generator=generator, device="cuda") * 0.02
+        assert not torch.equal(raw_weight.bfloat16().float(), raw_weight)
+        router.load_state_dict(
+            {"weight": raw_weight, "expert_bias": torch.linspace(-0.18, 0.18, 256, device="cuda").roll(73)},
+            strict=True,
+        )
+        inp = torch.randn(1024, 1, 5120, generator=generator, device="cuda", dtype=torch.bfloat16)
+        inp.requires_grad_()
+        ref_inp = inp.detach().clone().requires_grad_()
+        ref_weight = raw_weight.detach().clone().requires_grad_()
+        expected = torch.nn.functional.linear(ref_inp.float(), ref_weight)
+        actual = router.gating(inp)
+        upstream = torch.randn(expected.shape, generator=generator, device="cuda") / 16
+        actual.backward(upstream)
+        expected.backward(upstream)
+        assert actual.dtype == router.weight.dtype == router.weight.grad.dtype == torch.float32
+        assert inp.grad.dtype == torch.bfloat16
+        torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-6)
+        torch.testing.assert_close(router.weight.grad, ref_weight.grad, rtol=2e-5, atol=2e-6)
+        torch.testing.assert_close(inp.grad, ref_inp.grad, rtol=2 * torch.finfo(torch.bfloat16).eps, atol=2e-6)
+
+        # Independent HF group selection: correction bias selects experts but never weights them.
+        scores = expected.detach().reshape(-1, 256).sigmoid()
+        selection = scores + router.expert_bias
+        grouped = selection.reshape(-1, 8, 32)
+        group_scores = grouped.topk(2, dim=-1).values.sum(-1)
+        groups = group_scores.topk(4, dim=-1).indices
+        allowed = torch.zeros_like(group_scores, dtype=torch.bool).scatter(1, groups, True)
+        masked = selection.masked_fill(~allowed[:, :, None].expand_as(grouped).reshape_as(selection), -torch.inf)
+        experts = masked.topk(8, dim=-1).indices
+        sorted_groups = group_scores.sort(descending=True).values
+        sorted_experts = masked.sort(descending=True).values
+        assert ((sorted_groups[:, 3] - sorted_groups[:, 4]) > 0).all()
+        assert ((sorted_experts[:, 7] - sorted_experts[:, 8]) > 0).all()
+        expected_routes = torch.zeros_like(scores, dtype=torch.bool).scatter(1, experts, True)
+        selected_probs = scores.gather(1, experts)
+        selected_probs = selected_probs / (selected_probs.sum(-1, keepdim=True) + 1e-20) * 2.5
+        expected_probs = torch.zeros_like(scores).scatter(1, experts, selected_probs)
+        probs, routes = router.routing(actual.detach())
+        torch.testing.assert_close(routes, expected_routes, rtol=0, atol=0)
+        torch.testing.assert_close(probs, expected_probs, rtol=2e-5, atol=2e-6)
+    finally:
+        torch.set_float32_matmul_precision(precision)
+        teardown()
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -679,16 +937,35 @@ def test_router_gating_backward_accepts_expanded_grad_output(weight_dtype):
         torch.testing.assert_close(xi.grad.float(), expected_x, rtol=0, atol=0, msg=kind)
 
 
+@pytest.mark.unit
 class TestDistributedOptimizerGroupIndexMap:
-    def test_fix_reorders_only_mixed_groups(self):
-        a, gate, b, c = (torch.nn.Parameter(torch.zeros(1)) for _ in range(4))
-        opt = SimpleNamespace(
-            model_fp32_groups=[[gate], []],
-            model_float16_groups=[[a, b], [c]],
-            model_param_group_index_map={a: (0, 0), gate: (0, 1), b: (0, 2), c: (1, 5)},
-        )
-        modeling_beam._fix_group_index_map(opt)
-        assert opt.model_param_group_index_map == {gate: (0, 0), a: (0, 1), b: (0, 2), c: (1, 5)}
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+    def test_frozen_optimizer_after_fp32_router_construction(self):
+        """A Beam router must not break empty optimizers used for frozen model chunks."""
+        from megatron.core.distributed import DistributedDataParallelConfig
+        from megatron.core.optimizer import OptimizerConfig
+        from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
+
+        teardown = _distributed_context()
+        try:
+            _cpu_router(_router_config(moe_router_fp32_params=True, moe_router_dtype="fp32"))
+            optimizer = DistributedOptimizer(
+                optimizer=None,
+                config=OptimizerConfig(bf16=True, use_distributed_optimizer=True),
+                grad_scaler=None,
+                init_state_fn=None,
+                model_chunks=[SimpleNamespace(ddp_config=DistributedDataParallelConfig())],
+                per_model_buffers={},
+                data_parallel_group=torch.distributed.group.WORLD,
+                data_parallel_group_gloo=None,
+                data_parallel_group_idx=0,
+                distributed_optimizer_instance_id=0,
+            )
+            assert optimizer.is_stub_optimizer
+            assert optimizer.get_parameters() == []
+            optimizer.zero_grad()
+        finally:
+            teardown()
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
     def test_mixed_dtype_param_group_lookup(self):
@@ -696,10 +973,8 @@ class TestDistributedOptimizerGroupIndexMap:
         from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
         from megatron.core.optimizer import OptimizerConfig, get_megatron_optimizer
         from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
-        from megatron.core.transformer.module import mark_keep_in_fp32
         from megatron.core.transformer.transformer_config import TransformerConfig
 
-        modeling_beam.patch_distributed_optimizer_group_index_map()
         teardown = _distributed_context()
         try:
 
@@ -707,8 +982,14 @@ class TestDistributedOptimizerGroupIndexMap:
                 def __init__(self):
                     super().__init__()
                     self.a = torch.nn.Linear(64, 64, bias=False, dtype=torch.bfloat16, device="cuda")
-                    self.gate = torch.nn.Linear(64, 8, bias=False, device="cuda")
-                    mark_keep_in_fp32(self.gate.weight)
+                    self.gate = _cpu_router(
+                        _router_config(
+                            hidden_size=64,
+                            num_moe_experts=8,
+                            moe_router_fp32_params=True,
+                            moe_router_dtype="fp32",
+                        )
+                    ).cuda()
                     self.b = torch.nn.Linear(64, 32, bias=False, dtype=torch.bfloat16, device="cuda")
 
             model = Mixed()

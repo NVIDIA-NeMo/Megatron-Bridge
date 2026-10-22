@@ -57,31 +57,22 @@ RUN    pushd /opt/Export-Deploy && \
         echo "Container built with NeMo-Run commit hash: $NEMO_RUN_COMMIT" && \
     popd
 
-# cuDNN Frontend is replaced after the sync below with this ref of NVIDIA/cudnn-frontend
-# (feat/1.29.0-megatron). Docker-only: outside fw_pyproject.toml and uv.lock. Set empty to keep the
-# PyPI wheel.
-ARG CUDNN_FRONTEND_GIT_REF=8924d4b41fd678ba1b98cd7f98bb78b222637573
-
 # Sync environment
 COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
 COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
-COPY --chmod=644 docker/common/stubs/ /opt/NeMo-FW/stubs/
+COPY docker/common/stubs/ /opt/NeMo-FW/stubs/
+# Enroot/Pyxis extraction needs traversable directories, including the parent created above.
+RUN chmod 755 /opt/NeMo-FW \
+ && find /opt/NeMo-FW/stubs -type d -exec chmod 755 {} + \
+ && find /opt/NeMo-FW/stubs -type f -exec chmod 644 {} +
 COPY docker/common/preserve_base_runtime.py /opt/preserve_base_runtime.py
 RUN \
     cd /opt/NeMo-FW && \
     BASE_RUNTIME_UV_ARGS="" && \
     if [ "${MBRIDGE_PRESERVE_BASE_RUNTIME:-False}" = "True" ]; then \
         BASE_RUNTIME_UV_ARGS="--no-install-package nvidia-cudnn-frontend --no-install-package transformer-engine --no-install-package transformer-engine-torch"; \
-    elif [ -n "$CUDNN_FRONTEND_GIT_REF" ]; then \
-        BASE_RUNTIME_UV_ARGS="--no-install-package nvidia-cudnn-frontend"; \
     fi && \
     uv sync --no-cache-dir --all-groups --inexact ${BASE_RUNTIME_UV_ARGS} && \
-    if [ -n "$CUDNN_FRONTEND_GIT_REF" ] && [ "${MBRIDGE_PRESERVE_BASE_RUNTIME:-False}" != "True" ]; then \
-        uv pip install --no-config --no-cache-dir --no-deps --reinstall \
-            "nvidia-cudnn-frontend @ git+https://github.com/NVIDIA/cudnn-frontend.git@${CUDNN_FRONTEND_GIT_REF}" && \
-        CUDNN_FRONTEND_GIT_REF="$CUDNN_FRONTEND_GIT_REF" python -c \
-            'import importlib.metadata as m, json, os, sys; source = m.distribution("nvidia-cudnn-frontend").read_text("direct_url.json"); sys.exit(0 if json.loads(source)["vcs_info"]["commit_id"] == os.environ["CUDNN_FRONTEND_GIT_REF"] else "cuDNN Frontend Git ref mismatch")'; \
-    fi && \
     python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
     uv pip list && \
     chmod +x print_sha.sh && \

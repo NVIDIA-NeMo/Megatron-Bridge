@@ -360,7 +360,10 @@ def nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     # the 10-minute default timeout for its first backward.
     cfg.dist.distributed_timeout_minutes = 90
 
-    # Keep the complete process environment visible on the recipe.
+    # Keep the complete process environment visible on the recipe. Launchers must also export
+    # TORCHINDUCTOR_COMPILE_THREADS=1 before Python starts (slurm_sft.sh does): on Python 3.12 before 3.12.8,
+    # Inductor's forked compile-worker pool can deadlock in this recipe's long first step (pytorch/pytorch#200848),
+    # and Inductor reads the variable when it is imported, before this environment is applied.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         # One hardware queue, as Megatron-Core expects for TP>1 with sequence parallelism on Hopper.

@@ -196,12 +196,25 @@ class StateDict(Mapping[str, torch.Tensor]):
             raise TypeError(f"StateDict source must be a dict or a StateSource, got {type(source)}")
 
         self.source = source
+        self._key_set: set[str] | None = None
+        self._key_set_source: List[str] | None = None
 
     def _get_all_keys(self) -> List[str]:
         """
         Get all available tensor keys from the underlying source.
         """
         return self.source.get_all_keys()
+
+    def _get_key_set(self) -> set[str]:
+        # Membership checks run once per tensor during conversion; a list scan made
+        # them quadratic in the number of checkpoint keys. Sources return a cached
+        # list, so the set is rebuilt only if they hand back a different one (e.g.
+        # while a bridge temporarily wraps ``get_all_keys`` with virtual keys).
+        keys = self._get_all_keys()
+        if self._key_set_source is not keys:
+            self._key_set = set(keys)
+            self._key_set_source = keys
+        return self._key_set
 
     def _load_tensors(self, keys_to_load: List[str]) -> Dict[str, torch.Tensor]:
         """
@@ -221,7 +234,7 @@ class StateDict(Mapping[str, torch.Tensor]):
             return [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
         else:
             # Exact match
-            return [pattern] if pattern in all_keys else []
+            return [pattern] if pattern in self._get_key_set() else []
 
     @overload
     def __getitem__(self, key: str) -> Union[torch.Tensor, Dict[str, torch.Tensor]]: ...
@@ -299,11 +312,11 @@ class StateDict(Mapping[str, torch.Tensor]):
                     raise KeyError(f"No keys match pattern: {key}")
                 return self._load_tensors(matched_keys)
             else:
-                if key not in self._get_all_keys():
+                if key not in self._get_key_set():
                     raise KeyError(f"Key not found: {key}")
                 return self._load_tensors([key])[key]
         elif isinstance(key, list):
-            all_keys_set = set(self._get_all_keys())
+            all_keys_set = self._get_key_set()
             missing_keys = [k for k in key if k not in all_keys_set]
             if missing_keys:
                 raise KeyError(f"Keys not found: {missing_keys}")
@@ -334,7 +347,7 @@ class StateDict(Mapping[str, torch.Tensor]):
 
     def __contains__(self, key: str) -> bool:
         """Check if a key exists in the state dict."""
-        return key in self._get_all_keys()
+        return key in self._get_key_set()
 
     def __repr__(self) -> str:
         """String representation."""
@@ -350,7 +363,7 @@ class StateDict(Mapping[str, torch.Tensor]):
         Returns `default` if the key is not found.
         Note: This method is for single key lookup and does not support patterns.
         """
-        if key in self._get_all_keys():
+        if key in self._get_key_set():
             return self._load_tensors([key])[key]
         return default
 
@@ -500,6 +513,7 @@ class SafeTensorsStateSource(StateSource):
         # DeepSeek-V4-Pro). Both can be disabled through environment variables.
         self._small_tensor_cache: Dict[str, torch.Tensor] = {}
         self._open_handles: Dict[str, Any] = {}
+        self._open_handle_keys: dict[str, set[str]] = {}
         self._cache_small = os.environ.get("MBRIDGE_STATE_CACHE_SMALL_TENSORS", "1") == "1"
         self._reuse_handles = os.environ.get("MBRIDGE_STATE_REUSE_HANDLES", "1") == "1"
         self._small_numel = int(os.environ.get("MBRIDGE_STATE_SMALL_TENSOR_NUMEL", str(16 * 1024 * 1024)))
@@ -687,6 +701,17 @@ class SafeTensorsStateSource(StateSource):
             self._open_handles[key] = handle
         return handle
 
+    def _get_handle_keys(self, file_path: Path, handle: Any) -> set[str]:
+        """Return the key set of ``handle``, cached alongside reused handles."""
+        if not self._reuse_handles:
+            return set(handle.keys())
+        key = str(file_path)
+        keys = self._open_handle_keys.get(key)
+        if keys is None:
+            keys = set(handle.keys())
+            self._open_handle_keys[key] = keys
+        return keys
+
     def _maybe_cache(self, key: str, tensor: torch.Tensor) -> None:
         # Keep a private copy: callers may modify the tensors they get back in place.
         if self._cache_small and tensor.numel() <= self._small_numel:
@@ -695,6 +720,7 @@ class SafeTensorsStateSource(StateSource):
     def _invalidate_handle(self, file_path: Path) -> None:
         """Drop a reused handle so the next access re-reads the shard header (e.g. after a retry)."""
         self._open_handles.pop(str(file_path), None)
+        self._open_handle_keys.pop(str(file_path), None)
 
     def load_tensors(self, keys_to_load: List[str]) -> Dict[str, torch.Tensor]:
         if not keys_to_load:
@@ -744,7 +770,7 @@ class SafeTensorsStateSource(StateSource):
                     for attempt in range(max_retries):
                         f = self._get_handle(file_path)
                         if True:  # the handle may be shared across calls; do not close it here
-                            file_keys = set(f.keys())
+                            file_keys = self._get_handle_keys(file_path, f)
                             for key in keys_in_file:
                                 source_key = (self.key_prefix or "") + key
                                 if source_key in file_keys and key not in loaded_tensors:

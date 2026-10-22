@@ -17,6 +17,7 @@ The Nemotron 3.5 Lightning card's verified training recipes must exist at the re
 and each verified leaf must be last verified no earlier than its recorded revision's commit date.
 Every verified K-EXAONE-2 item must record a revision that exists in the repository history, and every
 GLM-5 / GLM-5.2 verified GB200 training leaf that pins its own revision must pin one that exists there.
+Every verified Beam model-level item must record a revision that exists in the repository history.
 
 Uses only pytest, PyYAML, git and the standard library (no torch / megatron import).
 The revision check needs the recorded commits in the local git history; it skips only
@@ -41,6 +42,7 @@ LIGHTNING_CARD = REPO_ROOT / "examples" / "model_verification_cards" / "nemotron
 K_EXAONE_2_CARD = REPO_ROOT / "examples" / "model_verification_cards" / "k-exaone-2" / "card.yaml"
 # inference is re-pinned separately in #6294; remove it from this set once that lands.
 K_EXAONE_2_PENDING = {"items/inference"}
+BEAM_CARD = REPO_ROOT / "examples" / "model_verification_cards" / "beam" / "card.yaml"
 GLM5_CARDS = [REPO_ROOT / "examples" / "model_verification_cards" / name / "card.yaml" for name in ("glm5", "glm5-2")]
 # These items have not reproduced at a public revision yet; remove each one once it is re-verified.
 GLM5_PENDING = {
@@ -195,3 +197,20 @@ def test_glm5_verified_items_pin_reachable_revisions(card_path: Path) -> None:
     if missing and _git("rev-parse", "--is-shallow-repository").stdout.strip() != "false":
         pytest.skip("a recorded bridge_commit is not in this shallow checkout's git history")
     assert not missing, "verified items pin a bridge_commit missing from the repository: " + "; ".join(missing)
+
+
+def test_beam_verified_model_level_items_record_reachable_revisions() -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git is not available")
+    card = yaml.safe_load(BEAM_CARD.read_text(encoding="utf-8"))
+    default = card["verification_environment"]["bridge_commit"]
+    leaves = [leaf for leaf in _verified_revisions(card["items"], default, "items") if leaf[0].count("/") == 1]
+    assert leaves, "the card records no verified model-level item"
+    missing = [
+        f"{path}: {revision[:10]}"
+        for path, revision in leaves
+        if _git("cat-file", "-e", f"{revision}^{{commit}}").returncode
+    ]
+    if missing and _git("rev-parse", "--is-shallow-repository").stdout.strip() != "false":
+        pytest.skip("a recorded bridge_commit is not in this shallow checkout's git history")
+    assert not missing, "verified items record a bridge_commit missing from the repository: " + "; ".join(missing)

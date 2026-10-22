@@ -103,7 +103,7 @@ def _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.cuda_graph_scope = []
-    cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
+    cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["core_attn", "attn_proj"]
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
