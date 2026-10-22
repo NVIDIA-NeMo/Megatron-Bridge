@@ -257,6 +257,10 @@ Examples:
         action="store_true",
         help="Reduce peak GPU memory while saving large imported checkpoints at the cost of additional runtime.",
     )
+    import_parser.add_argument(
+        "--bagel-repo",
+        help="Official ByteDance-Seed/Bagel source checkout to import BAGEL checkpoints.",
+    )
 
     export_parser = subparsers.add_parser(
         "export",
@@ -363,6 +367,8 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     if args.command == "import":
         if args.low_memory_save:
             worker_args.append("--low-memory-save")
+        if args.bagel_repo is not None:
+            worker_args.extend(["--bagel-repo", args.bagel_repo])
     elif args.command == "export":
         worker_args.extend(["--hf-path", args.hf_path])
         if args.no_progress:
