@@ -32,6 +32,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     nemotron_3_super_pretrain_config,
     nemotron_3_ultra_pretrain_config,
 )
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
@@ -288,6 +289,23 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) 
         # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_deterministic_config(*, num_gpus: int = 256) -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× GB200, MXFP8, deterministic.
+
+    Wraps :func:`nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    The NCCL EP dispatcher and every other perf setting are kept, so the delta vs the base
+    recipe is the determinism overhead only.
+
+    Args:
+        num_gpus: Launch GPU count used to size HSDP optimizer instances.
+            Defaults to the canonical 256-GPU benchmark allocation.
+    """
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(num_gpus=num_gpus)
+    apply_determinism_overrides(cfg)
     return cfg
 
 
