@@ -32,6 +32,7 @@ from megatron.core.dist_checkpointing.strategies.torch import (
 )
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.optimizer import distrib_optimizer
+from megatron.core.rerun_state_machine import RerunMode, RerunState, RerunStateMachine
 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
 from megatron.bridge.training.checkpointing import (
@@ -99,6 +100,96 @@ except ModuleNotFoundError:
 
 class _DummyClass:
     save_sharded_modelopt_state = None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("per_rank_objects", [False, True])
+def test_global_checkpoint_load_forwards_per_rank_objects(per_rank_objects):
+    """The configured object-loading policy must reach the real Core strategy."""
+    from megatron.bridge.training import checkpointing
+
+    config_kwargs = {}
+    if "ckpt_fully_parallel_load_per_rank_objects" in CheckpointConfig.__dataclass_fields__:
+        config_kwargs["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
+    elif per_rank_objects:
+        pytest.skip("The supported Core dev config does not expose per-rank object loading")
+    config = CheckpointConfig(async_save=False, fully_parallel_load=True, **config_kwargs)
+    group = Mock()
+    pg = SimpleNamespace(dp_cp=Mock(), dp_cp_gtp_remat=group)
+    context = {}
+    with (
+        patch.object(checkpointing, "TorchDistLoadShardedStrategy") as base_strategy,
+        patch.object(checkpointing.dist_checkpointing, "load", return_value={"model": {}}) as load,
+    ):
+        result = checkpointing._load_global_dist_base_checkpoint(
+            "checkpoint",
+            config,
+            False,
+            {"model": {}},
+            1,
+            False,
+            checkpoint_path_override="checkpoint/iter_0000001",
+            checkpointing_context=context,
+            pg_collection=pg,
+        )
+
+    strategy = load.call_args.args[2]
+    assert isinstance(strategy, checkpointing.FullyParallelLoadStrategyWrapper)
+    assert getattr(strategy, "per_rank_object_load", False) is per_rank_objects
+    assert strategy.parallelization_group is group
+    assert strategy.base_strategy is base_strategy.return_value
+    assert context["load_strategy"] is strategy
+    assert result[0] == {"model": {}}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("per_rank_objects", [None, False, True])
+def test_global_checkpoint_load_with_older_core(per_rank_objects, monkeypatch):
+    """Older Core must accept ordinary loads and reject an unsupported opt-in."""
+    from megatron.bridge.training import checkpointing
+
+    # Model both an older config without the field and a config with an explicit policy.
+    config_values = vars(CheckpointConfig(async_save=False, fully_parallel_load=True)).copy()
+    config_values.pop("ckpt_fully_parallel_load_per_rank_objects", None)
+    if per_rank_objects is not None:
+        config_values["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
+    config = SimpleNamespace(**config_values)
+    group = Mock()
+    pg = SimpleNamespace(dp_cp=group)
+    context = {}
+
+    def older_wrapper(strategy, parallelization_group):
+        # A strict signature catches accidental forwarding of the new keyword.
+        return SimpleNamespace(base_strategy=strategy, parallelization_group=parallelization_group)
+
+    monkeypatch.setattr(checkpointing, "_FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS", False)
+    monkeypatch.setattr(checkpointing, "FullyParallelLoadStrategyWrapper", older_wrapper)
+    with (
+        patch.object(checkpointing, "TorchDistLoadShardedStrategy") as base_strategy,
+        patch.object(checkpointing.dist_checkpointing, "load", return_value={"model": {}}) as load,
+    ):
+        load_kwargs = dict(
+            checkpoint_path_override="checkpoint/iter_0000001",
+            checkpointing_context=context,
+            pg_collection=pg,
+        )
+        if per_rank_objects:
+            with pytest.raises(ValueError, match="not supported by the installed Megatron-Core"):
+                checkpointing._load_global_dist_base_checkpoint(
+                    "checkpoint", config, False, {"model": {}}, 1, False, **load_kwargs
+                )
+            load.assert_not_called()
+            assert "load_strategy" not in context
+            return
+        result = checkpointing._load_global_dist_base_checkpoint(
+            "checkpoint", config, False, {"model": {}}, 1, False, **load_kwargs
+        )
+
+    strategy = load.call_args.args[2]
+    assert strategy.base_strategy is base_strategy.return_value
+    assert strategy.parallelization_group is group
+    assert context["load_strategy"] is strategy
+    assert result[0] == {"model": {}}
 
 
 def test_checkpoint_group_includes_gtp_and_supports_older_collections():
@@ -840,6 +931,7 @@ class TestSaveCheckpoint:
         assert legacy_tracker.read_text() == "500"
 
     @pytest.mark.parametrize("num_flops", [1000000, 16777217, 10**20 + 1234567890123])
+    @pytest.mark.parametrize("verify_integrity", [False, True])
     @pytest.mark.parametrize("save_rng", [True, False])
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
@@ -890,6 +982,7 @@ class TestSaveCheckpoint:
         save_checkpoint_fixtures,
         save_rng,
         num_flops,
+        verify_integrity,
     ):
         """Test saving a global checkpoint."""
         # Setup mocks
@@ -924,6 +1017,7 @@ class TestSaveCheckpoint:
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.save_rng = save_rng
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.verify_integrity = verify_integrity
 
         call_order = Mock()
         call_order.attach_mock(mock_dist_ckpt.save, "model")
@@ -954,6 +1048,7 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+        assert mock_dist_ckpt.save.call_args.kwargs["verify_integrity"] is verify_integrity
         if save_rng:
             mock_get_rng.assert_called_once()
         else:
@@ -2462,6 +2557,8 @@ class TestLoadCheckpoint:
     @patch("torch.cuda.empty_cache")
     @patch("os.path.exists")  # Add patch for train state file existence check
     @pytest.mark.parametrize("saved_version", [3.0, 3.1])
+    @pytest.mark.parametrize("saved_rerun_state", [RerunState.NOT_RUNNING_YET, RerunState.WILL_RERUN_FROM_CHECKPOINT])
+    @pytest.mark.parametrize("runtime_rerun_mode", list(RerunMode))
     def test_load_checkpoint_found(
         self,
         mock_exists_os,
@@ -2492,8 +2589,10 @@ class TestLoadCheckpoint:
         load_checkpoint_fixtures,
         optimizer_load_error,
         saved_version,
+        saved_rerun_state,
+        runtime_rerun_mode,
     ):
-        """Direct loading syncs HDO only after a successful restore and context cleanup."""
+        """Restore active reruns while retaining runtime mode for ordinary checkpoints."""
         # Setup mocks
         mock_dist_init.return_value = False  # Disable distributed for simpler testing
         mock_is_last_rank.return_value = False
@@ -2543,8 +2642,17 @@ class TestLoadCheckpoint:
         mock_dist_ckpt.load_tensors_metadata.return_value = {legacy_key: Mock()}
         mock_dist_ckpt.load.return_value = {}
 
-        # Mock rerun state machine
-        mock_rerun_machine.return_value.load_state_dict = Mock()
+        # Use the real Core producer and consumer; mock only checkpoint I/O and ranks.
+        saving_rerun_machine = RerunStateMachine(mode=RerunMode.VALIDATE_RESULTS)
+        saving_rerun_machine.state = saved_rerun_state
+        with (
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.get_world_size", return_value=1),
+        ):
+            saved_rerun_payload = saving_rerun_machine.state_dict(data_iterator=None, ckpt_format="torch_dist")
+        saved_rerun_payload["sharded"] = saved_rerun_payload["sharded"].data
+        loading_rerun_machine = RerunStateMachine(mode=runtime_rerun_mode)
+        mock_rerun_machine.return_value = loading_rerun_machine
 
         # Mock run config to avoid file I/O
         mock_run_config = {
@@ -2565,7 +2673,7 @@ class TestLoadCheckpoint:
             "model": {"param": "value"},
             "optimizer": {"param_groups": []},  # Mock optimizer state
             "opt_param_scheduler": {"scheduler_state": "test"},  # Mock scheduler state
-            "rerun_state_machine": {"state": "test"},  # Mock rerun state
+            "rerun_state_machine": saved_rerun_payload,
             "rng_state": [
                 {
                     "random_rng_state": ("test", [1, 2, 3]),
@@ -2599,6 +2707,8 @@ class TestLoadCheckpoint:
 
         optimizer.load_state_dict.side_effect = load_optimizer
         with (
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.get_world_size", return_value=1),
             patch(
                 "megatron.bridge.training.checkpointing.hybrid_optimizer_state_loading",
                 side_effect=partial(load_context, "hybrid"),
@@ -2635,6 +2745,14 @@ class TestLoadCheckpoint:
             return
         assert events[5:] == ["sync optimizer"]
         sync_optimizer.assert_called_once_with(optimizer)
+
+        # Idle shards are still requested for strict loading, but must not restore
+        # the previous job's validation mode. Active reruns retain their mode.
+        assert mock_generate_state_dict.call_args.kwargs["rerun_state"] is not None
+        expected_rerun_mode = runtime_rerun_mode
+        if saved_rerun_state != RerunState.NOT_RUNNING_YET and runtime_rerun_mode != RerunMode.DISABLED:
+            expected_rerun_mode = RerunMode.VALIDATE_RESULTS
+        assert loading_rerun_machine.get_mode() == expected_rerun_mode
 
         # Verify results
         assert result[0] == 1000  # iteration
@@ -5146,9 +5264,10 @@ class TestCheckpointPathOverride:
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/direct/iter_0001000")
         mock_strategy_cls.assert_not_called()
 
+    @pytest.mark.parametrize("verify_integrity", [False, True])
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
-    def test_load_global_dist_uses_override_non_rank0(self, mock_dist_ckpt, mock_strategy_cls):
+    def test_load_global_dist_uses_override_non_rank0(self, mock_dist_ckpt, mock_strategy_cls, verify_integrity):
         """Non-rank0 path should use checkpoint_path_override instead of get_checkpoint_name."""
         from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
 
@@ -5162,7 +5281,7 @@ class TestCheckpointPathOverride:
         sharded_sd = {"weight": "placeholder"}
         state_dict, checkpoint_name, release, ckpt_type = _load_global_dist_base_checkpoint(
             load_dir="/should/not/be/used",
-            ckpt_cfg=CheckpointConfig(),
+            ckpt_cfg=CheckpointConfig(verify_integrity=verify_integrity),
             rank0=False,
             sharded_state_dict=sharded_sd,
             iteration=None,
@@ -5174,6 +5293,7 @@ class TestCheckpointPathOverride:
         assert checkpoint_name == "/direct/iter_0001000"
         mock_strategy_cls.assert_called_once_with()
         mock_dist_ckpt.load.assert_called_once()
+        assert mock_dist_ckpt.load.call_args.kwargs["verify_integrity"] is verify_integrity
         load_call_args = mock_dist_ckpt.load.call_args
         assert load_call_args[0][1] == "/direct/iter_0001000"
 
