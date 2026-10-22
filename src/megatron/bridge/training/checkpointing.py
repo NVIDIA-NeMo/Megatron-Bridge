@@ -118,6 +118,10 @@ from megatron.bridge.utils.safe_pickle import energon_torch_load
 # MCore main uses FQN-safe optimizer keys; the supported dev pin still uses tuple keys.
 _get_legacy_grad_dtypes = getattr(distrib_optimizer, "get_legacy_grad_dtypes", None)
 _CHECKPOINT_FORMAT_VERSION = 3.1 if _get_legacy_grad_dtypes is not None else 3.0
+# The supported dev pin predates per-rank object loading.
+_FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS = (
+    "per_rank_object_load" in inspect.signature(FullyParallelLoadStrategyWrapper).parameters
+)
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -3840,7 +3844,17 @@ def _load_global_dist_base_checkpoint(
     )
     load_strategy = TorchDistLoadShardedStrategy()
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _checkpoint_dp_cp_group(pg_collection))
+        per_rank_objects = getattr(ckpt_cfg, "ckpt_fully_parallel_load_per_rank_objects", False)
+        if per_rank_objects and not _FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS:
+            raise ValueError("Per-rank checkpoint object loading is not supported by the installed Megatron-Core.")
+        object_load_kwargs = (
+            {"per_rank_object_load": per_rank_objects} if _FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS else {}
+        )
+        load_strategy = FullyParallelLoadStrategyWrapper(
+            load_strategy,
+            _checkpoint_dp_cp_group(pg_collection),
+            **object_load_kwargs,
+        )
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     validate_sharding_integrity = True

@@ -102,6 +102,100 @@ class _DummyClass:
     save_sharded_modelopt_state = None
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("per_rank_objects", [False, True])
+def test_global_checkpoint_load_forwards_per_rank_objects(per_rank_objects):
+    """The configured object-loading policy must reach the real Core strategy."""
+    from megatron.bridge.training import checkpointing
+
+    config_kwargs = {}
+    if "ckpt_fully_parallel_load_per_rank_objects" in CheckpointConfig.__dataclass_fields__:
+        config_kwargs["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
+    elif per_rank_objects:
+        pytest.skip("The supported Core dev config does not expose per-rank object loading")
+    config = CheckpointConfig(async_save=False, fully_parallel_load=True, **config_kwargs)
+    group = Mock()
+    pg = SimpleNamespace(dp_cp=Mock(), dp_cp_gtp_remat=group)
+    context = {}
+    with (
+        patch.object(checkpointing, "TorchDistLoadShardedStrategy") as base_strategy,
+        patch.object(checkpointing.dist_checkpointing, "load", return_value={"model": {}}) as load,
+    ):
+        result = checkpointing._load_global_dist_base_checkpoint(
+            "checkpoint",
+            config,
+            False,
+            {"model": {}},
+            1,
+            False,
+            checkpoint_path_override="checkpoint/iter_0000001",
+            checkpointing_context=context,
+            pg_collection=pg,
+        )
+
+    strategy = load.call_args.args[2]
+    assert isinstance(strategy, checkpointing.FullyParallelLoadStrategyWrapper)
+    assert getattr(strategy, "per_rank_object_load", False) is per_rank_objects
+    assert strategy.parallelization_group is group
+    assert strategy.base_strategy is base_strategy.return_value
+    assert context["load_strategy"] is strategy
+    assert result[0] == {"model": {}}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("per_rank_objects", [None, False, True])
+def test_global_checkpoint_load_with_older_core(per_rank_objects, monkeypatch):
+    """Older Core must accept ordinary loads and reject an unsupported opt-in."""
+    from megatron.bridge.training import checkpointing
+
+    # Model both an older config without the field and a config with an explicit policy.
+    config_values = dict(
+        fully_parallel_load=True,
+        fully_parallel_save=True,
+        ckpt_format="torch_dist",
+        dist_ckpt_strictness="assume_ok_unexpected",
+    )
+    if per_rank_objects is not None:
+        config_values["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
+    config = SimpleNamespace(**config_values)
+    group = Mock()
+    pg = SimpleNamespace(dp_cp=group)
+    context = {}
+
+    def older_wrapper(strategy, parallelization_group):
+        # A strict signature catches accidental forwarding of the new keyword.
+        return SimpleNamespace(base_strategy=strategy, parallelization_group=parallelization_group)
+
+    monkeypatch.setattr(checkpointing, "_FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS", False)
+    monkeypatch.setattr(checkpointing, "FullyParallelLoadStrategyWrapper", older_wrapper)
+    with (
+        patch.object(checkpointing, "TorchDistLoadShardedStrategy") as base_strategy,
+        patch.object(checkpointing.dist_checkpointing, "load", return_value={"model": {}}) as load,
+    ):
+        load_kwargs = dict(
+            checkpoint_path_override="checkpoint/iter_0000001",
+            checkpointing_context=context,
+            pg_collection=pg,
+        )
+        if per_rank_objects:
+            with pytest.raises(ValueError, match="not supported by the installed Megatron-Core"):
+                checkpointing._load_global_dist_base_checkpoint(
+                    "checkpoint", config, False, {"model": {}}, 1, False, **load_kwargs
+                )
+            load.assert_not_called()
+            assert "load_strategy" not in context
+            return
+        result = checkpointing._load_global_dist_base_checkpoint(
+            "checkpoint", config, False, {"model": {}}, 1, False, **load_kwargs
+        )
+
+    strategy = load.call_args.args[2]
+    assert strategy.base_strategy is base_strategy.return_value
+    assert strategy.parallelization_group is group
+    assert context["load_strategy"] is strategy
+    assert result[0] == {"model": {}}
+
+
 def test_checkpoint_group_includes_gtp_and_supports_older_collections():
     replica_group = Mock()
     distribution_group = Mock()
