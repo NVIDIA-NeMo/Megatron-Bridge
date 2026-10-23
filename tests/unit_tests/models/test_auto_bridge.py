@@ -1862,6 +1862,44 @@ class TestAutoBridge:
                         current_pp_stage_only=True,
                     )
 
+    @pytest.mark.unit
+    def test_export_hf_weights_with_prebuilt_tasks(self, monkeypatch):
+        """Forward supplied tasks without consuming them or rebuilding FP8 tasks."""
+        hf_config = PretrainedConfig()
+        bridge = AutoBridge(hf_config)
+        bridge.export_weight_dtype = "fp8"
+        model = [object()]
+        tasks = [object(), object()]
+        conversion_tasks = iter(tasks)
+        weights = [("weight", torch.ones(1))]
+        model_bridge = Mock()
+        model_bridge.stream_weights_megatron_to_hf.return_value = iter(weights)
+        model_bridge.build_export_fp8_tasks.side_effect = AssertionError(
+            "Prebuilt tasks must bypass FP8 task construction"
+        )
+        monkeypatch.setattr(AutoBridge, "_model_bridge", model_bridge)
+        monkeypatch.setattr(
+            bridge,
+            "_validate_fp8_export_config",
+            Mock(side_effect=AssertionError("Prebuilt tasks must bypass FP8 validation")),
+        )
+
+        assert (
+            list(bridge.export_hf_weights(model, conversion_tasks=conversion_tasks, current_pp_stage_only=True))
+            == weights
+        )
+        model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
+            model,
+            hf_config,
+            cpu=False,
+            show_progress=True,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=True,
+            weight_dtype=None,
+            current_pp_stage_only=True,
+        )
+        assert list(conversion_tasks) == tasks
+
     def test_export_with_megatron_names_rejects_streamers_without_the_flag(self):
         """A bridge whose streaming overrides lack ``with_megatron_names`` fails before streaming."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)

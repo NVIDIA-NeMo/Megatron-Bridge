@@ -17,6 +17,7 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen_vl.common import ConfigContainer, _select_gdn_kernel_backend
 from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
     _build_qwen35_vl_35b_a3b_gb300_bf16,
+    _build_qwen35_vl_397b_a17b_gb300_fp8mx,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
     qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config,
@@ -24,7 +25,6 @@ from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
     qwen35_vl_122b_a10b_pretrain_32gpu_gb300_fp8mx_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
 )
 
 
@@ -303,10 +303,10 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config() -> ConfigContainer
 def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× VRNVL72, MXFP8, EP=32, HybridEP.
 
-    Starts from the GB300 MXFP8 recipe (cuDNN GDN, per-layer CUDA graphs, forced load balancing) and adds the
-    CuTe DSL fused grouped MLP and the settings of the measured VRNVL72 run.
+    Starts from the GB300 MXFP8 base (cuDNN GDN, per-layer CUDA graphs, forced load balancing), not the tuned GB300
+    recipe, and adds the CuTe DSL fused grouped MLP and the settings of the measured VRNVL72 run.
     """
-    cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config()
+    cfg = _build_qwen35_vl_397b_a17b_gb300_fp8mx()
 
     # MBS 1, as in the GB300 base; the vision cap below is set for it.
     cfg.train.micro_batch_size = 1
