@@ -153,11 +153,9 @@ def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_override
     assert cfg.model.cross_entropy_loss_fusion is False
     assert cfg.model.moe_router_aux_loss_fusion is False
     assert cfg.model.moe_router_fusion == base.model.moe_router_fusion
-    # HybridEP with the legacy grouped MLP until the NCCL EP path is deterministic.
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.moe_use_grouped_tensor is False
-    assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
-    assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
-    expected_env = {name: value for name, value in base.env_vars.items() if name not in _NCCL_EP_ENV}
-    expected_env.update({name: cfg.env_vars[name] for name in HYBRID_EP_ENV_NAMES})
-    assert cfg.env_vars == {**expected_env, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
+    # Same NCCL EP stack as the base recipe; only the determinism overrides differ.
+    assert cfg.model.moe_token_dispatcher_type == base.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == base.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is base.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
