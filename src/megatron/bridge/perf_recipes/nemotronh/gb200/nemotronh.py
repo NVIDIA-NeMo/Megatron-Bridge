@@ -32,6 +32,8 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     nemotron_3_super_pretrain_config,
     nemotron_3_ultra_pretrain_config,
 )
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
@@ -267,6 +269,52 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) 
         # TODO: graph_capture_record_stream_reuse might be potentially useful
         # when enabling CG, because it allows the freed-up memory buffers of the offloaded tensors
         # to be reused during the CG capture, thus keeping the peak memory usage lower.
+        "PYTORCH_CUDA_ALLOC_CONF": ("expandable_segments:True,graph_capture_record_stream_reuse:True"),
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN normalization kernels for the VR200 performance candidate.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
+        # offloading weights;
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by the
+        # op fuser + fused weighted squared-ReLU with moe_act activation recompute
+        # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_deterministic_config(*, num_gpus: int = 256) -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× GB200, MXFP8, deterministic.
+
+    Wraps :func:`nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    The NCCL EP dispatcher and every other perf setting are kept, so the delta vs the base
+    recipe is the determinism overhead only.
+
+    Args:
+        num_gpus: Launch GPU count used to size HSDP optimizer instances.
+            Defaults to the canonical 256-GPU benchmark allocation.
+    """
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(num_gpus=num_gpus)
+    apply_determinism_overrides(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        **DETERMINISM_ENV_VARS,
+        # ---- Others ----
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": ("expandable_segments:True,graph_capture_record_stream_reuse:True"),
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
