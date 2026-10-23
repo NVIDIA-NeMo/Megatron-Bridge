@@ -14,7 +14,11 @@ Dynamic CP needs the Megatron-Core `dev` submodule pin:
 ./scripts/switch_mcore.sh dev && uv sync
 ```
 
-`ConfigContainer.validate` reports what an older pin is missing.
+On the default `main` pin, the [configuration](#configuration) below fails with
+an error that names this requirement. Model configs that reject undeclared
+fields, such as `BridgeGPTModelConfig`, raise it when
+`model.dynamic_context_parallel` is assigned; other configs raise it in
+`ConfigContainer.validate`.
 
 ## When to Use It
 

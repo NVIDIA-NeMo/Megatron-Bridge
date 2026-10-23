@@ -66,6 +66,22 @@ def test_flat_assignment_routes_to_declared_field_owner() -> None:
         config.phantom_override = True
 
 
+@pytest.mark.skipif(
+    hasattr(TransformerConfig, "dynamic_context_parallel"),
+    reason="The pinned Megatron-Core declares the dynamic context parallel fields.",
+)
+def test_dynamic_cp_fields_name_the_dev_pin_on_pins_without_them() -> None:
+    config = _make_model_config()
+
+    with pytest.raises(AttributeError, match="switch_mcore.sh dev"):
+        config.dynamic_context_parallel = True
+    with pytest.raises(AttributeError, match="switch_mcore.sh dev"):
+        config.min_dynamic_context_parallel_size = 1
+    with pytest.raises(AttributeError, match="declares a field") as excinfo:
+        config.phantom_override = True
+    assert "switch_mcore.sh" not in str(excinfo.value)
+
+
 def test_model_config_round_trip_restores_runtime_activation() -> None:
     config = _make_model_config()
 
