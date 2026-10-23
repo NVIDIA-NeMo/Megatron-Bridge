@@ -57,6 +57,7 @@ from megatron.bridge.training.checkpointing import (
     _has_global_non_persistent_checkpoint,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
+    _load_global_dist_base_checkpoint,
     _load_hf_pretrained_checkpoint,
     _load_model_state_dict,
     _load_non_persistent_base_checkpoint,
@@ -149,12 +150,8 @@ def test_global_checkpoint_load_with_older_core(per_rank_objects, monkeypatch):
     from megatron.bridge.training import checkpointing
 
     # Model both an older config without the field and a config with an explicit policy.
-    config_values = dict(
-        fully_parallel_load=True,
-        fully_parallel_save=True,
-        ckpt_format="torch_dist",
-        dist_ckpt_strictness="assume_ok_unexpected",
-    )
+    config_values = vars(CheckpointConfig(async_save=False, fully_parallel_load=True)).copy()
+    config_values.pop("ckpt_fully_parallel_load_per_rank_objects", None)
     if per_rank_objects is not None:
         config_values["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
     config = SimpleNamespace(**config_values)
@@ -934,8 +931,23 @@ class TestSaveCheckpoint:
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
         assert legacy_tracker.read_text() == "500"
 
+    @pytest.mark.parametrize("save_validation_supported", [True, False])
     @pytest.mark.parametrize("verify_integrity", [False, True])
     @pytest.mark.parametrize("save_rng", [True, False])
+    @pytest.mark.parametrize("validate_sharding", [True, False])
+    @pytest.mark.parametrize(
+        "fully_parallel,cached_strategy,constant_structure,is_mimo",
+        [
+            (False, False, False, False),
+            (True, False, False, False),
+            (False, True, True, False),
+            (True, True, True, False),
+            (True, True, False, False),
+            (False, False, False, True),
+            (True, False, False, True),
+        ],
+    )
+    @patch("megatron.bridge.training.checkpointing.FullyParallelSaveStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
     @patch("builtins.open", new_callable=mock_open)
@@ -982,11 +994,30 @@ class TestSaveCheckpoint:
         mock_file_open,
         mock_is_last_rank,
         mock_wandb,
+        mock_parallel_strategy,
         save_checkpoint_fixtures,
+        monkeypatch,
+        save_validation_supported,
         save_rng,
+        validate_sharding,
+        fully_parallel,
+        cached_strategy,
+        constant_structure,
+        is_mimo,
         verify_integrity,
     ):
         """Test saving a global checkpoint."""
+        monkeypatch.setattr(
+            "megatron.bridge.training.checkpointing._FULLY_PARALLEL_SAVE_HAS_VALIDATION_POLICY",
+            save_validation_supported,
+            raising=False,
+        )
+        if not save_validation_supported:
+            # Match the supported dev pin's constructor: a new keyword must fail this test.
+            def legacy_wrapper(strategy, parallelization_group, do_cache_distribution):
+                return Mock()
+
+            mock_parallel_strategy.side_effect = legacy_wrapper
         # Setup mocks
         mock_dist_init.return_value = True
         mock_get_dist_rank.return_value = 0
@@ -1019,6 +1050,12 @@ class TestSaveCheckpoint:
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.save_rng = save_rng
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.ckpt_load_validate_sharding_integrity = validate_sharding
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.fully_parallel_save = fully_parallel
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.ckpt_assume_constant_structure = constant_structure
+        if not is_mimo:
+            del save_checkpoint_fixtures["mock_model"][0].mimo_config
+        checkpoint_context = {"save_strategy": Mock()} if cached_strategy else {}
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.verify_integrity = verify_integrity
 
         call_order = Mock()
@@ -1032,7 +1069,7 @@ class TestSaveCheckpoint:
             save_checkpoint_fixtures["mock_optimizer"],
             save_checkpoint_fixtures["mock_scheduler"],
             1000000,
-            checkpointing_context={},
+            checkpointing_context=checkpoint_context,
             non_persistent_ckpt=False,
         )
 
@@ -1042,6 +1079,19 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+        expected_validation = (validate_sharding or not save_validation_supported) and not (
+            (cached_strategy and constant_structure) or (is_mimo and not fully_parallel)
+        )
+        assert mock_dist_ckpt.save.call_args.kwargs["validate_access_integrity"] is expected_validation
+        if fully_parallel and not cached_strategy:
+            if save_validation_supported:
+                assert (
+                    mock_parallel_strategy.call_args.kwargs.get("validate_access_integrity", True) is validate_sharding
+                )
+            else:
+                assert "validate_access_integrity" not in mock_parallel_strategy.call_args.kwargs
+        else:
+            mock_parallel_strategy.assert_not_called()
         assert mock_dist_ckpt.save.call_args.kwargs["verify_integrity"] is verify_integrity
         if save_rng:
             mock_get_rng.assert_called_once()
@@ -6954,3 +7004,30 @@ def test_checkpoint_minor_version_changes_are_compatible(monkeypatch, versions):
     assert checkpointing.get_checkpoint_version() == versions[-1]
     with pytest.raises(AssertionError, match="checkpoint versions do not match"):
         checkpointing.set_checkpoint_version(2.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("validate_sharding", [True, False])
+@pytest.mark.parametrize("fully_parallel", [True, False])
+@pytest.mark.parametrize("is_mimo", [True, False])
+def test_global_checkpoint_load_honors_sharding_validation(
+    validate_sharding: bool, fully_parallel: bool, is_mimo: bool
+) -> None:
+    """Public checkpoint policy must reach the Core loader."""
+    cfg = CheckpointConfig(
+        ckpt_format="torch_dist",
+        ckpt_load_validate_sharding_integrity=validate_sharding,
+        fully_parallel_load=fully_parallel,
+        fully_parallel_save=fully_parallel,
+    )
+    pg_collection = Mock()
+    with (
+        patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy"),
+        patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper"),
+        patch("megatron.bridge.training.checkpointing.dist_checkpointing.load", return_value={}) as load,
+    ):
+        _load_global_dist_base_checkpoint(
+            "checkpoints", cfg, False, {"model": {}}, 1, False, is_megatron_mimo=is_mimo, pg_collection=pg_collection
+        )
+    expected_validation = validate_sharding and not (is_mimo and not fully_parallel)
+    assert load.call_args.kwargs["validate_access_integrity"] is expected_validation
