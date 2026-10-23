@@ -39,6 +39,7 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.optimizer import distrib_optimizer
 from megatron.core.rerun_state_machine import RerunMode, RerunState, RerunStateMachine
 from megatron.core.transformer.module import Float16Module
+from megatron.core.utils import unwrap_model
 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
 from megatron.bridge.training.checkpointing import (
@@ -2597,7 +2598,7 @@ class TestLoadCheckpoint:
         mock_dist_init.return_value = False  # Disable distributed for simpler testing
         mock_is_last_rank.return_value = False
         mock_exists.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
 
         # Mock train state file existence (for train_state.pt check)
         mock_exists_os.return_value = True  # train_state.pt exists (normal case)
@@ -3745,7 +3746,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load.return_value = mock_full_state_dict
         mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(1)}}
-        mock_unwrap_model.return_value = mock_model
+        mock_unwrap_model.side_effect = unwrap_model
 
         from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
 
@@ -4330,8 +4331,7 @@ class TestMegatronLMCompatibility:
         mock_dist_init.return_value = False
         mock_is_last_rank.return_value = False
         mock_exists_checkpoint.return_value = True
-        mock_unwrap.return_value = [Mock()]
-        mock_unwrap.return_value[0].parameters.return_value = []
+        mock_unwrap.side_effect = unwrap_model
 
         # Mock file existence checks
         def mock_exists_side_effect(path):
@@ -6176,7 +6176,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_dist_init.return_value = False
         mock_exists.return_value = True
         mock_exists_os.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
         mock_generate_state_dict.return_value = {"test": "state"}
         mock_get_rng_state.return_value = Mock()
         mock_build_metadata.return_value = {}
@@ -6306,7 +6306,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_dist_init.return_value = False
         mock_exists.return_value = True
         mock_exists_os.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
         mock_generate_state_dict.return_value = {"test": "state"}
         mock_get_rng_state.return_value = Mock()
         mock_build_metadata.return_value = {}
