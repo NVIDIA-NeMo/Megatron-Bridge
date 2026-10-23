@@ -37,7 +37,6 @@ class MuseSparkModelConfig(BridgeHybridModelConfig):
     builder: ClassVar[str] = "megatron.bridge.models.muse_spark_open.MuseSparkModelBuilder"
     transformer_config_class: ClassVar[type] = MuseSparkTransformerConfig
     hf_config: dict[str, Any] = field(default_factory=dict)
-    hf_model_text_only: bool = False
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_audio_model: bool = False

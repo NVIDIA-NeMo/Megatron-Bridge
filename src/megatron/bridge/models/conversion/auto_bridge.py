@@ -474,6 +474,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
         from megatron.bridge.training.model_load_save import load_model_config
+        from megatron.bridge.training.utils.checkpoint_utils import get_hf_source_from_model_config
 
         checkpoint_path = Path(megatron_path)
         if not checkpoint_path.exists():
@@ -502,11 +503,8 @@ class AutoBridge(Generic[MegatronModelT]):
         text_reference = None
         if getattr(megatron_cfg, "hf_model_text_only", False) is True:
             # A replacement reference repository need not contain the source revision.
-            revision = (
-                getattr(megatron_cfg, "hf_model_revision", None)
-                if str(hf_model_id) == str(getattr(megatron_cfg, "hf_model_id", None))
-                else None
-            )
+            source_id, source_revision = get_hf_source_from_model_config(megatron_cfg)
+            revision = source_revision if str(hf_model_id) == str(source_id) else None
             text_reference = cls.from_hf_pretrained(
                 hf_model_id,
                 text_only=True,
@@ -2017,6 +2015,11 @@ class AutoBridge(Generic[MegatronModelT]):
         weights, initialize distributed state, finalize the config, or build a
         model.
 
+        The Hugging Face source id and revision are recorded in the config's
+        ``extra_checkpoint_metadata``. A source projected to its language model
+        with ``text_only=True`` also sets ``hf_model_text_only``, so a restored
+        config reopens the same projection.
+
         Returns:
             Serializable model config linked to its model builder.
 
@@ -2035,6 +2038,8 @@ class AutoBridge(Generic[MegatronModelT]):
         if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):
             hf_name_or_path = getattr(self.hf_pretrained, "name_or_path", None)
         self._set_source_metadata(model_config, hf_model_id=hf_name_or_path, hf_model_revision=self.hf_model_revision)
+        if self.text_only:
+            model_config.hf_model_text_only = True
 
         return model_config
 

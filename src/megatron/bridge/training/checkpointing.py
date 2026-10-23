@@ -97,6 +97,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_run_config_filename,
     get_checkpoint_tracker_filename,
     get_checkpoint_train_state_filename,
+    get_hf_source_from_model_config,
     is_checkpoint_iteration_directory,
     is_hf_checkpoint_dir,
     join_paths,
@@ -1012,7 +1013,8 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
 
     Resolution order (first non-empty wins):
       1. ``cfg.checkpoint.hf_source_path`` — explicit override.
-      2. ``cfg.model.hf_model_id`` — populated by ``AutoBridge.to_megatron_provider`` (preferred).
+      2. The source recorded on ``cfg.model`` by ``AutoBridge`` (preferred): ``extra_checkpoint_metadata``
+         for builder-backed configs, ``hf_model_id`` for providers.
       3. ``cfg.tokenizer.tokenizer_model`` — may be a tokenizer file path; only used as fallback when
          the above are unset (recipes that point this at an HF model id still work).
 
@@ -1025,7 +1027,7 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
         return ckpt_cfg.hf_source_path
     model_cfg = getattr(cfg, "model", None)
     if model_cfg is not None:
-        hf_id = getattr(model_cfg, "hf_model_id", None)
+        hf_id, _ = get_hf_source_from_model_config(model_cfg)
         if hf_id:
             return hf_id
     tokenizer_cfg = getattr(cfg, "tokenizer", None)
@@ -1054,18 +1056,14 @@ def _build_auto_bridge_for_save(cfg: ConfigContainer, hf_source: Optional[str] =
     if not source:
         raise ValueError(
             "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
-            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
-            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
-            "an HF model id."
+            "Set cfg.checkpoint.hf_source_path, record the source on cfg.model (AutoBridge and recipes "
+            "do this), or set cfg.tokenizer.tokenizer_model when it points at an HF model id."
         )
     trust_remote_code = bool(getattr(cfg.checkpoint, "hf_trust_remote_code", False))
     text_only = getattr(cfg.model, "hf_model_text_only", False) is True
     # Initialization and artifact templates may override the original HF source.
-    revision = (
-        getattr(cfg.model, "hf_model_revision", None)
-        if str(source) == str(getattr(cfg.model, "hf_model_id", None))
-        else None
-    )
+    recorded_id, recorded_revision = get_hf_source_from_model_config(cfg.model)
+    revision = recorded_revision if str(source) == str(recorded_id) else None
     cache_key = (str(source), bool(trust_remote_code))
     if text_only:
         cache_key += (text_only, revision)

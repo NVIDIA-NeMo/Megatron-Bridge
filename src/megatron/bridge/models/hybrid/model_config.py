@@ -57,6 +57,8 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
 
     Hugging Face source provenance is recorded in the inherited
     ``extra_checkpoint_metadata`` mapping, as for ``BridgeGPTModelConfig``.
+    ``hf_model_text_only`` records that the source checkpoint was projected to
+    its language model, so a restored config reopens the same projection.
     """
 
     builder: ClassVar[str] = "megatron.bridge.models.hybrid.BridgeHybridModelBuilder"
@@ -69,6 +71,9 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
 
     mamba_chunk_size: int = DEFAULT_MAMBA_CHUNK_SIZE
     """Chunk size of the Mamba scan."""
+
+    hf_model_text_only: bool = False
+    """Whether the source HF checkpoint was projected to its language model."""
 
     def finalize(self) -> None:
         """Combine the hybrid layer patterns and derive ``num_layers`` before finalizing the transformer config.
