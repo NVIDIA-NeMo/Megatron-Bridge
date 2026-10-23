@@ -2340,6 +2340,34 @@ def test_non_yarn_mapping_adds_no_yarn_defaults():
     assert not any(key.startswith("yarn_") for key in kwargs)
 
 
+_YARN_SCALING = {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 4096}
+
+
+@pytest.mark.parametrize(
+    ("rope_scaling", "bridge_type", "expected"),
+    [
+        (None, None, "rope"),
+        (None, "rope", "rope"),
+        (None, "none", "none"),
+        (None, "yarn", "yarn"),
+        (_YARN_SCALING, None, "yarn"),
+        (_YARN_SCALING, "rope", "yarn"),
+    ],
+)
+def test_provider_bridge_keeps_the_bridge_position_embedding(monkeypatch, rope_scaling, bridge_type, expected):
+    """The shared provider path keeps a type the bridge selects, unless the checkpoint uses YaRN."""
+    config = _yarn_qwen2_config(rope_scaling)
+    bridge = DummyBridge()
+    kwargs = bridge.hf_config_to_provider_kwargs(config)
+    if bridge_type is not None:
+        kwargs["position_embedding_type"] = bridge_type
+    monkeypatch.setattr(bridge, "hf_config_to_provider_kwargs", lambda _hf_config: dict(kwargs))
+
+    provider = MegatronModelBridge.provider_bridge(bridge, SimpleNamespace(config=config))
+
+    assert provider.position_embedding_type == expected
+
+
 @pytest.mark.parametrize(
     "config",
     [
