@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import dataclasses
-import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -1209,8 +1208,7 @@ class TestNemotronHBridgeMTPIntegration:
         bridge = NemotronHBridge()
         bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=1, mtp_hybrid_override_pattern="*E*M-")
 
-        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}):
-            registry = bridge.mapping_registry()
+        registry = bridge.mapping_registry()
 
         mlp_mapping = registry.megatron_to_hf_lookup(
             "mtp.layers.3.mtp_model_layer.layers.2.mlp.linear_fc1.weight_quantizer._amax"

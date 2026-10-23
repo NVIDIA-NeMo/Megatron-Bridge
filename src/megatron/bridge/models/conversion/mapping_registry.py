@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import re
 from typing import Any, List, Optional
 
@@ -115,12 +114,13 @@ class MegatronMappingRegistry:
         if extra_mappings:
             self.mappings.extend(extra_mappings)
 
-    def _add_quantization_mappings(self) -> None:
-        """Add quantization mappings for weight quantizers and input quantizers."""
-        original_mappings = list(self.mappings)
-        self.mappings.extend(convert_to_amax_map(original_mappings, ".weight_quantizer._amax"))
-        self.mappings.extend(convert_to_amax_map(original_mappings, ".input_quantizer._amax"))
-        self.mappings.extend(derive_kv_bmm_amax_map(original_mappings))
+    def _build_quantization_mappings(self) -> List[MegatronParamMapping]:
+        """Derive ModelOpt quantizer-state (amax) mappings from the weight mappings."""
+        return [
+            *convert_to_amax_map(self.mappings, ".weight_quantizer._amax"),
+            *convert_to_amax_map(self.mappings, ".input_quantizer._amax"),
+            *derive_kv_bmm_amax_map(self.mappings),
+        ]
 
     def _convert_pattern_to_regex(self, pattern: str) -> str:
         """Convert a pattern with wildcards to regex pattern.
@@ -158,14 +158,15 @@ class MegatronMappingRegistry:
         self.mappings = list(mappings)
         self._pg_collection = None
         self._add_separate_layernorm_mappings()
-        if int(os.environ.get("ENABLE_BRIDGE_QUANT_MAPPING", "0")):
-            self._add_quantization_mappings()
+        # Derived mappings for ModelOpt quantizer state: lookups resolve them, but they are not
+        # listed with the weight mappings, so registries rebuilt from those do not duplicate them.
+        self._quantization_mappings = self._build_quantization_mappings()
 
         # Pre-compile patterns for efficiency
         self._compiled_patterns = []
         self._reverse_patterns = []  # For hf_param -> megatron lookups
 
-        for mapping in self.mappings:
+        for mapping in [*self.mappings, *self._quantization_mappings]:
             # Compile source patterns
             if "*" in mapping.megatron_param:
                 # Convert glob pattern to regex with support for * and **
@@ -195,7 +196,7 @@ class MegatronMappingRegistry:
     def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
         """Install a process-group collection on all mappings returned by this registry."""
         self._pg_collection = pg_collection
-        for mapping in self.mappings:
+        for mapping in [*self.mappings, *self._quantization_mappings]:
             mapping.set_process_groups_from_pg_collection(pg_collection)
 
     def _prepare_mapping(self, mapping: MegatronParamMapping) -> MegatronParamMapping:

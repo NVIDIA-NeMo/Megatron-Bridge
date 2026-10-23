@@ -79,6 +79,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
     MegatronPeftBridge,
 )
 from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
+from megatron.bridge.models.conversion.quant_mapping import AmaxMapping, amax_mapping_hf_names
 from megatron.bridge.models.conversion.transformers_compat import (
     partial_rotary_factor_from_hf,
     rope_theta_from_hf,
@@ -1168,6 +1169,71 @@ class MegatronModelBridge(
 
         return gathered_global_param_names
 
+    def build_modelopt_quantizer_recipe(
+        self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
+    ) -> dict[str, dict[str, Any]]:
+        """Map each enabled ModelOpt quantizer to its HF names with its properties-only state.
+
+        Names follow the same amax mappings (and q/k/v, gate/up, per-expert fan-out) as the
+        exported ``_amax`` tensors. Collective: every rank must call it.
+
+        Args:
+            hf_pretrained: HF model or config whose checkpoint layout selects the mappings.
+            megatron_model: Megatron model instance or list of instances.
+
+        Raises:
+            ValueError: If an enabled quantizer has no HF mapping or holds tensors other than
+                ``_amax`` (which are not exported), a disabled quantizer still rotates or scales its
+                input (which the recipe cannot carry), or ranks disagree on the state of a quantizer
+                exported under the same HF name.
+        """
+        from modelopt.torch.quantization.nn import TensorQuantizer
+
+        models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+        model_config = unwrap_model(models_list)[0].config
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+        registry = self.mapping_registry()
+        recipe, unsupported = {}, []
+        for vp_stage, model in enumerate(models_list):
+            for name, module in model.named_modules():
+                if not isinstance(module, TensorQuantizer):
+                    continue
+                global_name = _megatron_local_name_to_global(
+                    models_list, model_config, self._unwrap_name(name), vp_stage
+                )
+                if not module.is_enabled:
+                    # Disabled quantizers are left out of the recipe, so they must leave their input unchanged.
+                    rotates = module.rotate_is_enabled and not module.rotate_back_is_enabled
+                    if rotates or module.pre_quant_scale is not None:
+                        unsupported.append(f"{global_name} (disabled but rotates or scales its input)")
+                    continue
+                mapping = registry.megatron_to_hf_lookup(f"{global_name}._amax")
+                hf_names = amax_mapping_hf_names(mapping, model_config.num_moe_experts) if mapping else []
+                if not hf_names:
+                    unsupported.append(f"{global_name} (no Hugging Face mapping)")
+                buffers = sorted(n for n, _ in module.named_buffers(recurse=False) if n != "_amax")
+                if buffers:
+                    unsupported.append(f"{global_name} (unexported tensors {buffers})")
+                state = module.get_modelopt_state(properties_only=True)
+                # build_conversion_tasks attaches the model config to modules lacking one; not quantizer state.
+                state.pop("config", None)
+                recipe.update((hf_name.removesuffix("._amax"), state) for hf_name in hf_names)
+
+        per_rank = [(recipe, unsupported)]
+        if torch.distributed.is_initialized():
+            per_rank = [None] * torch.distributed.get_world_size()
+            torch.distributed.all_gather_object(per_rank, (recipe, unsupported))
+        unsupported = sorted({name for _, names in per_rank for name in names})
+        if unsupported:
+            raise ValueError(f"ModelOpt quantizers cannot be exported: {unsupported}")
+        merged = {}
+        for rank_recipe, _ in per_rank:
+            for hf_name, state in rank_recipe.items():
+                if merged.setdefault(hf_name, state) != state:
+                    raise ValueError(f"Ranks disagree on the ModelOpt quantizer state of {hf_name}")
+        return merged
+
     def _with_progress_tracking(self, tasks, description: str, show_progress: bool = True):
         """Helper method to wrap an iterable with progress tracking.
 
@@ -2026,7 +2092,9 @@ class MegatronModelBridge(
             )  # dict will be none except for one expert;
             # Finalize the converted tensor for the current export rank
             converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
-            converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
+            # Quantizer ranges keep their precision; ``weight_dtype`` applies to the weights only.
+            if not isinstance(task.mapping, AmaxMapping):
+                converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             tied_output_hf_name = None
             if tied_mapping_registry is not None:
