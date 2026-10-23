@@ -27,8 +27,10 @@ from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optiona
 import torch
 import torch.distributed as dist
 import transformers
+import yaml
 from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
+from pydantic import BaseModel
 
 
 if TYPE_CHECKING:
@@ -352,8 +354,6 @@ def _save_modelopt_quantizer_sidecars(
     quantizer is enabled (e.g. weight-only formats whose weights were folded), so the export
     stays a plain checkpoint.
     """
-    import yaml
-    from pydantic import BaseModel
 
     class _RecipeDumper(yaml.SafeDumper):
         # Spell out every entry: anchors would make an edit of one quantizer change all its aliases.

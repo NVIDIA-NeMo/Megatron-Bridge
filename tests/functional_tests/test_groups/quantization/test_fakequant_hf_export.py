@@ -60,7 +60,9 @@ def _export(model: Path, out: Path, *args: str) -> str:
         if flag in args:
             num_gpus *= int(args[args.index(flag) + 1])
     cmd = [sys.executable, "-m", "torch.distributed.run", f"--nproc_per_node={num_gpus}"]
-    cmd += ["tests/functional_tests/test_groups/quantization/fakequant_hf_export.py"]
+    # Record the workers' coverage too; CI combines and uploads REPO_ROOT/.coverage.
+    cmd += ["-m", "coverage", "run", f"--data-file={REPO_ROOT / '.coverage'}", f"--source={REPO_ROOT}"]
+    cmd += ["--parallel-mode", "tests/functional_tests/test_groups/quantization/fakequant_hf_export.py"]
     cmd += ["--hf-model-path", str(model), "--out", str(out), *args]
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT, timeout=600)
     assert result.returncode == 0, f"{cmd} failed:\n{result.stdout[-4000:]}\n{result.stderr[-4000:]}"
