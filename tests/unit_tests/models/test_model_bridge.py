@@ -512,6 +512,100 @@ def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     assert [task.global_param_name for task in export_plan.conversion_tasks] == [first_name, last_name]
 
 
+def _quantizer_recipe_model(monkeypatch, **quantizers):
+    """Return a bridge and model whose ``layer`` holds the given ModelOpt quantizers."""
+    from megatron.bridge.models.conversion.quant_mapping import AmaxFanoutMapping, AmaxMapping
+
+    class QuantBridge(DummyBridge):
+        def mapping_registry(self):
+            return MegatronMappingRegistry(
+                AmaxMapping("layer.input_quantizer._amax", "hf.proj.input_quantizer._amax"),
+                AmaxFanoutMapping(
+                    "layer.qkv_quantizer._amax", ["hf.q.input_quantizer._amax", "hf.k.input_quantizer._amax"]
+                ),
+            )
+
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(num_moe_experts=None)
+    model.layer = torch.nn.Module()
+    for name, quantizer in quantizers.items():
+        setattr(model.layer, name, quantizer)
+    monkeypatch.setattr(model_bridge_module, "unwrap_model", lambda _model: [model])
+    monkeypatch.setattr(
+        model_bridge_module,
+        "_megatron_local_name_to_global",
+        lambda _models, _config, local_name, _vp_stage: local_name,
+    )
+    return QuantBridge(), model
+
+
+def test_build_modelopt_quantizer_recipe_maps_enabled_quantizers(monkeypatch):
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    input_quantizer = TensorQuantizer()
+    input_quantizer.amax = torch.tensor(1.0)
+    qkv_quantizer = TensorQuantizer()
+    qkv_quantizer.amax = torch.tensor(2.0)
+    disabled_quantizer = TensorQuantizer()
+    disabled_quantizer.disable()
+    bridge, model = _quantizer_recipe_model(
+        monkeypatch,
+        input_quantizer=input_quantizer,
+        qkv_quantizer=qkv_quantizer,
+        disabled_quantizer=disabled_quantizer,
+    )
+    expected_state = input_quantizer.get_modelopt_state(properties_only=True)
+    # build_conversion_tasks may attach the model config to quantizers; it must not reach the recipe.
+    input_quantizer.config = model.config
+
+    recipe = bridge.build_modelopt_quantizer_recipe(PretrainedConfig(), model)
+
+    assert set(recipe) == {"hf.proj.input_quantizer", "hf.q.input_quantizer", "hf.k.input_quantizer"}
+    assert recipe["hf.proj.input_quantizer"] == expected_state
+    assert recipe["hf.q.input_quantizer"] == recipe["hf.k.input_quantizer"]
+
+
+def test_build_modelopt_quantizer_recipe_rejects_unexportable_quantizers(monkeypatch):
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    input_quantizer = TensorQuantizer()
+    input_quantizer.pre_quant_scale = torch.ones(2)
+    unmapped_quantizer = TensorQuantizer()
+    rotating_quantizer = TensorQuantizer()
+    rotating_quantizer.set_from_attribute_config({"enable": False, "rotate": True})
+    bridge, model = _quantizer_recipe_model(
+        monkeypatch,
+        input_quantizer=input_quantizer,
+        unmapped_quantizer=unmapped_quantizer,
+        rotating_quantizer=rotating_quantizer,
+    )
+
+    with pytest.raises(ValueError, match="cannot be exported") as error:
+        bridge.build_modelopt_quantizer_recipe(PretrainedConfig(), model)
+
+    assert "layer.input_quantizer (unexported tensors ['_pre_quant_scale'])" in str(error.value)
+    assert "layer.unmapped_quantizer (no Hugging Face mapping)" in str(error.value)
+    assert "layer.rotating_quantizer (disabled but rotates or scales its input)" in str(error.value)
+
+
+def test_build_modelopt_quantizer_recipe_rejects_ranks_that_disagree(monkeypatch):
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    input_quantizer = TensorQuantizer()
+    bridge, model = _quantizer_recipe_model(monkeypatch, input_quantizer=input_quantizer)
+
+    def all_gather_object(output, local):
+        recipe, unsupported = local
+        output[:] = [local, ({name: {**state, "_num_bits": 4} for name, state in recipe.items()}, unsupported)]
+
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "all_gather_object", all_gather_object)
+
+    with pytest.raises(ValueError, match="Ranks disagree on the ModelOpt quantizer state of hf.proj.input_quantizer"):
+        bridge.build_modelopt_quantizer_recipe(PretrainedConfig(), model)
+
+
 def _setup_tied_output_bridge(
     monkeypatch, *, share_embeddings_and_output_weights, global_param_names=None, flag_on_model=False
 ):

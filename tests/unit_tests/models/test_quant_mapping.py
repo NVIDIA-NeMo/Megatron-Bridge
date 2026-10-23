@@ -961,6 +961,8 @@ class TestAmaxMappingHfNames:
         ]
         with pytest.raises(ValueError, match="num_experts"):
             names(f"{layer}.mlp.experts.linear_fc2.input_quantizer._amax")
+        # A weight mapping is not an amax mapping, so it names no quantizer.
+        assert names(f"{layer}.self_attention.linear_qkv.weight") == []
 
     def test_packed_experts_share_one_input_quantizer(self):
         registry = MegatronMappingRegistry(
