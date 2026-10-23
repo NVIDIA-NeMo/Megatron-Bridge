@@ -13,6 +13,8 @@
 # limitations under the License.
 """GB300 performance recipes for Qwen3.5-VL."""
 
+import torch
+
 from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen_vl.common import (
@@ -345,10 +347,47 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Qwen3.5-VL 397B-A17B pretrain: 64× GB300, MXFP8."""
+def _build_qwen35_vl_397b_a17b_gb300_fp8mx() -> ConfigContainer:
+    """Shared MXFP8 base for the Qwen3.5-VL 397B-A17B GB300 and VRNVL72 recipes."""
     cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
+
+
+def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Qwen3.5-VL 397B-A17B pretrain: 64× GB300, MXFP8.
+
+    Matches the tuned 64× GB300 configuration: on top of the MXFP8 base it adds the CuTe DSL fused grouped MLP,
+    vision-encoder CUDA graphs, the precision-aware optimizer with BF16 Adam moments, selective recompute, 128-token
+    HybridEP dispatch and preprocessing chunks, and a LayerNorm SM margin of 16.
+    """
+    cfg = _build_qwen35_vl_397b_a17b_gb300_fp8mx()
+
+    # CuTe DSL fused grouped MLP for the experts, as in the 35B MXFP8 recipe above. The op fuser, the 32-wide
+    # GLU interleaving and NVTE_CUTEDSL_FUSED_GROUPED_MLP below are required together; with the op fuser,
+    # Megatron-Core also runs the experts on grouped tensors.
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+
+    # Vision-encoder CUDA graph. The cap (vision patches per microbatch) is the largest real-data vision sequence
+    # measured at MBS 1 plus 5%; the 784-patch mock images fit and are padded to it on every replay. Raise it with
+    # MBS or images per sample. As in the VRNVL72 recipes, the graphed encoder runs without the 2D rotary embedding,
+    # and images that share a microbatch attend to each other and to the padding.
+    cfg.model.vision_cuda_graph_impl = "transformer_engine"
+    cfg.model.vision_cuda_graph_scope = ["attn", "mlp"]
+    cfg.model.max_vision_cuda_graph_seq_length = 1029
+
+    # FP32 main parameters and gradients, BF16 Adam moments.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+
+    # Selective recompute, which _qwen35_vl_common turns off for the shared perf settings.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn", "gdn_norm_out"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -365,8 +404,14 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
+        # HybridEP dispatch and preprocessing chunks (HybridEP's default is 64).
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 128,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 128,
         # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        # Gate for the CuTe DSL fused grouped MLP enabled above. Transformer Engine checks it when it
+        # registers the fusion; without it the op fuser runs the unfused path.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
