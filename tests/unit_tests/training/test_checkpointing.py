@@ -154,6 +154,7 @@ def test_global_checkpoint_load_with_older_core(per_rank_objects, monkeypatch):
         fully_parallel_save=True,
         ckpt_format="torch_dist",
         dist_ckpt_strictness="assume_ok_unexpected",
+        verify_integrity=False,
     )
     if per_rank_objects is not None:
         config_values["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
