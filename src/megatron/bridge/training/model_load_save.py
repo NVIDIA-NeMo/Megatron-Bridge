@@ -435,6 +435,12 @@ def build_and_load_model(
         else:
             model = _call_model_provider(model_cfg)
 
+        if isinstance(model_cfg, ModelConfig):
+            # As in AutoBridge.get_model, retain the outer config for subsequent
+            # saves; the modules' runtime config only describes the transformer.
+            for model_chunk in model:
+                model_chunk.model_config = model_cfg
+
         if getattr(model_cfg, "restore_modelopt_state", False):
             from megatron.bridge.training.post_training.checkpointing import (
                 load_modelopt_state,

@@ -1340,6 +1340,71 @@ class TestLoadMegatronModel:
         assert cfg.virtual_pipeline_model_parallel_size == 4
 
 
+class TestBuilderCheckpointConfigRetention:
+    """Builder config ownership across standalone load and save."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("wrapped", [False, True])
+    @pytest.mark.parametrize("num_chunks", [1, 2])
+    def test_load_builder_model_can_be_saved(self, tmp_path, wrapped, num_chunks):
+        """Loading retains the reconstructable config on every returned model chunk."""
+        model_config = GPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=16,
+                num_attention_heads=2,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=64,
+            seq_length=128,
+            share_embeddings_and_output_weights=False,
+        )
+        chunks = []
+        for _ in range(num_chunks):
+            module = torch.nn.Linear(16, 16)
+            module.config = model_config.transformer
+            if wrapped:
+                wrapper = torch.nn.Module()
+                wrapper.module = module
+                module = wrapper
+            chunks.append(module)
+        builder = Mock()
+        builder.build_distributed_models.return_value = chunks
+
+        with (
+            patch.object(model_load_save, "load_model_config", return_value=(model_config, None)),
+            patch.object(model_load_save, "_get_or_initialize_pg_collection"),
+            patch.object(type(model_config), "get_builder_cls", return_value=Mock(return_value=builder)),
+            patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state", return_value=False),
+            patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint") as load_weights,
+        ):
+            models = load_megatron_model("/checkpoint", use_cpu_init=True, skip_temp_dist_context=True)
+
+        assert models is chunks
+        load_weights.assert_called_once_with("/checkpoint", models, return_state_dict=False)
+
+        def save_config(**kwargs):
+            # Exercise the real config serializer; distributed tensor I/O is mocked.
+            kwargs["state"].cfg.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        with patch.object(model_load_save, "save_checkpoint", side_effect=save_config) as save_checkpoint:
+            save_megatron_model(models, str(tmp_path))
+
+        save_checkpoint.assert_called_once()
+        assert save_checkpoint.call_args.kwargs["model"] is models
+        for model in models:
+            assert model.model_config is model_config
+            inner_model = model.module if wrapped else model
+            assert inner_model.config is model_config.transformer
+        reloaded_config, _ = load_model_config(str(tmp_path))
+        assert type(reloaded_config) is type(model_config)
+        assert reloaded_config.get_builder_cls() is model_config.get_builder_cls()
+        assert reloaded_config.vocab_size == 64
+        assert reloaded_config.seq_length == 128
+        assert reloaded_config.share_embeddings_and_output_weights is False
+        assert reloaded_config.transformer.hidden_size == 16
+
+
 class TestSaveMegatronModel:
     """Test save_megatron_model function.
 
