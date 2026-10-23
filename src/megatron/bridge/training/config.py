@@ -1167,8 +1167,8 @@ class ConfigContainer(Container):
 
         MFSDP V2 owns its sharded parameter and gradient storage, so it must use
         its dedicated optimizer rather than Bridge's distributed-optimizer path.
-        Checkpointing and tensor/pipeline parallelism remain intentionally unsupported
-        upstream and are rejected here before model construction.
+        Tensor/pipeline parallelism remains unsupported and is rejected here
+        before model construction. Checkpoints use the fsdp_dtensor format.
         """
         unsupported_parallelisms = (
             "tensor_model_parallel_size",
@@ -1191,7 +1191,8 @@ class ConfigContainer(Container):
         if self.rng.data_parallel_random_init:
             raise ValueError("MFSDP V2 does not support data_parallel_random_init.")
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
-            raise ValueError("MFSDP V2 checkpoint save and load are not yet supported.")
+            if self.checkpoint.ckpt_format != "fsdp_dtensor":
+                raise ValueError("MFSDP V2 requires the fsdp_dtensor checkpointing format.")
         if self.checkpoint.pretrained_checkpoint is not None:
             raise ValueError("MFSDP V2 checkpoint loading is not yet supported.")
         if self.optimizer.loss_scale is not None:
