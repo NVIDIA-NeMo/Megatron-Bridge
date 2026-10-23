@@ -126,8 +126,6 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
 def test_public_modelopt_plan_excludes_quantizer_state_before_mapping_validation(
     monkeypatch, cached_names, quantization
 ):
-    monkeypatch.setenv("ENABLE_BRIDGE_QUANT_MAPPING", "1")
-
     class ProjectionBridge(MegatronModelBridge):
         def provider_bridge(self, hf_pretrained):
             raise NotImplementedError
