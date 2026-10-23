@@ -57,6 +57,7 @@ override-dependencies = [
     "transformer-engine; sys_platform == 'never'",     # Installed by MBridge
     # Pinning versions to solve conflicts
     "leptonai==0.27.3",                        # NeMo-Run requires leptonai.api.v1, absent in 0.47.1
+    "anyio>=4.14.2",                           # Override LeptonAI's <=4.9.0 cap; CVE-2026-63374
     "webdataset==0.2.86",                       # fix for SB multimodal
     "pandas==2.2.3",
     "ctc_segmentation==1.7.4",
