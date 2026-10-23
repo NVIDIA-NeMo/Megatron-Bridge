@@ -676,3 +676,68 @@ def test_mimo_reorder_defaults_validate():
         ).megatron_mimo_intra_microbatch_reorder
         is False
     )
+
+
+def test_lazy_examples_match_eager_examples_without_holding_rows(monkeypatch):
+    from megatron.bridge.data.sources import hf as hf_module
+    from megatron.bridge.data.sources.hf_adapters import LazyAdaptedHFDataset
+
+    rows = [
+        {"messages": [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": f"a{i}"}]}
+        for i in range(5)
+    ]
+    monkeypatch.setattr(hf_module, "load_hf_dataset_source", lambda source: Dataset.from_list(rows))
+    monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", hf_module.load_and_adapt_hf_dataset)
+    built = {}
+    for lazy in (False, True):
+        config = DirectHFSFTDatasetConfig(
+            seq_length=16,
+            source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+            pad_to_multiple_of=1,
+            do_validation=False,
+            do_test=False,
+            lazy_examples=lazy,
+        )
+        train, _, _ = DirectHFSFTDatasetBuilder(config).build(DatasetBuildContext(7, 0, 0, tokenizer=_Tokenizer()))
+        built[lazy] = train
+
+    assert isinstance(built[True]._base_examples, LazyAdaptedHFDataset)
+    # Indices past the rows wrap around, as for the eager list.
+    assert [built[True][i] for i in range(7)] == [built[False][i] for i in range(7)]
+    assert built[True].collate_fn([built[True][0]])["tokens"].tolist() == [[1, 2, 3]]
+
+
+def test_lazy_adapted_dataset_skips_rows_the_adapter_drops(monkeypatch):
+    from megatron.bridge.data.sources import hf_adapters
+
+    def keep_even(row, kwargs):
+        return None if row["i"] % 2 else {"i": row["i"], "scale": kwargs["scale"]}
+
+    monkeypatch.setitem(hf_adapters._ADAPTERS, "keep_even", keep_even)
+    dataset = Dataset.from_list([{"i": i} for i in range(5)])
+    lazy = hf_adapters.LazyAdaptedHFDataset(
+        dataset,
+        adapter_name="keep_even",
+        adapter_kwargs={"scale": 10},
+        transform=lambda row: row["i"] * row["scale"],
+    )
+    eager = [
+        row["i"] * 10
+        for row in hf_adapters.adapt_hf_dataset(dataset, adapter_name="keep_even", adapter_kwargs={"scale": 10})
+    ]
+    assert list(lazy) == eager == [0, 20, 40]
+    assert lazy[-1] == 40 and lazy[1:] == [20, 40]
+    with pytest.raises(ValueError, match="no examples"):
+        hf_adapters.LazyAdaptedHFDataset(dataset.select([1, 3]), adapter_name="keep_even", adapter_kwargs={"scale": 1})
+
+
+def test_lazy_examples_reject_a_blend():
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=[HFDatasetSourceConfig(path_or_dataset="org/a"), HFDatasetSourceConfig(path_or_dataset="org/b")],
+        lazy_examples=True,
+        do_validation=False,
+        do_test=False,
+    )
+    with pytest.raises(ValueError, match="lazy_examples supports one training source"):
+        config.validate()

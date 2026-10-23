@@ -199,6 +199,49 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 GB300 GPUs.
+
+    Match the VRNVL72 MXFP8 proxy: three leading dense layers, ten MoE
+    layers, one MTP layer, EP=32 and GBS=4096/MBS=1. PP=1 without virtual
+    pipelining gives dense DP=64, expert DP=2 and 64 microbatches. Retain
+    HybridEP, full-iteration graphs, cuTeDSL and combined-1F1B MoE overlap.
+    This reduced-depth benchmark does not establish at-scale throughput,
+    memory fit or convergence; GPU validation is required.
+    """
+    # Share the VRNVL72 base, without the GB300 parent's NCCL EP/grouped-tensor overrides.
+    cfg = _build_deepseek_v3_gb300_fp8mx()
+    cfg.model.num_layers = 13
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    # Keep this explicit environment identical to the 64-GPU VRNVL72 MXFP8 proxy.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # The fused SwiGLU scale gradient uses atomics; match the VRNVL72 proxy.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+    }
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, deterministic.
 
@@ -364,6 +407,53 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdpv2_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron FSDP v2."""
+    cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
+    cfg.ddp.megatron_fsdp_version = 2
+
+    # The helper re-selects HybridEP, so restore NCCL EP after it.
+    _enable_deepseek_full_iteration(cfg)
+    _enable_ncclep(cfg)
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 64
+
+    # The op fuser's fused-expert path calls every forward pre-hook as (module, args), but under
+    # Megatron-FSDP the combined-1F1B schedule registers an unshard hook taking (module, args,
+    # kwargs). Re-enable both once that arity mismatch is fixed in Megatron-Core.
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # delay_wgrad_compute is only valid alongside that overlap.
+    cfg.comm_overlap.delay_wgrad_compute = False
+
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        # MXFP8 experts under a fixed capacity take the CuTe DSL fused grouped MLP, the only
+        # grouped GEMM that reads the ragged per-expert counts on device.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
