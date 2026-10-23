@@ -167,7 +167,9 @@ def test_public_modelopt_plan_preserves_tied_embedding_metadata(monkeypatch, qua
     assert plan.quantization_config["quant_algo"] == quant_algo
     assert "model.embed_tokens" in plan.quantization_config["ignore"]
     assert ("lm_head" in plan.quantization_config["ignore"]) is tied
-    assert plan.conversion_tasks == baseline.conversion_tasks
+    for actual, expected in zip(plan.conversion_tasks, baseline.conversion_tasks, strict=True):
+        assert actual.param_weight is expected.param_weight
+        assert replace(actual, param_weight=None) == replace(expected, param_weight=None)
     assert plan.quantized_params == baseline.quantized_params
     assert plan.local_quantization_specs == baseline.local_quantization_specs
     if not tied:
