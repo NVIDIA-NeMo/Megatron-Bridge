@@ -30,9 +30,16 @@ from megatron.core.dist_checkpointing.strategies.torch import (
     TorchDistLoadShardedStrategy,
     TorchDistSaveShardedStrategy,
 )
+from megatron.core.distributed import DistributedDataParallel, TorchFullyShardedDataParallel
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+    FullyShardedDataParallelV1,
+    FullyShardedDataParallelV2,
+)
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.optimizer import distrib_optimizer
 from megatron.core.rerun_state_machine import RerunMode, RerunState, RerunStateMachine
+from megatron.core.transformer.module import Float16Module
+from megatron.core.utils import unwrap_model
 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
 from megatron.bridge.training.checkpointing import (
@@ -2597,7 +2604,7 @@ class TestLoadCheckpoint:
         mock_dist_init.return_value = False  # Disable distributed for simpler testing
         mock_is_last_rank.return_value = False
         mock_exists.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
 
         # Mock train state file existence (for train_state.pt check)
         mock_exists_os.return_value = True  # train_state.pt exists (normal case)
@@ -3745,7 +3752,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load.return_value = mock_full_state_dict
         mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(1)}}
-        mock_unwrap_model.return_value = mock_model
+        mock_unwrap_model.side_effect = unwrap_model
 
         from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
 
@@ -3985,6 +3992,62 @@ class TestLoadModelStateDictHelper:
     @pytest.fixture(autouse=True)
     def _disable_gtp_load_context(self, monkeypatch):
         monkeypatch.setattr("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", False)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "wrapper_types",
+        [
+            pytest.param((), id="unwrapped"),
+            pytest.param((DistributedDataParallel,), id="ddp"),
+            pytest.param((Float16Module,), id="float16"),
+            pytest.param((DistributedDataParallel, Float16Module), id="ddp-float16"),
+        ],
+    )
+    @pytest.mark.parametrize("strict", [True, False])
+    def test_load_model_state_dict_delegating_wrappers(
+        self, wrapper_types: tuple[type[torch.nn.Module], ...], strict: bool
+    ) -> None:
+        module = torch.nn.Linear(2, 1)
+        original_bias = module.bias.detach().clone()
+        state_dict = {"weight": torch.full_like(module.weight, 2.0)}
+        wrapped = module
+        for wrapper_type in reversed(wrapper_types):
+            # Only exercise native loading; the constructors require distributed setup.
+            wrapper = object.__new__(wrapper_type)
+            torch.nn.Module.__init__(wrapper)
+            wrapper.module = wrapped
+            wrapped = wrapper
+
+        with patch("megatron.bridge.training.checkpointing.print_rank_0") as print_rank_0:
+            _load_model_state_dict(wrapped, state_dict, strict=strict)
+
+        torch.testing.assert_close(module.weight, state_dict["weight"])
+        torch.testing.assert_close(module.bias, original_bias)
+        if strict:
+            assert print_rank_0.call_count == 2
+            assert print_rank_0.call_args_list[1].args == ("Non-extra-state mismatched keys: ['bias']",)
+        else:
+            print_rank_0.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "adapter_type",
+        [TorchFullyShardedDataParallel, FullyShardedDataParallelV1, FullyShardedDataParallelV2],
+    )
+    @pytest.mark.parametrize("strict", [True, False])
+    def test_load_model_state_dict_preserves_fsdp_adapters(
+        self, adapter_type: type[torch.nn.Module], strict: bool
+    ) -> None:
+        # Test routing, not distributed FSDP weight-refresh numerical parity.
+        adapter = Mock(spec=adapter_type)
+        adapter.module = Mock()
+        adapter.load_state_dict.return_value = None
+        state_dict = {"weight": torch.tensor([1.0])}
+
+        _load_model_state_dict(adapter, state_dict, strict=strict)
+
+        adapter.load_state_dict.assert_called_once_with(state_dict, strict=strict)
+        adapter.module.load_state_dict.assert_not_called()
 
     @patch("megatron.core.tensor_parallel.gtp_api.gtp_native_fp8_load_context", create=True)
     @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
@@ -4274,8 +4337,7 @@ class TestMegatronLMCompatibility:
         mock_dist_init.return_value = False
         mock_is_last_rank.return_value = False
         mock_exists_checkpoint.return_value = True
-        mock_unwrap.return_value = [Mock()]
-        mock_unwrap.return_value[0].parameters.return_value = []
+        mock_unwrap.side_effect = unwrap_model
 
         # Mock file existence checks
         def mock_exists_side_effect(path):
@@ -6120,7 +6182,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_dist_init.return_value = False
         mock_exists.return_value = True
         mock_exists_os.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
         mock_generate_state_dict.return_value = {"test": "state"}
         mock_get_rng_state.return_value = Mock()
         mock_build_metadata.return_value = {}
@@ -6250,7 +6312,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_dist_init.return_value = False
         mock_exists.return_value = True
         mock_exists_os.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
         mock_generate_state_dict.return_value = {"test": "state"}
         mock_get_rng_state.return_value = Mock()
         mock_build_metadata.return_value = {}
