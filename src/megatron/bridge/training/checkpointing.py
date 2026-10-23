@@ -1679,7 +1679,7 @@ def save_checkpoint(
                             previous_step = int(previous_metadata)
 
                 train_state_dict["floating_point_operations_so_far"] = torch.tensor(
-                    num_floating_point_operations_so_far, dtype=torch.float32
+                    num_floating_point_operations_so_far, dtype=torch.float64
                 )
                 if MultiStorageClientFeature.is_enabled():
                     msc = MultiStorageClientFeature.import_package()
