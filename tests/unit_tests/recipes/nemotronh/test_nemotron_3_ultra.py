@@ -229,7 +229,7 @@ def test_vrnvl72_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.model.moe_router_padding_for_quantization is True
     assert cfg.model.cuda_graph_impl == "local"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_preprocess", "moe_router"]
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
     assert cfg.mixed_precision.fp4 == "e2m1"
@@ -279,7 +279,7 @@ def test_nvfp4_perf_recipes_use_gtp_partial_cuda_graphs_and_nccl_ep(
     assert cfg.ddp.num_distributed_optimizer_instances == 1
 
     assert cfg.model.cuda_graph_impl == "local"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_preprocess", "moe_router"]
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
 

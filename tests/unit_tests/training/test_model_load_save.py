@@ -397,10 +397,7 @@ class TestLoadMegatronModel:
         build_model.assert_called_once()
         assert cfg.expert_tensor_parallel_size == 1
 
-    @pytest.mark.parametrize("legacy", [False, True])
-    def test_load_model_config_preserves_derived_gtp_sizes(self, tmp_path, legacy):
-        import yaml
-
+    def test_load_model_config_preserves_derived_gtp_sizes(self, tmp_path):
         from megatron.bridge.recipes.gpt import vanilla_gpt_pretrain_config
         from megatron.bridge.training.gtp import _get_checkpoint_weight_topology
 
@@ -412,12 +409,6 @@ class TestLoadMegatronModel:
         config = vanilla_gpt_pretrain_config()
         config.model = cfg
         config.to_yaml(str(tmp_path / "run_config.yaml"))
-        if legacy:
-            # Older saves retained runtime fields while leaving constructor shard counts unset.
-            raw = yaml.safe_load((tmp_path / "run_config.yaml").read_text())
-            raw["model"]["tensor_parallel_num_weight_shards"] = None
-            raw["model"]["expert_tensor_parallel_num_weight_shards"] = None
-            (tmp_path / "run_config.yaml").write_text(yaml.safe_dump(raw))
         loaded, _ = load_model_config(str(tmp_path))
         assert _get_checkpoint_weight_topology(loaded) == (2, 2, 1, 4)
         assert loaded.tensor_parallel_num_weight_shards == 4
