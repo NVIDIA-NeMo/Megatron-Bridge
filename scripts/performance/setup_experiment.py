@@ -61,6 +61,25 @@ try:
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
+try:
+    from utils.nvcre_bridge import (
+        BRIDGE_POD_ROOT,
+        WORKSPACE_MOUNT,
+        WORKSPACE_VOLUME,
+        LocalBridge,
+        bridge_init_container,
+        local_bridge_source,
+    )
+except (ImportError, ModuleNotFoundError):
+    from .utils.nvcre_bridge import (
+        BRIDGE_POD_ROOT,
+        WORKSPACE_MOUNT,
+        WORKSPACE_VOLUME,
+        LocalBridge,
+        bridge_init_container,
+        local_bridge_source,
+    )
+
 SCRIPT_DIR = Path(__file__).parent.resolve()
 REPO_ROOT = SCRIPT_DIR.parents[1]
 BRIDGE_SOURCE_DIR = REPO_ROOT / "src" / "megatron" / "bridge"
@@ -95,7 +114,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     Value-taking flags are passed as ``--flag value`` or ``--flag=value``.
     Boolean flags (no following value) are listed in ``_LAUNCHER_ONLY_BOOL``.
     """
-    _LAUNCHER_ONLY_BOOL = {"--offline", "--dryrun", "-d"}
+    _LAUNCHER_ONLY_BOOL = {"--offline", "--dryrun", "-d", "--nvcre_use_mbridge_commit"}
 
     def _is_launcher_only(flag: str) -> bool:
         return (
@@ -158,6 +177,17 @@ def _bridge_source_mount(in_container_script_dir: str) -> str:
     return f"{BRIDGE_SOURCE_DIR}:{target}"
 
 
+def _resolve_local_bridge(nvcre_use_mbridge_commit: bool, nvcre_namespace: Optional[str]) -> Optional[LocalBridge]:
+    """The checkout the pods should run for ``--nvcre_use_mbridge_commit``, or None when the flag is off."""
+    if not nvcre_use_mbridge_commit:
+        return None
+    if nvcre_namespace is None:
+        raise ValueError("--nvcre_use_mbridge_commit requires --nvcre_namespace.")
+    local_bridge = local_bridge_source(REPO_ROOT)
+    logger.info("Pods will run Megatron-Bridge %s@%s from the init container", local_bridge.url, local_bridge.commit)
+    return local_bridge
+
+
 def _build_nemorun_script(
     *,
     script_path: str,
@@ -168,10 +198,11 @@ def _build_nemorun_script(
 ) -> run.Script:
     """Build the rank-local task and apply optional Kubeflow NUMA binding."""
     in_container_repo_root = Path(script_dir).parents[1]
+    python_path = [script_dir, str(in_container_repo_root / "src")]
     task = run.Script(
         path=script_path,
         entrypoint="python",
-        env={"PYTHONPATH": f"{script_dir}:{in_container_repo_root / 'src'}:$PYTHONPATH"},
+        env={"PYTHONPATH": ":".join([*python_path, "$PYTHONPATH"])},
         args=args,
     )
     if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
@@ -578,7 +609,8 @@ def main(
     nvcre_node_selector_json: Optional[str] = None,
     nvcre_volumes_json: Optional[str] = None,
     nvcre_volume_mounts_json: Optional[str] = None,
-    nvcre_timeout_per_job: str = "24h",
+    nvcre_use_mbridge_commit: bool = False,
+    nvcre_timeout_per_job: str = "12h",
     nvcre_kubeconfig: Optional[str] = None,
     nvcre_kube_context: Optional[str] = None,
     nvcre_gang_scheduler_name: Optional[str] = None,
@@ -656,8 +688,11 @@ def main(
     # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
     # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
     # /tmp path does not exist in the pod; use the image's script path instead.
+    # On NVCRE, --nvcre_use_mbridge_commit has an init container clone this checkout's commits into the pod.
+    local_bridge = _resolve_local_bridge(nvcre_use_mbridge_commit, nvcre_namespace)
     if kubeflow_namespace or nvcre_namespace:
-        in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
+        bridge_root = BRIDGE_POD_ROOT if local_bridge else "/opt/Megatron-Bridge"
+        in_container_script_dir = f"{bridge_root}/scripts/performance"
         in_container_script_path = f"{in_container_script_dir}/{script_name}"
     else:
         in_container_script_dir = str(SCRIPT_DIR)
@@ -720,6 +755,9 @@ def main(
             from utils.executors import nvcre_executor
         except ImportError:
             from .utils.executors import nvcre_executor
+        init_containers = [bridge_init_container(local_bridge, container_image)] if local_bridge else None
+        extra_volumes = [dict(WORKSPACE_VOLUME)] if local_bridge else []
+        extra_mounts = [dict(WORKSPACE_MOUNT)] if local_bridge else []
         executor = nvcre_executor(
             namespace=nvcre_namespace,
             container_image=container_image,
@@ -730,8 +768,9 @@ def main(
             workdir_pvc_path=nvcre_workdir_pvc_path,
             workdir_local_path=nvcre_workdir_local_path,
             node_selector=json.loads(nvcre_node_selector_json) if nvcre_node_selector_json else None,
-            volumes=json.loads(nvcre_volumes_json) if nvcre_volumes_json else None,
-            volume_mounts=json.loads(nvcre_volume_mounts_json) if nvcre_volume_mounts_json else None,
+            volumes=(json.loads(nvcre_volumes_json) if nvcre_volumes_json else []) + extra_volumes,
+            volume_mounts=(json.loads(nvcre_volume_mounts_json) if nvcre_volume_mounts_json else []) + extra_mounts,
+            init_containers=init_containers,
             timeout_per_job=nvcre_timeout_per_job,
             kubeconfig=nvcre_kubeconfig,
             kube_context=nvcre_kube_context,
@@ -1062,7 +1101,7 @@ if __name__ == "__main__":
         task=args.task,
         compute_dtype=args.compute_dtype,
         gpu=args.gpu,
-        hf_token=args.hf_token or os.environ.get("HF_TOKEN"),
+        hf_token=args.hf_token,
         offline=args.offline,
         # Force detach for Nvcre — llmb-run polls for completion via nvcrectl
         detach=True if args.nvcre_namespace else args.detach,
@@ -1150,6 +1189,7 @@ if __name__ == "__main__":
         nvcre_node_selector_json=args.nvcre_node_selector_json,
         nvcre_volumes_json=args.nvcre_volumes_json,
         nvcre_volume_mounts_json=args.nvcre_volume_mounts_json,
+        nvcre_use_mbridge_commit=args.nvcre_use_mbridge_commit,
         nvcre_timeout_per_job=args.nvcre_timeout_per_job,
         nvcre_kubeconfig=args.nvcre_kubeconfig,
         nvcre_kube_context=args.nvcre_kube_context,
