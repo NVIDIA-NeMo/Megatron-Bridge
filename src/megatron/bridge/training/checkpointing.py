@@ -49,6 +49,7 @@ from megatron.core.dist_checkpointing.strategies.torch import (
     _get_filesystem_reader,
 )
 from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
+from megatron.core.distributed import DistributedDataParallel
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer, distrib_optimizer
@@ -56,6 +57,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
+from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import (
     get_model_config,
     get_pg_rank,
@@ -2815,6 +2817,10 @@ def _process_state_dict_for_model_glu_interleaving(
 
 def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
     """Helper function to load state dict with fallback for missing extra states."""
+    # These delegating wrappers discard the incompatible-key return value.
+    # Keep FSDP adapters wrapped: they own load-time prefixing and weight refresh.
+    module = unwrap_model(module, module_instances=(DistributedDataParallel, Float16Module))
+
     if HAVE_MEGATRON_FSDP and isinstance(module, MegatronFSDP):
         # Because the state dictionary was generated from the nested module of Megatron-FSDP,
         # but MegatronFSDP.load_state_dict() is called at MegatronFSDP(torch.nn.Module).
