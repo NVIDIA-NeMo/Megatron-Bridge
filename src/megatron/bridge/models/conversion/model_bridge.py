@@ -572,6 +572,11 @@ class MegatronModelBridge(
     # changing how its checkpoints are constructed. Requires MODEL_CONFIG_CLASS to be set.
     USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
 
+    # Source modules intentionally absent from every target of this bridge.
+    # Strict export still requires all other source tensors. Prefixes must name
+    # complete modules (nonempty, ending in a dot), never a wildcard or all keys.
+    HF_EXPORT_IGNORED_SOURCE_PREFIXES: ClassVar[tuple[str, ...]] = ()
+
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
