@@ -249,9 +249,6 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config() -> ConfigCont
     :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
     """
     cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
-    # TODO: revert back to NCCL EP once the NCCL EP issue is fixed.
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_use_grouped_tensor = False
     apply_determinism_overrides(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -266,11 +263,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config() -> ConfigCont
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
