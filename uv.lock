@@ -21,7 +21,7 @@ overrides = [
     { name = "cryptography", specifier = ">=50.0.0,<51" },
     { name = "fast-hadamard-transform", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=v1.1.0" },
     { name = "fastapi", specifier = "<0.139.2" },
-    { name = "gitpython", specifier = ">=3.1.62,<4" },
+    { name = "gitpython", specifier = ">=3.2.1,<4" },
     { name = "imageio", marker = "sys_platform == 'never'" },
     { name = "imageio-ffmpeg", marker = "sys_platform == 'never'" },
     { name = "langchain", specifier = ">=0.3.28" },
