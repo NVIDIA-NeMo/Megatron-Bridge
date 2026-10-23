@@ -1,0 +1,304 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from dataclasses import dataclass
+from unittest.mock import Mock, patch
+
+import pytest
+from megatron.core.activations import squared_relu
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
+from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_inference_stack_spec, hybrid_stack_spec
+from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention
+from megatron.core.transformer.enums import AttnBackend
+
+from megatron.bridge.models.beam.beam_config import BeamModelConfig
+from megatron.bridge.models.common.base import ModelConfig
+from megatron.bridge.models.hybrid import BridgeHybridModelBuilder, BridgeHybridModelConfig, HybridModelConfig
+from megatron.bridge.models.muse_spark_open.muse_spark_open_config import MuseSparkModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
+
+
+pytestmark = pytest.mark.unit
+
+
+def _make_model_config(**kwargs) -> BridgeHybridModelConfig:
+    transformer_kwargs = dict(
+        num_layers=4,
+        hidden_size=128,
+        num_attention_heads=4,
+        ffn_hidden_size=256,
+        activation_func=squared_relu,
+    )
+    transformer_kwargs.update(kwargs.pop("transformer", {}))
+    values = dict(
+        transformer=TransformerConfig(**transformer_kwargs),
+        vocab_size=256,
+        hybrid_layer_pattern="ME*-",
+    )
+    values.update(kwargs)
+    return BridgeHybridModelConfig(**values)
+
+
+def _core_attention(stack_spec: ModuleSpec):
+    return stack_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+
+
+class TestStrictOverrides:
+    def test_flat_assignment_routes_to_declared_field_owner(self) -> None:
+        config = _make_model_config()
+
+        config.hidden_size = 256
+        config.mamba_chunk_size = 256
+
+        assert config.transformer.hidden_size == 256
+        assert "hidden_size" not in config.__dict__
+        assert config.__dict__["mamba_chunk_size"] == 256
+
+        with pytest.raises(AttributeError, match="declares a field"):
+            config.keep_mtp_spec_in_bf16 = True
+
+    def test_is_a_bridge_hybrid_config_with_its_own_builder(self) -> None:
+        config = _make_model_config()
+
+        assert isinstance(config, HybridModelConfig)
+        assert BridgeHybridModelConfig.transformer_config_class is TransformerConfig
+        assert config.get_builder_cls() is BridgeHybridModelBuilder
+
+    def test_subclass_selects_nested_transformer_type(self) -> None:
+        @dataclass
+        class SpecializedTransformerConfig(TransformerConfig):
+            specialized_field: bool = False
+
+        @dataclass(kw_only=True)
+        class SpecializedModelConfig(BridgeHybridModelConfig):
+            transformer_config_class = SpecializedTransformerConfig
+
+        config = SpecializedModelConfig(
+            transformer=SpecializedTransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4),
+            vocab_size=256,
+        )
+        config.specialized_field = True
+
+        assert config.transformer.specialized_field is True
+        assert config.get_builder_cls() is BridgeHybridModelBuilder
+
+    @pytest.mark.parametrize("config_class", [BeamModelConfig, MuseSparkModelConfig])
+    def test_hybrid_family_configs_share_the_strict_config(self, config_class) -> None:
+        assert issubclass(config_class, BridgeHybridModelConfig)
+        assert config_class.get_builder_cls is BridgeHybridModelConfig.get_builder_cls
+        assert config_class.as_dict is BridgeHybridModelConfig.as_dict
+
+
+class TestSerialization:
+    def test_round_trip_restores_activation_and_builder(self) -> None:
+        config = _make_model_config(mamba_chunk_size=256, hybrid_layer_pattern="M*E-")
+
+        serialized = config.as_dict()
+        restored = ModelConfig.from_dict(serialized)
+
+        assert serialized["transformer"]["activation_func"] == "squared_relu"
+        assert serialized["mamba_chunk_size"] == 256
+        assert isinstance(restored, BridgeHybridModelConfig)
+        assert restored.hybrid_layer_pattern == "M*E-"
+        assert restored.mamba_chunk_size == 256
+        assert restored.get_builder_cls() is BridgeHybridModelBuilder
+
+    def test_from_dict_restores_activation_immediately(self) -> None:
+        restored = BridgeHybridModelConfig.from_dict(_make_model_config().as_dict())
+
+        assert restored.transformer.activation_func is squared_relu
+
+    def test_rejects_unregistered_activation(self) -> None:
+        config = _make_model_config()
+        config.transformer.activation_func = lambda value: value
+
+        with pytest.raises(ValueError, match="Cannot serialize unregistered activation"):
+            config.as_dict()
+
+    def test_from_dict_rejects_another_config_class(self) -> None:
+        data = _make_model_config().as_dict()
+
+        with pytest.raises(TypeError, match="Expected BeamModelConfig"):
+            BeamModelConfig.from_dict(data)
+
+
+class TestFinalize:
+    @pytest.mark.parametrize(
+        ("mtp_num_layers", "repeated", "expected_pattern", "expected_mtp_num_layers"),
+        [
+            (2, True, "ME*-/*E/*E", 2),
+            (None, True, "ME*-/*E", 1),
+            (1, True, "ME*-/*E", 1),
+            (2, False, "ME*-/*E/*E", 2),
+        ],
+    )
+    def test_appends_one_mtp_pattern_per_depth(
+        self, mtp_num_layers, repeated, expected_pattern, expected_mtp_num_layers
+    ) -> None:
+        config = _make_model_config(
+            transformer=dict(
+                mtp_num_layers=mtp_num_layers,
+                mtp_hybrid_override_pattern="*E",
+                mtp_use_repeated_layer=repeated,
+            )
+        )
+
+        config.finalize()
+
+        assert config.hybrid_layer_pattern == expected_pattern
+        assert config.mtp_num_layers == expected_mtp_num_layers
+        assert config.num_layers == 4
+
+    def test_mtp_pattern_replaces_an_already_combined_pattern(self) -> None:
+        # Deserialized checkpoints and recipe layouts carry the combined pattern.
+        config = _make_model_config(
+            hybrid_layer_pattern="ME|*-/*E",
+            transformer=dict(mtp_num_layers=2, mtp_hybrid_override_pattern="*E", mtp_use_repeated_layer=True),
+        )
+
+        config.finalize()
+
+        assert config.hybrid_layer_pattern == "ME|*-/*E/*E"
+        assert config.num_layers == 4
+
+    def test_derives_num_layers_from_the_pattern(self) -> None:
+        config = _make_model_config(hybrid_layer_pattern="MEM|*E-", transformer=dict(num_layers=0))
+
+        config.finalize()
+
+        assert config.num_layers == 6
+
+    def test_rejects_num_layers_that_disagree_with_the_pattern(self) -> None:
+        config = _make_model_config(transformer=dict(num_layers=5))
+
+        with pytest.raises(ValueError, match=r"num_layers \(5\) does not match the 4 layers"):
+            config.finalize()
+
+    def test_moves_deprecated_override_pattern(self) -> None:
+        config = _make_model_config(hybrid_layer_pattern=None, hybrid_override_pattern="M*E-")
+
+        with pytest.warns(DeprecationWarning, match="hybrid_override_pattern is deprecated"):
+            config.finalize()
+
+        assert config.hybrid_layer_pattern == "M*E-"
+        assert config.hybrid_override_pattern is None
+
+    def test_rejects_both_pattern_fields(self) -> None:
+        config = _make_model_config(hybrid_override_pattern="M*E-")
+
+        with pytest.raises(ValueError, match="cannot both be specified"):
+            config.finalize()
+
+    def test_rejects_nonpositive_mamba_chunk_size(self) -> None:
+        config = _make_model_config(mamba_chunk_size=0)
+
+        with pytest.raises(ValueError, match="mamba_chunk_size must be at least 1"):
+            config.finalize()
+
+
+class TestBuilderStackSpec:
+    def test_default_is_the_transformer_engine_stack(self) -> None:
+        resolved = BridgeHybridModelBuilder(_make_model_config())._resolve_hybrid_stack_spec()
+
+        assert resolved is hybrid_stack_spec
+
+    def test_modelopt_default_remaps_fused_layer_norms(self) -> None:
+        config = _make_model_config(restore_modelopt_state=True)
+        modelopt_spec = ModuleSpec(module=object)
+
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_builder.get_hybrid_stack_modelopt_spec",
+            return_value=modelopt_spec,
+        ) as get_spec:
+            resolved = BridgeHybridModelBuilder(config)._resolve_hybrid_stack_spec()
+
+        get_spec.assert_called_once_with(local_core_attention=False, remap_te_layernorm=True)
+        assert resolved is modelopt_spec
+
+    def test_inference_optimized_default(self) -> None:
+        config = _make_model_config(transformer=dict(transformer_impl="inference_optimized"))
+
+        resolved = BridgeHybridModelBuilder(config)._resolve_hybrid_stack_spec()
+
+        assert resolved is hybrid_inference_stack_spec
+
+    def test_wide_residual_default_uses_megatron_core_selection(self) -> None:
+        config = _make_model_config()
+        config.transformer.wide_residual = Mock()
+        wide_spec = ModuleSpec(module=object)
+
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_builder.resolve_hybrid_stack_spec", return_value=wide_spec
+        ) as resolve:
+            resolved = BridgeHybridModelBuilder(config)._resolve_hybrid_stack_spec()
+
+        resolve.assert_called_once_with(config)
+        assert resolved is wide_spec
+
+    def test_module_spec_is_used_directly(self) -> None:
+        stack_spec = ModuleSpec(module=object)
+
+        resolved = BridgeHybridModelBuilder(
+            _make_model_config(hybrid_stack_spec=stack_spec)
+        )._resolve_hybrid_stack_spec()
+
+        assert resolved is stack_spec
+
+    def test_factories_take_no_arguments_or_the_model_config(self) -> None:
+        stack_spec = ModuleSpec(module=object)
+        seen = []
+
+        def config_factory(config):
+            seen.append(config)
+            return stack_spec
+
+        config = _make_model_config(hybrid_stack_spec=config_factory)
+        assert BridgeHybridModelBuilder(config)._resolve_hybrid_stack_spec() is stack_spec
+        assert seen == [config]
+
+        config.hybrid_stack_spec = lambda: stack_spec
+        assert BridgeHybridModelBuilder(config)._resolve_hybrid_stack_spec() is stack_spec
+
+    @pytest.mark.parametrize("attention_backend", [AttnBackend.local, "local"])
+    def test_local_attention_uses_megatron_core_attention_on_a_copy(self, attention_backend) -> None:
+        config = _make_model_config(transformer=dict(attention_backend=attention_backend))
+
+        resolved = BridgeHybridModelBuilder(config)._resolve_hybrid_stack_spec()
+
+        assert resolved is not hybrid_stack_spec
+        assert _core_attention(resolved) is DotProductAttention
+        assert _core_attention(hybrid_stack_spec) is TEDotProductAttention
+
+    def test_nondefault_mamba_chunk_size_is_applied_to_a_copy(self) -> None:
+        resolved = BridgeHybridModelBuilder(_make_model_config(mamba_chunk_size=256))._resolve_hybrid_stack_spec()
+
+        assert resolved.submodules.mamba_layer.submodules.mixer.params["chunk_size"] == 256
+        assert "chunk_size" not in hybrid_stack_spec.submodules.mamba_layer.submodules.mixer.params
+
+    @patch("megatron.training.models.hybrid.HybridModel")
+    def test_build_model_passes_the_resolved_spec_and_restores_the_config(self, mock_model) -> None:
+        def config_factory(config):
+            return hybrid_stack_spec
+
+        config = _make_model_config(hybrid_stack_spec=config_factory, mamba_chunk_size=256)
+        pg_collection = Mock()
+
+        BridgeHybridModelBuilder(config).build_model(pg_collection, pre_process=True, post_process=True)
+
+        resolved = mock_model.call_args.kwargs["hybrid_stack_spec"]
+        assert resolved.submodules.mamba_layer.submodules.mixer.params["chunk_size"] == 256
+        assert mock_model.call_args.kwargs["hybrid_layer_pattern"] == "ME*-"
+        assert mock_model.call_args.kwargs["config"] is config.transformer
+        assert config.hybrid_stack_spec is config_factory

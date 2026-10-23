@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 import tempfile
+from contextlib import nullcontext
 from dataclasses import fields
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -20,6 +22,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.nn.functional as F
+from megatron.training.models.gpt import default_layer_spec as mcore_default_layer_spec
 from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 
 from megatron.bridge.models import AutoBridge
@@ -97,6 +100,24 @@ class TestLlamaBridgeConfigConverter:
         """Llama should not maintain a separate provider construction path."""
         assert "provider_bridge" not in LlamaBridge.__dict__
 
+    def test_conversion_uses_builder_config(self):
+        """Checkpoint conversion builds Llama through ModelBuilder instead of the legacy provider."""
+        assert LlamaBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_builder_default_layer_spec_matches_provider(self, mock_pretrained_llama, llama_config):
+        """The builder's default layer spec matches the spec the provider path builds with."""
+        bridge = LlamaBridge()
+        model_config = bridge.hf_config_to_model_config(llama_config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained_llama)
+
+        # The builder resolves Megatron Core's default spec when the config leaves it unset.
+        assert model_config.transformer_layer_spec is None
+        builder_spec = mcore_default_layer_spec(model_config, vp_stage=None)
+        # functools.partial (used for the MLP submodule) compares by identity, so compare structure.
+        assert repr(builder_spec) == repr(provider.transformer_layer_spec(provider))
+
     def test_provider_bridge_stores_rope_scaling_for_llama31(self, mock_pretrained_llama):
         """Test that provider_bridge enables rope_scaling for Llama 3.1/3.2."""
         bridge = LlamaBridge()
@@ -149,8 +170,9 @@ class TestLlamaBridgeConfigConverter:
                 "high_freq_factor": 4.0,
                 "original_max_position_embeddings": 8192,
             },
+            {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768},
         ],
-        ids=["default", "linear", "llama3"],
+        ids=["default", "linear", "llama3", "yarn"],
     )
     def test_model_config_matches_provider_runtime_config(self, rope_scaling):
         """Builder and provider paths agree on every comparable runtime field."""
@@ -238,6 +260,93 @@ class TestLlamaBridgeConfigConverter:
         assert provider.seq_len_interpolation_factor == 8.0
         assert provider.rope_scaling is False
         assert provider.rope_scaling_factor == 1.0
+
+    def test_model_config_maps_yarn_to_transformer_config(self):
+        """YaRN checkpoints keep YaRN on the builder path and export it back to Hugging Face."""
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=131072,
+            vocab_size=128,
+            rope_scaling={"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768},
+        )
+
+        result = LlamaBridge().hf_config_to_model_config(config)
+
+        assert result.position_embedding_type == "yarn"
+        assert result.rope_scaling is False
+        assert result.seq_len_interpolation_factor is None
+        assert result.transformer.yarn_rotary_scaling_factor == 4.0
+        assert result.transformer.yarn_original_max_position_embeddings == 32768
+        # Absent keys take the Hugging Face YaRN defaults rather than None.
+        assert result.transformer.yarn_beta_fast == 32.0
+        assert result.transformer.yarn_beta_slow == 1.0
+        assert result.transformer.yarn_correction_range_round_to_int is True
+
+        hf_config = LlamaBridge.megatron_to_hf_config(result)
+        assert hf_config["rope_scaling"] == {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768,
+            "beta_fast": 32.0,
+            "beta_slow": 1.0,
+            "truncate": True,
+        }
+
+        roundtrip = LlamaBridge().hf_config_to_model_config(LlamaConfig(**hf_config))
+        assert roundtrip.position_embedding_type == "yarn"
+        for field_name in (
+            "yarn_rotary_scaling_factor",
+            "yarn_original_max_position_embeddings",
+            "yarn_beta_fast",
+            "yarn_beta_slow",
+            "yarn_mscale",
+            "yarn_mscale_all_dim",
+            "yarn_correction_range_round_to_int",
+        ):
+            assert getattr(roundtrip.transformer, field_name) == getattr(result.transformer, field_name), field_name
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [("low_freq_factor", 2.0), ("high_freq_factor", 8.0), ("original_max_position_embeddings", 4096)],
+    )
+    def test_rejects_llama3_rope_scaling_megatron_core_cannot_apply(self, key, value):
+        """llama3 values other than Megatron Core's fixed ones raise instead of converting silently."""
+        rope_scaling = {
+            "rope_type": "llama3",
+            "factor": 8.0,
+            "low_freq_factor": 1.0,
+            "high_freq_factor": 4.0,
+            "original_max_position_embeddings": 8192,
+        }
+        rope_scaling[key] = value
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=131072,
+            vocab_size=128,
+            rope_scaling=rope_scaling,
+        )
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = LlamaBridge()
+        expected = re.escape(f"Unsupported llama3 RoPE scaling values {{'{key}': {value}}}.")
+
+        with pytest.raises(ValueError, match=expected):
+            bridge.hf_config_to_model_config(config)
+        with (
+            pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"),
+            pytest.raises(ValueError, match=expected),
+        ):
+            bridge.provider_bridge(mock_pretrained)
 
     def test_provider_bridge_architecture_mapping(self, mock_pretrained_llama, llama_config):
         """Test that architecture parameters are correctly mapped from HF config."""
@@ -931,6 +1040,51 @@ class TestAutoBridgeIntegration:
 
             # Verify kwargs were passed through
             mock_pretrained.assert_called_once_with(temp_dir, **kwargs)
+
+    def test_import_ckpt_builds_through_model_builder(self, tmp_path):
+        """Checkpoint import builds Llama through get_model() and keeps RoPE scaling and tied embeddings."""
+        hf_path = tmp_path / "hf"
+        LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            max_position_embeddings=131072,
+            vocab_size=128,
+            rope_theta=500000.0,
+            rope_scaling={
+                "rope_type": "llama3",
+                "factor": 32.0,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+            },
+            tie_word_embeddings=True,
+        ).save_pretrained(hf_path)
+        megatron_model = [Mock()]
+
+        with (
+            patch(
+                "megatron.bridge.training.model_load_save.temporary_distributed_context",
+                return_value=nullcontext(),
+            ),
+            patch.object(AutoBridge, "get_model", return_value=megatron_model) as mock_get_model,
+            patch.object(AutoBridge, "to_megatron_model", side_effect=AssertionError("provider path used")),
+            patch.object(AutoBridge, "save_megatron_model") as mock_save_megatron_model,
+        ):
+            AutoBridge.import_ckpt(hf_path, tmp_path / "megatron")
+
+        (model_config,), build_kwargs = mock_get_model.call_args
+        assert build_kwargs == {"wrap_with_ddp": False, "mixed_precision_wrapper": None}
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.use_cpu_initialization is True
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.rope_scaling is True
+        assert model_config.rope_scaling_factor == 32.0
+        assert model_config.share_embeddings_and_output_weights is True
+        assert mock_save_megatron_model.call_args.args[0] is megatron_model
 
     def test_supports_llama_architectures(self, llama_configs):
         """Test that AutoBridge.supports correctly identifies Llama models."""
