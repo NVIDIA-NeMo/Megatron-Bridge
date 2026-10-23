@@ -149,13 +149,8 @@ def test_global_checkpoint_load_with_older_core(per_rank_objects, monkeypatch):
     from megatron.bridge.training import checkpointing
 
     # Model both an older config without the field and a config with an explicit policy.
-    config_values = dict(
-        fully_parallel_load=True,
-        fully_parallel_save=True,
-        ckpt_format="torch_dist",
-        dist_ckpt_strictness="assume_ok_unexpected",
-        verify_integrity=False,
-    )
+    config_values = vars(CheckpointConfig(async_save=False, fully_parallel_load=True)).copy()
+    config_values.pop("ckpt_fully_parallel_load_per_rank_objects", None)
     if per_rank_objects is not None:
         config_values["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
     config = SimpleNamespace(**config_values)
@@ -935,6 +930,7 @@ class TestSaveCheckpoint:
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
         assert legacy_tracker.read_text() == "500"
 
+    @pytest.mark.parametrize("num_flops", [1000000, 16777217, 10**20 + 1234567890123])
     @pytest.mark.parametrize("verify_integrity", [False, True])
     @pytest.mark.parametrize("save_rng", [True, False])
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
@@ -985,6 +981,7 @@ class TestSaveCheckpoint:
         mock_wandb,
         save_checkpoint_fixtures,
         save_rng,
+        num_flops,
         verify_integrity,
     ):
         """Test saving a global checkpoint."""
@@ -1032,12 +1029,20 @@ class TestSaveCheckpoint:
             save_checkpoint_fixtures["mock_model"],
             save_checkpoint_fixtures["mock_optimizer"],
             save_checkpoint_fixtures["mock_scheduler"],
-            1000000,
+            num_flops,
             checkpointing_context={},
             non_persistent_ckpt=False,
         )
 
         assert [call[0] for call in call_order.mock_calls] == ["model", "loader"]
+
+        train_state_saves = [
+            call.args[0] for call in mock_torch_save.call_args_list if str(call.args[1]).endswith("train_state.pt")
+        ]
+        assert train_state_saves
+        for saved_state in train_state_saves:
+            assert saved_state["floating_point_operations_so_far"].dtype == torch.float64
+            assert saved_state["floating_point_operations_so_far"].item() == float(num_flops)
 
         # Verify calls
         mock_ft.on_checkpointing_start.assert_called_once()
