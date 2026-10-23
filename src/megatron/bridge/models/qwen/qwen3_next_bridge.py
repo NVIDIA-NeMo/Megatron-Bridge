@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import Qwen3NextForCausalLM
+from transformers import PretrainedConfig, Qwen3NextForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -31,6 +33,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
@@ -46,54 +49,64 @@ class Qwen3NextBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        # Standard GPT settings (shared with Qwen3 MoE)
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False
-        provider.hidden_dropout = 0.0
-        provider.qk_layernorm = True
-        provider.autocast_dtype = torch.bfloat16
-        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3-Next config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            # Standard GPT settings (shared with Qwen3 MoE)
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            qk_layernorm=True,
+            autocast_dtype=torch.bfloat16,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            # MoE settings
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="global_aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_shared_expert_gate=True,
+            moe_router_dtype="fp32",
+            moe_shared_expert_intermediate_size=hf_config.shared_expert_intermediate_size,
+            # Qwen3-Next: zero-centered RMSNorm and gated attention
+            layernorm_zero_centered_gamma=True,
+            attention_output_gate=True,
+            # Qwen3-Next: hybrid gated delta net + standard attention. The builder's default
+            # layer spec builds the hybrid block from experimental_attention_variant.
+            experimental_attention_variant="gated_delta_net",
+            linear_attention_freq=full_attention_interval_from_hf(hf_config),
+            linear_conv_kernel_dim=hf_config.linear_conv_kernel_dim,
+            linear_key_head_dim=hf_config.linear_key_head_dim,
+            linear_value_head_dim=hf_config.linear_value_head_dim,
+            linear_num_key_heads=hf_config.linear_num_key_heads,
+            linear_num_value_heads=hf_config.linear_num_value_heads,
+            # Heterogeneous checkpointing for mixed attention layers
+            hetereogenous_dist_checkpoint=True,
+        )
+        # The shared mapping already selects "yarn" for YaRN-scaled checkpoints.
+        config_kwargs.setdefault("position_embedding_type", "rope")
+        return config_kwargs
 
-        # MoE settings
-        provider.moe_grouped_gemm = True
-        provider.moe_router_load_balancing_type = "global_aux_loss"
-        provider.moe_aux_loss_coeff = 1e-3
-        provider.moe_router_pre_softmax = False
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
-        provider.moe_shared_expert_gate = True
-        provider.moe_router_dtype = "fp32"
-        provider.moe_shared_expert_intermediate_size = hf_config.shared_expert_intermediate_size
-
-        # Qwen3-Next: zero-centered RMSNorm and gated attention
-        provider.layernorm_zero_centered_gamma = True
-        provider.attention_output_gate = True
-
-        # Qwen3-Next: hybrid gated delta net + standard attention
-        provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
-        provider.experimental_attention_variant = "gated_delta_net"
-        provider.linear_attention_freq = full_attention_interval_from_hf(hf_config)
-        provider.linear_conv_kernel_dim = hf_config.linear_conv_kernel_dim
-        provider.linear_key_head_dim = hf_config.linear_key_head_dim
-        provider.linear_value_head_dim = hf_config.linear_value_head_dim
-        provider.linear_num_key_heads = hf_config.linear_num_key_heads
-        provider.linear_num_value_heads = hf_config.linear_num_value_heads
-
-        # Heterogeneous checkpointing for mixed attention layers
-        provider.hetereogenous_dist_checkpoint = True
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        # The provider's default layer spec builds homogeneous attention layers; the hybrid
+        # gated delta net block needs the experimental attention variant block spec.
+        provider_kwargs["transformer_layer_spec"] = get_transformer_block_with_experimental_attention_variant_spec
+        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
