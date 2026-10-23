@@ -29,6 +29,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import save_megatron_mimo_model
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -1348,7 +1349,7 @@ class TestBuilderCheckpointConfigRetention:
     @pytest.mark.parametrize("num_chunks", [1, 2])
     def test_load_builder_model_can_be_saved(self, tmp_path, wrapped, num_chunks):
         """Loading retains the reconstructable config on every returned model chunk."""
-        model_config = GPTModelConfig(
+        model_config = BridgeGPTModelConfig(
             transformer=TransformerConfig(
                 num_layers=2,
                 hidden_size=16,
@@ -1403,6 +1404,7 @@ class TestBuilderCheckpointConfigRetention:
         assert reloaded_config.seq_length == 128
         assert reloaded_config.share_embeddings_and_output_weights is False
         assert reloaded_config.transformer.hidden_size == 16
+        assert reloaded_config.transformer.attention_backend is model_config.transformer.attention_backend
 
 
 class TestSaveMegatronModel:
