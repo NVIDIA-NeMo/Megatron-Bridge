@@ -23,7 +23,7 @@ import pytest
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
-from megatron.bridge.training.config import GPTDatasetConfig
+from megatron.bridge.training.config import DistributedInitConfig, GPTDatasetConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import (
     _delete_cuda_graphs,
@@ -334,6 +334,100 @@ class TestFSDPRegistration:
 
         # Verify registration was called
         fsdp_buffer.manual_buffer_registration.assert_called_once()
+
+
+@pytest.mark.parametrize("use_megatron_fsdp", [False, True])
+def test_train_params_norm_uses_ddp_fsdp_setting(use_megatron_fsdp):
+    """Parameter norm logging must use the same FSDP setting as model wrapping."""
+    model_config = SimpleNamespace(cuda_graph_impl=None, fp8_recipe=None, param_sync_func=None)
+    config = SimpleNamespace(
+        train=SimpleNamespace(
+            train_iters=1,
+            manual_gc=False,
+            check_weight_hash_across_dp_replicas_interval=None,
+            micro_batch_size=1,
+            decrease_batch_size_if_needed=False,
+        ),
+        validation=SimpleNamespace(),
+        dataset=GPTDatasetConfig(seq_length=8, random_seed=1234),
+        checkpoint=SimpleNamespace(save=None),
+        logger=SimpleNamespace(
+            log_throughput_to_tensorboard=False,
+            skip_train_metrics_log=False,
+            log_params_norm=True,
+        ),
+        model=SimpleNamespace(
+            virtual_pipeline_model_parallel_size=None,
+            moe_expert_rank_capacity_factor=None,
+        ),
+        optimizer=SimpleNamespace(use_distributed_optimizer=False, optimizer_cuda_graph=False),
+        ddp=SimpleNamespace(use_megatron_fsdp=use_megatron_fsdp, overlap_param_gather=False),
+        dist=DistributedInitConfig(),
+        straggler=None,
+        profiling=None,
+        tensor_inspect=None,
+    )
+    state = SimpleNamespace(
+        cfg=config,
+        train_state=SimpleNamespace(
+            step=0,
+            consumed_train_samples=0,
+            skipped_train_samples=0,
+            floating_point_operations_so_far=0.0,
+        ),
+        timers=Mock(return_value=Mock()),
+        straggler_timer=Mock(),
+        energy_monitor=None,
+        nvrx_straggler_manager=None,
+    )
+    pg_collection = SimpleNamespace(pp=SimpleNamespace(size=lambda: 1))
+    model = [Mock()]
+    optimizer = SimpleNamespace(is_stub_optimizer=True, param_groups=[])
+    calc_norm = Mock(return_value=2.0)
+    flops_stats = SimpleNamespace(
+        seqlen_sum=8,
+        seqlen_squared_sum=64,
+        has_exact_vision_stats=False,
+        num_vision_patches=0,
+        cross_seqlen_sum=None,
+        cross_seqlen_product_sum=None,
+    )
+
+    with (
+        patch.multiple(
+            "megatron.bridge.training.train",
+            get_model_config=Mock(return_value=model_config),
+            get_rerun_state_machine=Mock(return_value=SimpleNamespace(current_iteration=0)),
+            prepare_forward_step_func=Mock(),
+            get_num_microbatches=Mock(return_value=1),
+            get_forward_backward_func=Mock(),
+            is_full_iteration_cuda_graph=Mock(return_value=False),
+            P2PCommunicator=Mock(),
+            get_data_distribution_group=Mock(return_value=SimpleNamespace(size=lambda: 1)),
+            handle_profiling_step=Mock(),
+            nvtx_range_push=Mock(),
+            fault_tolerance=Mock(),
+            update_num_microbatches=Mock(),
+            _should_skip_and_handle_iteration=Mock(return_value=False),
+            train_step=Mock(return_value=({}, 0, False, False, 0, None, None, None)),
+            tensor_inspect_step_if_enabled=Mock(),
+            _maybe_register_fsdp_buffers=Mock(),
+            get_current_global_batch_size=Mock(return_value=1),
+            get_current_running_global_batch_size=Mock(return_value=1),
+            calc_params_l2_norm=calc_norm,
+            training_log=Mock(side_effect=RuntimeError("stop after logging")),
+        ),
+        patch("megatron.bridge.training.train.torch.distributed.get_rank", return_value=0),
+        patch(
+            "megatron.bridge.training.train.flop_utils.resolve_global_flops_runtime_stats",
+            return_value=flops_stats,
+        ),
+        patch("megatron.bridge.training.train.flop_utils.num_floating_point_operations", return_value=0.0),
+        pytest.raises(RuntimeError, match="stop after logging"),
+    ):
+        train(Mock(), model, optimizer, Mock(), None, None, state, Mock(), pg_collection)
+
+    calc_norm.assert_called_once_with(model, model_config, use_megatron_fsdp=use_megatron_fsdp)
 
 
 class TestPostTrainingStepHelpers:

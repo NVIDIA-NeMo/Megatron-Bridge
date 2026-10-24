@@ -692,7 +692,6 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config() -> ConfigCont
 
     cfg.model.init_model_with_meta_device = True
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.num_distributed_optimizer_instances = 1
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"

@@ -323,10 +323,9 @@ def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classi
     mock_classify.side_effect = lambda _model, _config: events.append("classify")
     cfg = SimpleNamespace(
         model=model_config,
-        ddp=object(),
+        ddp=SimpleNamespace(use_megatron_fsdp=False),
         optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
         dist=DistributedInitConfig(
-            use_megatron_fsdp=False,
             use_torch_fsdp2=False,
             gtp_remat_reduce_scatter_with_fp32_accumulation=fp32_accumulation,
             gtp_remat_nccl_ub=nccl_ub,
