@@ -24,7 +24,7 @@
           "workflow": "hf_to_megatron_cpu"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "6d319871f71b85a5af95981164276ba6d6074646",
           "command_topologies": [
             {
               "gpus_per_node": "1",
@@ -33,14 +33,14 @@
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 1 --hf-model ByteDance-Seed/BAGEL-7B-MoT --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b --megatron-path work/model-verification/bagel/hf-to-megatron --torch-dtype bfloat16"
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 1 --hf-model ByteDance-Seed/BAGEL-7B-MoT --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b --megatron-path work/model-verification/bagel/hf-to-megatron --torch-dtype bfloat16 --bagel-repo work/dependencies/Bagel"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "bagel-hf-to-megatron-gpu",
           "expected_result": "The public GPU importer consumed the pinned official EMA state, reported 1,223 source tensors consumed and 943 target tensors verified, and wrote a standalone torch_dist checkpoint. A clean one-GPU reload completed without missing or unexpected checkpoint keys; all 56 MoT language-layer input-norm tensors used as regression sentinels exactly matched the official EMA values.\n",
           "hardware": null,
-          "last_verified": "2026-09-01",
+          "last_verified": "2026-10-22",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.hf_to_megatron_gpu",
