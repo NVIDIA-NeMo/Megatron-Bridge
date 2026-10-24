@@ -20,6 +20,7 @@ from .gb200 import (
     nemotron_35_super_vl_sft_64gpu_gb200_bf16_config,
     nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config,
 )
+from .gb300 import nemotron_35_super_vl_pretrain_64gpu_gb300_fp8mx_config
 from .nemotron_35_super_vl import (
     NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
     NEMOTRON_35_SUPER_VL_HF_REVISION,
@@ -40,6 +41,7 @@ __all__ = [
     "nemotron_35_super_vl_peft_16gpu_gb200_bf16_config",
     "nemotron_35_super_vl_pretrain_config",
     "nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config",
+    "nemotron_35_super_vl_pretrain_64gpu_gb300_fp8mx_config",
     "nemotron_35_super_vl_sft_config",
     "nemotron_35_super_vl_sft_64gpu_gb200_bf16_config",
     "nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config",
