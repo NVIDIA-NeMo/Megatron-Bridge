@@ -5422,6 +5422,46 @@ class TestTokenizerConfig:
         assert config.tokenizer_hf_no_use_fast == (not use_fast)
         assert config.tokenizer_sentencepiece_legacy == legacy
 
+    def test_direct_hf_fields_survive_post_init(self):
+        """The fields the deprecation warning points at must not be reset on construction."""
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="/path/to/tokenizer",
+            trust_remote_code=True,
+            tokenizer_hf_no_use_fast=True,
+            tokenizer_hf_no_include_special_tokens=True,
+        )
+
+        assert config.trust_remote_code is True
+        assert config.tokenizer_hf_no_use_fast is True
+        assert config.tokenizer_hf_no_include_special_tokens is True
+
+    def test_hf_tokenizer_kwargs_still_overrides_the_fields_it_carries(self):
+        """A key the deprecated dict supplies wins; one it omits leaves the field alone."""
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="/path/to/tokenizer",
+            hf_tokenizer_kwargs={"use_fast": False, "trust_remote_code": True},
+            tokenizer_hf_no_use_fast=False,
+            trust_remote_code=False,
+            tokenizer_hf_no_include_special_tokens=True,
+        )
+
+        assert config.tokenizer_hf_no_use_fast is True
+        assert config.trust_remote_code is True
+        assert config.tokenizer_hf_no_include_special_tokens is True
+
+    def test_hf_tokenizer_kwargs_accepts_none(self):
+        """The field is typed as optional, so None must not reach a .get call."""
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="/path/to/tokenizer",
+            hf_tokenizer_kwargs=None,
+            trust_remote_code=True,
+        )
+
+        assert config.trust_remote_code is True
+
     def test_config_failure(self):
         tokenizer_model = "/path/to/tokenizer"
         tokenizer_type = "HuggingFaceTokenizer"
