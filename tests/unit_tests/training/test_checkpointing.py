@@ -5168,7 +5168,7 @@ class TestCheckpointPathOverride:
         )
 
         assert checkpoint_name == "/direct/iter_0001000"
-        mock_strategy_cls.assert_called_once_with()
+        mock_strategy_cls.assert_called_once_with(cache_metadata=False)
         mock_dist_ckpt.load.assert_called_once()
         load_call_args = mock_dist_ckpt.load.call_args
         assert load_call_args[0][1] == "/direct/iter_0001000"
@@ -5217,6 +5217,131 @@ class TestCheckpointPathOverride:
         assert checkpoint_name == "/direct/iter_0001000"
         assert state_dict == {}
         assert ckpt_type == CheckpointType.FSDP_DTENSOR
+
+
+class TestLoadSaveCachedMetadataHandoff:
+    """The load strategy keeps checkpoint metadata so the first save after resume can reuse it."""
+
+    @pytest.mark.parametrize("assume_constant_structure", [False, True])
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_strategy_caches_metadata_only_with_constant_structure(
+        self, mock_dist_ckpt, mock_strategy_cls, assume_constant_structure
+    ):
+        """cache_metadata follows ckpt_assume_constant_structure, like the save-side cache."""
+        from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
+
+        mock_dist_ckpt.load.return_value = {"model": {}}
+        checkpointing_context = {}
+
+        _load_global_dist_base_checkpoint(
+            load_dir="/checkpoints",
+            ckpt_cfg=CheckpointConfig(ckpt_assume_constant_structure=assume_constant_structure),
+            rank0=False,
+            sharded_state_dict={"model": {}},
+            iteration=1000,
+            release=False,
+            checkpointing_context=checkpointing_context,
+            pg_collection=Mock(),
+        )
+
+        mock_strategy_cls.assert_called_once_with(cache_metadata=assume_constant_structure)
+        assert checkpointing_context["load_strategy"] is mock_strategy_cls.return_value
+
+    def test_first_save_after_load_reuses_loaded_global_metadata(self, tmp_path, save_checkpoint_fixtures):
+        """The metadata read by a real load reaches the save strategy built by the next save_checkpoint."""
+        from nvidia_resiliency_ext.checkpointing.async_ckpt.cached_metadata_filesystem_reader import (
+            CachedMetadataFileSystemReader,
+        )
+
+        from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
+
+        if torch.distributed.is_initialized():
+            pytest.skip("Requires an isolated CPU process group")
+        checkpoint_dir = tmp_path / "iter_0000001"
+        checkpoint_dir.mkdir()
+        checkpointing_context = {}
+
+        def load_with_strategy(sharded_state_dict, checkpoint_name, load_strategy, **kwargs):
+            return load_strategy.load(sharded_state_dict, checkpoint_name)
+
+        torch.distributed.init_process_group("gloo", store=torch.distributed.HashStore(), rank=0, world_size=1)
+        try:
+            with patch("torch.cuda.is_available", return_value=False):
+                _CpuTorchDistSaveShardedStrategy().save(
+                    {"weight": ShardedTensor.from_rank_offsets("weight", torch.ones(3, 4))}, checkpoint_dir
+                )
+            with patch(
+                "megatron.bridge.training.checkpointing.dist_checkpointing.load", side_effect=load_with_strategy
+            ):
+                _load_global_dist_base_checkpoint(
+                    load_dir=str(tmp_path),
+                    ckpt_cfg=CheckpointConfig(ckpt_assume_constant_structure=True),
+                    rank0=False,
+                    sharded_state_dict={"weight": ShardedTensor.from_rank_offsets("weight", torch.empty(3, 4))},
+                    iteration=None,
+                    release=False,
+                    checkpoint_path_override=str(checkpoint_dir),
+                    checkpointing_context=checkpointing_context,
+                    pg_collection=Mock(),
+                )
+        finally:
+            torch.distributed.destroy_process_group()
+            CachedMetadataFileSystemReader.clear_metadata_cache(checkpoint_dir)
+
+        loaded_metadata = checkpointing_context["load_strategy"].cached_global_metadata
+        assert loaded_metadata is not None
+        assert "weight" in loaded_metadata.state_dict_metadata
+
+        state = save_checkpoint_fixtures["mock_state"]
+        state.cfg.checkpoint.save = str(tmp_path / "save")
+        state.cfg.checkpoint.most_recent_k = -1
+        state.cfg.checkpoint.ckpt_assume_constant_structure = True
+        state.cfg.checkpoint.fully_parallel_save = False
+        state.cfg.checkpoint.storage_writers_per_rank = 1
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=None),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={"model": {"weight": Mock()}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("torch.distributed.is_initialized", return_value=False),
+        ):
+            mock_rerun.return_value.state_dict.return_value = {}
+            save_checkpoint(
+                state,
+                save_checkpoint_fixtures["mock_model"],
+                save_checkpoint_fixtures["mock_optimizer"],
+                save_checkpoint_fixtures["mock_scheduler"],
+                1000000,
+                checkpointing_context=checkpointing_context,
+                pg_collection=pg_collection,
+            )
+
+        save_strategy = checkpointing_context["save_strategy"]
+        assert isinstance(save_strategy, TorchDistSaveShardedStrategy)
+        assert save_strategy.use_cached_ckpt_structure is True
+        assert save_strategy.cached_global_metadata is loaded_metadata
 
 
 class TestLoadCheckpointFromPathDirectIterDir:
