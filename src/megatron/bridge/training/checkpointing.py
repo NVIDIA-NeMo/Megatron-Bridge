@@ -3846,7 +3846,8 @@ def _load_global_dist_base_checkpoint(
         if checkpoint_path_override is not None
         else get_checkpoint_name(load_dir, iteration, release)
     )
-    load_strategy = TorchDistLoadShardedStrategy()
+    # Keep the loaded global metadata so the first save after resume can reuse it (see save_checkpoint).
+    load_strategy = TorchDistLoadShardedStrategy(cache_metadata=ckpt_cfg.ckpt_assume_constant_structure)
     if ckpt_cfg.fully_parallel_load:
         per_rank_objects = getattr(ckpt_cfg, "ckpt_fully_parallel_load_per_rank_objects", False)
         if per_rank_objects and not _FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS:
