@@ -75,6 +75,8 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
             )
         )
 
+    finalize_errors: list[Exception] = []
+
     def destroy_state():
         """Comprehensive state cleanup for in-process restart."""
 
@@ -86,8 +88,20 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
             global_state.reset_for_restart()
         except Exception as e:
             logger.error(f"destroy_state failed: {type(e).__name__}: {e}", exc_info=True)
+            finalize_errors.append(e)
 
-    finalize = [inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=destroy_state)]
+    class RaiseFinalizeError(inprocess.finalize.Finalize):
+        def __call__(self, state: inprocess.state.FrozenState) -> inprocess.state.FrozenState:
+            if finalize_errors:
+                raise finalize_errors.pop()
+            return state
+
+    # Compose runs right-to-left. Relay cleanup errors after the worker joins,
+    # because ThreadedFinalize does not propagate exceptions from its thread.
+    finalize = [
+        RaiseFinalizeError(),
+        inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=destroy_state),
+    ]
 
     if config.empty_cuda_cache:
         finalize.append(inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=torch.cuda.empty_cache))
