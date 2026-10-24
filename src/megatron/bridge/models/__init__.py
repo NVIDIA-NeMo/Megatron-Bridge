@@ -51,6 +51,14 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.d1 import (
+    D1OmniBridge,
+    D1OmniModel,
+    D1OmniModelProvider,
+    D1VLBridge,
+    D1VLModel,
+    D1VLModelProvider,
+)
 from megatron.bridge.models.deepseek import (
     DeepSeekV3Bridge,
 )
@@ -231,6 +239,12 @@ from megatron.bridge.models.t5_provider import T5ModelProvider
 
 
 __all__ = [
+    "D1OmniBridge",
+    "D1OmniModel",
+    "D1OmniModelProvider",
+    "D1VLBridge",
+    "D1VLModel",
+    "D1VLModelProvider",
     "AutoBridge",
     "MegatronMappingRegistry",
     "MegatronModelBridge",
