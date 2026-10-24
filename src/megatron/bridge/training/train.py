@@ -104,6 +104,7 @@ from megatron.bridge.training.tensor_inspect import (
 from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
 from megatron.bridge.training.utils.mlflow_utils import end_active_mlflow_run
+from megatron.bridge.training.utils.optimizer_utils import uses_distributed_optimizer
 from megatron.bridge.training.utils.train_utils import (
     accumulate_zero_token_step,
     calc_params_l2_norm,
@@ -269,7 +270,7 @@ def train(
     # Megatron FSDP and FSDP2 does not have this hook
     should_toggle_forward_pre_hook = should_disable_forward_pre_hook(
         config.ddp.use_megatron_fsdp,
-        config.optimizer.use_distributed_optimizer,
+        uses_distributed_optimizer(config.optimizer),
         config.ddp.overlap_param_gather,
     )
     # Also, check weight hash across DP replicas to be very pedantic.
@@ -1245,17 +1246,16 @@ def disable_forward_pre_hook(
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
-def force_param_sync(model: list[DDP], optimizer: Optional[MegatronOptimizer] = None) -> None:
+def force_param_sync(model: list[MegatronModule], optimizer: Optional[MegatronOptimizer] = None) -> None:
     """Force parameter synchronization for all model chunks.
 
     Args:
-        model: list of model chunks wrapped in DDP.
+        model: Model chunks implementing start_param_sync, directly or through a wrapper.
         optimizer: Optional optimizer used to stage params before forced sync.
     """
     if optimizer is not None:
         optimizer.prepare_model_params_for_param_sync()
     for model_chunk in model:
-        assert isinstance(model_chunk, DDP)
         model_chunk.start_param_sync(force_sync=True)
 
 
@@ -1400,7 +1400,7 @@ def save_checkpoint_and_time(
 
     should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
-        state.cfg.optimizer.use_distributed_optimizer,
+        uses_distributed_optimizer(state.cfg.optimizer),
         state.cfg.ddp.overlap_param_gather,
     )
     if should_force_param_sync:

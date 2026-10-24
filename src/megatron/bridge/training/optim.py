@@ -26,7 +26,6 @@ from megatron.core.optimizer import (
     get_megatron_optimizer,
     get_mup_config_overrides,
 )
-from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, combine_param_group_overrides
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
@@ -37,6 +36,7 @@ from megatron.bridge.training.config import (
     OptimizerConfigOverrideProviderContext,
     SchedulerConfig,
 )
+from megatron.bridge.training.utils.optimizer_utils import normalize_optimizer_config
 
 
 G_LOGGER = logging.getLogger(__name__)
@@ -62,6 +62,11 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
+    if not hasattr(optimizer_config, "provide"):
+        # setup_optimizer is also used by callers that construct Core's config
+        # directly, without ConfigContainer validation.
+        normalize_optimizer_config(optimizer_config)
+
     if optimizer_config_override_provider is None:
         optimizer_config_override_provider = OptimizerConfigOverrideProvider()
 
@@ -116,21 +121,12 @@ def setup_optimizer(
             use_gloo_process_groups=use_gloo_process_groups,
             pg_collection=pg_collection,
         )
-    elif "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
+    else:
         optimizer = get_megatron_optimizer(
             config=optimizer_config,
             model_chunks=model,
             config_overrides=config_overrides,
             use_gloo_process_groups=use_gloo_process_groups,
-            pg_collection=pg_collection,
-        )
-    else:
-        optimizer = get_megatron_muon_optimizer(
-            config=optimizer_config,
-            model_chunks=model,
-            config_overrides=config_overrides,
-            use_gloo_process_groups=use_gloo_process_groups,
-            layer_wise_distributed_optimizer="dist" in optimizer_config.optimizer,
             pg_collection=pg_collection,
         )
 
@@ -480,7 +476,14 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
         return False
 
     def _sync_one(distrib_opt: MegatronOptimizer) -> bool:
-        """Sync the three FP32 master levels for one DistributedOptimizer wrapping an HDO."""
+        """Sync HDO leaves without accessing a chained optimizer's single-leaf property."""
+        sub_optimizers = getattr(distrib_opt, "chained_optimizers", None)
+        if isinstance(sub_optimizers, (list, tuple)):
+            synced = False
+            for sub_opt in sub_optimizers:
+                synced |= _sync_one(sub_opt)
+            return synced
+
         inner = getattr(distrib_opt, "optimizer", None)
         if not isinstance(inner, HybridDeviceOptimizer):
             return False
@@ -533,11 +536,7 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
 
         return True
 
-    synced = False
-    sub_optimizers = getattr(optimizer, "chained_optimizers", None)
-    sub_optimizers = sub_optimizers if isinstance(sub_optimizers, (list, tuple)) else [optimizer]
-    for sub_opt in sub_optimizers:
-        synced |= _sync_one(sub_opt)
+    synced = _sync_one(optimizer)
 
     if synced:
         G_LOGGER.info(
