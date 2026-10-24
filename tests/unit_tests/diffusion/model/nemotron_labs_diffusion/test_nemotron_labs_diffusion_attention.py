@@ -49,18 +49,11 @@ def _make_config(
     apply_qk_scaling: bool = False,
 ) -> TransformerConfig:
     """Build a minimal TransformerConfig for NemotronLabsDiffusionAttention."""
-    hf_text_config = types.SimpleNamespace(
-        max_position_embeddings=seq_len,
-        rope_parameters={
-            "rope_type": "default",
-            "rope_theta": 10000.0,
-            "llama_4_scaling_beta": 0.1,
-            "original_max_position_embeddings": seq_len,
-        },
-        num_attention_heads=num_heads,
-        hidden_size=num_heads * head_dim,
+    from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+        NemotronLabsDiffusionModelProvider,
     )
-    cfg = TransformerConfig(
+
+    cfg = NemotronLabsDiffusionModelProvider(
         num_layers=1,
         hidden_size=num_heads * head_dim,
         num_attention_heads=num_heads,
@@ -69,14 +62,16 @@ def _make_config(
         context_parallel_size=1,
         tensor_model_parallel_size=1,
         use_cpu_initialization=True,
+        seq_length=seq_len,
+        block_size=block_size,
+        apply_llama4_style_query_key_layer_scaling=apply_llama4,
+        llama4_scaling_beta=0.1 if apply_llama4 else None,
+        yarn_original_max_position_embeddings=seq_len,
+        sequence_parallel=False,
+        apply_query_key_layer_scaling=apply_qk_scaling,
+        attention_dropout=0.0,
+        rotary_base=10000.0,
     )
-    cfg.seq_length = seq_len
-    cfg.block_size = block_size
-    cfg.apply_llama4_style_query_key_layer_scaling = apply_llama4
-    cfg.hf_config = types.SimpleNamespace(text_config=hf_text_config)
-    cfg.sequence_parallel = False
-    cfg.apply_query_key_layer_scaling = apply_qk_scaling
-    cfg.attention_dropout = 0.0
     return cfg
 
 
@@ -287,6 +282,24 @@ class TestMinistral3RotaryEmbedding:
         assert cos.dtype == x.dtype
         assert sin.dtype == x.dtype
 
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_model_dtype_cast_preserves_rotary_frequencies(self, dtype, device):
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA is unavailable")
+        rope = Ministral3RotaryEmbedding(self._make_hf_config(seq_len=32768, head_dim=64), device=device)
+        position_ids = torch.tensor([[0, 1, 127, 1023, 4095, 16383]], device=device)
+        x = torch.empty(1, 4, position_ids.shape[1], 64, dtype=dtype, device=device)
+        expected_cos, expected_sin = rope(x, position_ids)
+
+        # Simulate casting the complete model, including its registered buffers.
+        rope.to(dtype=dtype)
+        assert rope.inv_freq.dtype == dtype
+        actual_cos, actual_sin = rope(x, position_ids)
+
+        torch.testing.assert_close(actual_cos, expected_cos, rtol=0, atol=0)
+        torch.testing.assert_close(actual_sin, expected_sin, rtol=0, atol=0)
+
     def test_default_rope_type_initializes(self):
         hf_cfg = self._make_hf_config()
         rope = Ministral3RotaryEmbedding(hf_cfg)
@@ -297,6 +310,48 @@ class TestMinistral3RotaryEmbedding:
 # ---------------------------------------------------------------------------
 # TestNemotronLabsDiffusionAttentionInit
 # ---------------------------------------------------------------------------
+
+
+class TestLazyDiffusionMask:
+    def test_ar_forward_backward_never_builds_diffusion_mask(self):
+        from megatron.bridge.diffusion.models.common import nemotron_labs_diffusion_attention as module
+
+        with patch.object(module, "compute_block_mask", side_effect=AssertionError("unused diffusion mask")):
+            attn = module.NemotronLabsDiffusionAttention(
+                _make_config(seq_len=49152),
+                1,
+                AttnMaskType.causal,
+                "self",
+                pg_collection=_make_pg_collection(),
+            )
+            attn.set_inference_mode(True)
+            attn.set_inference_params(causal=True, cache_enabled=False)
+            q = torch.randn(8, 1, 4, 8, requires_grad=True)
+            k = torch.randn(8, 1, 2, 8, requires_grad=True)
+            v = torch.randn(8, 1, 2, 8, requires_grad=True)
+            attn(q, k, v).square().mean().backward()
+            assert attn.mask is None
+            for tensor in (q, k, v):
+                assert tensor.grad is not None and torch.isfinite(tensor.grad).all()
+
+    def test_diffusion_forward_builds_mask_once(self):
+        from megatron.bridge.diffusion.models.common import nemotron_labs_diffusion_attention as module
+
+        attn = _make_attention(apply_llama4=False)
+        attn.config.sequence_parallel = True
+        q = torch.randn(16, 1, 4, 8)
+        k = torch.randn(16, 1, 2, 8)
+        v = torch.randn(16, 1, 2, 8)
+        sentinel = object()
+        with (
+            patch.object(module, "compute_block_mask", return_value=sentinel) as build,
+            patch.object(module, "fused_flex_attention", side_effect=lambda q, k, v, **kw: q) as forward,
+        ):
+            attn(q, k, v)
+            attn(q, k, v)
+        build.assert_called_once_with(block_size=4, max_seq_length=16)
+        assert attn.mask is sentinel
+        assert all(call.kwargs["block_mask"] is sentinel for call in forward.call_args_list)
 
 
 class TestNemotronLabsDiffusionAttentionInit:
@@ -524,3 +579,10 @@ class TestRotaryEmbeddingNonDefault:
         cos, sin = rope(x, pos)
         assert cos.shape == (1, 16, 8)
         assert sin.shape == (1, 16, 8)
+
+
+def test_text_only_provider_scatters_sequence_parallel_embeddings() -> None:
+    config = _make_config()
+    config.tensor_model_parallel_size = 2
+    config.sequence_parallel = True
+    assert config.scatter_embedding_sequence_parallel is True
