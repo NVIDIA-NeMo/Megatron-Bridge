@@ -24,10 +24,6 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-    FullyShardedDataParallelV1,
-    FullyShardedDataParallelV2,
-)
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -78,6 +74,7 @@ from megatron.bridge.training.checkpointing import (
     CheckpointSaveContext,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.dsa_metrics import reset_dsa_metrics
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.global_batch_packing import (
@@ -114,6 +111,7 @@ from megatron.bridge.training.utils.train_utils import (
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+from megatron.bridge.utils.mcore_fsdp import FullyShardedDataParallelV1, FullyShardedDataParallelV2
 
 
 # For Paged Stashing support
@@ -269,7 +267,7 @@ def train(
     # Megatron FSDP and FSDP2 does not have this hook
     should_toggle_forward_pre_hook = should_disable_forward_pre_hook(
         config.ddp.use_megatron_fsdp,
-        config.optimizer.use_distributed_optimizer,
+        config.ddp.use_distributed_optimizer,
         config.ddp.overlap_param_gather,
     )
     # Also, check weight hash across DP replicas to be very pedantic.
@@ -915,6 +913,9 @@ def train_step(
     packed_num_microbatches = None
     rerun_data_iterator = data_iterator
     while rerun_state_machine.should_run_forward_backward(rerun_data_iterator):
+        # Discard warmup/evaluation values and prior rerun attempts without rebinding
+        # the tracker storage retained by attention CUDA graphs.
+        reset_dsa_metrics(model_config)
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -1400,7 +1401,7 @@ def save_checkpoint_and_time(
 
     should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
-        state.cfg.optimizer.use_distributed_optimizer,
+        state.cfg.ddp.use_distributed_optimizer,
         state.cfg.ddp.overlap_param_gather,
     )
     if should_force_param_sync:

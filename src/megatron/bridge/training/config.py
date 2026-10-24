@@ -1350,6 +1350,32 @@ class ConfigContainer(Container):
         if seq_length > model.seq_length:
             raise ValueError(f"dataset.seq_length={seq_length} exceeds model.seq_length={model.seq_length}.")
 
+    def _validate_fixed_thd_dsv4_packing(self) -> None:
+        """Require static offline batches for the development DSv4 scheduler marker."""
+        if getattr(self.dataset, "enable_global_batch_packing", False):
+            raise ValueError(
+                "Fixed-THD DSv4 consumes prepacked batches and does not run the online scheduler; "
+                "dataset.enable_global_batch_packing must be False."
+            )
+        specs = getattr(self.dataset, "offline_packing_specs", None)
+        dataset_kwargs = getattr(self.dataset, "dataset_kwargs", None) or {}
+        pad_to_max_length = (
+            getattr(self.dataset, "pad_to_max_length", False) is True
+            or dataset_kwargs.get("pad_to_max_length", False) is True
+        )
+        if not (
+            getattr(self.dataset, "enable_offline_packing", False) is True
+            and specs is not None
+            and specs.pad_cu_seqlens
+            and pad_to_max_length
+        ):
+            raise ValueError(
+                "Fixed-THD DSv4 requires dataset.enable_offline_packing=True, pad_to_max_length=True, "
+                "and offline_packing_specs.pad_cu_seqlens=True."
+            )
+        if specs.packed_sequence_size != self.model.seq_length:
+            raise ValueError("Fixed-THD DSv4 requires offline_packing_specs.packed_sequence_size=model.seq_length.")
+
     def _apply_global_batch_packing_padding(self, collate_padding_multiple: int) -> None:
         """Push the CP alignment multiple to the dataset that yields unpacked samples."""
         if hasattr(self.dataset, "global_batch_packing_pad_to_multiple_of"):
@@ -1428,6 +1454,8 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        from megatron.bridge.training.global_batch_packing import fixed_thd_dsv4_packing_enabled
+
         if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
                 "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
@@ -1443,6 +1471,9 @@ class ConfigContainer(Container):
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
         enable_global_batch_packing = getattr(self.dataset, "enable_global_batch_packing", False)
+        fixed_thd_dsv4 = fixed_thd_dsv4_packing_enabled(self.model)
+        if fixed_thd_dsv4:
+            self._validate_fixed_thd_dsv4_packing()
         uses_thd = (
             enable_offline_packing or enable_in_batch_packing or enable_energon_packing or enable_global_batch_packing
         )
@@ -1456,9 +1487,13 @@ class ConfigContainer(Container):
                 "enable_global_batch_packing is mutually exclusive with offline, in-batch, and Energon packing: "
                 "the scheduler packs unpacked samples itself."
             )
-        if not enable_global_batch_packing and (
-            getattr(self.model, "sequence_packing_scheduler", None) is not None
-            or getattr(self.model, "dynamic_context_parallel", False)
+        if (
+            not enable_global_batch_packing
+            and not fixed_thd_dsv4
+            and (
+                getattr(self.model, "sequence_packing_scheduler", None) is not None
+                or getattr(self.model, "dynamic_context_parallel", False)
+            )
         ):
             raise ValueError(
                 "model.sequence_packing_scheduler / model.dynamic_context_parallel are driven by the dataset: set "
@@ -2360,8 +2395,9 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
 
     This function ensures that distributed optimizer settings are consistent across
-    DDP and optimizer configurations. If either setting is enabled, both will be
-    enabled to maintain consistency.
+    DDP and optimizer configurations. Layer-wise optimizers require DDP's
+    distributed buffers while retaining their own optimizer implementation.
+    Otherwise, if either setting is enabled, both will be enabled.
 
     Args:
         config: The configuration container to validate and potentially modify.
@@ -2369,7 +2405,13 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     ddp_setting = config.ddp.use_distributed_optimizer
     optimizer_setting = config.optimizer.use_distributed_optimizer
 
-    if ddp_setting or optimizer_setting:
+    uses_layer_wise_optimizer = (
+        config.optimizer.use_layer_wise_distributed_optimizer or config.optimizer.optimizer.startswith("dist_")
+    )
+    if uses_layer_wise_optimizer:
+        config.ddp.use_distributed_optimizer = True
+        config.optimizer.use_distributed_optimizer = False
+    elif ddp_setting or optimizer_setting:
         if ddp_setting != optimizer_setting:
             warn_rank_0(
                 f"Distributed optimizer settings were not in sync: "

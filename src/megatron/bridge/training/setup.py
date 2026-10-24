@@ -27,10 +27,6 @@ import torch
 from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-    FullyShardedDataParallelV1,
-    FullyShardedDataParallelV2,
-)
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -63,6 +59,7 @@ from megatron.bridge.training.checkpointing import (
     maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.dsa_metrics import initialize_dsa_metrics
 from megatron.bridge.training.gtp import (
     classify_gtp_remat_chains,
     configure_gtp_remat,
@@ -84,6 +81,7 @@ from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, i
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
+from megatron.bridge.utils.mcore_fsdp import FullyShardedDataParallelV1, FullyShardedDataParallelV2
 
 
 def _get_embedding_ranks(
@@ -418,6 +416,7 @@ def setup(
     start_memory_history_recording(cfg.profiling)
 
     model = _build_distributed_model(cfg, pg_collection)
+    initialize_dsa_metrics(model, cfg.model, pg_collection)
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
@@ -609,6 +608,12 @@ def _freeze_base_model_for_mtp(model: list[MegatronModule]) -> list[MegatronModu
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
     """Build distributed model from either ModelConfig or ModelProviderMixin."""
     model_config = cfg.model
+    layer_wise_kwargs = {}
+    optimizer_name = getattr(cfg.optimizer, "optimizer", "")
+    if getattr(cfg.optimizer, "use_layer_wise_distributed_optimizer", False) is True or (
+        isinstance(optimizer_name, str) and optimizer_name.startswith("dist_")
+    ):
+        layer_wise_kwargs["use_layer_wise_distributed_optimizer"] = True
     if not isinstance(model_config, ModelConfig):
         model_config.finalize()
     configure_gtp_remat(
@@ -624,6 +629,12 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
         builder = builder_cls(model_config)
+        if layer_wise_kwargs:
+            parameters = inspect.signature(builder.build_distributed_models).parameters
+            if "use_layer_wise_distributed_optimizer" not in parameters and not any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+            ):
+                raise RuntimeError("This model builder does not support layer-wise optimizer DDP layouts.")
         model = builder.build_distributed_models(
             pg_collection=pg_collection,
             ddp_config=cfg.ddp,
@@ -631,6 +642,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            **layer_wise_kwargs,
         )
     else:
         model = model_config.provide_distributed_model(
@@ -640,6 +652,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
+            **layer_wise_kwargs,
         )
     classify_gtp_remat_chains(model, model_config)
     return model
