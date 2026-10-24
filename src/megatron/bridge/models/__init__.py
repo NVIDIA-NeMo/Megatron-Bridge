@@ -136,6 +136,7 @@ from megatron.bridge.models.mimo_v2_flash import (
     MiMoV2FlashBridge,
     MiMoV2FlashModelProvider,
 )
+from megatron.bridge.models.minicpmo import MiniCPMOBridge, MiniCPMOModelConfig
 from megatron.bridge.models.minimax_m2 import (
     MiniMaxM2Bridge,
 )
@@ -232,6 +233,8 @@ from megatron.bridge.models.t5_provider import T5ModelProvider
 
 __all__ = [
     "AutoBridge",
+    "MiniCPMOBridge",
+    "MiniCPMOModelConfig",
     "MegatronMappingRegistry",
     "MegatronModelBridge",
     "ColumnParallelMapping",
