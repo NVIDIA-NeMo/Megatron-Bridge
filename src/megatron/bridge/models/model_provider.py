@@ -47,6 +47,12 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
 
+
+try:
+    from megatron.core.utils import get_cpu_resident_parameter_ids
+except ImportError:
+    get_cpu_resident_parameter_ids = None
+
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
@@ -718,8 +724,19 @@ def get_model(
         and not model_config.use_cpu_initialization
         and not model_config.init_model_with_meta_device
     ):
-        for model_module in model:
-            model_module.cuda(torch.cuda.current_device())
+        if get_cpu_resident_parameter_ids is None:
+            for model_module in model:
+                model_module.cuda(torch.cuda.current_device())
+        else:
+            dev = torch.cuda.current_device()
+            for model_module in model:
+                cpu_resident_parameters = get_cpu_resident_parameter_ids(model_module)
+                for param in model_module.parameters():
+                    if id(param) in cpu_resident_parameters:
+                        continue
+                    param.data = param.data.to(device=dev, non_blocking=True)
+                for buffer in model_module.buffers():
+                    buffer.data = buffer.data.to(device=dev, non_blocking=True)
 
     if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
         model = _apply_mixed_precision_wrapper(model, model_config, mixed_precision_wrapper)

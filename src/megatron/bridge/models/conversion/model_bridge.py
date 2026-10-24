@@ -2577,7 +2577,14 @@ class MegatronModelBridge(
         hf_key_set = set(hf_keys) if hf_keys is not None else None
 
         for global_name in global_param_names:
-            mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
+            unwrapped_name = self._get_lora_unwrapped_name(global_name)
+            mapping = mapping_registry.megatron_to_hf_lookup(unwrapped_name)
+            if mapping is None and global_name.endswith(".to_wrap.weight"):
+                # A parameter-backed LoRA target (for example DeepSeek V4's
+                # replicated ``linear_o_group_proj``) is registered without a
+                # ``.weight`` leaf. The wrapper exposes it as
+                # ``.to_wrap.weight`` after PEFT promotion.
+                mapping = mapping_registry.megatron_to_hf_lookup(unwrapped_name[: -len(".weight")])
             if mapping is None:
                 missing_mappings.append(global_name)
                 continue
