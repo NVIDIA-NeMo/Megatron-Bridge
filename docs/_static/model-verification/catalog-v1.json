@@ -7369,24 +7369,24 @@
           "bridge_commit": "3a5b4f610a5b3608b1bded146418459672492cd9",
           "command_topologies": [
             {
-              "expert_parallel": "2",
+              "expert_parallel": "4",
               "expert_tensor_parallel": "1",
               "gpus_per_node": "4",
-              "nodes": "1",
+              "nodes": "2",
               "pipeline_parallel": "2",
               "tensor_parallel": "1",
-              "total_gpus": 4
+              "total_gpus": 8
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron"
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 4 --etp 1 --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-gpu",
-          "expected_result": "Distributed GPU import and paired export passed on H100 and GB200. All 42,683 language tensors, including 1,040 MTP tensors, matched in keys, shapes, dtypes and values across the saved round trip. Compared 247,222,108,160 source tensor bytes; no media tensors were exported. This establishes weight conversion, not forward or training parity.\n",
+          "expected_result": "Two-node, eight-GPU distributed import and paired export passed on H100 and GB200. All 42,683 language tensors, including 1,040 MTP tensors, matched in keys, shapes, dtypes and values across the saved round trip. Compared 247,222,108,160 source tensor bytes; no media tensors were exported. This establishes weight conversion, not forward or training parity.\n",
           "hardware": null,
-          "last_verified": "2026-09-23",
+          "last_verified": "2026-10-20",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.hf_to_megatron_gpu",
@@ -7415,24 +7415,24 @@
           "bridge_commit": "3a5b4f610a5b3608b1bded146418459672492cd9",
           "command_topologies": [
             {
-              "expert_parallel": "2",
+              "expert_parallel": "4",
               "expert_tensor_parallel": "1",
               "gpus_per_node": "4",
-              "nodes": "1",
+              "nodes": "2",
               "pipeline_parallel": "2",
               "tensor_parallel": "1",
-              "total_gpus": 4
+              "total_gpus": 8
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --distributed-save --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron --hf-path work/model-verification/nemotron-3.5-super-vl-text-only/hf"
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 4 --etp 1 --distributed-save --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron --hf-path work/model-verification/nemotron-3.5-super-vl-text-only/hf"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-gpu",
           "expected_result": "Exported a standalone native NemotronHForCausalLM checkpoint with unprefixed language and MTP weights and zero media tensors. All 42,683 tensors matched the source exactly, including 1,040 MTP tensors. The tokenizer was preserved, native HF config loading and normal text bridge dispatch passed, and the tensor-name/shape structure matched Nemotron 3 Super. This does not claim identical weights to that model.\n",
           "hardware": null,
-          "last_verified": "2026-09-23",
+          "last_verified": "2026-10-20",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_gpu",
@@ -7557,7 +7557,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --seq_length 2048 --max_steps 500 --save_interval 250 --load_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft checkpoint.ckpt_step=250 checkpoint.finetune=false --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false model.expert_model_parallel_size=64 model.moe_token_dispatcher_type=flex model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false model.moe_router_force_load_balancing=false optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32 optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32 mixed_precision.grad_reduce_in_fp32=true ddp.grad_reduce_in_fp32=true dataset.hf_dataset=null dataset.hf_validation_proportion=null dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true ++dataset.dataset_kwargs.index_mapping_dir=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery-indices 'dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}' scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery-config/ConfigContainer.yaml ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true"
+            "./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --seq_length 2048 --max_steps 500 --save_interval 250 --pretrained_checkpoint work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false model.expert_model_parallel_size=64 model.moe_token_dispatcher_type=flex model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false model.moe_router_force_load_balancing=false optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32 optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32 mixed_precision.grad_reduce_in_fp32=true ddp.grad_reduce_in_fp32=true dataset.hf_dataset=null dataset.hf_validation_proportion=null dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true ++dataset.dataset_kwargs.index_mapping_dir=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-indices 'dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}' scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-config/ConfigContainer.yaml ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -7565,15 +7565,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-sft-h100",
-          "expected_result": "Completed a fresh-root continuation from the original complete step-250 checkpoint through step 500 after the reference run failed at final save. All 1250 loss comparisons across steps 251-500 passed the unchanged 1% plus 1e-6 bound. Metrics below describe only that continuation, not an uninterrupted 500-step execution. Uses the native Nemotron 3 Super SFT recipe on 64 H100 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.\n",
+          "expected_result": "Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super SFT recipe on 64 H100 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export and native HF reload passed; they do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.\n",
           "hardware": "H100",
-          "last_verified": "2026-09-27",
+          "last_verified": "2026-10-20",
           "metrics": {
-            "final_loss": 0.5672588,
-            "initial_loss": 0.6722764,
-            "last_10_steps_model_tflops_per_gpu_avg": 23.57,
-            "last_10_steps_step_time_ms_avg": 3792.22,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 270.02652799679345
+            "final_loss": 0.5677204,
+            "initial_loss": 0.6108999,
+            "last_10_steps_model_tflops_per_gpu_avg": 18.62,
+            "last_10_steps_step_time_ms_avg": 5013.44,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 204.25097338354507
           },
           "precision": "bf16",
           "source_pointer": "items.sft.H100",
@@ -7622,13 +7622,13 @@
           "bridge_commit": "5e63b9d9ebb0230199aaf6177efa86e06bbce5d3",
           "command_topologies": [
             {
-              "expert_parallel": "2",
+              "expert_parallel": "4",
               "expert_tensor_parallel": "1",
               "gpus_per_node": "4",
-              "nodes": "1",
+              "nodes": "2",
               "pipeline_parallel": "2",
               "tensor_parallel": "1",
-              "total_gpus": 4
+              "total_gpus": 8
             },
             {
               "gpus_per_node": "4",
@@ -7637,15 +7637,15 @@
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model work/model-verification/nemotron-3.5-super-vl-text-only/hf --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery/iter_0000500 --hf-path work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-hf --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --distributed-timeout-minutes 60 --distributed-save",
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --hf-model work/model-verification/nemotron-3.5-super-vl-text-only/hf --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft/iter_0000500 --hf-path work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-hf --torch-dtype bfloat16 --tp 1 --pp 2 --ep 4 --etp 1 --distributed-timeout-minutes 60 --distributed-save",
             "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4 --tasks-per-node 1 --task hf-inference --hf-model work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-hf --prompt \"What is two plus two?\" --max-new-tokens 32 --chat-template --disable-thinking --device cuda --device-map balanced --dtype bfloat16 --require-gpu-only"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-sft-export-inference-h100",
-          "expected_result": "Exported the final step-500 language checkpoint through its standalone native text source, retaining 42,683 language tensors including 1,040 MTP tensors and zero media tensors. The only config differences from the pretrained text source were initializer_range=0.014 and max_position_embeddings=2048, both checked against the saved training config. Strict native Transformers reload covered 862 modules and generated exactly 7 tokens, stopping at EOS before the 32-token maximum. The literal completion was \"Two plus two equals four.\". This validates full-model export and one greedy completion, not native HF MTP execution or broad numerical equivalence. The separate matched six-position forward comparison also passed without changing numerical tolerances.\n",
+          "expected_result": "Exported the final step-500 language checkpoint through its standalone native text source, retaining 42,683 language tensors including 1,040 MTP tensors and zero media tensors. The only config differences from the pretrained text source were initializer_range=0.014 and max_position_embeddings=2048, both checked against the saved training config. Strict native Transformers reload covered 862 modules and generated exactly 7 tokens, stopping at EOS before the 32-token maximum. The literal completion was \"Two plus two equals four.\". This validates full-model export and one greedy completion, not native HF MTP execution or broad numerical equivalence.\n",
           "hardware": "H100",
-          "last_verified": "2026-09-27",
+          "last_verified": "2026-10-20",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.H100",
