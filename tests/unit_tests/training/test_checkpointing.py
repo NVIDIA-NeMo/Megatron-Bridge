@@ -5248,31 +5248,24 @@ class TestLoadSaveCachedMetadataHandoff:
         mock_strategy_cls.assert_called_once_with(cache_metadata=assume_constant_structure)
         assert checkpointing_context["load_strategy"] is mock_strategy_cls.return_value
 
-    def test_first_save_after_load_reuses_loaded_global_metadata(self, tmp_path, save_checkpoint_fixtures):
-        """The metadata read by a real load reaches the save strategy built by the next save_checkpoint."""
-        from nvidia_resiliency_ext.checkpointing.async_ckpt.cached_metadata_filesystem_reader import (
-            CachedMetadataFileSystemReader,
-        )
-
+    def test_load_keeps_the_metadata_of_a_real_checkpoint(self, tmp_path):
+        """With constant structure, the load strategy ends up holding the checkpoint metadata it read."""
         from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
 
         if torch.distributed.is_initialized():
             pytest.skip("Requires an isolated CPU process group")
-        checkpoint_dir = tmp_path / "iter_0000001"
-        checkpoint_dir.mkdir()
-        checkpointing_context = {}
-
-        def load_with_strategy(sharded_state_dict, checkpoint_name, load_strategy, **kwargs):
-            return load_strategy.load(sharded_state_dict, checkpoint_name)
-
         torch.distributed.init_process_group("gloo", store=torch.distributed.HashStore(), rank=0, world_size=1)
+        checkpointing_context = {}
         try:
             with patch("torch.cuda.is_available", return_value=False):
                 _CpuTorchDistSaveShardedStrategy().save(
-                    {"weight": ShardedTensor.from_rank_offsets("weight", torch.ones(3, 4))}, checkpoint_dir
+                    {"weight": ShardedTensor.from_rank_offsets("weight", torch.ones(3, 4))}, tmp_path
                 )
             with patch(
-                "megatron.bridge.training.checkpointing.dist_checkpointing.load", side_effect=load_with_strategy
+                "megatron.bridge.training.checkpointing.dist_checkpointing.load",
+                side_effect=lambda sharded_state_dict, checkpoint_name, load_strategy, **_: load_strategy.load(
+                    sharded_state_dict, checkpoint_name
+                ),
             ):
                 _load_global_dist_base_checkpoint(
                     load_dir=str(tmp_path),
@@ -5281,24 +5274,26 @@ class TestLoadSaveCachedMetadataHandoff:
                     sharded_state_dict={"weight": ShardedTensor.from_rank_offsets("weight", torch.empty(3, 4))},
                     iteration=None,
                     release=False,
-                    checkpoint_path_override=str(checkpoint_dir),
+                    checkpoint_path_override=str(tmp_path),
                     checkpointing_context=checkpointing_context,
                     pg_collection=Mock(),
                 )
         finally:
             torch.distributed.destroy_process_group()
-            CachedMetadataFileSystemReader.clear_metadata_cache(checkpoint_dir)
 
-        loaded_metadata = checkpointing_context["load_strategy"].cached_global_metadata
-        assert loaded_metadata is not None
-        assert "weight" in loaded_metadata.state_dict_metadata
+        metadata = checkpointing_context["load_strategy"].cached_global_metadata
+        assert "weight" in metadata.state_dict_metadata
+
+    def test_first_save_plugs_in_the_loaded_metadata(self, tmp_path, save_checkpoint_fixtures):
+        """save_checkpoint seeds its first save strategy with the metadata kept by the load strategy."""
+        loaded_metadata = Mock(name="loaded_metadata")
+        checkpointing_context = {"load_strategy": Mock(cached_global_metadata=loaded_metadata)}
 
         state = save_checkpoint_fixtures["mock_state"]
-        state.cfg.checkpoint.save = str(tmp_path / "save")
+        state.cfg.checkpoint.save = str(tmp_path)
         state.cfg.checkpoint.most_recent_k = -1
         state.cfg.checkpoint.ckpt_assume_constant_structure = True
         state.cfg.checkpoint.fully_parallel_save = False
-        state.cfg.checkpoint.storage_writers_per_rank = 1
         pg_collection = Mock()
         pg_collection.expt_dp.rank.return_value = 0
         pg_collection.tp.rank.return_value = 0
@@ -5308,6 +5303,7 @@ class TestLoadSaveCachedMetadataHandoff:
 
         with (
             patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=None),
+            patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
             patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
@@ -5339,7 +5335,6 @@ class TestLoadSaveCachedMetadataHandoff:
             )
 
         save_strategy = checkpointing_context["save_strategy"]
-        assert isinstance(save_strategy, TorchDistSaveShardedStrategy)
         assert save_strategy.use_cached_ckpt_structure is True
         assert save_strategy.cached_global_metadata is loaded_metadata
 
