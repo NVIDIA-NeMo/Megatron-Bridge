@@ -75,7 +75,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
     GatedMLPMapping,
-    MegatronParamMapping,
+    HCAlphaMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
@@ -359,93 +359,6 @@ def _dsv4_use_mxfp4_export(hf_param: str, weight: torch.Tensor, source_scale: to
 # ---------------------------------------------------------------------------
 # Custom mapping helpers
 # ---------------------------------------------------------------------------
-
-
-class _HCAlphaMapping(MegatronParamMapping):
-    """Map Megatron's three scalar HC alpha parameters to/from the V4 checkpoint's
-    3-element hc_*_scale tensor.
-
-    V4 checkpoint  :  layers.N.hc_attn_scale  shape [3]  = [alpha_pre, alpha_post, alpha_res]
-    Megatron       :  three separate nn.Parameter([1]) tensors
-    """
-
-    def __init__(self, megatron_pre: str, megatron_post: str, megatron_res: str, hf_param: str):
-        # We register under the alpha_pre path; the others are handled inside hf_to_megatron.
-        super().__init__(megatron_param=megatron_pre, hf_param=hf_param)
-        self._megatron_post = megatron_post
-        self._megatron_res = megatron_res
-
-    @staticmethod
-    def _resolve_single(pattern: str, captures) -> str:
-        result = pattern
-        ci = 0
-        while "**" in result and ci < len(captures):
-            result = result.replace("**", captures[ci], 1)
-            ci += 1
-        ci = 0
-        while "*" in result and ci < len(captures):
-            result = result.replace("*", captures[ci], 1)
-            ci += 1
-        return result
-
-    def resolve(self, captures):
-        resolved_mg, resolved_hf = self._resolve_names(captures)
-        resolved_post = self._resolve_single(self._megatron_post, captures)
-        resolved_res = self._resolve_single(self._megatron_res, captures)
-        return _HCAlphaMapping(
-            megatron_pre=resolved_mg,
-            megatron_post=resolved_post,
-            megatron_res=resolved_res,
-            hf_param=resolved_hf,
-        )
-
-    def hf_to_megatron(self, hf_weights, megatron_module):
-        # hf_weights is hc_*_scale [3]; we write alpha_pre here (index 0).
-        # alpha_post and alpha_res are handled by their own mappings when registered.
-        target = hf_weights.to(megatron_module.alpha_pre.device)
-        return target[0:1]
-
-    def megatron_to_hf(self, megatron_weights, megatron_module):
-        # megatron_weights is alpha_pre [1]; gather all 3 from the same module.
-        # With PP > 1, megatron_module may be None on non-owning ranks,
-        # so we broadcast alpha_post and alpha_res alongside alpha_pre.
-        post_tensor = megatron_module.alpha_post.detach() if megatron_module is not None else None
-        res_tensor = megatron_module.alpha_res.detach() if megatron_module is not None else None
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
-        post = self.broadcast_from_pp_rank(post_tensor, cache_key=str(self.hf_param) + "_post")
-        res = self.broadcast_from_pp_rank(res_tensor, cache_key=str(self.hf_param) + "_res")
-        if megatron_weights is None:
-            return {}
-        megatron_weights = self.maybe_dequantize(megatron_weights)
-        return {self.hf_param: torch.cat([megatron_weights.float(), post.float(), res.float()])}
-
-
-class _HCAlphaSecondaryMapping(MegatronParamMapping):
-    """Secondary mapping for alpha_post (index=1) or alpha_res (index=2).
-
-    Import: extracts element [index] from the 3-element hc_*_scale tensor.
-    Export: returns {} because the primary _HCAlphaMapping (alpha_pre) already
-    exports all three alpha values together. This mapping just suppresses the
-    "No mapping found" warning for the secondary Megatron params during export.
-    """
-
-    def __init__(self, megatron_param: str, hf_scale_param: str, index: int):
-        super().__init__(megatron_param=megatron_param, hf_param=hf_scale_param)
-        self._index = index
-        self.allow_hf_name_mismatch = True  # export is no-op; skip hf_keys check
-
-    def hf_to_megatron(self, hf_weights, megatron_module):
-        attr = "alpha_post" if self._index == 1 else "alpha_res"
-        target = hf_weights.to(getattr(megatron_module, attr).device)
-        return target[self._index : self._index + 1]
-
-    def resolve(self, captures):
-        resolved_mg, resolved_hf = self._resolve_names(captures)
-        return _HCAlphaSecondaryMapping(resolved_mg, resolved_hf, self._index)
-
-    def megatron_to_hf(self, megatron_weights, megatron_module):
-        # Already handled by the primary alpha_pre _HCAlphaMapping
-        return {}
 
 
 class _ReplicatedOptional(ReplicatedMapping):
@@ -784,14 +697,9 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         def _hc_alpha_mappings(hc_prefix: str, hf_scale_param: str) -> list:
             """mHC alpha triplet: one 3-vector hc_*_scale <-> alpha_pre/post/res scalars."""
             return [
-                _HCAlphaMapping(
-                    megatron_pre=f"{hc_prefix}.alpha_pre",
-                    megatron_post=f"{hc_prefix}.alpha_post",
-                    megatron_res=f"{hc_prefix}.alpha_res",
-                    hf_param=hf_scale_param,
-                ),
-                _HCAlphaSecondaryMapping(f"{hc_prefix}.alpha_post", hf_scale_param, 1),
-                _HCAlphaSecondaryMapping(f"{hc_prefix}.alpha_res", hf_scale_param, 2),
+                HCAlphaMapping(f"{hc_prefix}.alpha_pre", hf_scale_param, 0),
+                HCAlphaMapping(f"{hc_prefix}.alpha_post", hf_scale_param, 1),
+                HCAlphaMapping(f"{hc_prefix}.alpha_res", hf_scale_param, 2),
             ]
 
         def _attention_layer_mappings(layer_prefix: str, ck: str) -> list:
