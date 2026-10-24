@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-memory-snapshot-analysis
-description: Analyze and compare PyTorch CUDA memory snapshots produced by Megatron Bridge's ProfilingConfig(record_memory_history=True). Replays the recorded allocation timeline to plot memory over time, compare two runs, and attribute peak memory to source code locations.
+description: Analyze and compare PyTorch CUDA memory snapshots produced by Megatron Bridge's ProfilingConfig(record_memory_history=True). Replays the recorded allocation timeline to plot memory over time, compare two runs, and attribute peak memory to source code locations. Use when debugging an OOM or peak-memory regression from a captured snapshot pickle, plotting GPU memory over time, comparing memory between two configurations, or attributing memory to specific allocations; 'snapshot.pickle', 'snapshot_0.pickle', 'memory snapshot', 'record_memory_history', 'memory_snapshot_path', 'device_traces', 'plot memory usage', 'graph memory over time', 'memory timeline', 'visualize GPU memory', 'memory usage chart', 'why does this config use more memory', 'peak memory analysis', 'OOM pickle'.
 license: Apache-2.0
-when_to_use: Debugging an OOM or peak-memory regression from a captured snapshot pickle, plotting GPU memory over time, comparing memory between two configurations, or attributing memory to specific allocations; 'snapshot.pickle', 'snapshot_0.pickle', 'memory snapshot', 'record_memory_history', 'memory_snapshot_path', 'device_traces', 'plot memory usage', 'graph memory over time', 'memory timeline', 'visualize GPU memory', 'memory usage chart', 'why does this config use more memory', 'peak memory analysis', 'OOM pickle'.
 ---
 
 # Memory Snapshot Analysis
