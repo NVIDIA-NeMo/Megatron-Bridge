@@ -60,10 +60,10 @@ Use the `examples/quantization/quantize.py` script for LLM PTQ:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/quantize.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
+    --hf-model-id Qwen/Qwen3-0.6B \
     --export-quant-cfg fp8 \
     --tp 2 \
-    --megatron-save-path ./llama3_2_1b_fp8
+    --megatron-save-path ./qwen3_0_6b_fp8
 ```
 
 Use the `examples/quantization/quantize_vlm.py` script for VLM PTQ:
@@ -95,8 +95,8 @@ Resume the quantized checkpoint and test with text generation using `examples/qu
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/ptq_generate.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
     --tp 2
 ```
 
@@ -124,9 +124,9 @@ Export the quantized checkpoint to a quantized HuggingFace checkpoint using `exa
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/export.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
-    --export-dir ./llama3_2_1b_fp8_hf \
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
+    --export-dir ./qwen3_0_6b_fp8_hf \
     --tp 2
 ```
 
@@ -143,7 +143,7 @@ Megatron exporter, which supports TP=1 only.
 From Python, save a quantized model directly:
 
 ```python
-bridge.save_hf_pretrained_modelopt(megatron_model, "./llama3_2_1b_fp8_hf")
+bridge.save_hf_pretrained_modelopt(megatron_model, "./qwen3_0_6b_fp8_hf")
 ```
 
 ### Programmatic ModelOpt Export
