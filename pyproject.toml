@@ -94,7 +94,7 @@ dependencies = [
     "flash-linear-attention",
     "timm",
     "open-clip-torch>=3.2.0",
-    "mlflow>=3.16.0",   # CVE-2025-15031, CVE-2026-71211
+    "mlflow>=3.17.2",   # CVE-2025-15031, CVE-2026-71211, CVE-2026-53995
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
     "flashinfer-python==0.6.18.post1",  # keep flashinfer-python and flashinfer-cubin in lockstep:
@@ -131,8 +131,9 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "filelock>=4.2.1",  # CVE-2026-112940; multi-storage-client 0.51 caps filelock below 4
     "wandb>=0.29.0",
-    "mlflow>=3.16.0",                                       # CVE-2025-15031, CVE-2026-71211
+    "mlflow>=3.17.2",                                       # CVE-2025-15031, CVE-2026-71211, CVE-2026-53995
     # BDSA-2026-31388, CVE-2026-78676, CVE-2026-78677, CVE-2026-114145
     "GitPython>=3.2.1,<4",
     "sqlparse>=0.6.0,<1",                                   # CVE-2026-59894
