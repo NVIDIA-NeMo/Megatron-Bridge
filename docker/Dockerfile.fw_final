@@ -114,6 +114,13 @@ RUN pip install "fastapi==0.139.1" \
 RUN uv pip install --python /usr/bin/python3 --system --break-system-packages --no-deps \
     "pynvvideocodec==2.2.3"
 
+# PyNvVideoCodec 2.2.3 vendors FFmpeg 9.0.1. Backport the RTSP redirect limit
+# (CVE-2026-107696) into its bundled libavformat without changing its ABI.
+COPY --chmod=755 docker/common/patch_pynvvideocodec_ffmpeg.sh /opt/patch_pynvvideocodec_ffmpeg.sh
+COPY --chmod=644 docker/patches/ffmpeg-rtsp-redirect-limit.patch /opt/ffmpeg-rtsp-redirect-limit.patch
+RUN /opt/patch_pynvvideocodec_ffmpeg.sh && \
+    rm /opt/patch_pynvvideocodec_ffmpeg.sh /opt/ffmpeg-rtsp-redirect-limit.patch
+
 # Remove PyTorch's bundled third-party onnx source tree (build artifact, not used at runtime).
 # The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
 RUN rm -rf /opt/pytorch/pytorch/third_party/onnx
