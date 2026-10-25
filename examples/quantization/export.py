@@ -25,7 +25,10 @@ The process is as follows:
 1. An AutoBridge is initialized from a pretrained Hugging Face model
     to get the tokenizer and model structure.
 2. The quantized Megatron-LM model is loaded from the checkpoint using the specified path.
-3. The model is exported to HuggingFace format using ModelOpt export utilities.
+3. The model is saved as a quantized HuggingFace checkpoint with ``bridge.save_hf_pretrained_modelopt``:
+    packed weights and scales, with the ``quantization_config`` that vLLM, SGLang and TensorRT-LLM read in
+    ``config.json``. Models the bridge export does not cover yet, and ``--export-extra-modules`` (EAGLE / Medusa
+    heads), use ModelOpt's Megatron exporter instead.
 
 Usage:
 torchrun --nproc_per_node 2 examples/quantization/export.py --hf-model-id meta-llama/Llama-3.2-1B \
@@ -49,6 +52,7 @@ from quantize_utils import (
     require_torchrun,
 )
 
+from megatron.bridge.models.conversion.modelopt_utils import check_exportable_quantizers
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
@@ -120,16 +124,30 @@ def main(
         console.print(f"[green]Export directory: {export_dir}[/green]")
         console.print(f"[green]Export extra modules: {export_extra_modules_flag}[/green]")
 
-    # Export the model to HuggingFace format
-    mtex.export_mcore_gpt_to_hf(
-        unwrapped_model,
-        hf_model_id,
-        export_extra_modules=export_extra_modules_flag,
-        dtype=torch_dtype,
-        export_dir=export_dir,
-        moe_router_dtype=getattr(unwrapped_model.config, "moe_router_dtype", None),
-        trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model_id),
-    )
+    export_plan = None
+    if not export_extra_modules_flag:
+        try:
+            check_exportable_quantizers(megatron_model)
+            export_plan = bridge.build_hf_modelopt_export_plan(megatron_model)
+        except (NotImplementedError, RuntimeError) as error:
+            if is_rank_0:
+                console.print(f"[yellow]Megatron-Bridge cannot export this model yet: {error}[/yellow]")
+
+    if export_plan is None:
+        # ModelOpt's Megatron exporter also covers EAGLE / Medusa heads, but supports TP=1 only.
+        if is_rank_0:
+            console.print("[yellow]Exporting with ModelOpt's Megatron exporter[/yellow]")
+        mtex.export_mcore_gpt_to_hf(
+            unwrapped_model,
+            hf_model_id,
+            export_extra_modules=export_extra_modules_flag,
+            dtype=torch_dtype,
+            export_dir=export_dir,
+            moe_router_dtype=getattr(unwrapped_model.config, "moe_router_dtype", None),
+            trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model_id),
+        )
+    else:
+        bridge.save_hf_pretrained_modelopt(megatron_model, export_dir, export_plan=export_plan)
 
     if is_rank_0:
         console.print("[green]Export completed successfully![/green]")
@@ -164,7 +182,7 @@ if __name__ == "__main__":
         type=str,
         default="bfloat16",
         choices=["bfloat16", "float16", "float32"],
-        help="Data type for export",
+        help="Data type for ModelOpt's Megatron exporter (models the bridge export does not cover yet)",
     )
 
     args = parser.parse_args()

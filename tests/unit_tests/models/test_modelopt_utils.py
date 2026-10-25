@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -1141,3 +1142,109 @@ def test_grouped_modelopt_export_rejects_custom_model_bridge_export(monkeypatch)
                 export_plan=SimpleNamespace(),
             )
         )
+
+
+@pytest.mark.unit
+def test_plan_config_lists_unquantized_matrices_but_not_vectors():
+    norm = torch.nn.LayerNorm(32)
+    model = torch.nn.Module()
+    model.projection, model.unquantized, model.norm = _nvfp4_linear(), _nvfp4_linear(), norm
+    model.unquantized.weight_quantizer.disable()
+    model.unquantized.input_quantizer.disable()
+    tasks = [
+        _task(ColumnParallelMapping("projection.weight", "model.layers.0.mlp.up_proj.weight"), model.projection),
+        _task(
+            ColumnParallelMapping("unquantized.weight", "model.layers.0.mlp.gate.weight"),
+            model.unquantized,
+            global_name="decoder.layers.0.unquantized.weight",
+        ),
+        _task(
+            ColumnParallelMapping("norm.weight", "model.layers.0.input_layernorm.weight"),
+            norm,
+            global_name="decoder.layers.0.norm.weight",
+        ),
+    ]
+
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[model])
+
+    assert plan.quantization_config["ignore"] == ["model.layers.0.mlp.gate"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("max_shard_size", [1, 1 << 20])
+def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size):
+    from safetensors.torch import load_file
+
+    (tmp_path / "model.safetensors").write_bytes(b"stale")
+    tensors = {
+        "model.weight": torch.arange(4, dtype=torch.uint8),
+        "model.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
+        "model.input_scale": torch.tensor(0.5),
+    }
+
+    saved = modelopt_utils.save_safetensors_shards(iter(tensors.items()), tmp_path, max_shard_size=max_shard_size)
+
+    loaded = {}
+    for filename in saved - {"model.safetensors.index.json"}:
+        loaded.update(load_file(tmp_path / filename))
+    assert loaded.keys() == tensors.keys()
+    for name, tensor in tensors.items():
+        assert loaded[name].dtype == tensor.dtype and torch.equal(loaded[name].float(), tensor.float()), name
+    if max_shard_size == 1:
+        index = json.loads((tmp_path / "model.safetensors.index.json").read_text())
+        assert set(index["weight_map"]) == tensors.keys() and set(index["weight_map"].values()) == saved - {
+            "model.safetensors.index.json"
+        }
+        assert len(saved) == 4
+    else:
+        assert saved == {"model.safetensors"}
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+@pytest.mark.unit
+def test_shard_writer_rejects_duplicate_names(tmp_path):
+    tensors = [("model.weight", torch.ones(1)), ("model.weight", torch.ones(1))]
+    with pytest.raises(ValueError, match="Duplicate"):
+        modelopt_utils.save_safetensors_shards(iter(tensors), tmp_path, max_shard_size=1 << 20)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("projections", "scale", "matching"),
+    [
+        (("q_proj", "k_proj", "v_proj"), "input_scale", True),
+        (("q_proj", "k_proj", "v_proj"), "input_scale", False),
+        (("gate_proj", "up_proj"), "weight_scale_2", False),
+        (("q_a_proj", "kv_a_proj_with_mqa"), "input_scale", False),
+        (("q_proj", "o_proj"), "input_scale", True),  # Not fused: different scales are fine.
+    ],
+)
+def test_fused_sibling_scales_must_match(projections, scale, matching):
+    tensors = {
+        f"model.layers.0.self_attn.{projection}.{scale}": torch.tensor(1.0 if matching or index else 2.0)
+        for index, projection in enumerate(projections)
+    }
+    tensors["model.layers.1.self_attn.q_proj.input_scale"] = torch.tensor(3.0)  # Another layer.
+    if "o_proj" in projections:
+        tensors["model.layers.0.self_attn.o_proj.input_scale"] = torch.tensor(4.0)
+
+    if matching:
+        modelopt_utils.check_fused_sibling_scales(tensors)
+    else:
+        with pytest.raises(ValueError, match=projections[0]):
+            modelopt_utils.check_fused_sibling_scales(tensors)
+
+
+@pytest.mark.unit
+def test_export_rejects_enabled_quantizers_it_would_drop():
+    model = torch.nn.Module()
+    model.projection = _nvfp4_linear()
+    model.attention = torch.nn.Module()
+    model.attention.k_bmm_quantizer = mtq.nn.TensorQuantizer()
+    model.attention.k_bmm_quantizer.disable()
+    modelopt_utils.check_exportable_quantizers([model])
+
+    model.attention.k_bmm_quantizer.enable()
+    model.projection.output_quantizer.enable()
+    with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
+        modelopt_utils.check_exportable_quantizers([model])
