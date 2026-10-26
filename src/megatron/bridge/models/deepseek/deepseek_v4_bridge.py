@@ -152,7 +152,8 @@ def set_deepseek_v4_pipeline_model_parallel_layout(
     Args:
         model_cfg: DeepSeek-V4 provider to configure in place.
         logical_layers_per_stage: Optional block counts in VPP-major, PP-minor
-            order. Otherwise distribute logical blocks as evenly as possible.
+            order. Otherwise distribute logical blocks as evenly as possible
+            while keeping the hash-routed MoE blocks on the embedding stage.
     """
     pp_size = model_cfg.pipeline_model_parallel_size or 1
     vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None) or 1
@@ -188,8 +189,13 @@ def set_deepseek_v4_pipeline_model_parallel_layout(
 
     num_stages = pp_size * vp_size
     if logical_layers_per_stage is None:
+        # MCore requires every hash-routed MoE layer on the embedding stage, the only one that owns the token
+        # IDs. Grow that stage when an even split would leave hash layers behind; otherwise the split is even.
+        num_hash_blocks = min(len(blocks), int(getattr(model_cfg, "moe_num_hash_layers", 0) or 0))
         base, extra = divmod(len(blocks), num_stages)
-        counts = [base + int(stage < extra) for stage in range(num_stages)]
+        first = max(base + int(extra > 0), num_hash_blocks)
+        base, extra = divmod(len(blocks) - first, num_stages - 1)
+        counts = [first] + [base + int(stage < extra) for stage in range(num_stages - 1)]
     else:
         counts = list(logical_layers_per_stage)
         if (
@@ -500,32 +506,18 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def generate_pipeline_layout(num_layers: int, pp: int, mtp_layers: int = 1) -> list[list[str]]:
-        """Generate a pipeline-parallel layout for DSv4 models.
+    def configure_pipeline_layout(model_cfg: DeepSeekV4HybridModelProvider) -> None:
+        """Set the pipeline stages of a DSv4 model for checkpoint conversion.
 
-        DSv4 with hash MoE routing requires an explicit pipeline layout when PP > 1.
-        The layout distributes decoder layers across PP stages, placing the embedding
-        on the first stage and MTP + loss on the last stage.
+        MCore's HybridModel takes its stage boundaries from the ``|`` segments of
+        ``hybrid_layer_pattern``, and the layout must list one decoder entry per
+        physical layer, so conversion uses the same segmentation as the recipes.
 
         Args:
-            num_layers: Number of decoder layers (e.g. 43 for Flash, 61 for Pro).
-            pp: Pipeline parallel size.
-            mtp_layers: Number of MTP layers (default 1).
-
-        Returns:
-            List of lists, where each inner list describes one pipeline stage.
+            model_cfg: DeepSeek-V4 provider or model config with its pipeline
+                parallel size set; updated in place.
         """
-        base, rem = num_layers // pp, num_layers % pp
-        layout = []
-        for i in range(pp):
-            n = base + (1 if i < rem else 0)
-            stage = ["decoder"] * n
-            if i == 0:
-                stage = ["embedding"] + stage
-            if i == pp - 1:
-                stage = stage + ["mtp"] * mtp_layers + ["loss"]
-            layout.append(stage)
-        return layout
+        set_deepseek_v4_pipeline_model_parallel_layout(model_cfg)
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV4HybridModelProvider:
         provider = super().provider_bridge(hf_pretrained)
