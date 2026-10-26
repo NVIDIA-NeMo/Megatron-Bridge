@@ -896,12 +896,14 @@ def check_exportable_quantizers(model: list[torch.nn.Module]) -> None:
     """
     from modelopt.torch.quantization.nn import TensorQuantizer
 
-    unsupported = [
-        name
-        for chunk in model
-        for name, module in chunk.named_modules()
-        if isinstance(module, TensorQuantizer) and module.is_enabled and not _EXPORTED_QUANTIZER.search(name)
-    ]
+    unsupported = sorted(
+        {
+            name
+            for chunk in model
+            for name, module in chunk.named_modules()
+            if isinstance(module, TensorQuantizer) and module.is_enabled and not _EXPORTED_QUANTIZER.search(name)
+        }
+    )
     error = None
     if unsupported:
         error = f"ModelOpt HF export cannot carry these enabled quantizers: {unsupported[:4]}"
