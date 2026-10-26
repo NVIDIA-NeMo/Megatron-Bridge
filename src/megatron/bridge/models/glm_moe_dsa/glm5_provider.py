@@ -15,6 +15,7 @@
 """Hybrid model provider for the GLM-5 DSA family."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from megatron.core.transformer.experimental_attention_variant.dsa import is_dsa_skip_topk_layer
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -81,6 +82,77 @@ def _partition_layer_groups(group_sizes: list[int], num_stages: int) -> list[int
     return stage_sizes
 
 
+def finalize_glm_hybrid_pattern(config: Any) -> None:
+    """Validate GLM's physical layout and keep each DSA sharing group within one pipeline stage.
+
+    ``GLM5ModelProvider`` and ``GLM5ModelConfig`` run this before their Hybrid finalization. It places
+    DSA-aligned pipeline boundaries, enables sequence parallelism for TP > 1, and derives
+    ``num_layers``, the MTP pattern and the MoE layer schedule from ``hybrid_layer_pattern``.
+
+    Args:
+        config: GLM-5 provider or model config to finalize in place.
+
+    Raises:
+        ValueError: If the pattern, pipeline topology or training settings are unsupported.
+    """
+    if not config.hybrid_layer_pattern:
+        raise ValueError("GLM requires an explicit hybrid_layer_pattern.")
+    main = config.hybrid_layer_pattern.split("/")[0]
+    compact = main.replace("|", "")
+    if len(compact) % 2 or any(compact[i : i + 2] not in ("D-", "DE") for i in range(0, len(compact), 2)):
+        raise ValueError("GLM requires alternating DSA and dense/MoE layers.")
+    if config.virtual_pipeline_model_parallel_size is not None:
+        raise ValueError("GLM Hybrid recipes currently support non-VPP execution only.")
+    if config.pipeline_model_parallel_layout is not None:
+        raise ValueError("Use hybrid_layer_pattern pipe separators instead of a GPT pipeline layout.")
+    if "|" not in main and config.pipeline_model_parallel_size > 1:
+        blocks = len(compact) // 2
+        # Balance complete DSA sharing groups, including the short dense prefix.
+        # This also makes ordinary conversion --pp overrides safe for GLM-5.2.
+        boundaries = [
+            i
+            for i in range(blocks)
+            if not is_dsa_skip_topk_layer(
+                i + 1, config.dsa_indexer_skip_topk_offset or 0, config.dsa_indexer_topk_freq or 1
+            )
+        ] + [blocks]
+        stages = config.pipeline_model_parallel_size
+        if len(boundaries) - 1 < stages:
+            raise ValueError(
+                f"PP={stages} exceeds the {len(boundaries) - 1} DSA top-k sharing groups in {blocks} decoder layers; "
+                "each pipeline stage must start on a layer that computes its own top-k indices."
+            )
+        group_sizes = [end - start for start, end in zip(boundaries, boundaries[1:])]
+        main = split_glm_pattern(main, _partition_layer_groups(group_sizes, stages))
+    segments = main.split("|")
+    if len(segments) != config.pipeline_model_parallel_size:
+        raise ValueError("GLM requires exactly one nonempty pattern segment per pipeline rank.")
+    offset = 0
+    for segment in segments:
+        if not segment or len(segment) % 2:
+            raise ValueError("GLM pipeline boundaries must preserve complete attention/MLP pairs.")
+        if is_dsa_skip_topk_layer(
+            offset + 1, config.dsa_indexer_skip_topk_offset or 0, config.dsa_indexer_topk_freq or 1
+        ):
+            raise ValueError("GLM pipeline stage starts on a DSA reuse layer; move the boundary to a compute layer.")
+        offset += len(segment) // 2
+    if config.recompute_granularity == "selective" and "core_attn" in (config.recompute_modules or []):
+        raise ValueError(
+            "GLM Hybrid selective core_attn recompute cannot preserve forward-local DSA state. "
+            "Use full-stage recompute or selective modules outside core_attn."
+        )
+    if config.fp8 or config.fp4:
+        raise ValueError("GLM Hybrid training currently requires BF16/FP32; FP8 checkpoint import remains supported.")
+    # The Hybrid DSA layer uses AbsorbedMLA, which asserts sequence parallelism whenever TP > 1.
+    if config.tensor_model_parallel_size > 1:
+        config.sequence_parallel = True
+    config.num_layers = len(compact)
+    config.hybrid_layer_pattern = main
+    config.mtp_hybrid_override_pattern = "DE" if config.mtp_num_layers else None
+    # Hybrid symbols own MLP selection; keep the schedule dimensionally consistent.
+    config.moe_layer_freq = [int(symbol == "E") for symbol in compact]
+
+
 @dataclass
 class GLM5ModelProvider(HybridModelProvider, MLATransformerConfig):
     """Construct GLM as DSA/dense/MoE Hybrid layers with MLA configuration."""
@@ -90,67 +162,8 @@ class GLM5ModelProvider(HybridModelProvider, MLATransformerConfig):
 
     def finalize(self) -> None:
         """Validate physical layout and preserve DSA sharing within each stage."""
-        if not self.hybrid_layer_pattern:
-            raise ValueError("GLM requires an explicit hybrid_layer_pattern.")
-        main = self.hybrid_layer_pattern.split("/")[0]
-        compact = main.replace("|", "")
-        if len(compact) % 2 or any(compact[i : i + 2] not in ("D-", "DE") for i in range(0, len(compact), 2)):
-            raise ValueError("GLM requires alternating DSA and dense/MoE layers.")
-        if self.virtual_pipeline_model_parallel_size is not None:
-            raise ValueError("GLM Hybrid recipes currently support non-VPP execution only.")
-        if self.pipeline_model_parallel_layout is not None:
-            raise ValueError("Use hybrid_layer_pattern pipe separators instead of a GPT pipeline layout.")
-        if "|" not in main and self.pipeline_model_parallel_size > 1:
-            blocks = len(compact) // 2
-            # Balance complete DSA sharing groups, including the short dense prefix.
-            # This also makes ordinary conversion --pp overrides safe for GLM-5.2.
-            boundaries = [
-                i
-                for i in range(blocks)
-                if not is_dsa_skip_topk_layer(
-                    i + 1, self.dsa_indexer_skip_topk_offset or 0, self.dsa_indexer_topk_freq or 1
-                )
-            ] + [blocks]
-            stages = self.pipeline_model_parallel_size
-            if len(boundaries) - 1 < stages:
-                raise ValueError(
-                    f"PP={stages} exceeds the {len(boundaries) - 1} DSA top-k sharing groups in {blocks} decoder layers; "
-                    "each pipeline stage must start on a layer that computes its own top-k indices."
-                )
-            group_sizes = [end - start for start, end in zip(boundaries, boundaries[1:])]
-            main = split_glm_pattern(main, _partition_layer_groups(group_sizes, stages))
-        segments = main.split("|")
-        if len(segments) != self.pipeline_model_parallel_size:
-            raise ValueError("GLM requires exactly one nonempty pattern segment per pipeline rank.")
-        offset = 0
-        for segment in segments:
-            if not segment or len(segment) % 2:
-                raise ValueError("GLM pipeline boundaries must preserve complete attention/MLP pairs.")
-            if is_dsa_skip_topk_layer(
-                offset + 1, self.dsa_indexer_skip_topk_offset or 0, self.dsa_indexer_topk_freq or 1
-            ):
-                raise ValueError(
-                    "GLM pipeline stage starts on a DSA reuse layer; move the boundary to a compute layer."
-                )
-            offset += len(segment) // 2
-        if self.recompute_granularity == "selective" and "core_attn" in (self.recompute_modules or []):
-            raise ValueError(
-                "GLM Hybrid selective core_attn recompute cannot preserve forward-local DSA state. "
-                "Use full-stage recompute or selective modules outside core_attn."
-            )
-        if self.fp8 or self.fp4:
-            raise ValueError(
-                "GLM Hybrid training currently requires BF16/FP32; FP8 checkpoint import remains supported."
-            )
-        # The Hybrid DSA layer uses AbsorbedMLA, which asserts sequence parallelism whenever TP > 1.
-        if self.tensor_model_parallel_size > 1:
-            self.sequence_parallel = True
-        self.num_layers = len(compact)
-        self.hybrid_layer_pattern = main
-        self.mtp_hybrid_override_pattern = "DE" if self.mtp_num_layers else None
-        # Hybrid symbols own MLP selection; keep the schedule dimensionally consistent.
-        self.moe_layer_freq = [int(symbol == "E") for symbol in compact]
+        finalize_glm_hybrid_pattern(self)
         super().finalize()
 
 
-__all__ = ["GLM5ModelProvider"]
+__all__ = ["GLM5ModelProvider", "finalize_glm_hybrid_pattern"]

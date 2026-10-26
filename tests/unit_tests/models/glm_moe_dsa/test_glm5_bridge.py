@@ -14,6 +14,8 @@
 
 """Unit tests for the GLM-5 MoE DSA bridge."""
 
+from dataclasses import fields
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -21,9 +23,13 @@ import torch
 from transformers import GlmMoeDsaConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
+from megatron.bridge.models.glm_moe_dsa.glm5_config import GLM5ModelBuilder, GLM5ModelConfig
+from megatron.bridge.models.glm_moe_dsa.glm5_hybrid import GLMHybridStack
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
 pytestmark = pytest.mark.unit
@@ -52,24 +58,25 @@ def test_glm53_config_loads_through_shared_bridge() -> None:
         num_nextn_predict_layers=1,
     )
     auto_bridge = AutoBridge.from_hf_config(config)
-    provider = auto_bridge.to_megatron_provider(load_weights=False)
+    model_config = auto_bridge.get_model_config()
 
     assert isinstance(auto_bridge._model_bridge, GLM5Bridge)
-    assert provider.num_layers == 156
-    assert provider.hidden_size == 6144
-    assert provider.num_attention_heads == 64
-    assert provider.num_moe_experts == 256
-    assert provider.moe_router_topk == 8
-    assert provider.q_lora_rank == 2048
-    assert provider.kv_lora_rank == 512
-    assert provider.qk_head_dim == 192
-    assert provider.qk_pos_emb_head_dim == 64
-    assert provider.v_head_dim == 256
-    assert provider.rotary_base == 8_000_000
-    assert provider.dsa_indexer_topk_freq == 4
-    assert provider.dsa_indexer_skip_topk_offset == 3
-    assert provider.moe_layer_freq == [0, 0] * 3 + [0, 1] * 75
-    assert provider.mtp_num_layers is None
+    assert isinstance(model_config, GLM5ModelConfig)
+    assert model_config.num_layers == 156
+    assert model_config.hidden_size == 6144
+    assert model_config.num_attention_heads == 64
+    assert model_config.num_moe_experts == 256
+    assert model_config.moe_router_topk == 8
+    assert model_config.q_lora_rank == 2048
+    assert model_config.kv_lora_rank == 512
+    assert model_config.qk_head_dim == 192
+    assert model_config.qk_pos_emb_head_dim == 64
+    assert model_config.v_head_dim == 256
+    assert model_config.rotary_base == model_config.transformer.rotary_base == 8_000_000
+    assert model_config.dsa_indexer_topk_freq == 4
+    assert model_config.dsa_indexer_skip_topk_offset == 3
+    assert model_config.moe_layer_freq == [0, 0] * 3 + [0, 1] * 75
+    assert model_config.mtp_num_layers is None
 
 
 _DSA_INDEXER_SUFFIXES = {
@@ -93,7 +100,7 @@ def _mapping_by_megatron_param(bridge: GLM5Bridge) -> dict[str, object]:
     return {mapping.megatron_param: mapping for mapping in bridge.mapping_registry()}
 
 
-def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides: int) -> SimpleNamespace:
+def _model_config_from_hf_config(**config_overrides: int) -> GLM5ModelConfig:
     config = {
         "first_k_dense_replace": 3,
         "num_hidden_layers": 78,
@@ -109,25 +116,23 @@ def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides
         "index_n_heads": 32,
         "index_topk": 2048,
         "indexer_rope_interleave": True,
+        "torch_dtype": "bfloat16",
     }
     config.update(config_overrides)
 
-    monkeypatch.setattr(
-        MegatronModelBridge,
-        "provider_bridge",
-        lambda _self, _hf_pretrained: SimpleNamespace(),
-    )
-    return GLM5Bridge().provider_bridge(SimpleNamespace(config=SimpleNamespace(**config)))
+    return GLM5Bridge().hf_config_to_model_config(SimpleNamespace(**config))
 
 
 def test_hf_config_ignores_upstream_num_experts_default() -> None:
     """GLM-5 ignores the num_experts default injected by affected Transformers versions."""
-    hf_config = GlmMoeDsaConfig(n_routed_experts=8)
+    hf_config = GlmMoeDsaConfig(n_routed_experts=8, indexer_rope_interleave=True)
 
+    model_config_kwargs = GLM5Bridge().hf_config_to_model_config_kwargs(hf_config)
     provider_kwargs = GLM5Bridge().hf_config_to_provider_kwargs(hf_config)
 
     assert getattr(hf_config, "num_experts", None) in (None, 256)
-    assert provider_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
+    assert model_config_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
+    assert provider_kwargs["num_moe_experts"] == 8
 
 
 @pytest.mark.parametrize(
@@ -209,46 +214,45 @@ def test_megatron_config_export_reference_supplies_max_position_embeddings() -> 
         ({"index_topk_freq": 4, "index_skip_topk_offset": 3}, 4, 3),
     ],
 )
-def test_provider_bridge_maps_dsa_architecture_from_hf_config(
-    monkeypatch: pytest.MonkeyPatch,
+def test_model_config_maps_dsa_architecture_from_hf_config(
     config_overrides: dict[str, int],
     expected_topk_freq: int,
     expected_skip_topk_offset: int,
 ) -> None:
     """GLM-5 version-specific DSA architecture stays owned by the bridge."""
-    provider = _provider_from_hf_config(monkeypatch, **config_overrides)
+    model_config = _model_config_from_hf_config(**config_overrides)
 
-    assert provider.experimental_attention_variant == "dsa"
-    assert provider.cp_comm_type == "allgather"
-    assert provider.qk_pos_emb_head_dim == 64
-    assert provider.dsa_indexer_head_dim == 128
-    assert provider.dsa_indexer_n_heads == 32
-    assert provider.dsa_indexer_topk == 2048
-    assert provider.dsa_indexer_rope_interleaved is True
-    assert provider.dsa_indexer_topk_freq == expected_topk_freq
-    assert provider.dsa_indexer_skip_topk_offset == expected_skip_topk_offset
-    assert provider.dsa_indexer_rotate_activation is False
-    assert provider.dsa_indexer_k_norm_epsilon == 1e-6
-    assert provider.dsa_indexer_loss_coeff == 0.001
-    assert provider.dsa_indexer_use_sparse_loss is True
+    assert model_config.experimental_attention_variant == "dsa"
+    assert model_config.cp_comm_type == "allgather"
+    assert model_config.qk_pos_emb_head_dim == 64
+    assert model_config.dsa_indexer_head_dim == 128
+    assert model_config.dsa_indexer_n_heads == 32
+    assert model_config.dsa_indexer_topk == 2048
+    assert model_config.dsa_indexer_rope_interleaved is True
+    assert model_config.dsa_indexer_topk_freq == expected_topk_freq
+    assert model_config.dsa_indexer_skip_topk_offset == expected_skip_topk_offset
+    assert model_config.dsa_indexer_rotate_activation is False
+    assert model_config.dsa_indexer_k_norm_epsilon == 1e-6
+    assert model_config.dsa_indexer_loss_coeff == 0.001
+    assert model_config.dsa_indexer_use_sparse_loss is True
 
 
-def test_provider_bridge_keeps_pretrained_router_bias_fixed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_model_config_keeps_pretrained_router_bias_fixed() -> None:
     """Retain pretrained expert bias without updating it during fine-tuning."""
-    provider = _provider_from_hf_config(monkeypatch)
+    model_config = _model_config_from_hf_config()
 
-    assert provider.moe_router_enable_expert_bias is True
-    assert provider.moe_router_bias_update_rate == 0
+    assert model_config.moe_router_enable_expert_bias is True
+    assert model_config.moe_router_bias_update_rate == 0
 
 
-def test_provider_bridge_uses_hybridep_dispatcher(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_model_config_uses_hybridep_dispatcher() -> None:
     """GLM-5 avoids the affected grouped all-to-all transport path."""
-    provider = _provider_from_hf_config(monkeypatch)
+    model_config = _model_config_from_hf_config()
 
-    assert provider.moe_token_dispatcher_type == "flex"
-    assert provider.moe_flex_dispatcher_backend == "hybridep"
-    assert provider.moe_flex_dispatcher_num_sms == 16
-    assert provider.moe_permute_fusion_into_hybridep is False
+    assert model_config.moe_token_dispatcher_type == "flex"
+    assert model_config.moe_flex_dispatcher_backend == "hybridep"
+    assert model_config.moe_flex_dispatcher_num_sms == 16
+    assert model_config.moe_permute_fusion_into_hybridep is False
 
 
 def test_mapping_registry_includes_grouped_and_local_expert_fc2_paths(glm5_bridge: GLM5Bridge) -> None:
@@ -436,3 +440,141 @@ def test_glm53_fp8_import_uses_separate_128_by_128_block_scales(weight_name: str
     expected[128:, :128] = 1.0
     expected[128:, 128:] = 2.0
     torch.testing.assert_close(converted, expected, rtol=0, atol=0)
+
+
+def _glm5_hf_config(**overrides: object) -> GlmMoeDsaConfig:
+    """Return GLM-5.2's architecture; ``overrides`` select GLM-5.1 or a shorter decoder."""
+    values = dict(
+        architectures=["GlmMoeDsaForCausalLM"],
+        num_hidden_layers=78,
+        first_k_dense_replace=3,
+        hidden_size=6144,
+        intermediate_size=12288,
+        moe_intermediate_size=2048,
+        num_attention_heads=64,
+        num_key_value_heads=64,
+        n_routed_experts=256,
+        n_shared_experts=1,
+        num_experts_per_tok=8,
+        q_lora_rank=2048,
+        kv_lora_rank=512,
+        qk_head_dim=256,
+        qk_nope_head_dim=192,
+        qk_rope_head_dim=64,
+        v_head_dim=256,
+        index_head_dim=128,
+        index_n_heads=32,
+        index_topk=2048,
+        index_topk_freq=4,
+        index_skip_topk_offset=3,
+        indexer_rope_interleave=True,
+        rope_parameters={"rope_theta": 8_000_000, "rope_type": "default"},
+        vocab_size=154880,
+        max_position_embeddings=1048576,
+        rms_norm_eps=1e-5,
+        num_nextn_predict_layers=1,
+        torch_dtype="bfloat16",
+    )
+    values.update(overrides)
+    return GlmMoeDsaConfig(**values)
+
+
+_GLM51_OVERRIDES = dict(
+    index_topk_freq=1,
+    index_skip_topk_offset=0,
+    rope_parameters={"rope_theta": 1_000_000, "rope_type": "default"},
+    max_position_embeddings=202752,
+)
+
+
+def _same_value(left: object, right: object) -> bool:
+    # finalize() creates a new init-method partial on each config.
+    if isinstance(left, partial) and isinstance(right, partial):
+        return (left.func, left.args, left.keywords) == (right.func, right.args, right.keywords)
+    return left == right
+
+
+def _shared_fields_differing(model_config: GLM5ModelConfig, provider: GLM5ModelProvider) -> dict[str, tuple]:
+    model_fields = {field.name for field in fields(model_config)} | {
+        field.name for field in fields(model_config.transformer)
+    }
+    shared = {field.name for field in fields(provider)} & model_fields
+    return {
+        name: (getattr(provider, name), getattr(model_config, name))
+        for name in sorted(shared)
+        if not _same_value(getattr(provider, name), getattr(model_config, name))
+    }
+
+
+class TestGLM5BridgeModelConfig:
+    def test_provider_bridge_is_inherited_compatibility_only(self) -> None:
+        assert "provider_bridge" not in GLM5Bridge.__dict__
+
+    def test_conversion_uses_builder_config(self) -> None:
+        assert GLM5Bridge.MODEL_CONFIG_CLASS is GLM5ModelConfig
+        assert GLM5Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+        assert GLM5ModelConfig.transformer_config_class is MLATransformerConfig
+
+    def test_model_config_keeps_rope_on_the_mla_transformer(self) -> None:
+        """MLA attention applies RoPE from the nested config, which must carry GLM's base."""
+        model_config = GLM5Bridge().hf_config_to_model_config(_glm5_hf_config())
+
+        assert model_config.transformer.rotary_base == 8_000_000
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.rotary_scaling_factor == 1.0
+        assert model_config.mscale == model_config.mscale_all_dim == 1.0
+
+    @pytest.mark.parametrize("overrides", [{}, _GLM51_OVERRIDES], ids=["glm52", "glm51"])
+    @pytest.mark.parametrize(
+        "topology",
+        [{}, {"tensor_model_parallel_size": 2}, {"pipeline_model_parallel_size": 4}],
+        ids=["pp1", "tp2", "pp4"],
+    )
+    def test_model_config_matches_provider(self, overrides, topology) -> None:
+        hf_config = _glm5_hf_config(**overrides)
+        bridge = GLM5Bridge()
+        model_config = bridge.hf_config_to_model_config(hf_config)
+        with pytest.warns(FutureWarning, match="deprecated for builder-backed models"):
+            provider = bridge.provider_bridge(SimpleNamespace(config=hf_config))
+        assert _shared_fields_differing(model_config, provider) == {}
+
+        for config in (model_config, provider):
+            for name, value in topology.items():
+                setattr(config, name, value)
+            config.finalize()
+
+        assert _shared_fields_differing(model_config, provider) == {}
+        assert model_config.hybrid_layer_pattern == provider.hybrid_layer_pattern
+        assert GLM5Bridge.megatron_to_hf_config(model_config) == GLM5Bridge.megatron_to_hf_config(provider)
+
+    def test_finalize_rejects_what_the_provider_rejects(self) -> None:
+        model_config = GLM5Bridge().hf_config_to_model_config(_glm5_hf_config())
+        model_config.pipeline_model_parallel_size = 2
+        model_config.virtual_pipeline_model_parallel_size = 2
+
+        with pytest.raises(ValueError, match="non-VPP execution only"):
+            model_config.finalize()
+
+    def test_builder_uses_the_glm_hybrid_stack(self) -> None:
+        model_config = GLM5Bridge().hf_config_to_model_config(
+            _glm5_hf_config(num_hidden_layers=4, first_k_dense_replace=1)
+        )
+        model_config.finalize()
+
+        assert model_config.get_builder_cls() is GLM5ModelBuilder
+        assert GLM5ModelBuilder(model_config)._resolve_hybrid_stack_spec().module is GLMHybridStack
+
+    def test_model_config_round_trips(self) -> None:
+        model_config = GLM5Bridge().hf_config_to_model_config(_glm5_hf_config())
+        model_config.pipeline_model_parallel_size = 4
+        model_config.finalize()
+
+        restored = ModelConfig.from_dict(model_config.as_dict())
+
+        assert isinstance(restored, GLM5ModelConfig)
+        assert restored.get_builder_cls() is GLM5ModelBuilder
+        assert restored.hybrid_layer_pattern == model_config.hybrid_layer_pattern
+        assert restored.transformer.rotary_base == 8_000_000
+        assert restored.dsa_indexer_topk_freq == 4
+        restored.finalize()
+        assert restored.hybrid_layer_pattern == model_config.hybrid_layer_pattern
