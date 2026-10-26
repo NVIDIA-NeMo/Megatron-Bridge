@@ -259,8 +259,7 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     _apply_nemotron_3_ultra_gtp(cfg)
 
     cfg.model.cuda_graph_impl = "local"
-    set_cuda_graph_modules(cfg.model, ["attn", "mamba"])
-    # TODO: "moe_preprocess", "moe_router" needs to be disabled due to MCore PR 7046, performing a CPU-to-GPU copy for per token loss
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_preprocess", "moe_router"])
     # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
@@ -376,8 +375,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(*, num_gpus: int = 256) 
     _apply_nemotron_3_ultra_gtp(cfg)
 
     cfg.model.cuda_graph_impl = "local"
-    set_cuda_graph_modules(cfg.model, ["attn", "mamba"])
-    # TODO: "moe_preprocess", "moe_router" needs to be disabled due to MCore PR 7046, performing a CPU-to-GPU copy for per token loss
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_preprocess", "moe_router"])
     # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
@@ -594,10 +592,11 @@ def _build_nemotron_3_5_lightning_gb300_bf16() -> ConfigContainer:
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.model.extra_checkpoint_metadata.update(
+        hf_model_id=_NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+        hf_model_revision=_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+    )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     return cfg
@@ -633,10 +632,11 @@ def _build_nemotron_3_5_lightning_gb300_mxfp8() -> ConfigContainer:
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.model.extra_checkpoint_metadata.update(
+        hf_model_id=_NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+        hf_model_revision=_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+    )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     return cfg
@@ -719,10 +719,11 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.model.extra_checkpoint_metadata.update(
+        hf_model_id=_NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+        hf_model_revision=_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+    )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     cfg.env_vars = {

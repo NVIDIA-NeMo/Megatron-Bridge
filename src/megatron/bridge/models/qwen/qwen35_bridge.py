@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -34,7 +37,72 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
+def _qwen35_common_config_kwargs(text_config) -> dict[str, Any]:
+    """Return the Qwen3.5 LM configuration shared by the dense and MoE variants.
+
+    Covers normalization and the GDN hybrid architecture. The text bridges add these
+    fields to their builder config kwargs, and the VL bridges apply them to their
+    providers through ``_apply_qwen35_common_config``.
+
+    Args:
+        text_config: HuggingFace config object (or text_config for VLMs)
+            so that language-model fields are read from the correct level.
+
+    Returns:
+        Megatron config fields keyed by name.
+    """
+    return dict(
+        # --- Common Qwen3 LLM settings ---
+        normalization="RMSNorm",
+        gated_linear_unit=True,
+        add_qkv_bias=getattr(text_config, "attention_bias", False),
+        add_bias_linear=False,
+        qk_layernorm=True,
+        hidden_dropout=0.0,
+        # --- Qwen3-Next hybrid architecture settings ---
+        layernorm_zero_centered_gamma=True,
+        attention_output_gate=True,
+        experimental_attention_variant="gdn",
+        # full_attention_interval defines how often standard attention appears:
+        # e.g., 4 means every 4th layer is standard attention (3 GDN + 1 Attn)
+        linear_attention_freq=full_attention_interval_from_hf(text_config),
+        linear_num_value_heads=getattr(text_config, "linear_num_value_heads", 32),
+        rotary_percent=getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25),
+        # --- GDN (Gated DeltaNet) specific parameters ---
+        linear_conv_kernel_dim=getattr(text_config, "linear_conv_kernel_dim", 4),
+        linear_key_head_dim=getattr(text_config, "linear_key_head_dim", 128),
+        linear_value_head_dim=getattr(text_config, "linear_value_head_dim", 128),
+        linear_num_key_heads=getattr(text_config, "linear_num_key_heads", 16),
+    )
+
+
+def _qwen35_moe_config_kwargs(text_config) -> dict[str, Any]:
+    """Return the Qwen3.5 MoE configuration added on top of the common LM configuration.
+
+    Args:
+        text_config: HuggingFace config object (or text_config for VLMs)
+            so that language-model fields are read from the correct level.
+
+    Returns:
+        Megatron config fields keyed by name.
+    """
+    return dict(
+        moe_ffn_hidden_size=getattr(text_config, "moe_intermediate_size", 1024),
+        num_moe_experts=getattr(text_config, "num_experts", 512),
+        moe_router_topk=getattr(text_config, "num_experts_per_tok", 10),
+        moe_shared_expert_intermediate_size=getattr(text_config, "shared_expert_intermediate_size", None),
+        moe_shared_expert_gate=True,
+        moe_grouped_gemm=True,
+        moe_router_load_balancing_type="global_aux_loss",
+        moe_router_pre_softmax=False,
+        moe_token_dispatcher_type="alltoall",
+        moe_permute_fusion=True,
+        moe_router_dtype="fp32",
+    )
 
 
 def _apply_qwen35_common_config(provider: GPTModelProvider, text_config) -> None:
@@ -48,29 +116,8 @@ def _apply_qwen35_common_config(provider: GPTModelProvider, text_config) -> None
         text_config: HuggingFace config object (or text_config for VLMs)
             so that language-model fields are read from the correct level.
     """
-    # --- Common Qwen3 LLM settings ---
-    provider.normalization = "RMSNorm"
-    provider.gated_linear_unit = True
-    provider.add_qkv_bias = getattr(text_config, "attention_bias", False)
-    provider.add_bias_linear = False
-    provider.qk_layernorm = True
-    provider.hidden_dropout = 0.0
-
-    # --- Qwen3-Next hybrid architecture settings ---
-    provider.layernorm_zero_centered_gamma = True
-    provider.attention_output_gate = True
-    provider.experimental_attention_variant = "gdn"
-    # full_attention_interval defines how often standard attention appears:
-    # e.g., 4 means every 4th layer is standard attention (3 GDN + 1 Attn)
-    provider.linear_attention_freq = full_attention_interval_from_hf(text_config)
-    provider.linear_num_value_heads = getattr(text_config, "linear_num_value_heads", 32)
-    provider.rotary_percent = getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25)
-
-    # --- GDN (Gated DeltaNet) specific parameters ---
-    provider.linear_conv_kernel_dim = getattr(text_config, "linear_conv_kernel_dim", 4)
-    provider.linear_key_head_dim = getattr(text_config, "linear_key_head_dim", 128)
-    provider.linear_value_head_dim = getattr(text_config, "linear_value_head_dim", 128)
-    provider.linear_num_key_heads = getattr(text_config, "linear_num_key_heads", 16)
+    for name, value in _qwen35_common_config_kwargs(text_config).items():
+        setattr(provider, name, value)
 
     # --- MTP (Multi-Token Prediction) ---
     if provider.mtp_num_layers:
@@ -90,17 +137,8 @@ def _apply_qwen35_moe_config(provider: GPTModelProvider, text_config) -> None:
     _apply_qwen35_common_config(provider, text_config)
 
     # --- MoE specific parameters ---
-    provider.moe_ffn_hidden_size = getattr(text_config, "moe_intermediate_size", 1024)
-    provider.num_moe_experts = getattr(text_config, "num_experts", 512)
-    provider.moe_router_topk = getattr(text_config, "num_experts_per_tok", 10)
-    provider.moe_shared_expert_intermediate_size = getattr(text_config, "shared_expert_intermediate_size", None)
-    provider.moe_shared_expert_gate = True
-    provider.moe_grouped_gemm = True
-    provider.moe_router_load_balancing_type = "global_aux_loss"
-    provider.moe_router_pre_softmax = False
-    provider.moe_token_dispatcher_type = "alltoall"
-    provider.moe_permute_fusion = True
-    provider.moe_router_dtype = "fp32"
+    for name, value in _qwen35_moe_config_kwargs(text_config).items():
+        setattr(provider, name, value)
 
 
 def _moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed, transpose_on_export=False):
@@ -152,8 +190,8 @@ class Qwen35MoEBridge(MegatronModelBridge):
 
     Architecture: 15 × (3 × (GDN → MoE) + 1 × (Attention → MoE)) = 60 layers
 
-    The VL variant (Qwen35VLMoEBridge) reuses the provider settings and LM
-    mapping logic via the module-level helpers and static mapping methods.
+    The VL variant (Qwen35VLMoEBridge) reuses the LM settings and mapping
+    logic via the module-level helpers and static mapping methods.
 
     Example:
         >>> from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -163,8 +201,11 @@ class Qwen35MoEBridge(MegatronModelBridge):
         >>> tokenizer.save_pretrained("./Qwen3.5-397B-A17B")
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("./Qwen3.5-397B-A17B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @staticmethod
     def _get_moe_lm_mappings(hf_prefix="model.", megatron_prefix="", experts_packed=False):
@@ -405,26 +446,39 @@ class Qwen35MoEBridge(MegatronModelBridge):
 
         return mapping_list
 
-    def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace Qwen3.5 text model config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3.5 MoE text config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
 
         # --- LM-specific parameters ---
-        _apply_qwen35_moe_config(provider, hf_config)
+        config_kwargs.update(_qwen35_common_config_kwargs(hf_config))
+        config_kwargs.update(_qwen35_moe_config_kwargs(hf_config))
 
         # --- LM-specific overrides ---
-        provider.position_embedding_type = "rope"
-        provider.autocast_dtype = torch.bfloat16
-        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
-        provider.bos_token_id = getattr(hf_config, "bos_token_id", 248045)
-        provider.eos_token_id = getattr(hf_config, "eos_token_id", 248046)
-        provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
+        config_kwargs.update(
+            autocast_dtype=torch.bfloat16,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            # Heterogeneous checkpointing for mixed attention layers
+            hetereogenous_dist_checkpoint=True,
+        )
+        # The shared mapping already selects "yarn" for YaRN-scaled checkpoints.
+        config_kwargs.setdefault("position_embedding_type", "rope")
 
-        # Heterogeneous checkpointing for mixed attention layers
-        provider.hetereogenous_dist_checkpoint = True
+        # --- MTP (Multi-Token Prediction) ---
+        if config_kwargs.get("mtp_num_layers"):
+            config_kwargs["mtp_loss_scaling_factor"] = 0.1
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        # The builder's default layer spec builds the hybrid GDN block from
+        # experimental_attention_variant; the provider's builds homogeneous layers.
+        provider_kwargs["transformer_layer_spec"] = get_transformer_block_with_experimental_attention_variant_spec
+        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -479,8 +533,8 @@ class Qwen35Bridge(MegatronModelBridge):
     Architecture (27B): 16 × (3 × GDN + 1 × Attention) = 64 layers
 
     This class also serves as the base for Qwen35VLBridge (vision-language
-    variant), which reuses the common provider settings and LM mapping logic
-    via the static helper methods.
+    variant), which reuses the common LM settings and mapping logic via the
+    module-level helpers and static mapping methods.
 
     Example:
         >>> from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -490,8 +544,11 @@ class Qwen35Bridge(MegatronModelBridge):
         >>> tokenizer.save_pretrained("./Qwen3.5-27B-LM")
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("./Qwen3.5-27B-LM")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @staticmethod
     def _get_dense_lm_mappings(
@@ -643,25 +700,38 @@ class Qwen35Bridge(MegatronModelBridge):
 
         return mapping_list
 
-    def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace Qwen3.5 text model config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3.5 dense text config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
 
         # --- LM-specific parameters ---
-        _apply_qwen35_common_config(provider, hf_config)
+        config_kwargs.update(_qwen35_common_config_kwargs(hf_config))
 
         # --- LM-specific overrides ---
-        provider.position_embedding_type = "rope"
-        provider.autocast_dtype = torch.bfloat16
-        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
-        provider.bos_token_id = getattr(hf_config, "bos_token_id", 248045)
-        provider.eos_token_id = getattr(hf_config, "eos_token_id", 248046)
-        provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
-        # Heterogeneous checkpointing for mixed attention layers
-        provider.hetereogenous_dist_checkpoint = True
+        config_kwargs.update(
+            autocast_dtype=torch.bfloat16,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            # Heterogeneous checkpointing for mixed attention layers
+            hetereogenous_dist_checkpoint=True,
+        )
+        # The shared mapping already selects "yarn" for YaRN-scaled checkpoints.
+        config_kwargs.setdefault("position_embedding_type", "rope")
 
-        return provider
+        # --- MTP (Multi-Token Prediction) ---
+        if config_kwargs.get("mtp_num_layers"):
+            config_kwargs["mtp_loss_scaling_factor"] = 0.1
+        return config_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        # The builder's default layer spec builds the hybrid GDN block from
+        # experimental_attention_variant; the provider's builds homogeneous layers.
+        provider_kwargs["transformer_layer_spec"] = get_transformer_block_with_experimental_attention_variant_spec
+        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """

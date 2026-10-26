@@ -330,14 +330,15 @@ class MyTransformerConfig(TransformerConfig):  # Bridge TransformerConfig
 
 
 @dataclass(kw_only=True)
-class MyModelConfig(ModelConfigOverrideMixin, HybridModelConfig):
+class MyModelConfig(BridgeHybridModelConfig):  # or BridgeGPTModelConfig
     builder: ClassVar[str] = "megatron.bridge.models.<model>.MyModelBuilder"
     transformer_config_class: ClassVar[type[TransformerConfig]] = MyTransformerConfig
     image_token_id: int = 0
 ```
 
-The builder subclasses Megatron Core's `GPTModelBuilder` or `HybridModelBuilder` and overrides
-`build_model()`. The bridge sets `MODEL_CONFIG_CLASS = MyModelConfig` and
+`BridgeHybridModelConfig` and `BridgeGPTModelConfig` provide strict overrides and serialization, so
+the subclass declares only its own fields. The builder subclasses Megatron Core's `GPTModelBuilder`
+or `HybridModelBuilder` and overrides `build_model()`. The bridge sets `MODEL_CONFIG_CLASS = MyModelConfig` and
 `USE_MODEL_CONFIG_FOR_CONVERSION = True`, and overrides `hf_config_to_model_config()` and
 `megatron_to_hf_config()`. Follow Muse Glimmer (`src/megatron/bridge/models/muse_glimmer/`).
 

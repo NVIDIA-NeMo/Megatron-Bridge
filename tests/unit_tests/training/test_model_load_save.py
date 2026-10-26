@@ -865,6 +865,48 @@ class TestLoadMegatronModel:
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
 
+    @patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_gpu_load_of_cpu_imported_builder_config_builds_on_gpu(
+        self,
+        mock_from_dict,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_load_weights,
+        mock_get_pg_collection,
+        tmp_path,
+    ):
+        """A builder config saved by a CPU import must not make a GPU load build on CPU."""
+        mock_run_config_fname.return_value = tmp_path / "run_config.yaml"
+        mock_run_config.return_value = {
+            "model": {"tensor_model_parallel_size": 1, "_builder_": "import.path.to.SomeModelBuilder"}
+        }
+
+        mock_model = Mock()
+        mock_model_cfg = Mock(spec=GPTModelConfig)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = False
+        mock_model_cfg.fp16 = False
+        # A CPU import saves this flag in the checkpoint's builder config.
+        mock_model_cfg.use_cpu_initialization = True
+        mock_model_cfg.finalize = Mock()
+        cpu_init_at_build = []
+        mock_builder = Mock()
+        mock_builder.build_distributed_models.side_effect = lambda *args, **kwargs: (
+            cpu_init_at_build.append(mock_model_cfg.use_cpu_initialization) or [mock_model]
+        )
+        mock_model_cfg.get_builder_cls.return_value = Mock(return_value=mock_builder)
+        mock_from_dict.return_value = mock_model_cfg
+        (tmp_path / "run_config.yaml").touch()
+
+        result = load_megatron_model(tmp_path, use_cpu_init=False, skip_temp_dist_context=True)
+
+        assert result == [mock_model]
+        assert cpu_init_at_build == [False]
+
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
