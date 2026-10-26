@@ -29,6 +29,8 @@ from megatron.core import dist_checkpointing
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
+from megatron.bridge.training.post_training.lsq import propagate_expert_allreduce_to_lsq_params
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,8 @@ def restore_sharded_modelopt_state(model: list[MegatronModule], checkpoint_path:
     )
     model[0] = mto.restore_from_modelopt_state(model[0], modelopt_state)
     _load_extra_state_from_sharded_checkpoint(model[0], checkpoint_path, prefix="")
+    # The extra-state load (re)creates LSQ scales; set their reduction group before DDP wrapping.
+    propagate_expert_allreduce_to_lsq_params(model[0])
 
 
 def _validate_modelopt_checkpointing(non_persistent_ckpt_type: str | None) -> None:
