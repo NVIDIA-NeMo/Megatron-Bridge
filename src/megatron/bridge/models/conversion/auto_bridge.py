@@ -1428,25 +1428,20 @@ class AutoBridge(Generic[MegatronModelT]):
         tensors = self.export_hf_weights_modelopt(
             model, cpu=True, show_progress=show_progress, export_plan=export_plan
         )
+        scales = {}
+
+        def _keep_scales(tensors):
+            for name, tensor in tensors:
+                if name.endswith(("weight_scale_2", "input_scale")):
+                    scales[name] = tensor
+                yield name, tensor
+
         error = None
-        if rank == 0:
-            previous_weight_files = _existing_safetensors_files(output_path)
-            scales = {}
-
-            def _keep_scales(tensors):
-                for name, tensor in tensors:
-                    if name.endswith(("weight_scale_2", "input_scale")):
-                        scales[name] = tensor
-                    yield name, tensor
-
-            try:
+        try:
+            if rank == 0:
+                previous_weight_files = _existing_safetensors_files(output_path)
                 saved = save_safetensors_shards(_keep_scales(tensors), output_path, max_shard_size=max_shard_size)
                 check_fused_sibling_scales(scales)
-            except Exception as exception:  # Drain so the other ranks finish the export collectives.
-                error = f"{type(exception).__name__}: {exception}"
-                for _ in tensors:
-                    pass
-            else:
                 for filename in previous_weight_files - saved:
                     (output_path / filename).unlink(missing_ok=True)
                 # Quantizer sidecars or a separate config would describe other weights.
@@ -1456,14 +1451,18 @@ class AutoBridge(Generic[MegatronModelT]):
                 config = json.loads(config_file.read_text())
                 config["quantization_config"] = export_plan.quantization_config
                 config_file.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
-        else:
+            else:
+                for _ in tensors:
+                    pass
+        except Exception as exception:  # Drain so the other ranks finish the export collectives.
+            error = f"{type(exception).__name__}: {exception}"
             for _ in tensors:
                 pass
 
         if dist.is_initialized():
-            errors = [error]
-            dist.broadcast_object_list(errors, src=0)
-            error = errors[0]
+            errors = [None] * dist.get_world_size()
+            dist.all_gather_object(errors, error)
+            error = "; ".join(dict.fromkeys(item for item in errors if item is not None)) or None
         if error is not None:
             raise RuntimeError(f"ModelOpt HF export to {output_path} failed: {error}")
 

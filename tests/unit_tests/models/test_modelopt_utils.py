@@ -15,6 +15,8 @@
 import copy
 import json
 from dataclasses import replace
+from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1248,3 +1250,65 @@ def test_export_rejects_enabled_quantizers_it_would_drop():
     model.projection.output_quantizer.enable()
     with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
         modelopt_utils.check_exportable_quantizers([model])
+
+
+class _StreamingBridge(AutoBridge):
+    """Streams one tensor from every rank, or fails like a stale export plan."""
+
+    def __init__(self, case):
+        self.case = case
+
+    @property
+    def _model_bridge(self):
+        return MegatronModelBridge()
+
+    def _save_hf_artifacts(self, path, source_path):
+        if self.case == "success" and torch.distributed.get_rank() == 0:
+            (Path(path) / "config.json").write_text("{}")
+
+    def export_hf_weights_modelopt(self, model, **kwargs):
+        if self.case == "stale_plan":
+            raise ValueError("ModelOpt export plan validation failed")
+        yield HFWeightTuple("model.weight", torch.ones(2, 2))
+
+
+def _save_failure_worker(rank, world_size, init_file, out_dir, case):
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=60),
+    )
+    try:
+
+        def save():
+            _StreamingBridge(case).save_hf_pretrained_modelopt(
+                [torch.nn.Linear(2, 2)],
+                out_dir,
+                export_plan=SimpleNamespace(quantization_config={"quant_method": "modelopt"}),
+                show_progress=False,
+            )
+
+        if case == "success":
+            save()
+            config = json.loads((Path(out_dir) / "config.json").read_text())
+            assert config["quantization_config"] == {"quant_method": "modelopt"}
+        else:
+            # A config.json missing at finalization fails rank 0 only; a stale plan fails every rank.
+            match = "plan validation failed" if case == "stale_plan" else "FileNotFoundError"
+            with pytest.raises(RuntimeError, match=match):
+                save()
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("case", ["success", "stale_plan", "finalization"])
+def test_save_fails_on_every_rank_when_any_rank_fails(tmp_path, case):
+    torch.multiprocessing.spawn(
+        _save_failure_worker,
+        args=(2, str(tmp_path / "dist-init"), str(tmp_path), case),
+        nprocs=2,
+        join=True,
+    )
