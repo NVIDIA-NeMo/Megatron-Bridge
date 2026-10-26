@@ -4185,6 +4185,86 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @staticmethod
+    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            model=SimpleNamespace(moe_token_dispatcher_type=dispatcher, moe_flex_dispatcher_backend=backend),
+            dist=SimpleNamespace(external_gpu_device_mapping=False),
+        )
+
+    def test_ncclep_one_gpu_per_rank_narrows_visible_devices(self, monkeypatch):
+        """NCCL EP recipes keep only the local rank's GPU and switch the trainer to device 0."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "4,5,6,7")
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "6"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    def test_ncclep_one_gpu_per_rank_uses_local_rank_when_no_device_list(self, monkeypatch):
+        """Without a CUDA_VISIBLE_DEVICES list the local rank itself selects the device."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.delenv("LOCAL_RANK", raising=False)
+        monkeypatch.setenv("SLURM_LOCALID", "3")
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "3"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    def test_ncclep_one_gpu_per_rank_single_visible_device_only_sets_mapping(self, monkeypatch):
+        """A launcher that already binds one GPU per task keeps its list; only the mapping flips."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "1")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "5")
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "5"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    @pytest.mark.parametrize("backend,dispatcher", [("hybridep", "flex"), ("ncclep", "alltoall")])
+    def test_ncclep_one_gpu_per_rank_is_noop_for_other_dispatchers(self, monkeypatch, backend, dispatcher):
+        """HybridEP and non-flex recipes keep the launcher's device list and local-rank selection."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+        cfg = self._ncclep_binding_cfg(backend=backend, dispatcher=dispatcher)
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+        assert cfg.dist.external_gpu_device_mapping is False
+
+    def test_ncclep_one_gpu_per_rank_skips_after_cuda_init(self, monkeypatch):
+        """Once CUDA is initialized the device list cannot change: warn and leave everything alone."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: True)
+        cfg = self._ncclep_binding_cfg()
+
+        with pytest.warns(UserWarning, match="CUDA was initialized"):
+            apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+        assert cfg.dist.external_gpu_device_mapping is False
+
     @pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
     def test_recipe_environment_variables_reject_invalid_values(self, env_vars):
         """Invalid recipe environment mappings should fail before training starts."""

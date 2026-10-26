@@ -128,7 +128,9 @@ def test_verified_mxfp8_kernel_and_parameter_settings(hf_config):
     assert cfg.model.moe_mlp_glu_interleave_size == 32
     assert cfg.model.moe_single_grouped_weight is True
     assert cfg.model.moe_single_grouped_bias is False
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL"] == 1
     assert cfg.env_vars["NVTE_GROUPED_LINEAR_SINGLE_PARAM"] == 1
@@ -141,7 +143,7 @@ def test_bf16_recipe_has_no_mxfp8_kernel_or_checkpoint_requirements(hf_config):
     assert cfg.mixed_precision.fp8_param_gather is False
     assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
     assert cfg.checkpoint.load_main_params_from_ckpt is False
-    assert cfg.model.moe_use_grouped_tensor is False
+    assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.model.use_transformer_engine_op_fuser is False
     assert cfg.model.moe_mlp_glu_interleave_size is None
     assert cfg.model.moe_single_grouped_weight is False

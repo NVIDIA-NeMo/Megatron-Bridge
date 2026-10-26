@@ -54,6 +54,7 @@ class _FakeMegatronProvider(SimpleNamespace):
         "moe_router_force_load_balancing",
         "moe_shared_expert_overlap",
         "moe_token_dispatcher_type",
+        "moe_use_grouped_tensor",
         "mtp_num_layers",
         "hybrid_layer_pattern",
         "num_layers_in_first_pipeline_stage",
@@ -169,7 +170,7 @@ def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:
             None,
             [14, 16, 12, 12, 12, 12],
         ),
-        (gb200.glm52_sft_192gpu_gb200_bf16_config, 4, 8, 100, "flex", "hybridep", [14, 12, 12, 12, 12, 16]),
+        (gb200.glm52_sft_192gpu_gb200_bf16_config, 4, 8, 100, "flex", "ncclep", [14, 12, 12, 12, 12, 16]),
         (gb200.glm52_peft_192gpu_gb200_bf16_config, 1, 32, 100, "alltoall", None, [14, 12, 12, 12, 12, 16]),
     ],
 )
@@ -221,7 +222,7 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert decoder_starts == [0, 14, 30, 42, 54, 66]
     assert all((start + 1 - 3) % 4 == 0 for start in decoder_starts[1:])
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.apply_rope_fusion is False
     assert cfg.train.global_batch_size == 56
@@ -237,10 +238,11 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
 
 
 def test_glm52_gb200_sft_uses_8k_packed_tulu3() -> None:
@@ -263,7 +265,7 @@ def test_glm52_gb200_sft_uses_8k_packed_tulu3() -> None:
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
 
 
 def test_glm52_gb200_recipes_do_not_depend_on_h100_recipes() -> None:

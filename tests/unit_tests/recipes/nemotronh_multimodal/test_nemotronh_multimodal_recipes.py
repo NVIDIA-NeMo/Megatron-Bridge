@@ -894,7 +894,7 @@ def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is True
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms_preprocessing is None
@@ -912,10 +912,11 @@ def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
     assert cfg.dataset.seq_length == 4096
     assert cfg.checkpoint.async_save is False
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
 
 
 def test_super_vl_long_context_sft_uses_coderforge_packing_and_cp(fake_processor):

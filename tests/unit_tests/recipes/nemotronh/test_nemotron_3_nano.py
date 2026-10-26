@@ -648,5 +648,7 @@ def test_gb200_8gpu_deterministic_pretrain_applies_determinism():
     assert cfg.train.global_batch_size == base.train.global_batch_size
     for key, value in DETERMINISM_ENV_VARS.items():
         assert cfg.env_vars[key] == value
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
