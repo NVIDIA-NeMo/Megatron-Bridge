@@ -47,6 +47,7 @@ test = ["coverage>=7.8.1"]
 
 [tool.uv]
 prerelease = "allow"
+constraint-dependencies = ["pillow>=13.0.0"]
 override-dependencies = [
     # Force core libraries to be installed from the local paths
     "megatron-core[dev,mlm]; sys_platform == 'never'", # Installed by MBridge
@@ -56,6 +57,7 @@ override-dependencies = [
     "transformer-engine; sys_platform == 'never'",     # Installed by MBridge
     # Pinning versions to solve conflicts
     "leptonai==0.27.3",                        # NeMo-Run requires leptonai.api.v1, absent in 0.47.1
+    "anyio>=4.14.2",                           # Override LeptonAI's <=4.9.0 cap; CVE-2026-63374
     "webdataset==0.2.86",                       # fix for SB multimodal
     "pandas==2.2.3",
     "ctc_segmentation==1.7.4",
@@ -70,11 +72,10 @@ override-dependencies = [
     "packaging>=25.0",
     "nvidia-pytriton>=0.7.0",
     "flashinfer-python==0.6.18.post1",          # Match flashinfer-cubin installed by MBridge
-    "nvidia-cudnn-frontend==1.29.0",            # Match MBridge; override PyPI MCore's older dev pin
+    "nvidia-cudnn-frontend==1.29.1",           # Match MBridge; override PyPI MCore's older dev pin
     "urllib3>=2.0.7",
     "sh==2.2.4",
     "jupyter-core==5.8.1",
-    "pillow==12.3.0",
     "protobuf==6.33.5",
     "cuda-python>=13.0.0",
     "multi-storage-client!=0.36.0",
@@ -120,7 +121,9 @@ override-dependencies = [
     "open-clip-torch>=3.2.0",                            # Required by megatron-bridge, override nemo-toolkit's 2.24.0 constraint
     "hydra-core>=1.3.4,<1.4",                           # CVE-2026-68508
     "lilcom!=1.8.2",
-    "cryptography>=48.0.1,<49",                          # Required by megatron-bridge, override nemo-run's constraint
+    "cryptography>=50.0.0,<51",                          # Required by megatron-bridge, override nemo-run's constraint
+    "httpx2>=2.12.0,<3",                                # GHSA-8xx6-hgc6-gc2m and GHSA-7mj9-2mp8-4m2p
+    "httpcore2>=2.12.0,<3",                             # GHSA-7mj9-2mp8-4m2p
     "opencv-python; sys_platform == 'never'",            # Use the dependency from the base pytorch container
     "langchain~=1.0.0",
     "langchain-core~=1.3.3",                             # GHSA-pjwx-r37v-7724

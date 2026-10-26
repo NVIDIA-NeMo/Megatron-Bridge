@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from megatron.core.activations import squared_relu
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.transformer.enums import AttnBackend
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -31,6 +33,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 
 
 def _replace_wildcards(pattern: str, captures: Tuple[str, ...]) -> str:
@@ -247,8 +250,11 @@ class NemotronHBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", trust_remote_code=True)
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeHybridModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
         """Return the already-text-only checkpoint without changing its config or weights."""
@@ -334,60 +340,87 @@ class NemotronHBridge(MegatronModelBridge):
         return mtp_num_layers, mtp_pattern
 
     @classmethod
+    def _hf_mtp_settings(cls, hf_config) -> dict[str, Any]:
+        """Return the MTP fields that the model config and provider paths share."""
+        mtp_num_layers, mtp_pattern = cls._hf_mtp_config(hf_config)
+        settings = {
+            "mtp_num_layers": mtp_num_layers,
+            "mtp_hybrid_override_pattern": mtp_pattern,
+            "mtp_use_repeated_layer": bool(mtp_num_layers and getattr(hf_config, "mtp_use_repeated_layer", True)),
+        }
+        if mtp_num_layers:
+            settings["mtp_loss_scaling_factor"] = getattr(hf_config, "mtp_loss_scaling_factor", 0.3)
+        return settings
+
+    @staticmethod
+    def _keep_mtp_spec_in_bf16(hf_config, mtp_num_layers: int) -> bool:
+        """Return the provider-only ``keep_mtp_spec_in_bf16`` flag, which nothing reads."""
+        return bool(mtp_num_layers and getattr(hf_config, "keep_mtp_spec_in_bf16", True))
+
+    @classmethod
     def _configure_mtp_provider(cls, provider: HybridModelProvider, hf_config) -> None:
         """Apply shared Nemotron-H MTP settings to a text or multimodal provider."""
-        mtp_num_layers, mtp_pattern = cls._hf_mtp_config(hf_config)
-        provider.mtp_num_layers = mtp_num_layers
-        provider.mtp_hybrid_override_pattern = mtp_pattern
-        provider.mtp_use_repeated_layer = bool(mtp_num_layers and getattr(hf_config, "mtp_use_repeated_layer", True))
-        provider.keep_mtp_spec_in_bf16 = bool(mtp_num_layers and getattr(hf_config, "keep_mtp_spec_in_bf16", True))
-        if mtp_num_layers:
-            provider.mtp_loss_scaling_factor = getattr(hf_config, "mtp_loss_scaling_factor", 0.3)
+        for name, value in cls._hf_mtp_settings(hf_config).items():
+            setattr(provider, name, value)
+        provider.keep_mtp_spec_in_bf16 = cls._keep_mtp_spec_in_bf16(hf_config, provider.mtp_num_layers)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> HybridModelProvider:
-        """Convert HuggingFace Nemotron-H config to HybridModelProvider."""
-        # Use base class for common config conversion
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
-
-        # Mamba doesn't use position embeddings; override the base class default of "rope"
-        provider.position_embedding_type = "none"
-
-        # Nemotron-H specific defaults
-        provider.activation_func = squared_relu
-        provider.masked_softmax_fusion = True
-        provider.apply_query_key_layer_scaling = False
-        provider.persist_layer_norm = True
-        provider.attention_softmax_in_fp32 = False
-        provider.first_last_layers_bf16 = True
-        provider.is_hybrid_model = True
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Nemotron-H config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            # Nemotron-H attention layers use no position embedding.
+            position_embedding_type="none",
+            activation_func=squared_relu,
+            masked_softmax_fusion=True,
+            apply_query_key_layer_scaling=False,
+            persist_layer_norm=True,
+            attention_softmax_in_fp32=False,
+            first_last_layers_bf16=True,
+            is_hybrid_model=True,
+            moe_aux_loss_coeff=0.0001,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_router_dtype="fp32",
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_shared_expert_overlap=getattr(hf_config, "moe_shared_expert_overlap", True),
+            # HybridModelProvider defaults that differ from the builder config's.
+            normalization="RMSNorm",
+            apply_rope_fusion=True,
+            attention_backend=AttnBackend.flash,
+            bias_dropout_fusion=True,
+            **self._hf_mtp_settings(hf_config),
+        )
+        # HybridModelProvider defaults for fields that some Hugging Face configs omit.
+        for name, default in (
+            ("add_bias_linear", False),
+            ("hidden_dropout", 0.0),
+            ("attention_dropout", 0.0),
+            ("num_attention_heads", 1),
+        ):
+            config_kwargs.setdefault(name, default)
 
         hybrid_pattern = self._hf_hybrid_pattern(hf_config)
         if hybrid_pattern is not None:
-            provider.hybrid_layer_pattern = hybrid_pattern
+            config_kwargs["hybrid_layer_pattern"] = hybrid_pattern
 
-        # Handle kv_channels from head_dim or attention_head_dim
         kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
         if kv_channels is not None:
-            provider.kv_channels = kv_channels
-
-        provider.moe_aux_loss_coeff = 0.0001
-        provider.moe_router_score_function = "sigmoid"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_load_balancing_type = "seq_aux_loss"
-        provider.moe_router_dtype = "fp32"
-        provider.moe_grouped_gemm = True
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
-        provider.moe_shared_expert_overlap = True
+            config_kwargs["kv_channels"] = kv_channels
 
         if hasattr(hf_config, "moe_latent_size"):
-            provider.moe_latent_size = hf_config.moe_latent_size
-        if hasattr(hf_config, "moe_shared_expert_overlap"):
-            provider.moe_shared_expert_overlap = hf_config.moe_shared_expert_overlap
-        self._configure_mtp_provider(provider, hf_config)
+            config_kwargs["moe_latent_size"] = hf_config.moe_latent_size
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        provider_kwargs["keep_mtp_spec_in_bf16"] = self._keep_mtp_spec_in_bf16(
+            hf_config, provider_kwargs["mtp_num_layers"]
+        )
+        return provider_kwargs
 
     @classmethod
     def get_hf_tokenizer_kwargs(cls) -> dict:
