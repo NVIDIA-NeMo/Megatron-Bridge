@@ -3,11 +3,11 @@
   "models": [
     {
       "architecture": "BagelForConditionalGeneration",
-      "base_container": "nvcr.io/nvidia/nemo:26.10",
-      "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+      "base_container": "nvcr.io/nvidia/nemo:26.10.rc7",
+      "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
       "entries": [
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -24,7 +24,7 @@
           "workflow": "hf_to_megatron_cpu"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [
             {
               "gpus_per_node": "1",
@@ -49,7 +49,7 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -66,7 +66,7 @@
           "workflow": "megatron_to_hf_cpu"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -83,7 +83,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -100,7 +100,7 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [
             {}
           ],
@@ -110,7 +110,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "bagel-inference",
-          "expected_result": "On clean commit fd8ab826d95fbad72d440248947abe373cfc0b35 the direct deterministic example loaded the converted checkpoint and returned the literal completion `(b) False` for the pinned public image and prompt. This item remains unverified because the generic maintained inference launcher does not yet support BAGEL's model inputs.\n",
+          "expected_result": "On clean commit adddd2ee2bf09786b1f131065c6d6bc6fbc7b934 the direct deterministic example loaded the converted checkpoint and returned the literal completion `(b) False` for the pinned public image and prompt. This item remains unverified because the generic maintained inference launcher does not yet support BAGEL's model inputs.\n",
           "hardware": null,
           "last_verified": null,
           "metrics": {},
@@ -121,7 +121,7 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -155,7 +155,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -178,7 +178,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -195,7 +195,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -218,7 +218,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -241,7 +241,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -264,7 +264,7 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "fd8ab826d95fbad72d440248947abe373cfc0b35",
+          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
           "command_topologies": [
             {
               "gpus_per_node": "8",

@@ -40,8 +40,8 @@ model:
   architecture: BagelForConditionalGeneration
   min_transformers_version: "5.12.1"
 verification_environment:
-  base_container: nvcr.io/nvidia/nemo:26.10
-  bridge_commit: fd8ab826d95fbad72d440248947abe373cfc0b35  # pragma: allowlist secret
+  base_container: nvcr.io/nvidia/nemo:26.10.rc7
+  bridge_commit: adddd2ee2bf09786b1f131065c6d6bc6fbc7b934  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -120,7 +120,7 @@ items:
       --max-new-tokens 16
     last_verified: null
     expected_result: >
-      On clean commit fd8ab826d95fbad72d440248947abe373cfc0b35 the direct
+      On clean commit adddd2ee2bf09786b1f131065c6d6bc6fbc7b934 the direct
       deterministic example loaded the converted checkpoint and returned the
       literal completion `(b) False` for the pinned public image and prompt.
       This item remains unverified because the generic maintained inference
