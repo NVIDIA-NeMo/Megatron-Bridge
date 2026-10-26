@@ -38,9 +38,14 @@ class BridgeGPTModelConfig(ModelConfigOverrideMixin, GPTModelConfig, ModelConfig
     dedicated field here. It is recorded in the inherited serializable
     ``extra_checkpoint_metadata`` mapping so it round-trips through
     ``run_config.yaml`` without adding model-specific config fields.
+    ``hf_model_text_only`` records that the source checkpoint was projected to
+    its language model, so a restored config reopens the same projection.
     """
 
     transformer_config_class: ClassVar[type[TransformerConfig]] = TransformerConfig
+
+    hf_model_text_only: bool = False
+    """Whether the source HF checkpoint was projected to its language model."""
 
     def get_builder_cls(self) -> type:
         """Resolve the configured builder through Bridge's target allowlist."""

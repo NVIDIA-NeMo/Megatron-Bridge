@@ -25,6 +25,7 @@ from unittest.mock import Mock, PropertyMock, patch
 import pytest
 import torch
 import transformers
+import yaml
 from megatron.core import parallel_state
 from safetensors.torch import save_file
 from tokenizers import Tokenizer, models, pre_tokenizers
@@ -45,6 +46,7 @@ from megatron.bridge.models.conversion.auto_bridge import (
     _model_omits_mtp,
     _mtp_source_key_prefixes,
     _resolve_pretrained_wrapper_cls,
+    _save_modelopt_quantizer_sidecars,
     _saved_config_disables_mtp,
 )
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -2804,86 +2806,31 @@ class TestAutoBridge:
 
             assert call_kwargs["additional_files"] is None
 
+    @pytest.mark.parametrize("other_rank_quantized", [False, True])
     @patch("torch.distributed.barrier")
     @patch("torch.distributed.is_available", return_value=True)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.get_rank", return_value=0)
-    def test_save_hf_weights_filters_quantizer_tensors(self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier):
-        """Test that save_hf_weights separates _quantizer. tensors into a sidecar file."""
-        mock_hf_model = Mock(spec=PreTrainedCausalLM)
-        mock_hf_model.config = Mock()
-        mock_hf_model.config.architectures = ["LlamaForCausalLM"]
-        mock_hf_model.config.auto_map = None
-
-        from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
-
-        mock_source = Mock(spec=SafeTensorsStateSource)
-        mock_hf_model.state = Mock()
-        mock_hf_model.state.source = mock_source
-
-        normal_tensor = torch.randn(4, 4)
-        quant_tensor = torch.randn(1)
-        weight_iter = [
-            ("model.layers.0.self_attn.q_proj.weight", normal_tensor),
-            ("model.layers.0.self_attn.q_proj.input_quantizer._amax", quant_tensor),
-        ]
-
-        mock_megatron_model = [Mock()]
-        mock_megatron_model[0].module = Mock()
-        mock_megatron_model[0].module.module = None
-
-        bridge = AutoBridge.__new__(AutoBridge)
-        bridge.hf_pretrained = mock_hf_model
-
-        with (
-            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
-            patch(
-                "modelopt.torch.quantization.utils.is_quantized",
-                return_value=True,
-            ),
-            patch("torch.save") as mock_torch_save,
-        ):
-            mock_model_bridge = Mock()
-            mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
-            mock_model_bridge_prop.return_value = mock_model_bridge
-
-            # Capture what save_generator receives by consuming the generator it's passed
-            saved_pairs = []
-
-            def fake_save_generator(gen, *args, **kwargs):
-                for pair in gen:
-                    saved_pairs.append(pair)
-                return set()
-
-            mock_source.save_generator = fake_save_generator
-
-            bridge.save_hf_weights(mock_megatron_model, "/tmp/output")
-
-            # Only the normal weight should have passed through to save_generator
-            assert len(saved_pairs) == 1
-            assert saved_pairs[0][0] == "model.layers.0.self_attn.q_proj.weight"
-            mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
-                mock_megatron_model,
-                mock_hf_model,
-                cpu=True,
-                show_progress=True,
-                merge_adapter_weights=True,
-                weight_dtype=None,
-            )
-
-            # The quantizer tensor should have been saved via torch.save sidecar
-            mock_torch_save.assert_called_once()
-            sidecar_dict = mock_torch_save.call_args[0][0]
-            assert "model.layers.0.self_attn.q_proj.input_quantizer._amax" in sidecar_dict
-
-    @patch("torch.distributed.barrier")
-    @patch("torch.distributed.is_available", return_value=True)
-    @patch("torch.distributed.is_initialized", return_value=True)
-    @patch("torch.distributed.get_rank", return_value=0)
+    @patch("torch.distributed.get_world_size", return_value=2)
     def test_save_hf_weights_no_sidecar_when_not_quantized(
-        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier
+        self,
+        mock_world_size,
+        mock_get_rank,
+        mock_is_init,
+        mock_is_avail,
+        mock_barrier,
+        other_rank_quantized,
+        tmp_path,
     ):
-        """Test that save_hf_weights skips sidecar logic when model is not quantized."""
+        """A model without quantizers writes no sidecars and removes those of an earlier export.
+
+        The recipe is still built (a collective) when another rank, e.g. a later pipeline stage,
+        holds quantizers.
+        """
+
+        def all_gather_object(per_rank, quantized):
+            per_rank[:] = [quantized, other_rank_quantized]
+
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
@@ -2911,13 +2858,18 @@ class TestAutoBridge:
                 return_value=False,
             ),
             patch("torch.save") as mock_torch_save,
+            patch("torch.distributed.all_gather_object", side_effect=all_gather_object),
         ):
             mock_model_bridge = Mock()
             mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
+            mock_model_bridge.build_modelopt_quantizer_recipe.return_value = {}
             mock_model_bridge_prop.return_value = mock_model_bridge
 
             mock_source.save_generator = Mock(return_value=set())
-            bridge.save_hf_weights(mock_megatron_model, "/tmp/output")
+            stale_sidecars = [tmp_path / "quantizer_state.pth", tmp_path / "quant_recipe.yaml"]
+            for sidecar in stale_sidecars:
+                sidecar.touch()
+            bridge.save_hf_weights(mock_megatron_model, tmp_path)
 
             mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
                 mock_megatron_model,
@@ -2928,6 +2880,8 @@ class TestAutoBridge:
                 weight_dtype=None,
             )
             mock_torch_save.assert_not_called()
+            assert not any(sidecar.exists() for sidecar in stale_sidecars)
+            assert mock_model_bridge.build_modelopt_quantizer_recipe.called == other_rank_quantized
 
     @patch("torch.distributed.barrier")
     @patch("torch.distributed.is_available", return_value=True)
@@ -2967,9 +2921,45 @@ class TestAutoBridge:
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
+            patch("torch.distributed.get_world_size", return_value=1),
+            patch("torch.distributed.all_gather_object", side_effect=lambda out, obj: out.__setitem__(0, obj)),
         ):
             mock_model_bridge_prop.return_value = mock_model_bridge
             bridge.save_hf_weights([wrapper], tmp_path)
 
         assert mock_source.save_generator.call_args.kwargs["ignored_source_key_prefixes"] == ("mtp.",)
         mock_source.has_glob.assert_called_once_with("mtp.*")
+
+
+def test_save_modelopt_quantizer_sidecars_spells_out_states_and_drops_stale_files(tmp_path):
+    from modelopt.torch.quantization.config import RotateConfig
+
+    nvfp4 = {
+        "_disabled": False,
+        "_num_bits": (2, 1),
+        "_block_sizes": {-1: 16, "scale_bits": (4, 3)},
+        "_input_dtype": torch.bfloat16,
+        "_shape": torch.Size([2, 3]),
+        "_rotate": RotateConfig(enable=False),
+    }
+    recipe = {f"model.layers.0.self_attn.{p}_proj.input_quantizer": nvfp4 for p in "qkv"}
+    tensors = {f"{name}._amax": torch.tensor(1.5) for name in recipe}
+    tensors["model.layers.0.mlp.down_proj.input_quantizer._amax"] = torch.tensor(2.0)
+
+    _save_modelopt_quantizer_sidecars(tmp_path, recipe, tensors)
+
+    state = torch.load(tmp_path / "quantizer_state.pth")
+    assert state.keys() == {f"{name}._amax" for name in recipe}
+    recipe_text = (tmp_path / "quant_recipe.yaml").read_text()
+    # Every entry is written out, without YAML anchors, so editing one never changes another.
+    assert recipe_text.count("_block_sizes") == len(recipe)
+    quantizers = yaml.safe_load(recipe_text)["quantizers"]
+    assert quantizers.keys() == recipe.keys()
+    assert len({id(entry) for entry in quantizers.values()}) == len(recipe)
+    assert all(entry["_input_dtype"] == "torch.bfloat16" for entry in quantizers.values())
+    assert all(entry["_shape"] == [2, 3] for entry in quantizers.values())
+    assert all(entry["_rotate"]["enable"] is False for entry in quantizers.values())
+
+    _save_modelopt_quantizer_sidecars(tmp_path, {}, {})
+    assert not (tmp_path / "quantizer_state.pth").exists()
+    assert not (tmp_path / "quant_recipe.yaml").exists()
