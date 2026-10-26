@@ -185,6 +185,7 @@ def get_batch(  # pragma: no cover
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
         include_full_batch_fields=include_full_batch_fields,
+        inter_document_masking=getattr(cfg.dataset, "inter_document_masking", False),
     )
 
     cp_size = pg_collection.cp.size()
