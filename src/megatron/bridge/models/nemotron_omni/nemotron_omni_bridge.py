@@ -34,6 +34,7 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
 
 import copy
 import json
+import logging
 import warnings
 from collections.abc import Iterable
 from dataclasses import fields
@@ -126,6 +127,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         "vision_model.radio_model.input_conditioner.norm_mean",
         "vision_model.radio_model.input_conditioner.norm_std",
     )
+    _HF_VIDEO_EMBEDDER_KEY = "vision_model.radio_model.model.patch_generator.video_embedder.weight"
 
     CONFIG_MAPPING = NemotronVLBridge.CONFIG_MAPPING + [
         # HF public Omni config uses layer_norm_epsilon instead of rms_norm_eps.
@@ -350,6 +352,16 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
 
         return MegatronMappingRegistry(*mappings)
 
+    @staticmethod
+    def _hf_requires_video_embedder(config) -> bool:
+        vision_config = getattr(config, "vision_config", None)
+        separate_video_embedder = (
+            vision_config.get("separate_video_embedder", False)
+            if isinstance(vision_config, dict)
+            else getattr(vision_config, "separate_video_embedder", False)
+        )
+        return separate_video_embedder is True
+
     @torch.no_grad()
     def stream_weights_megatron_to_hf(
         self,
@@ -363,8 +375,9 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         with_megatron_names: bool = False,
         current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
-        """Export model weights and preserve immutable source-only buffers."""
-        yield from super().stream_weights_megatron_to_hf(
+        """Export model weights, recovering the unused image-SFT video weight from HF."""
+        video_exported = False
+        for weight in super().stream_weights_megatron_to_hf(
             megatron_model,
             hf_pretrained,
             cpu=cpu,
@@ -374,9 +387,31 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             weight_dtype=weight_dtype,
             with_megatron_names=with_megatron_names,
             current_pp_stage_only=current_pp_stage_only,
-        )
+        ):
+            video_exported |= weight.param_name == self._HF_VIDEO_EMBEDDER_KEY
+            yield weight
         if not self._should_emit_hf_passthrough(megatron_model, current_pp_stage_only=current_pp_stage_only):
             return
+        # A stage-local stream need not contain a video weight owned by another
+        # pipeline stage. Never replace that trained parameter with the reference.
+        video_owned_elsewhere = current_pp_stage_only and any(
+            name.endswith("vision_model.video_embedder.weight") for name in getattr(self, "_cached_param_owners", {})
+        )
+        # MIMO calls this stream once per route. Only the vision route may
+        # recover video weights: an earlier language-route fallback would win
+        # deduplication over the trained weight emitted by the vision route.
+        video_in_registry = any(
+            mapping.hf_param == self._HF_VIDEO_EMBEDDER_KEY for mapping in self.mapping_registry().mappings
+        )
+        recover_video = video_in_registry and not video_exported and not video_owned_elsewhere
+        config = getattr(hf_pretrained, "config", hf_pretrained)
+        video_required = recover_video and self._hf_requires_video_embedder(config)
+        missing_video_error = (
+            f"Cannot export Nemotron Omni: {self._HF_VIDEO_EMBEDDER_KEY} is missing from the Megatron model "
+            "and cannot be recovered from the reference HF checkpoint. Provide the original HF checkpoint "
+            "and revision used for training; exporting without this weight would randomly initialize the "
+            "video embedder on HF reload, even with strict=False."
+        )
         # Passthrough tensors are copied straight from the HF checkpoint and have no
         # Megatron counterpart, so with ``with_megatron_names`` they carry zero sources.
         passthrough_sources = () if with_megatron_names else None
@@ -386,14 +421,38 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         if source is None:
             source_path = getattr(hf_pretrained, "name_or_path", None)
             if not source_path:
+                if video_required:
+                    raise ValueError(missing_video_error)
                 return
-            source = SafeTensorsStateSource(source_path)
+            source = SafeTensorsStateSource(source_path, revision=getattr(config, "_commit_hash", None))
             state = StateDict(source)
-        source_keys = set(source.get_all_keys())
-        for name in self._HF_PASSTHROUGH_KEYS:
+        try:
+            source_keys = set(source.get_all_keys())
+        except (OSError, ValueError) as error:
+            if video_required:
+                raise ValueError(missing_video_error) from error
+            raise
+        passthrough_keys = list(self._HF_PASSTHROUGH_KEYS)
+        if recover_video and self._HF_VIDEO_EMBEDDER_KEY in source_keys:
+            passthrough_keys.append(self._HF_VIDEO_EMBEDDER_KEY)
+            logging.getLogger(__name__).warning(
+                "Recovering %s from the reference HF checkpoint because the Megatron export has no video embedder. "
+                "Use the original HF checkpoint and revision used for training.",
+                self._HF_VIDEO_EMBEDDER_KEY,
+            )
+        elif video_required:
+            raise ValueError(missing_video_error)
+        for name in passthrough_keys:
             if name not in source_keys:
                 continue
-            tensor = state[name]
+            try:
+                tensor = state[name]
+            except (KeyError, OSError, ValueError) as error:
+                if name == self._HF_VIDEO_EMBEDDER_KEY:
+                    raise ValueError(missing_video_error) from error
+                raise
+            if name == self._HF_VIDEO_EMBEDDER_KEY and weight_dtype is not None:
+                tensor = tensor.to(dtype=weight_dtype)
             # These come straight off disk, so they are on CPU while every
             # mapped tensor in the stream above is on the current device when
             # cpu=False. Consumers that batch the whole stream together (RL
@@ -418,6 +477,11 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     _HF_PASSTHROUGH_KEYS = (*NemotronOmniBridge._HF_PASSTHROUGH_KEYS, _HF_SUMMARY_IDXS_BUFFER)
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
+
+    @staticmethod
+    def _hf_requires_video_embedder(config) -> bool:
+        # Super VL uses the top-level temporal size, overriding nested RADIO flags.
+        return int(getattr(config, "video_temporal_patch_size", 1) or 1) > 1
 
     @staticmethod
     def _hf_language_config(hf_config):

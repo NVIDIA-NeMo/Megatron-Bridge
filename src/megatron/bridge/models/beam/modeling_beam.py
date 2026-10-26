@@ -28,17 +28,14 @@ cover Beam except for:
 
 Everything except the last item is swapped into the stack spec by
 :func:`beam_hybrid_stack_spec`, which builds the hybrid layers from Megatron-Core's
-Transformer Engine GPT layer submodules with the subclasses below. Megatron-Core offers
-no hook for one piece: the distributed optimizer's parameter-group index map, which
-assumes a group holds a single parameter dtype.
-:func:`patch_distributed_optimizer_group_index_map` monkey patches it once the first
-fp32 Beam router is built.
+Transformer Engine GPT layer submodules with the subclasses below. The pinned Megatron-Core
+distributed optimizer supports mixed FP32/BF16 parameter groups directly.
 """
 
 import dataclasses
 import functools
 import math
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple, cast
 
 import torch
 from megatron.core import parallel_state
@@ -50,6 +47,7 @@ from megatron.core.ssm.mlp_layer import MLPLayer
 from megatron.core.tensor_parallel import ColumnParallelLinear
 from megatron.core.tensor_parallel.layers import set_tensor_model_parallel_attributes
 from megatron.core.transformer.attention import SelfAttention
+from megatron.core.transformer.enums import CudaGraphModule
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.module import MegatronModule, mark_keep_in_fp32
 from megatron.core.transformer.moe import moe_utils
@@ -63,6 +61,10 @@ from megatron.core.transformer.transformer_layer import (
 )
 from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group, make_sharded_tensors_for_checkpoint
 from megatron.core.utils import divide, get_tensor_model_parallel_group_if_none
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.beam.beam_config import BeamTransformerConfig
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +336,8 @@ class BeamTEDotProductAttention(_BeamSSMaxCoreAttentionMixin, TEDotProductAttent
 # ---------------------------------------------------------------------------
 
 
+# Megatron-Core selects an untyped Torch fuser at import time.
+@jit_fuser  # type: ignore[misc]
 def apply_output_gate(x: torch.Tensor, gate: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
     """Gate ``x`` with ``sigmoid(gate [+ bias per head])``.
 
@@ -383,6 +387,10 @@ class AttentionOutputGateBias(MegatronModule):
         """Initialize the bias to zero."""
         torch.nn.init.zeros_(self.bias)
 
+    def forward(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+        """Apply the gate after this module's parameter-gather hooks have run."""
+        return cast(torch.Tensor, apply_output_gate(x, gate, self.bias))
+
     def sharded_state_dict(
         self,
         prefix: str = "",
@@ -418,11 +426,10 @@ class BeamSelfAttention(SelfAttention):
                 tp_group=self.pg_collection.tp,
             )
 
-    @jit_fuser
     def _apply_output_gate(self, x, gate):
-        # Fused like Megatron-Core's Attention._apply_output_gate, so the gate rounds identically.
-        bias = self.output_gate_bias.bias if self.output_gate_bias is not None else None
-        return apply_output_gate(x, gate, bias)
+        if self.output_gate_bias is not None:
+            return self.output_gate_bias(x, gate)
+        return apply_output_gate(x, gate)
 
     def forward_pre_attn_and_core_attn(self, *args, **kwargs):
         """Reject dynamic-batching inference on SSMax layers: it bypasses core attention."""
@@ -481,6 +488,9 @@ class BeamTransformerLayerMixin:
     (offload commits, recompute hooks, viewless outputs) stays in place.
     """
 
+    config: "BeamTransformerConfig"
+    is_moe_layer: bool
+
     def __init__(self, config, submodules, layer_number: int = 1, *args, **kwargs):
         super().__init__(config, submodules, layer_number, *args, **kwargs)
         has_attention = not isinstance(self.self_attention, IdentityOp)
@@ -526,6 +536,24 @@ class BeamTransformerLayerMixin:
             raise ValueError("Enabled post-layer norms require a normalization module in the spec.")
         return norm(config=self.config, hidden_size=self.config.hidden_size, eps=self.config.layernorm_epsilon)
 
+    def _get_submodules_under_cudagraphs(self) -> list[torch.nn.Module]:
+        """Include captured sandwich norms in parameter-gather hooks during graph replay."""
+        # The concrete Megatron-Core layer supplies the cooperative superclass method.
+        submodules: list[torch.nn.Module] = super()._get_submodules_under_cudagraphs()  # type: ignore[misc]
+        # Native config finalization normalizes graph scopes to enum members.
+        scopes = cast(list[CudaGraphModule], self.config.cuda_graph_modules)
+        if not scopes:
+            # Whole-layer capture already includes every child module.
+            return submodules
+        if CudaGraphModule.attn in scopes and self.post_self_attn_layernorm is not None:
+            submodules.append(self.post_self_attn_layernorm)
+        if self.post_mlp_layernorm is not None and (
+            (not self.is_moe_layer and CudaGraphModule.mlp in scopes)
+            or (self.is_moe_layer and CudaGraphModule.moe in scopes)
+        ):
+            submodules.append(self.post_mlp_layernorm)
+        return submodules
+
     def _beam_bda(self, training: bool, fused: bool, *, is_attention: bool):
         """Same call contract as ``get_bias_dropout_add``: returns ``f(x_with_bias, residual, prob)``."""
         norm = self.post_self_attn_layernorm if is_attention else self.post_mlp_layernorm
@@ -568,9 +596,10 @@ class BeamMoETransformerLayer(BeamTransformerLayerMixin, MoETransformerLayer):
 class _BeamRouterGatingLinear(torch.autograd.Function):
     """``RouterGatingLinearFunction`` for routers whose weight dtype differs from the input dtype.
 
-    Two changes to Megatron-Core's version: cuBLASLt requires both GEMM operands in
-    ``router_dtype`` (fp32 router weights meet bf16 activations; saved activations keep their
-    input dtype), and the TE GEMM reads raw storage and ignores strides, so an expanded
+    FP32/FP64 routers use Torch GEMMs, matching HF's math policy: TE forces TF32
+    for FP32 operands, which can change expert selection. GEMM operands are cast to
+    ``router_dtype`` while saved activations retain their input dtype. Lower-precision
+    TE GEMMs read raw storage and ignore strides, so an expanded
     (stride-0) ``grad_output`` such as ``logits.sum().backward()`` produces is made contiguous.
     """
 
@@ -584,16 +613,19 @@ class _BeamRouterGatingLinear(torch.autograd.Function):
         inp = inp.view(-1, inp_shape[-1])
 
         te_general_gemm = moe_utils.te_general_gemm
-        if te_general_gemm is not None and router_dtype != torch.float64:
+        if te_general_gemm is not None and router_dtype not in (torch.float32, torch.float64):
             gemm_bias = bias.to(router_dtype) if bias is not None else None
             gemm_weight, gemm_inp = weight, inp
             if weight.dtype != inp.dtype:
                 gemm_weight, gemm_inp = weight.to(router_dtype), inp.to(router_dtype)
             output = te_general_gemm(gemm_weight, gemm_inp, router_dtype, layout="TN", bias=gemm_bias)[0]
-        elif bias is None:
-            output = torch.mm(inp.to(router_dtype), weight.to(router_dtype).t())
         else:
-            output = torch.addmm(bias.to(router_dtype), inp.to(router_dtype), weight.to(router_dtype).t())
+            # The explicit router dtype must survive an enclosing model autocast context.
+            with torch.autocast(device_type=inp.device.type, enabled=False):
+                if bias is None:
+                    output = torch.mm(inp.to(router_dtype), weight.to(router_dtype).t())
+                else:
+                    output = torch.addmm(bias.to(router_dtype), inp.to(router_dtype), weight.to(router_dtype).t())
         return output.view(*inp_shape[:-1], -1)
 
     @staticmethod
@@ -605,7 +637,7 @@ class _BeamRouterGatingLinear(torch.autograd.Function):
         grad_output = grad_output.contiguous().view(-1, grad_shape[-1])
 
         te_general_gemm = moe_utils.te_general_gemm
-        if te_general_gemm is not None and ctx.router_dtype != torch.float64:
+        if te_general_gemm is not None and ctx.router_dtype not in (torch.float32, torch.float64):
             grad_input = te_general_gemm(
                 weight.to(ctx.router_dtype), grad_output, ctx.router_dtype, layout="NN", grad=True
             )
@@ -615,8 +647,9 @@ class _BeamRouterGatingLinear(torch.autograd.Function):
             grad_input = grad_input[0].to(ctx.input_dtype)
             grad_weight = grad_weight[0].to(ctx.weight_dtype)
         else:
-            grad_input = torch.mm(grad_output, weight.to(ctx.router_dtype)).to(ctx.input_dtype)
-            grad_weight = torch.mm(grad_output.t(), inp.to(ctx.router_dtype)).to(ctx.weight_dtype)
+            with torch.autocast(device_type=inp.device.type, enabled=False):
+                grad_input = torch.mm(grad_output, weight.to(ctx.router_dtype)).to(ctx.input_dtype)
+                grad_weight = torch.mm(grad_output.t(), inp.to(ctx.router_dtype)).to(ctx.weight_dtype)
 
         grad_bias = grad_output.sum(dim=0).to(ctx.weight_dtype) if bias is not None else None
         return grad_input.view(*inp_shape), grad_weight, grad_bias, None
@@ -634,6 +667,11 @@ class BeamTopKRouter(TopKRouter):
     router reproduces HF's fp32 expert selection.
     """
 
+    def __init__(self, config: "BeamTransformerConfig", *args: object, **kwargs: object) -> None:
+        super().__init__(config, *args, **kwargs)
+        # Fixed checkpoint biases still affect routing, but need no token-count collective.
+        self.frozen_expert_bias = self.enable_expert_bias and config.moe_router_bias_update_rate == 0.0
+
     def reset_parameters(self):
         """Initialize like ``Router.reset_parameters``, casting to fp32 instead of ``params_dtype``."""
         if not self.config.moe_router_fp32_params:
@@ -649,7 +687,6 @@ class BeamTopKRouter(TopKRouter):
             self.bias.data = self.bias.data.to(dtype=torch.float32)
             setattr(self.bias, "sequence_parallel", self.config.sequence_parallel)
             mark_keep_in_fp32(self.bias)
-        patch_distributed_optimizer_group_index_map()
 
     def gating(self, input: torch.Tensor):
         """``Router.gating`` through :func:`beam_router_gating_linear`."""
@@ -664,40 +701,6 @@ class BeamTopKRouter(TopKRouter):
         elif self.config.moe_router_dtype == "fp64":
             router_dtype = torch.float64
         return beam_router_gating_linear(input, self.weight, self.bias, router_dtype)
-
-
-def _fix_group_index_map(optimizer) -> None:
-    """Point ``model_param_group_index_map`` at the inner optimizer's parameter order.
-
-    ``DistributedOptimizer`` builds each inner-optimizer group as fp32 shards followed by
-    float16-derived shards, while ``model_param_group_index_map`` follows the original
-    parameter order. With mixed dtypes in one group (fp32 router + bf16 rest) the two
-    orders differ and checkpointed optimizer state lands in the wrong slots.
-    """
-    for group_index, (fp32_params, float16_params) in enumerate(
-        zip(optimizer.model_fp32_groups, optimizer.model_float16_groups)
-    ):
-        if not fp32_params or not float16_params:
-            continue
-        for group_order, model_param in enumerate([*fp32_params, *float16_params]):
-            optimizer.model_param_group_index_map[model_param] = (group_index, group_order)
-
-
-def patch_distributed_optimizer_group_index_map() -> None:
-    """Monkey patch ``DistributedOptimizer.__init__`` to apply :func:`_fix_group_index_map` (idempotent)."""
-    from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
-
-    if getattr(DistributedOptimizer.__init__, "_beam_group_index_fix", False):
-        return
-    original_init = DistributedOptimizer.__init__
-
-    @functools.wraps(original_init)
-    def __init__(self, *args, **kwargs):
-        original_init(self, *args, **kwargs)
-        _fix_group_index_map(self)
-
-    __init__._beam_group_index_fix = True
-    DistributedOptimizer.__init__ = __init__
 
 
 # ---------------------------------------------------------------------------
