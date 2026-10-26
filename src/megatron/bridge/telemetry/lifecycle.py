@@ -34,6 +34,7 @@ import torch
 
 from megatron.bridge import telemetry
 from megatron.bridge.package_info import __version__ as _bridge_version
+from megatron.bridge.training.utils.checkpoint_utils import get_hf_source_from_model_config
 from megatron.bridge.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
 
 
@@ -53,7 +54,8 @@ DEFAULT_SERVICE_NAME = "megatron-bridge"
 # Resource attributes that nemo-lens semconv has no constant for.
 CONTEXT_PARALLEL_SIZE = "dl.context_parallel.size"
 EXPERT_PARALLEL_SIZE = "dl.expert_parallel.size"
-MODEL_PROVIDER = "megatron_bridge.model.provider"
+MODEL_CONFIG = "megatron_bridge.model.config"
+MODEL_HF_ID = "megatron_bridge.model.hf_model_id"
 
 _INSTALL_HINT = "Install Megatron Bridge with its `otel` extra: `uv sync --extra otel`."
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -278,8 +280,13 @@ def _resource_attributes(config: "ConfigContainer", *, rank: int, world_size: in
         semconv.NV_DL_RANK: rank,
         semconv.NV_DL_WORLD_SIZE: world_size,
         semconv.NV_DL_LOCAL_RANK: get_local_rank_preinit(),
-        MODEL_PROVIDER: type(model).__name__,
+        MODEL_CONFIG: type(model).__name__,
     }
+    # Builder-backed model configs share a few classes, such as BridgeGPTModelConfig, so the Hugging Face
+    # source is what names the model. A Hub ID names it; a local path would only expose the directory layout.
+    hf_model_id, _ = get_hf_source_from_model_config(model)
+    if isinstance(hf_model_id, str) and not os.path.isabs(hf_model_id) and not os.path.exists(hf_model_id):
+        attributes[MODEL_HF_ID] = hf_model_id
     # getattr: not every model provider, such as the MIMO ones, carries every parallel size.
     sizes = {
         semconv.DL_TENSOR_PARALLEL_SIZE: getattr(model, "tensor_model_parallel_size", None),

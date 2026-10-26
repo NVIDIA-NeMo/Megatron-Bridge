@@ -125,7 +125,46 @@ class TestInitTelemetry:
         assert resource["dl.data_parallel.size"] == 4
         assert resource["dl.context_parallel.size"] == 1
         assert resource["dl.expert_parallel.size"] == 1
-        assert resource["megatron_bridge.model.provider"] == "BridgeGPTModelConfig"
+        assert resource["megatron_bridge.model.config"] == "BridgeGPTModelConfig"
+        assert "megatron_bridge.model.hf_model_id" not in resource
+
+    @pytest.mark.parametrize(
+        ("source", "exported"),
+        [
+            pytest.param("meta-llama/Llama-3.2-1B", True, id="hub-id"),
+            pytest.param("/checkpoints/llama-3.2-1b", False, id="absolute-path"),
+            pytest.param("checkpoints/llama-3.2-1b", False, id="existing-relative-path"),
+        ],
+    )
+    def test_hf_model_id_names_hub_models_only(self, lifecycle_capture, monkeypatch, tmp_path, source, exported):
+        """Builder-backed configs share a few classes, so the Hub ID names the model; a local path is never exported."""
+        monkeypatch.setenv("MEGATRON_OTEL_ENABLED", "1")
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "checkpoints" / "llama-3.2-1b").mkdir(parents=True)
+        config = _config()
+        # Where AutoBridge.get_model_config records the source of a builder-backed config.
+        config.model.extra_checkpoint_metadata = {"hf_model_id": source}
+
+        lifecycle.init_telemetry(config)
+
+        resource = _resource(lifecycle_capture)
+        assert resource["megatron_bridge.model.config"] == "BridgeGPTModelConfig"
+        assert resource.get("megatron_bridge.model.hf_model_id") == (source if exported else None)
+
+    def test_hf_model_id_of_a_model_provider(self, lifecycle_capture, monkeypatch):
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+        monkeypatch.setenv("MEGATRON_OTEL_ENABLED", "1")
+        config = _config()
+        config.model = GPTModelProvider(
+            num_layers=2, hidden_size=64, num_attention_heads=4, hf_model_id="Qwen/Qwen3-0.6B"
+        )
+
+        lifecycle.init_telemetry(config)
+
+        resource = _resource(lifecycle_capture)
+        assert resource["megatron_bridge.model.config"] == "GPTModelProvider"
+        assert resource["megatron_bridge.model.hf_model_id"] == "Qwen/Qwen3-0.6B"
 
     @requires_otel_config_fields
     def test_config_fields_override_environment(self, lifecycle_capture, monkeypatch):

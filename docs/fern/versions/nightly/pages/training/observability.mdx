@@ -182,7 +182,8 @@ Every span and metric carries the following attributes, which are fixed for the 
 | `service.instance.id` | `<run ID>-rank<rank>` |
 | `nv.dl.rank`, `nv.dl.world_size`, `nv.dl.local_rank` | Rank, world size, and local rank |
 | `dl.data_parallel.size`, `dl.tensor_parallel.size`, `dl.pipeline_parallel.size`, `dl.context_parallel.size`, `dl.expert_parallel.size` | Parallel layout |
-| `megatron_bridge.model.provider` | Class of the model configuration, such as `GPTModelProvider` |
+| `megatron_bridge.model.config` | Class of the model configuration, such as `GPTModelProvider` or `BridgeGPTModelConfig` |
+| `megatron_bridge.model.hf_model_id` | Hugging Face model ID, when the model configuration records one, such as `meta-llama/Llama-3.2-1B`. A local model path is never recorded. |
 
 nemo-lens adds host, process, Slurm, and Kubernetes attributes when they apply.
 
