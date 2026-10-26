@@ -35,7 +35,7 @@ import os
 from dataclasses import asdict, is_dataclass
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     FusedExpertMapping,
@@ -80,7 +80,22 @@ class Gemma4VLBridge(Gemma4Bridge):
     - vision_tower and embed_vision weight mappings
     - Dense E4B VL provider construction
     - ``GEMMA4_CONVERSION_MODE`` dispatch (text / auto / vl)
+
+    In text mode, ``get_model_config()`` returns the Gemma 4 text builder config. The
+    vision-language models still build through providers, so conversion stays on them.
     """
+
+    USE_MODEL_CONFIG_FOR_CONVERSION = False
+
+    def hf_config_to_model_config(self, hf_config):
+        """Build the Gemma 4 text builder config in ``GEMMA4_CONVERSION_MODE=text``."""
+        if self._conversion_mode() != "text":
+            raise ModelConfigNotSupportedError(
+                "Gemma 4 vision-language models still build through providers; set "
+                "GEMMA4_CONVERSION_MODE=text for the builder-backed text model, or use "
+                "AutoBridge.to_megatron_provider()."
+            )
+        return super().hf_config_to_model_config(hf_config.text_config)
 
     def provider_bridge(
         self, hf_pretrained: PreTrainedCausalLM

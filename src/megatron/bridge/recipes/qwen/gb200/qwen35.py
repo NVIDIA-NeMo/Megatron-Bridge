@@ -57,7 +57,7 @@ def _qwen35_text_35b_a3b_long_context_common(
     if hasattr(hf_config, "text_config"):
         text_config.tie_word_embeddings = hf_config.tie_word_embeddings
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
-    cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
     cfg.model.gdn_kernel_backend = "transformer_engine"
     cfg.model.gdn_pre_gated_delta_rule_fusion = True
     cfg.tokenizer.tokenizer_model = hf_path
@@ -198,7 +198,7 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     # The nested text config intentionally omits ``architectures``. AutoBridge
     # needs it to select the registered causal-LM bridge instead of the VLM.
     text_config.architectures = ["Qwen3_5ForCausalLM"]
-    cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_9B_BASE
     cfg.dataset.seq_length = 4096
     cfg.dataset.blend = None
@@ -291,7 +291,7 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     # The nested text config intentionally omits ``architectures``. AutoBridge
     # needs it to select the registered causal-LM bridge instead of the VLM.
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
-    cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_35B_A3B_BASE
     cfg.dataset.seq_length = 4096
     cfg.dataset.blend = None
@@ -385,10 +385,11 @@ def qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config() -> ConfigContain
     so on up to the full pool. Set ``checkpoint.pretrained_checkpoint`` to a converted
     Megatron checkpoint before training.
 
-    Requires the Megatron-Core ``dev`` submodule pin (``./scripts/switch_mcore.sh dev``);
-    ``ConfigContainer.validate`` reports what the ``main`` pin is missing. Qwen3.5 attention
-    uses 256-wide heads, which Transformer Engine only trains with FlashAttention; until
-    Megatron-Core derives ``pad_between_seqs`` from the actual ``cu_seqlens``
+    Requires the Megatron-Core ``dev`` submodule pin (``./scripts/switch_mcore.sh dev``). The
+    ``main`` pin's model config does not declare ``dynamic_context_parallel``, so building this
+    recipe there raises ``AttributeError``. Qwen3.5 attention uses 256-wide heads, which
+    Transformer Engine only trains with FlashAttention; until Megatron-Core derives
+    ``pad_between_seqs`` from the actual ``cu_seqlens``
     (https://github.com/NVIDIA/Megatron-LM/pull/7417), FlashAttention also needs bins
     without padding between sequences, which ``fold_alignment_padding`` provides. See
     ``docs/training/dynamic-context-parallel.md``.
@@ -397,7 +398,7 @@ def qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config() -> ConfigContain
 
     text_config = AutoConfig.from_pretrained(_QWEN35_35B_A3B_BASE).text_config
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
-    cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_35B_A3B_BASE
 
     seq_length = 32768
