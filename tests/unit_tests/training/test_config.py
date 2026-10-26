@@ -5572,10 +5572,6 @@ class TestGlobalBatchPackingValidation:
         assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 4
         assert getattr(container.model, "_enable_in_batch_packing", False) is True  # variable_seq_lengths path
 
-    @pytest.mark.skipif(
-        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
-        reason="dynamic context parallel needs the Megatron-Core dev pin",
-    )
     def test_dynamic_cp_selects_dynamic_scheduler_and_pool_padding_multiple(self):
         model_cfg = create_test_gpt_config(
             context_parallel_size=2,
@@ -5598,10 +5594,6 @@ class TestGlobalBatchPackingValidation:
         # dp 4 x cp 2 = pool 8 -> 2 * pool
         assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 16
 
-    @pytest.mark.skipif(
-        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
-        reason="dynamic context parallel needs the Megatron-Core dev pin",
-    )
     def test_dynamic_cp_sequence_parallel_multiple_covers_the_whole_pool(self):
         # TP4 x CP1 x DP2: a sequence may run on a CP2 group spanning both DP ranks, so each of its
         # two CP shards must split over four TP ranks: 2 x 4 = 8 (the static rule would give 4).
@@ -5626,10 +5618,6 @@ class TestGlobalBatchPackingValidation:
 
         assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 8
 
-    @pytest.mark.skipif(
-        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
-        reason="dynamic context parallel needs the Megatron-Core dev pin",
-    )
     def test_dynamic_cp_rejects_non_power_of_two_pool(self):
         model_cfg = create_test_gpt_config(
             context_parallel_size=2,
@@ -5651,6 +5639,67 @@ class TestGlobalBatchPackingValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def _validate_with_linear_attention(self, *, linear_attention_freq: list[int], **model_kwargs: Any) -> Any:
+        """Validate a 2-way CP model with the given Gated DeltaNet layer pattern on eight ranks."""
+        model_cfg = create_test_gpt_config(
+            num_layers=len(linear_attention_freq),
+            context_parallel_size=2,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=256,
+            experimental_attention_variant="gdn",
+            linear_attention_freq=linear_attention_freq,
+            **model_kwargs,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=self._gpt_sft_unpacked_dataset(512),
+        )
+        container.ddp.average_in_collective = False
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+        return container
+
+    def test_dynamic_cp_rejects_linear_attention_layers(self):
+        with pytest.raises(ValueError, match="linear-attention"):
+            self._validate_with_linear_attention(linear_attention_freq=[1, 1, 1, 0], dynamic_context_parallel=True)
+
+    def test_dynamic_cp_accepts_a_linear_attention_variant_with_full_attention_layers_only(self):
+        container = self._validate_with_linear_attention(
+            linear_attention_freq=[0, 0, 0, 0], dynamic_context_parallel=True
+        )
+        assert container.model.sequence_packing_scheduler == "default_dynamic_cp"
+
+    def test_static_packing_accepts_linear_attention_layers(self):
+        container = self._validate_with_linear_attention(linear_attention_freq=[1, 1, 1, 0])
+        assert container.model.sequence_packing_scheduler == "dp_balanced"
+
+    def test_dynamic_cp_rejects_multi_token_prediction(self):
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=256,
+            dynamic_context_parallel=True,
+            mtp_num_layers=1,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=self._gpt_sft_unpacked_dataset(512),
+        )
+        container.ddp.average_in_collective = False
+        try:
+            with pytest.raises(ValueError, match="multi-token prediction"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_dynamic_scheduler_requires_dynamic_context_parallel(self, monkeypatch):
         from megatron.bridge.training import global_batch_packing
 
@@ -5661,8 +5710,8 @@ class TestGlobalBatchPackingValidation:
             max_seqlen_per_dp_cp_rank=256,
             sequence_packing_scheduler="default_dynamic_cp",
         )
-        # The flag defaults to False on the dev pin and is absent on older main pins.
-        assert not getattr(model_cfg, "dynamic_context_parallel", False)
+        # The flag defaults to off, so a dynamic scheduler alone is a configuration mistake.
+        assert not model_cfg.dynamic_context_parallel
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=8,

@@ -16,16 +16,12 @@
 
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass, fields
-from typing import ClassVar
 
 import pytest
 from transformers import Qwen3_5Config, Qwen3_5MoeConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
-from megatron.bridge.models.qwen.qwen35_bridge import Qwen35MoEBridge
-from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.recipes.qwen.gb200 import qwen35
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -46,19 +42,6 @@ _RECIPES = [
     if not name.startswith("_") and name.endswith("_config") and inspect.isfunction(value)
     if value.__module__ == qwen35.__name__ and value is not _DYNAMIC_CP_RECIPE
 ]
-
-
-@dataclass
-class _DynamicCPTransformerConfig(TransformerConfig):
-    """Transformer config with the dynamic context parallel fields of the Megatron-Core dev pin."""
-
-    dynamic_context_parallel: bool = False
-    min_dynamic_context_parallel_size: int = 1
-
-
-@dataclass(kw_only=True)
-class _DynamicCPModelConfig(BridgeGPTModelConfig):
-    transformer_config_class: ClassVar[type[TransformerConfig]] = _DynamicCPTransformerConfig
 
 
 def _reject_provider_api(*args, **kwargs):
@@ -89,22 +72,11 @@ def test_each_qwen35_text_recipe_uses_strict_builder_config(recipe_func: Callabl
     assert cfg.model.share_embeddings_and_output_weights is False
 
 
-def test_dynamic_cp_recipe_uses_strict_builder_config(builder_only: None, monkeypatch: pytest.MonkeyPatch):
-    """With the dev pin's dynamic CP fields declared, the recipe sets only declared fields."""
-    monkeypatch.setattr(Qwen35MoEBridge, "MODEL_CONFIG_CLASS", _DynamicCPModelConfig)
-
+def test_dynamic_cp_recipe_uses_strict_builder_config(builder_only: None):
+    """The recipe sets only fields the builder-backed model config declares, dynamic CP among them."""
     cfg = _DYNAMIC_CP_RECIPE()
 
     assert isinstance(cfg.model, BridgeGPTModelConfig)
     assert cfg.model.dynamic_context_parallel is True
     assert cfg.model.min_dynamic_context_parallel_size == 1
     assert cfg.model.num_moe_experts == 256
-
-
-def test_dynamic_cp_recipe_rejects_model_config_without_dynamic_cp(builder_only: None):
-    """A pin without dynamic CP fields fails the recipe instead of dropping the setting."""
-    if "dynamic_context_parallel" in {field.name for field in fields(TransformerConfig)}:
-        pytest.skip("The pinned Megatron-Core declares dynamic context parallelism.")
-
-    with pytest.raises(AttributeError, match="dynamic_context_parallel"):
-        _DYNAMIC_CP_RECIPE()

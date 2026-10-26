@@ -12,37 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fine-tune Qwen3.5-35B-A3B on long variable-length data with global-batch packing and dynamic CP.
+"""Dynamic context parallelism (DCP v2) with global-batch packing on mock variable-length data.
 
-This is a real launch script (unlike ``dynamic_context_parallel.py``, the packing
-demo next to it). It builds the ``qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config``
-recipe (CoderForge SWE-Rebench trajectories, TP1 PP1 CP4 EP8, 32k cap), applies optional
-YAML / dotted CLI overrides, and calls ``pretrain``.
+This is a real launch script (unlike ``dynamic_context_parallel.py``, the packing demo next to it).
+It builds the ``qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config`` recipe, applies optional
+YAML / dotted CLI overrides, and calls ``pretrain``. It runs on the Megatron-Core ``main`` pin this
+repository ships; no submodule switch is needed.
 
-Requires the Megatron-Core ``dev`` submodule pin::
+``--tiny-model`` is the supported way to run it today. It shrinks the recipe to a Qwen3.5-shaped
+attention + MoE model with full-attention layers only and replaces the dataset with a generated
+variable-length SFT file, so it needs no download and no checkpoint. The full recipe has Gated
+DeltaNet layers, whose context-parallel exchange Megatron-Core ``main`` sizes from the static CP
+group, and a multi-token-prediction layer that hangs under dynamic CP, so dynamic CP rejects it at
+validation until Megatron-Core supports runtime groups for both.
 
-    ./scripts/switch_mcore.sh dev && uv sync
+The tiny model runs ``world_size / 2`` data-parallel replicas of CP2 with EP2. Dynamic CP schedules
+each packed bin onto a group of 1, 2, ... ranks drawn from the ``dp x cp`` pool, so a bin that fits
+one rank's ``max_seqlen_per_dp_cp_rank`` pays no context-parallel communication.
 
-Full recipe on eight GB200 GPUs::
-
-    uv run python -m torch.distributed.run --nproc_per_node=8 \\
-        examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py \\
-        checkpoint.pretrained_checkpoint=/path/to/megatron/qwen3.5-35b-a3b \\
-        train.train_iters=20 logger.log_interval=1
-
-Static-CP baseline on the same packing path (``dp_balanced`` at CP4)::
-
-    uv run python -m torch.distributed.run --nproc_per_node=8 \\
-        examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py \\
-        model.dynamic_context_parallel=false model.sequence_packing_scheduler=dp_balanced
-
-Smoke test with a tiny Qwen3.5-shaped model on a generated variable-length SFT file, on two GPUs::
+Dynamic CP on two GPUs::
 
     uv run python -m torch.distributed.run --nproc_per_node=2 \\
         examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py --tiny-model
 
-Dotted overrides use the ``ConfigContainer`` field paths, e.g. ``train.global_batch_size=128``
-or ``model.max_seqlen_per_dp_cp_rank=4096``.
+Static-CP baseline on the same packing path (``dp_balanced`` at CP2), for throughput comparisons::
+
+    uv run python -m torch.distributed.run --nproc_per_node=2 \\
+        examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py --tiny-model --static-cp
+
+For a steadier comparison add ``train.train_iters=40 logger.log_interval=1`` and drop the first
+iterations, which pay one-time compilation and communicator setup. Dotted overrides use the
+``ConfigContainer`` field paths, e.g. ``train.global_batch_size=128`` or
+``model.max_seqlen_per_dp_cp_rank=4096``.
 """
 
 from __future__ import annotations
@@ -67,16 +68,25 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.utils.common_utils import get_rank_safe
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
 
 
 logger = logging.getLogger(__name__)
+
+_TINY_NUM_LAYERS = 4
+_TINY_CP_SIZE = 2
+_TINY_EP_SIZE = 2
+_TINY_SEQ_LENGTH = 8192
+_TINY_MAX_SEQLEN_PER_RANK = 4096
+_TINY_SAMPLES_PER_GPU = 8
+_MOCK_NUM_ROWS = 2048
+_MOCK_SEED = 1234
 
 
 def parse_cli_args() -> tuple[argparse.Namespace, list[str]]:
     """Parse the script's own flags and pass the rest through as config overrides."""
     parser = argparse.ArgumentParser(
-        description="Qwen3.5-35B-A3B with online sequence packing and dynamic context parallelism.",
+        description="Qwen3.5 recipe with online sequence packing and dynamic context parallelism.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -88,18 +98,31 @@ def parse_cli_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--tiny-model",
         action="store_true",
-        help="Shrink the model to a Qwen3.5-shaped smoke-test size (4 layers, 8 experts, 8k cap) that runs "
-        "on two GPUs with CP2 and the cuDNN attention backend.",
+        help="Shrink the recipe to a Qwen3.5-shaped attention + MoE smoke-test size (4 layers, 8 experts, 8k cap) "
+        "on generated variable-length data. Runs on any even GPU count with CP2 per replica.",
+    )
+    parser.add_argument(
+        "--static-cp",
+        action="store_true",
+        help="Run the static-CP baseline on the same packing path (dp_balanced scheduler, dynamic CP off).",
     )
     return parser.parse_known_args()
 
 
-def write_tiny_sft_dataset(root: Path, *, num_rows: int = 256, seed: int = 1234) -> Path:
-    """Write a prompt/completion JSONL with lognormal answer lengths for the smoke test.
+def write_tiny_sft_dataset(root: Path, *, num_rows: int, seed: int) -> Path:
+    """Write a prompt/completion JSONL with lognormal answer lengths for the mock-data runs.
 
-    Most answers fit within one rank's 4K-token share and some need the full 8K CP2
-    group, so dynamic CP has both kinds of bins to schedule. Every rank writes the same
-    seeded file and renames it into place, so concurrent writers are harmless.
+    Most answers fit within one rank's 4K-token share and some need a larger CP group, so dynamic CP
+    has both kinds of bins to schedule. Every rank writes the same seeded file and renames it into
+    place, so concurrent writers are harmless.
+
+    Args:
+        root: Directory that receives ``training.jsonl``.
+        num_rows: Number of prompt/completion rows to generate.
+        seed: Seed of the length and token generator.
+
+    Returns:
+        ``root``, which holds ``training.jsonl``.
     """
     train_file = root / "training.jsonl"
     if train_file.exists():
@@ -117,53 +140,69 @@ def write_tiny_sft_dataset(root: Path, *, num_rows: int = 256, seed: int = 1234)
     return root
 
 
-def apply_tiny_model_overrides(cfg: ConfigContainer) -> None:
-    """Shrink the recipe for a two-GPU smoke test while keeping the global-batch packing path.
+def apply_tiny_model_overrides(cfg: ConfigContainer, *, world_size: int) -> None:
+    """Shrink the recipe for a mock-data run while keeping the global-batch packing path.
 
-    The model keeps Qwen3.5's shape (Gated DeltaNet 3:1 with gated attention, MoE) at a
-    fraction of the size, and the CoderForge dataset is replaced by a generated
-    prompt/completion file with lognormal lengths (see :func:`write_tiny_sft_dataset`), so
-    the run needs no download and no checkpoint.
+    The model keeps Qwen3.5's attention and MoE shape (gated attention, shared expert) at a fraction
+    of the size, with full-attention layers only: Megatron-Core ``main`` supports dynamic CP for
+    attention and MoE layers but not yet for Gated DeltaNet or multi-token prediction, so the recipe's
+    MTP layer is dropped too. The CoderForge dataset is replaced by a generated prompt/completion file
+    with lognormal lengths (see :func:`write_tiny_sft_dataset`), so the run needs no download and no
+    checkpoint.
+
+    Args:
+        cfg: The recipe configuration to shrink in place.
+        world_size: Total number of ranks; must be a multiple of the per-replica CP size.
+
+    Raises:
+        ValueError: If ``world_size`` cannot hold whole CP2 replicas.
     """
-    cfg.model.num_layers = 4
-    # The Qwen3.5 bridge expresses the 3:1 GDN:attention layout as a per-layer list in
-    # linear_attention_freq; keep the first four entries for the shrunken depth.
-    if isinstance(cfg.model.linear_attention_freq, list):
-        cfg.model.linear_attention_freq = list(cfg.model.linear_attention_freq[:4])
+    if world_size < _TINY_CP_SIZE or world_size % _TINY_CP_SIZE:
+        raise ValueError(
+            f"--tiny-model runs replicas of CP{_TINY_CP_SIZE}; the world size must be a positive multiple of "
+            f"{_TINY_CP_SIZE}, got {world_size}."
+        )
+    cfg.model.num_layers = _TINY_NUM_LAYERS
+    # In linear_attention_freq a 1 marks a Gated DeltaNet layer and a 0 a full-attention layer.
+    cfg.model.linear_attention_freq = [0] * _TINY_NUM_LAYERS
+    # Multi-token prediction hangs under dynamic CP on the pinned Megatron-Core, so the recipe's MTP layer is dropped.
+    cfg.model.mtp_num_layers = None
     cfg.model.hidden_size = 512
     cfg.model.ffn_hidden_size = 1024
     cfg.model.num_attention_heads = 8
     cfg.model.num_query_groups = 2
     # 128-wide heads keep the cuDNN fused-attention backend available for THD bins.
     cfg.model.kv_channels = 128
-    cfg.model.linear_num_key_heads = 4
-    cfg.model.linear_num_value_heads = 8
-    cfg.model.linear_key_head_dim = 64
-    cfg.model.linear_value_head_dim = 64
     cfg.model.num_moe_experts = 8
     cfg.model.moe_router_topk = 2
     cfg.model.moe_ffn_hidden_size = 256
     cfg.model.moe_shared_expert_intermediate_size = 256
-    cfg.model.expert_model_parallel_size = 2
-    cfg.model.context_parallel_size = 2
-    cfg.model.seq_length = 8192
-    cfg.model.max_seqlen_per_dp_cp_rank = 4096
+    cfg.model.expert_model_parallel_size = _TINY_EP_SIZE
+    cfg.model.context_parallel_size = _TINY_CP_SIZE
+    cfg.model.seq_length = _TINY_SEQ_LENGTH
+    cfg.model.max_seqlen_per_dp_cp_rank = _TINY_MAX_SEQLEN_PER_RANK
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
+    mock_root = Path(tempfile.gettempdir()) / f"qwen35_dynamic_cp_tiny_sft_{_MOCK_NUM_ROWS}_{_MOCK_SEED}"
     cfg.dataset = GPTSFTDatasetConfig(
-        dataset_root=str(write_tiny_sft_dataset(Path(tempfile.gettempdir()) / "qwen35_dynamic_cp_tiny_sft")),
-        seq_length=8192,
-        dataloader_type="single",
+        dataset_root=str(write_tiny_sft_dataset(mock_root, num_rows=_MOCK_NUM_ROWS, seed=_MOCK_SEED)),
+        seq_length=_TINY_SEQ_LENGTH,
+        # A cyclic loader starts a new epoch instead of ending the run when train_iters * global_batch_size outgrows the
+        # generated rows.
+        dataloader_type="cyclic",
         num_workers=2,
         do_validation=False,
         do_test=False,
         enable_global_batch_packing=True,
     )
-    cfg.train.global_batch_size = 16
+    cfg.train.global_batch_size = _TINY_SAMPLES_PER_GPU * world_size
     cfg.train.train_iters = 5
     cfg.validation.eval_iters = 0
+    # Mock runs neither write nor resume checkpoints, so repeated and dynamic-versus-static runs always start fresh.
     cfg.checkpoint.pretrained_checkpoint = None
+    cfg.checkpoint.save = None
+    cfg.checkpoint.load = None
 
 
 def main() -> None:
@@ -171,7 +210,11 @@ def main() -> None:
     args, cli_overrides = parse_cli_args()
     cfg: ConfigContainer = qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config()
     if args.tiny_model:
-        apply_tiny_model_overrides(cfg)
+        apply_tiny_model_overrides(cfg, world_size=get_world_size_safe())
+    if args.static_cp:
+        # One static CP group per replica on the same packing path: the baseline dynamic CP is measured against.
+        cfg.model.dynamic_context_parallel = False
+        cfg.model.sequence_packing_scheduler = "dp_balanced"
 
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
     if args.config_file:

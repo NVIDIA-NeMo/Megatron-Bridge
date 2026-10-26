@@ -5,16 +5,14 @@ This directory contains small examples for long-context training features.
 ## Dynamic Context Parallel Packing
 
 `dynamic_context_parallel.py` is a local packing demo for Megatron-Core Dynamic
-Context Parallelism (DCP). It does not train a model, build a model, or launch
+Context Parallelism (DCP v2). It does not train a model, build a model, or launch
 distributed workers. The goal is to show what DCP does to variable-length
 samples before the forward pass.
 
-Run it after switching the Megatron-Core submodule to a dev commit that contains
-DCP:
+It runs on the Megatron-Core `main` pin this repository ships, so no submodule
+switch is needed:
 
 ```bash
-./scripts/switch_mcore.sh dev
-uv sync
 uv run python examples/training_features/long_context/dynamic_context_parallel.py
 ```
 
@@ -32,45 +30,52 @@ with `max_seqlen_per_rank=64`, `dp_size=2`, and `cp_size=2`.
 The first block shows the Bridge config knobs used in a real DCP run:
 
 ```python
-cfg.model.dynamic_context_parallel = True
-cfg.model.sequence_packing_scheduler = "default_dynamic_cp"
+cfg.dataset.enable_global_batch_packing = True
+cfg.model.dynamic_context_parallel = True  # selects the default_dynamic_cp scheduler
 cfg.model.max_seqlen_per_dp_cp_rank = 64
 cfg.model.min_dynamic_context_parallel_size = 1
 cfg.train.micro_batch_size = 1
 ```
 
-The second block shows each input sample length and how many DPxCP ranks it
-needs:
+The second block shows the CP group sizes the `dp x cp` pool can form and the
+smallest group each input sample needs:
 
 ```text
-sample 0: length=128, gpus_needed=2
-sample 2: length=64, gpus_needed=1
+Valid group sizes for the dp x cp = 4 pool: [1, 2, 4]
+sample 0: length=128, min_group_size=2
+sample 2: length=64, min_group_size=1
 ```
 
 A length-128 sample needs two ranks because each rank is configured for at most
 64 sequence tokens. Length-64 and shorter samples fit on one rank.
 
 The scheduled microbatch block shows the packed THD-style batch metadata that
-the scheduled data iterator would yield:
+the scheduled data iterator would yield, together with the scheduler's own
+estimate of the work each rank receives (the sum of `length ** 2 / group size`,
+in relative units):
 
 ```text
-dpxcp_rank 3: sample_ids=[5, 6, 7], lengths=[24, 16, 8], local_cp_size=1
-  tokens.shape=(48,), cu_seqlens=[0, 24, 40, 48], max_seqlen=24
+microbatch 1:
+  dpxcp_rank 2: sample_ids=[3, 6], lengths=[48, 16], local_cp_size=1, estimated_work=2560
+    tokens.shape=(64,), cu_seqlens=[0, 48, 64], max_seqlen=48, tokens[:8]=[3000, 3001, ...]
+  dpxcp_rank 3: sample_ids=[5, 7], lengths=[24, 8], local_cp_size=1, estimated_work=640
+    tokens.shape=(32,), cu_seqlens=[0, 24, 32], max_seqlen=24, tokens[:8]=[5000, 5001, ...]
+  critical path (busiest rank, relative units): 2560
 ```
 
-This means three short samples were packed onto one DPxCP rank:
+This means short samples were packed onto single DPxCP ranks:
 
-- `tokens.shape=(48,)`: the packed token tensor has `24 + 16 + 8` tokens.
-- `cu_seqlens=[0, 24, 40, 48]`: sequence boundaries inside the flat token
-  tensor.
-- `max_seqlen=24`: longest individual sequence in this packed microbatch.
+- `tokens.shape=(64,)`: the packed token tensor has `48 + 16` tokens.
+- `cu_seqlens=[0, 48, 64]`: sequence boundaries inside the flat token tensor.
+- `max_seqlen=48`: longest individual sequence in this packed microbatch.
 - `local_cp_size=1`: this packed microbatch does not need a multi-rank CP
   group.
 
-For longer samples, the output may show the same `sample_id` on multiple DPxCP
-ranks with `local_cp_size=2`. In the real forward step, MCore reads
-`local_cp_size`, selects the matching dynamic CP group, and slices the packed
-THD batch with:
+The scheduler is packing-aware: it may place a short sample on a larger group
+than it needs when that lowers the busiest rank's workload. In the default run
+the 64-token sample fits one rank but runs on a two-rank group, for that reason.
+In the real forward step Megatron-Core reads `local_cp_size`, selects the
+matching pre-created dynamic CP group, and slices the packed THD batch with:
 
 ```python
 get_batch_on_this_rank_for_sequence_packing(..., dynamic_cp=True)
@@ -99,74 +104,96 @@ uv run python examples/training_features/long_context/dynamic_context_parallel.p
   --dp-size 4 --cp-size 2
 ```
 
+Restrict the scheduler to a subset of the valid group sizes:
+
+```bash
+uv run python examples/training_features/long_context/dynamic_context_parallel.py \
+  --dp-size 2 --cp-size 2 --cp-group-sizes 1 4
+```
+
 ## Long-Context SFT Launch Scripts
 
 The `qwen3_600m_sft_128k.sh` and `qwen3_600m_sft_yarn_128k.sh` scripts are
 separate long-context SFT launch examples. They are real training launch
 scripts, unlike the DCP packing demo above.
 
-## Qwen3.5-35B-A3B with Dynamic Context Parallel
+## Dynamic Context Parallel Training on Mock Data
 
 `qwen35_35b_a3b_dynamic_cp.py` is a real training launch script. It builds the
 `qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config` recipe, applies
-dotted config overrides, and trains. The recipe fine-tunes Qwen3.5-35B-A3B on
-CoderForge-Preview SWE-Rebench trajectories with TP1, PP1, CP4, and EP8 on eight
-GB200 GPUs and a 32K-token cap. `dataset.enable_global_batch_packing=True` packs
-the global batch once per step, and `model.dynamic_context_parallel=True` runs
-every packed microbatch on a context-parallel group sized for its longest
-sequence. The script needs the Megatron-Core dev pin and a converted pretrained
-checkpoint:
+dotted config overrides, and trains. It runs on the Megatron-Core `main` pin
+this repository ships.
 
-```bash
-./scripts/switch_mcore.sh dev && uv sync
-uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py \
-  checkpoint.pretrained_checkpoint=/path/to/megatron/qwen3.5-35b-a3b \
-  train.train_iters=20 logger.log_interval=1
-```
+`--tiny-model` is the supported way to run it today. It shrinks the recipe to a
+Qwen3.5-shaped attention and MoE model (4 layers, 8 experts, 8K cap) and
+replaces the dataset with a generated variable-length SFT file, so it needs no
+download and no checkpoint. The model runs `world_size / 2` data-parallel
+replicas of CP2 with EP2, uses full-attention layers only, and drops the
+recipe's multi-token-prediction layer. Mock runs write and resume no
+checkpoints, so repeated runs and dynamic-versus-static runs start fresh.
 
-Static-CP baseline on the same packing path:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py \
-  model.dynamic_context_parallel=false model.sequence_packing_scheduler=dp_balanced
-```
-
-Two-GPU smoke test with a tiny Qwen3.5-shaped model on a generated
-variable-length SFT file, with no download and no checkpoint:
+Dynamic CP on two GPUs:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=2 \
   examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py --tiny-model
 ```
 
-### Measured on GB200
+Static-CP baseline on the same packing path (`dp_balanced`), for comparisons:
 
-Eight GB200 GPUs in one NVL72 rack, NeMo 26.06.01 container, Megatron-Core dev
-pin with [Megatron-LM #7417](https://github.com/NVIDIA/Megatron-LM/pull/7417),
-random initialization, the first 4,000 SWE-Rebench trajectories, and 12 steps
-of which the first four are dropped. Throughput is Bridge's model TFLOP/s per
-GPU.
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=2 \
+  examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py --tiny-model --static-cp
+```
 
-| Configuration | Median step | Median TFLOP/s per GPU | Peak allocated per GPU |
-|---|---|---|---|
-| Recipe: dynamic CP, full recompute, 16 loader workers | 88 s | 90 | 108 GB |
-| Static CP4 (`dp_balanced`), otherwise identical | 83 s | 93 | 108 GB |
-| Recipe with 2 loader workers | 254 s | 31 | 108 GB |
-| Recipe with selective recompute of `moe_act` and `layernorm` | 75 s over four steps, then NCCL out of memory | 106 | 163 GB |
+The generated data has lognormal lengths: most samples fit within one rank's
+4K-token share and a tail needs a larger group. `dataset.enable_global_batch_packing=True`
+packs the global batch once per step, and `model.dynamic_context_parallel=True`
+runs every packed microbatch on a context-parallel group sized for its
+longest sequence.
 
-- GPT-SFT tokenizes each trajectory lazily, which takes about 9 seconds per
-  sample here, and the packing scheduler pulls a whole step's samples at once.
-  With two loader workers the GPUs wait on data; the recipe uses 16.
-- About nine in ten of these trajectories are longer than the 32K cap, so
-  nearly every packed sequence needs the full CP4 group and dynamic CP has no
-  short sequences to place on smaller groups. Its median step is 5% slower
-  than static CP4 here, within this run's step-to-step noise. Dynamic CP pays
-  off on streams with a meaningful share of short sequences.
-- Selective recompute runs about 13% faster per step, but it reserves over
-  170 GB per GPU, and the next communicator dynamic CP creates for a new group
-  size fails to allocate. Full recompute leaves that headroom.
+### Limits of dynamic CP on Megatron-Core `main`
 
-See `docs/training/dynamic-context-parallel.md` for when dynamic CP helps, the
-configuration rules, and the notes for wide-head MoE models.
+Dynamic CP on `main` covers full-attention and MoE layers. Two things in the
+full Qwen3.5-35B-A3B recipe are not supported under it yet, and
+`ConfigContainer.validate` rejects the recipe with an explanation instead of
+letting the run fail later:
+
+- **Gated DeltaNet layers.** Megatron-Core sizes their context-parallel
+  exchange from the static CP group, so a bin placed on a smaller runtime group
+  fails in the forward pass.
+- **Multi-token prediction.** With microbatches on different context-parallel
+  groups the MTP token roll hangs. Static CP with MTP is unaffected.
+
+### Measured on GB200 with mock data
+
+Four GB200 GPUs in one node, NeMo 26.10 rc5 container, Megatron-Core `main`
+pin, `--tiny-model` data, with the first 12 steps dropped as warm-up (one-time
+compilation, communicator setup and shape-dependent kernel setup). Both modes
+process identical global batches in the same order and reach the same loss
+(final losses agree to four decimals), so the comparison is step time over the
+same steps. The first two rows are single 40-step runs. The CP4 / 128 row is two
+runs in opposite order (dynamic first, then static first), compared over steps 13
+to 37 and 13 to 30.
+
+| Topology | Global batch | Static CP median step | Dynamic CP median step | Static / dynamic total time |
+|---|---|---|---|---|
+| DP2 x CP2 | 32 | 702 ms | 638 ms | 0.89 (dynamic 11% slower) |
+| CP4 | 32 | 771 ms | 645 ms | 1.10 |
+| CP4 | 128 | 2.82 s | 2.10 to 2.15 s | 1.41 and 1.46 (1.31 on the matched 13 to 30 window) |
+
+- Dynamic CP pays off when static CP is expensive. With CP2 inside two
+  data-parallel replicas on one NVLink domain, communication is cheap and the
+  tiny model is dominated by per-step overhead, so dynamic CP is slightly slower.
+  With one CP4 group across all four GPUs and a larger global batch, short
+  samples run on single GPUs with no context-parallel exchange and the gain
+  grows.
+- The gain depends on the length mix. This mock stream has many samples that fit
+  one rank. A stream where nearly every sample needs the whole group gains
+  nothing from dynamic CP.
+- Steps vary because each step draws a different mix of lengths, and each newly
+  seen packed shape pays a one-time kernel setup cost, so short runs overstate
+  per-step variance. Compare totals over the same steps, as above.
+
+See `docs/training/dynamic-context-parallel.md` for when dynamic CP helps and the
+configuration rules.

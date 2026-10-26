@@ -192,22 +192,14 @@ def test_supported_main_like_pin_also_runs_the_first_fetch(monkeypatch, no_mtp):
     assert out[0] == "tokens"
 
 
-@pytest.mark.parametrize("has_routes", [True, False])
-def test_finalize_binds_the_cp_group_and_prebuilds_routes_when_available(monkeypatch, has_routes):
+def test_finalize_binds_the_cp_group(monkeypatch):
     import megatron.core.packed_seq_params as packed_seq_params_module
 
     cp_group = _Group(2)
     params = SimpleNamespace(cp_group=None, local_cp_size=None)
-    prebuilt = []
     monkeypatch.setattr(packed_seq_params_module, "resolve_cp_group", lambda static, psp: static)
-    monkeypatch.setattr(
-        global_batch_packing,
-        "_thd_cp_route_prebuilder",
-        lambda: (lambda psp, group: prebuilt.append((psp, group))) if has_routes else None,
-    )
     finalized = global_batch_packing.finalize_packed_seq_params(params, SimpleNamespace(cp=cp_group))
     assert finalized is params and params.cp_group is cp_group
-    assert prebuilt == ([(params, cp_group)] if has_routes else [])
     assert global_batch_packing.finalize_packed_seq_params(None, SimpleNamespace(cp=cp_group)) is None
 
 
@@ -225,10 +217,11 @@ def test_probe_reports_what_the_pinned_scheduler_is_missing(monkeypatch):
     assert message is not None and "ProcessGroupCollection" in message
 
 
-def test_probe_requires_dynamic_cp_support_and_points_at_the_dev_pin(monkeypatch):
+def test_probe_requires_dynamic_cp_support_and_points_at_the_main_pin(monkeypatch):
     _install_fake_data_schedule(monkeypatch, schedulers=["dp_balanced"])
     message = global_batch_packing.probe_global_batch_packing_support("default_dynamic_cp", dynamic_cp=True)
-    assert message is not None and "default_dynamic_cp" in message and "switch_mcore.sh dev" in message
+    assert message is not None and "default_dynamic_cp" in message
+    assert "dynamic CP v2" in message and "main pin" in message and "switch_mcore" not in message
 
     _install_fake_data_schedule(
         monkeypatch, schedulers=["dp_balanced", "default_dynamic_cp"], get_batch=_get_batch_with_config
@@ -240,7 +233,7 @@ def test_probe_requires_dynamic_cp_support_and_points_at_the_dev_pin(monkeypatch
         monkeypatch, schedulers=["dp_balanced", "default_dynamic_cp"], get_batch=_get_batch_with_dynamic_cp
     )
     assert global_batch_packing.probe_global_batch_packing_support("default_dynamic_cp", dynamic_cp=True) is None
-    # Static packing never needs the dev pin hint.
+    # Static packing never needs the dynamic CP hint.
     assert global_batch_packing.probe_global_batch_packing_support("dp_balanced") is None
 
 

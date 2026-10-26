@@ -385,11 +385,14 @@ def qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config() -> ConfigContain
     so on up to the full pool. Set ``checkpoint.pretrained_checkpoint`` to a converted
     Megatron checkpoint before training.
 
-    Requires the Megatron-Core ``dev`` submodule pin (``./scripts/switch_mcore.sh dev``). The
-    ``main`` pin's model config does not declare ``dynamic_context_parallel``, so building this
-    recipe there raises ``AttributeError``. Qwen3.5 attention uses 256-wide heads, which
-    Transformer Engine only trains with FlashAttention; until Megatron-Core derives
-    ``pad_between_seqs`` from the actual ``cu_seqlens``
+    Dynamic CP runs on the Megatron-Core ``main`` pin, which supports it for full-attention
+    and MoE layers but not yet for Gated DeltaNet or multi-token prediction. This recipe's 3:1
+    Gated DeltaNet layout and its MTP layer therefore fail ``ConfigContainer.validate`` with an
+    explanation; until Megatron-Core supports runtime groups there,
+    ``examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py --tiny-model`` runs
+    the same packing path on a full-attention model without MTP. Qwen3.5 attention uses
+    256-wide heads, which Transformer Engine only trains with FlashAttention; until Megatron-Core
+    derives ``pad_between_seqs`` from the actual ``cu_seqlens``
     (https://github.com/NVIDIA/Megatron-LM/pull/7417), FlashAttention also needs bins
     without padding between sequences, which ``fold_alignment_padding`` provides. See
     ``docs/training/dynamic-context-parallel.md``.

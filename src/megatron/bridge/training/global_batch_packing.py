@@ -19,7 +19,7 @@ driven by ``dataset.enable_global_batch_packing``) packs unpacked variable-lengt
 samples into THD microbatches once per training step, with the whole global batch
 across data-parallel ranks as its candidate pool. With
 ``model.dynamic_context_parallel`` it also runs every packed bin on a
-context-parallel group sized for its longest sequence (Megatron-Core ``dev``).
+context-parallel group sized for its longest sequence (Megatron-Core dynamic CP v2).
 :func:`probe_global_batch_packing_support` checks the pinned Megatron-Core before
 training starts, and the entry points below adapt to the scheduler API of the pinned
 release.
@@ -51,6 +51,7 @@ __all__ = [
     "finalize_packed_seq_params",
     "get_batch_for_global_batch_packing",
     "global_batch_packing_enabled",
+    "model_has_linear_attention_layers",
     "probe_global_batch_packing_support",
     "wrap_data_iterator_for_global_batch_packing",
 ]
@@ -59,8 +60,9 @@ __all__ = [
 DYNAMIC_CP_SCHEDULERS: tuple[str, ...] = ("default_dynamic_cp",)
 """Scheduler names that form dynamic context-parallel groups per microbatch."""
 
-_DEV_PIN_HINT = (
-    " Dynamic context parallelism needs the Megatron-Core dev pin: `./scripts/switch_mcore.sh dev && uv sync`."
+_DYNAMIC_CP_HINT = (
+    " Dynamic context parallelism needs a Megatron-Core with dynamic CP v2: use the Megatron-Core main pin this "
+    "repository ships (update the 3rdparty/Megatron-LM submodule, then `uv sync`)."
 )
 
 
@@ -76,6 +78,29 @@ def global_batch_packing_enabled(model_config: Any) -> bool:
 def dynamic_context_parallel_enabled(model_config: Any) -> bool:
     """Return whether dynamic context parallelism is configured (an explicit ``True``, not any truthy value)."""
     return getattr(model_config, "dynamic_context_parallel", False) is True
+
+
+def model_has_linear_attention_layers(model_config: Any) -> bool:
+    """Return whether any layer of the model is a linear-attention (Gated DeltaNet or KDA) layer.
+
+    Megatron-Core sizes those layers' context-parallel exchange from the static CP group, so they cannot
+    run on the smaller runtime groups that dynamic context parallelism picks. A model that names a
+    linear-attention variant with an unusable layer pattern is treated as having such layers.
+    """
+    variant = getattr(model_config, "experimental_attention_variant", None)
+    if variant is None:
+        return False
+    from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+        get_linear_attention_pattern,
+        is_linear_attention_variant,
+    )
+
+    if not is_linear_attention_variant(variant):
+        return False
+    try:
+        return any(get_linear_attention_pattern(model_config))
+    except (ValueError, AssertionError):
+        return True
 
 
 def _scheduler_api() -> tuple[Callable[..., Any], Callable[..., Any]]:
@@ -94,16 +119,6 @@ def _accepted_parameters(fn: Callable[..., Any]) -> frozenset[str]:
     return frozenset(inspect.signature(fn).parameters)
 
 
-@functools.lru_cache(maxsize=None)
-def _thd_cp_route_prebuilder() -> Callable[..., None] | None:
-    """Return Megatron-Core's THD CP partition-route prebuild, or ``None`` if the release has no CP layout routes."""
-    try:
-        from megatron.core.context_parallel_layout.routes import prebuild_thd_cp_partition_routes
-    except ImportError:
-        return None
-    return prebuild_thd_cp_partition_routes
-
-
 def probe_global_batch_packing_support(scheduler: str, *, dynamic_cp: bool = False) -> str | None:
     """Return why the pinned Megatron-Core cannot run ``scheduler``, or ``None`` if it can.
 
@@ -112,7 +127,7 @@ def probe_global_batch_packing_support(scheduler: str, *, dynamic_cp: bool = Fal
     first step. ``dynamic_cp`` additionally requires the packed batch fetch to accept
     the dynamic-CP arguments.
     """
-    hint = _DEV_PIN_HINT if dynamic_cp or scheduler in DYNAMIC_CP_SCHEDULERS else ""
+    hint = _DYNAMIC_CP_HINT if dynamic_cp or scheduler in DYNAMIC_CP_SCHEDULERS else ""
     try:
         data_schedule = importlib.import_module("megatron.core.datasets.data_schedule")
     except ImportError:
@@ -235,19 +250,14 @@ def get_batch_for_global_batch_packing(
 def finalize_packed_seq_params(
     packed_seq_params: PackedSeqParams | None, pg_collection: ProcessGroupCollection
 ) -> PackedSeqParams | None:
-    """Bind the CP group to one microbatch and prebuild its THD CP partition route.
+    """Bind the CP group to one microbatch.
 
     Uses ``pg_collection.cp`` as the static group so attention runs on the group the
-    model was built with unless the scheduler attached a dynamic group. Releases with context-parallel layout routes get the route
-    built here, off the forward path; older releases partition without one.
+    model was built with unless the scheduler attached a dynamic group.
     """
     if packed_seq_params is None:
         return None
     from megatron.core.packed_seq_params import resolve_cp_group
 
-    cp_group = resolve_cp_group(pg_collection.cp, packed_seq_params)
-    packed_seq_params.cp_group = cp_group
-    prebuild_routes = _thd_cp_route_prebuilder()
-    if prebuild_routes is not None:
-        prebuild_routes(packed_seq_params, cp_group)
+    packed_seq_params.cp_group = resolve_cp_group(pg_collection.cp, packed_seq_params)
     return packed_seq_params

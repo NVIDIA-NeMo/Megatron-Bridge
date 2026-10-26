@@ -1265,6 +1265,7 @@ class ConfigContainer(Container):
         """
         from megatron.bridge.training.global_batch_packing import (
             DYNAMIC_CP_SCHEDULERS,
+            model_has_linear_attention_layers,
             probe_global_batch_packing_support,
         )
 
@@ -1311,6 +1312,20 @@ class ConfigContainer(Container):
         if getattr(model, "is_hybrid_model", False):
             raise ValueError(
                 f"{feature} does not yet support Mamba hybrid models (packed boundaries are not propagated to SSM layers)."
+            )
+        if dynamic_cp and model_has_linear_attention_layers(model):
+            raise ValueError(
+                "model.dynamic_context_parallel does not yet support linear-attention (Gated DeltaNet / KDA) layers: "
+                "Megatron-Core sizes their context-parallel exchange from the static CP group, so a bin placed on a "
+                "smaller runtime group would fail in the forward pass. Use a model with full-attention layers only "
+                "(the Qwen3.5 example does this with --tiny-model) or disable dynamic context parallelism."
+            )
+        if dynamic_cp and (getattr(model, "mtp_num_layers", None) or 0) > 0:
+            raise ValueError(
+                "model.dynamic_context_parallel does not yet support multi-token prediction: when microbatches run on "
+                "different context-parallel groups, the MTP token roll hangs on the pinned Megatron-Core. Set "
+                "model.mtp_num_layers=null (the Qwen3.5 example does this with --tiny-model) or disable dynamic "
+                "context parallelism."
             )
         if getattr(self.ddp, "use_megatron_fsdp", False):
             raise ValueError(f"{feature} is not supported with Megatron FSDP.")
