@@ -51,10 +51,10 @@ You can also turn telemetry on for every job in an environment, without changing
 export MEGATRON_OTEL_ENABLED=1
 ```
 
-`pretrain`, and the `finetune` and `distill` entry points that call it, start telemetry on every rank before
-setup. When `logger.otel_enabled` is `true` and nemo-lens or the OpenTelemetry SDK is not installed, the job
-stops at startup with an error that names the `otel` extra. When only the environment enables telemetry, the
-job logs a warning and trains without telemetry.
+`pretrain`, and the `finetune`, `distill`, and `dpo_train` entry points that call it, start telemetry on every
+rank before setup. When `logger.otel_enabled` is `true` and nemo-lens or the OpenTelemetry SDK is not
+installed, the job stops at startup with an error that names the `otel` extra. When only the environment
+enables telemetry, the job logs a warning and trains without telemetry.
 
 ### Send Telemetry to a Collector
 
@@ -79,7 +79,7 @@ Megatron Bridge reads the same environment variables as Megatron-LM. Each `MEGAT
 falls back to `NEMO_LENS_<KEY>`. A configuration field that is set takes precedence over its environment
 variable; `logger.otel_enabled=false`, the default, leaves the decision to the environment.
 
-| Configuration field | Environment variable | Default | Description |
+| Configuration Field | Environment Variable | Default | Description |
 |---|---|---|---|
 | `logger.otel_enabled` | `MEGATRON_OTEL_ENABLED` | `false` | Export telemetry from every rank. |
 | `logger.otel_span_groups` | `MEGATRON_OTEL_SPAN_GROUPS` | `default` | Span groups to record: a preset, a group name, or a comma-separated list of both. |
@@ -100,7 +100,7 @@ rank generates its own ID, and Megatron Bridge logs a warning on multi-rank jobs
 Every span belongs to a span group, and `span_groups` selects which groups are recorded. The following table
 lists the spans of each group:
 
-| Group | Spans | How often |
+| Group | Spans | How Often |
 |---|---|---|
 | `job` | `megatron.startup` | Once per `pretrain` call, covering setup |
 | `model_init` | `megatron.bridge.model.build` | Once per model built |
