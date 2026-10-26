@@ -27,7 +27,7 @@ from megatron.training.models.base import (
     ModelConfig as _MegatronModelConfig,
 )
 
-from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix, instantiate
 
 
@@ -108,6 +108,39 @@ class ModelConfigOverrideMixin:
             raise AttributeError(
                 f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
             )
+
+
+class MLAModelConfigMixin:
+    """Nest an MLA transformer config, which owns the rotary settings that MLA attention applies.
+
+    Megatron Core's MLA transformer config declares ``rotary_base`` and
+    ``rotary_percent``, as do the GPT and Hybrid model configs. MLA attention
+    reads the nested values, so the outer fields here read and write them
+    instead of keeping a second copy that could disagree. Construction assigns
+    the outer values, so pass them to the model config rather than only to its
+    transformer config. List this mixin before the model config class it
+    extends.
+    """
+
+    transformer_config_class: ClassVar[type[TransformerConfig]] = MLATransformerConfig
+
+    @property
+    def rotary_base(self) -> float:
+        """Rotary base of the nested MLA transformer config."""
+        return self.transformer.rotary_base
+
+    @rotary_base.setter
+    def rotary_base(self, value: float) -> None:
+        self.transformer.rotary_base = value
+
+    @property
+    def rotary_percent(self) -> float:
+        """Rotary percent of the nested MLA transformer config."""
+        return self.transformer.rotary_percent
+
+    @rotary_percent.setter
+    def rotary_percent(self, value: float) -> None:
+        self.transformer.rotary_percent = value
 
 
 class ModelConfig(_MegatronModelConfig):

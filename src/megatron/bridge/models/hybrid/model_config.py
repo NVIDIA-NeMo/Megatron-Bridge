@@ -27,7 +27,7 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
-from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideMixin
+from megatron.bridge.models.common.base import MLAModelConfigMixin, ModelConfig, ModelConfigOverrideMixin
 from megatron.bridge.models.hybrid.hybrid_builder import DEFAULT_MAMBA_CHUNK_SIZE, HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
@@ -188,4 +188,16 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
         return result
 
 
-__all__ = ["BridgeHybridModelConfig"]
+@dataclass(kw_only=True)
+class BridgeHybridMLAModelConfig(MLAModelConfigMixin, BridgeHybridModelConfig):
+    """Hybrid model config with Multi-Latent Attention (MLA) in its attention layers.
+
+    The nested transformer config is an ``MLATransformerConfig``, and
+    ``rotary_base`` and ``rotary_percent`` read and write its values, because
+    MLA attention applies RoPE from them. Hybrid MLA families such as
+    DeepSeek-V4 and GLM-5 subclass it, as their providers combine
+    ``HybridModelProvider`` with an MLA config.
+    """
+
+
+__all__ = ["BridgeHybridMLAModelConfig", "BridgeHybridModelConfig"]

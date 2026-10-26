@@ -46,7 +46,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.core.utils import get_pg_size
 from megatron.training.models.base import ModelConfig
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
@@ -753,7 +753,12 @@ class MegatronModelBridge(
         # HF configs use either "type" or "rope_type" key for the scaling type
         from megatron.bridge.models.mla_provider import MLAModelProvider
 
-        is_mla_provider = self.PROVIDER_CLASS is not None and issubclass(self.PROVIDER_CLASS, MLAModelProvider)
+        # MLA rope fields belong to an MLA provider or to a model config that nests an MLA transformer config.
+        model_transformer_config_class = getattr(self.MODEL_CONFIG_CLASS, "transformer_config_class", None)
+        is_mla = (self.PROVIDER_CLASS is not None and issubclass(self.PROVIDER_CLASS, MLAModelProvider)) or (
+            isinstance(model_transformer_config_class, type)
+            and issubclass(model_transformer_config_class, MLATransformerConfig)
+        )
         rope_scaling = getattr(hf_config, "rope_scaling", None)
 
         rope_type = None
@@ -761,9 +766,8 @@ class MegatronModelBridge(
             rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
 
         if rope_type == "yarn":
-            # Check if this is an MLA provider (uses direct field names)
-            # or a GPT provider (uses yarn_ prefixed field names)
-            if is_mla_provider:
+            # MLA configs use direct field names; GPT configs use yarn_ prefixed field names
+            if is_mla:
                 # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)
                 mla_params = {}
                 for hf_key, megatron_key in self.MLA_ROPE_SCALING_MAPPING:
@@ -785,7 +789,7 @@ class MegatronModelBridge(
                 # fields to YarnRotaryEmbedding explicitly, so None would override its defaults.
                 for megatron_key, default in self.YARN_HF_DEFAULTS:
                     provider_kwargs.setdefault(megatron_key, default)
-        elif is_mla_provider:
+        elif is_mla:
             if rope_type not in (None, "default"):
                 logger.warning(
                     f"Unsupported {rope_type=} for MLA model; "
@@ -826,6 +830,12 @@ class MegatronModelBridge(
         override hook.
         """
         config_kwargs = self._hf_config_to_megatron_kwargs(hf_config)
+        mla_rope_params = config_kwargs.pop("_mla_rope_params", None)
+        if mla_rope_params is not None:
+            # MLA transformer configs declare the rotary scaling fields, and MLA attention applies
+            # RoPE itself, so the model keeps "rope", as provider_bridge() sets for MLA providers.
+            config_kwargs.update(mla_rope_params)
+            config_kwargs["position_embedding_type"] = "rope"
         config_kwargs.update(
             attention_softmax_in_fp32=False,
             cross_entropy_loss_fusion=True,

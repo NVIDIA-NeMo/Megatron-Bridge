@@ -16,18 +16,28 @@ from dataclasses import dataclass
 from unittest.mock import Mock, patch
 
 import pytest
+import torch.nn.functional as F
 from megatron.core.activations import squared_relu
 from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_inference_stack_spec, hybrid_stack_spec
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnBackend
+from transformers import DeepseekV3Config
 
 from megatron.bridge.models.beam.beam_config import BeamModelConfig
 from megatron.bridge.models.common.base import ModelConfig
-from megatron.bridge.models.hybrid import BridgeHybridModelBuilder, BridgeHybridModelConfig, HybridModelConfig
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.hybrid import (
+    BridgeHybridMLAModelConfig,
+    BridgeHybridModelBuilder,
+    BridgeHybridModelConfig,
+    HybridModelConfig,
+)
 from megatron.bridge.models.muse_spark_open.muse_spark_open_config import MuseSparkModelConfig
-from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 pytestmark = pytest.mark.unit
@@ -302,3 +312,125 @@ class TestBuilderStackSpec:
         assert mock_model.call_args.kwargs["hybrid_layer_pattern"] == "ME*-"
         assert mock_model.call_args.kwargs["config"] is config.transformer
         assert config.hybrid_stack_spec is config_factory
+
+
+def _make_mla_model_config(**kwargs) -> BridgeHybridMLAModelConfig:
+    values = dict(
+        transformer=MLATransformerConfig(
+            num_layers=4,
+            hidden_size=128,
+            num_attention_heads=4,
+            ffn_hidden_size=256,
+            activation_func=F.silu,
+            q_lora_rank=None,
+            kv_lora_rank=32,
+            qk_head_dim=16,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=16,
+        ),
+        vocab_size=256,
+        hybrid_layer_pattern="*E*E",
+        rotary_base=50_000.0,
+    )
+    values.update(kwargs)
+    return BridgeHybridMLAModelConfig(**values)
+
+
+class _HybridMLABridge(MegatronModelBridge):
+    """A builder-only MLA bridge: no legacy MLA provider selects the MLA rope fields."""
+
+    MODEL_CONFIG_CLASS = BridgeHybridMLAModelConfig
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        return MegatronMappingRegistry()
+
+
+class TestMLAConfig:
+    def test_rotary_settings_live_on_the_mla_transformer(self) -> None:
+        """MLA attention reads rotary_base and rotary_percent from its transformer config, which declares both."""
+        config = _make_mla_model_config()
+
+        assert BridgeHybridMLAModelConfig.transformer_config_class is MLATransformerConfig
+        assert config.transformer.rotary_base == 50_000.0
+
+        config.rotary_base = 20_000.0
+        config.rotary_percent = 0.5
+
+        assert config.transformer.rotary_base == 20_000.0
+        assert config.transformer.rotary_percent == 0.5
+        assert "rotary_base" not in config.__dict__
+
+        config.transformer.rotary_base = 30_000.0
+        assert config.rotary_base == 30_000.0
+
+    def test_round_trip_restores_the_mla_transformer(self) -> None:
+        serialized = _make_mla_model_config().as_dict()
+        restored = ModelConfig.from_dict(serialized)
+
+        assert serialized["rotary_base"] == serialized["transformer"]["rotary_base"] == 50_000.0
+        assert isinstance(restored, BridgeHybridMLAModelConfig)
+        assert isinstance(restored.transformer, MLATransformerConfig)
+        assert restored.rotary_base == 50_000.0
+        assert restored.q_lora_rank is None
+        assert restored.kv_lora_rank == 32
+        assert restored.get_builder_cls() is BridgeHybridModelBuilder
+
+    def test_cli_overrides_reach_the_mla_transformer(self) -> None:
+        @dataclass
+        class _Root:
+            model: BridgeHybridMLAModelConfig
+
+        root = _Root(model=_make_mla_model_config())
+
+        process_config_with_overrides(root, cli_overrides=["model.rotary_base=20000.0", "model.kv_lora_rank=64"])
+
+        assert root.model.transformer.rotary_base == 20_000.0
+        assert root.model.rotary_base == 20_000.0
+        assert root.model.kv_lora_rank == 64
+
+    def test_finalize_derives_layers_and_keeps_mla(self) -> None:
+        config = _make_mla_model_config()
+        config.transformer.num_layers = None
+
+        config.finalize()
+
+        assert config.num_layers == 4
+        assert config.multi_latent_attention is True
+        assert config.rotary_base == 50_000.0
+
+    def test_bridge_maps_mla_rope_fields_from_the_model_config(self) -> None:
+        """The MLA model config, not a legacy MLA provider, selects the flat MLA rope fields."""
+        hf_config = DeepseekV3Config(
+            num_hidden_layers=2,
+            hidden_size=128,
+            intermediate_size=256,
+            moe_intermediate_size=64,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            n_routed_experts=4,
+            num_experts_per_tok=2,
+            q_lora_rank=32,
+            kv_lora_rank=32,
+            qk_nope_head_dim=16,
+            qk_rope_head_dim=16,
+            v_head_dim=16,
+            vocab_size=256,
+            rope_theta=50_000.0,
+            rope_scaling={
+                "type": "yarn",
+                "factor": 40,
+                "beta_fast": 32,
+                "beta_slow": 1,
+                "mscale": 1.0,
+                "mscale_all_dim": 1.0,
+                "original_max_position_embeddings": 4096,
+            },
+        )
+
+        kwargs = _HybridMLABridge().hf_config_to_model_config_kwargs(hf_config)
+
+        assert "_mla_rope_params" not in kwargs
+        assert kwargs["position_embedding_type"] == "rope"
+        assert kwargs["rotary_scaling_factor"] == 40
+        assert kwargs["original_max_position_embeddings"] == 4096
+        assert "yarn_rotary_scaling_factor" not in kwargs
