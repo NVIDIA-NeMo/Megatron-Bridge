@@ -97,7 +97,9 @@ nested transformer config is an `MLATransformerConfig`. Megatron Core declares `
 views of them. With an MLA model config, the base mapping maps a YaRN `rope_scaling` dict to the MLA
 fields (`rotary_scaling_factor`, `mscale`, `beta_fast`, ...) and selects `position_embedding_type="rope"`.
 Follow GLM-5 (`src/megatron/bridge/models/glm_moe_dsa/glm5_config.py`), whose config shares its
-DSA-aware `finalize()` with the provider and whose builder resolves a custom stack spec.
+DSA-aware `finalize()` with the provider and whose builder resolves a custom stack spec, and
+DeepSeek-V4 (`src/megatron/bridge/models/deepseek/deepseek_v4_config.py`), which adds a transformer
+field that recipes set.
 
 ### When you need a custom config class
 
