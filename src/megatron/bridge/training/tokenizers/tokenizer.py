@@ -114,6 +114,17 @@ def _resolve_hf_tokenizer_revision(config: TokenizerConfig) -> TokenizerConfig:
             HfHubHTTPError = Exception
             OfflineModeIsEnabled = Exception
 
+    # huggingface_hub >= 1.x raises httpx transport errors (ConnectError,
+    # ReadTimeout, ...) for network failures; these are not builtin
+    # ConnectionError subclasses, so catch the httpx base transport error too.
+    try:
+        from httpx import TransportError as _HttpxTransportError
+    except ImportError:
+        # Nothing can raise it when httpx is absent; a placeholder that no
+        # raised exception inherits keeps the handler valid either way.
+        class _HttpxTransportError(Exception):
+            pass
+
     try:
         snapshot_path = snapshot_download(
             repo_id=tokenizer_model,
@@ -122,7 +133,7 @@ def _resolve_hf_tokenizer_revision(config: TokenizerConfig) -> TokenizerConfig:
             ignore_patterns=list(_HF_MODEL_WEIGHT_IGNORE_PATTERNS),
             local_files_only=local_files_only,
         )
-    except (OfflineModeIsEnabled, HfHubHTTPError, ConnectionError) as err:
+    except (OfflineModeIsEnabled, HfHubHTTPError, ConnectionError, _HttpxTransportError) as err:
         if not local_files_only:
             try:
                 snapshot_path = snapshot_download(
