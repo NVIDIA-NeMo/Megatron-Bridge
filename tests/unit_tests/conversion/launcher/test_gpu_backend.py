@@ -532,6 +532,37 @@ class TestPipelineLayout:
             ["loss"],
         ]
 
+    def test_restore_reads_fields_nested_in_a_builder_model_config(self, cli, tmp_path):
+        # Builder-backed checkpoints save Megatron-Core fields under model.transformer.
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  _builder_: megatron.bridge.models.gpt.BridgeGPTModelBuilder\n"
+            "  transformer:\n"
+            "    mtp_num_layers: 1\n"
+            "    pipeline_model_parallel_size: 3\n"
+            "    pipeline_model_parallel_layout:\n"
+            "      - [embedding, decoder, decoder]\n"
+            "      - [decoder]\n"
+            "      - [decoder, mtp, loss]\n"
+        )
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                raise AssertionError("a saved layout for the requested topology must be restored")
+
+        provider = _FakeProvider([])
+        provider.mtp_num_layers = None
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=3)
+
+        assert provider.mtp_num_layers == 1
+        assert provider.pipeline_model_parallel_layout == [
+            ["embedding", "decoder", "decoder"],
+            ["decoder"],
+            ["decoder", "mtp", "loss"],
+        ]
+
     def test_restore_keeps_hybrid_segments_saved_with_the_layout(self, cli, tmp_path):
         (tmp_path / "run_config.yaml").write_text(
             "model:\n"

@@ -135,6 +135,8 @@ def _maybe_restore_pipeline_layout(
         with config_path.open() as config_file:
             config = yaml.safe_load(config_file) or {}
         model_config = config.get("model", {})
+        # Builder-backed model configs serialize the Megatron-Core fields under ``transformer``.
+        model_config = {**(model_config.get("transformer") or {}), **model_config}
         if "mtp_num_layers" in model_config:
             model_provider.mtp_num_layers = model_config["mtp_num_layers"]
         saved_layout = model_config.get("pipeline_model_parallel_layout")
