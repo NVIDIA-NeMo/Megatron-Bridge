@@ -35,6 +35,7 @@ if str(COMMON_SCRIPT_DIR) not in sys.path:
 from container_runtime import (  # noqa: E402
     add_container_runtime_args,
     apply_container_runtime,
+    run_from_container_repo_root,
     validate_container_runtime,
 )
 from slurm_parameters import add_slurm_parameter_args  # noqa: E402
@@ -298,6 +299,8 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
     task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
+    if args.container_runtime == "pyxis":
+        task = run_from_container_repo_root(task)
 
     with run.Experiment(args.experiment_name or "inference", skip_status_at_exit=True) as experiment:
         experiment.add(task, executor=executor, name=args.task)
