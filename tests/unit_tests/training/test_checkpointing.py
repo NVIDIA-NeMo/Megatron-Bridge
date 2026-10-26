@@ -5284,10 +5284,21 @@ class TestLoadSaveCachedMetadataHandoff:
         metadata = checkpointing_context["load_strategy"].cached_global_metadata
         assert "weight" in metadata.state_dict_metadata
 
-    def test_first_save_plugs_in_the_loaded_metadata(self, tmp_path, save_checkpoint_fixtures):
-        """save_checkpoint seeds its first save strategy with the metadata kept by the load strategy."""
+    @pytest.mark.parametrize("fully_parallel_load", [False, True])
+    def test_first_save_plugs_in_the_loaded_metadata(self, tmp_path, save_checkpoint_fixtures, fully_parallel_load):
+        """save_checkpoint seeds its first save strategy with the metadata kept by the load strategy.
+
+        With fully_parallel_load on a single-rank DP x CP group, the wrapper leaves its own field empty
+        and only the wrapped strategy holds the metadata.
+        """
         loaded_metadata = Mock(name="loaded_metadata")
-        checkpointing_context = {"load_strategy": Mock(cached_global_metadata=loaded_metadata)}
+        if fully_parallel_load:
+            load_strategy = Mock(
+                cached_global_metadata=None, base_strategy=Mock(cached_global_metadata=loaded_metadata)
+            )
+        else:
+            load_strategy = Mock(cached_global_metadata=loaded_metadata)
+        checkpointing_context = {"load_strategy": load_strategy}
 
         state = save_checkpoint_fixtures["mock_state"]
         state.cfg.checkpoint.save = str(tmp_path)

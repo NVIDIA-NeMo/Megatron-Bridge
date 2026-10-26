@@ -1522,9 +1522,14 @@ def save_checkpoint(
                 if ckpt_cfg.ckpt_assume_constant_structure and ckpt_cfg.ckpt_format == "torch_dist":
                     save_strategy.use_cached_ckpt_structure = ckpt_cfg.ckpt_assume_constant_structure
                     if checkpointing_context is not None and "load_strategy" in checkpointing_context:
-                        cached_global_metadata = getattr(
-                            checkpointing_context["load_strategy"], "cached_global_metadata", None
-                        )
+                        load_strategy = checkpointing_context["load_strategy"]
+                        cached_global_metadata = getattr(load_strategy, "cached_global_metadata", None)
+                        if cached_global_metadata is None:
+                            # FullyParallelLoadStrategyWrapper does not forward the metadata when its
+                            # DP x CP group has a single rank, so read it from the wrapped strategy.
+                            cached_global_metadata = getattr(
+                                getattr(load_strategy, "base_strategy", None), "cached_global_metadata", None
+                            )
                         if cached_global_metadata is not None:
                             logger.debug("Plugging in the read metadata from the load strategy...")
                             save_strategy.cached_global_metadata = cached_global_metadata
