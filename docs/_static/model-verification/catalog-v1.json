@@ -24,7 +24,7 @@
           "workflow": "hf_to_megatron_cpu"
         },
         {
-          "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
+          "bridge_commit": "6d319871f71b85a5af95981164276ba6d6074646",
           "command_topologies": [
             {
               "gpus_per_node": "1",
@@ -33,14 +33,14 @@
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 1 --hf-model ByteDance-Seed/BAGEL-7B-MoT --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b --megatron-path work/model-verification/bagel/hf-to-megatron --torch-dtype bfloat16"
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 1 --hf-model ByteDance-Seed/BAGEL-7B-MoT --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b --megatron-path work/model-verification/bagel/hf-to-megatron --torch-dtype bfloat16 --bagel-repo work/dependencies/Bagel"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "bagel-hf-to-megatron-gpu",
           "expected_result": "The public GPU importer consumed the pinned official EMA state, reported 1,223 source tensors consumed and 943 target tensors verified, and wrote a standalone torch_dist checkpoint. A clean one-GPU model reload of the saved checkpoint completed with no missing or unexpected keys; all 943 checkpoint tensors matched the model's keys and shapes and were BF16. Mapping every reloaded tensor back to the official EMA names (undoing the QKV and GLU fusion) covered all 1,223 EMA tensors, which are already BF16, and every one exactly matched its EMA value, including all 56 understanding and generation input-norm tensors. Altering a single finite element made the value check fail.\n",
           "hardware": null,
-          "last_verified": "2026-10-21",
+          "last_verified": "2026-10-22",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.hf_to_megatron_gpu",
