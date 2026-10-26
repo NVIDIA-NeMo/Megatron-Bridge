@@ -882,7 +882,8 @@ _DEEPSEEK_V4_FLASH_FOUR_LAYER_CONFIG = {
 class TestDeepSeekV4CheckpointConfigExport:
     """``convert.sh export`` rebuilds the HF config from the checkpoint through ``AutoBridge.from_auto_config``."""
 
-    def test_from_auto_config_reproduces_the_reference_config(self, tmp_path):
+    @pytest.mark.parametrize("use_model_config", [False, True], ids=["provider", "model_config"])
+    def test_from_auto_config_reproduces_the_reference_config(self, tmp_path, use_model_config):
         pytest.importorskip("transformers.models.deepseek_v4")
         from transformers import AutoConfig
 
@@ -893,11 +894,16 @@ class TestDeepSeekV4CheckpointConfigExport:
         hf_dir.mkdir()
         (hf_dir / "config.json").write_text(json.dumps(_DEEPSEEK_V4_FLASH_FOUR_LAYER_CONFIG))
         reference = AutoConfig.from_pretrained(hf_dir)
-        provider = AutoBridge.from_hf_config(reference).to_megatron_provider(load_weights=False)
+        bridge = AutoBridge.from_hf_config(reference)
+        if use_model_config and bridge._model_bridge.MODEL_CONFIG_CLASS is None:
+            pytest.skip("DeepSeek-V4 has no builder-backed model config yet.")
+        model_config = (
+            bridge.get_model_config() if use_model_config else bridge.to_megatron_provider(load_weights=False)
+        )
         checkpoint_dir = tmp_path / "checkpoint"
         checkpoint_dir.mkdir()
         ConfigContainer(
-            model=provider,
+            model=model_config,
             train=None,
             optimizer=None,
             scheduler=None,
@@ -913,7 +919,12 @@ class TestDeepSeekV4CheckpointConfigExport:
         assert rebuilt.to_json_string() == reference.to_json_string()
         # Native configs derive qk_rope_head_dim from head_dim and partial_rotary_factor; a re-import must
         # keep v_head_dim > qk_pos_emb_head_dim, which MCore asserts for the DSv4 hybrid attention.
-        reimported = AutoBridge.from_hf_config(rebuilt).to_megatron_provider(load_weights=False)
+        rebuilt_bridge = AutoBridge.from_hf_config(rebuilt)
+        reimported = (
+            rebuilt_bridge.get_model_config()
+            if use_model_config
+            else rebuilt_bridge.to_megatron_provider(load_weights=False)
+        )
         assert (reimported.v_head_dim, reimported.qk_pos_emb_head_dim) == (512, 64)
 
 
