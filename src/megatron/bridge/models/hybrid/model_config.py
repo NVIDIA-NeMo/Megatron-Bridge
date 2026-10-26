@@ -25,6 +25,7 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
     parse_hybrid_pattern,
 )
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideMixin
 from megatron.bridge.models.hybrid.hybrid_builder import DEFAULT_MAMBA_CHUNK_SIZE, HybridModelConfig
@@ -145,7 +146,7 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
         return builder_cls
 
     def as_dict(self) -> dict[str, Any]:
-        """Serialize the config with a symbolic activation function."""
+        """Serialize the config with a symbolic activation function and a restorable pipeline layout."""
         data = super().as_dict()
         transformer_data = data.get("transformer")
         if not isinstance(transformer_data, dict):
@@ -161,6 +162,12 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
             raise ValueError(f"Cannot serialize unregistered activation callable: {activation_func!r}.")
 
         transformer_data["activation_func"] = activation_name
+
+        # finalize() parses the layout into an object that a saved run config cannot restore.
+        # Persist the layout as given, as the provider checkpoint path does.
+        layout = transformer_data.get("pipeline_model_parallel_layout")
+        if isinstance(layout, PipelineParallelLayerLayout):
+            transformer_data["pipeline_model_parallel_layout"] = layout.input_data
         return data
 
     @classmethod
