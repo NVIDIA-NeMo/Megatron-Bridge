@@ -337,7 +337,8 @@ class MyModelConfig(BridgeHybridModelConfig):  # or BridgeGPTModelConfig
 ```
 
 `BridgeHybridModelConfig` and `BridgeGPTModelConfig` provide strict overrides and serialization, so
-the subclass declares only its own fields. The builder subclasses Megatron Core's `GPTModelBuilder`
+the subclass declares only its own fields. A HybridModel with Multi-Latent Attention subclasses
+`BridgeHybridMLAModelConfig` instead (see @skills/adding-model-support/llm-patterns.md). The builder subclasses Megatron Core's `GPTModelBuilder`
 or `HybridModelBuilder` and overrides `build_model()`. The bridge sets `MODEL_CONFIG_CLASS = MyModelConfig` and
 `USE_MODEL_CONFIG_FOR_CONVERSION = True`, and overrides `hf_config_to_model_config()` and
 `megatron_to_hf_config()`. Follow Muse Glimmer (`src/megatron/bridge/models/muse_glimmer/`).
