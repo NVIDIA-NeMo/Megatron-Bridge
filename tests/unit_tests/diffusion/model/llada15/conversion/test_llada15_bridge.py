@@ -36,7 +36,7 @@ from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15Mod
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.model_load_save import load_model_config
+from megatron.bridge.training.model_load_save import build_and_load_model, load_model_config
 from megatron.bridge.utils.instantiate_utils import instantiate
 
 
@@ -271,6 +271,20 @@ def _comparable(value):
     return value
 
 
+def _save_run_config(model_config: BridgeGPTModelConfig, directory) -> None:
+    """Write the model config as a checkpoint's run_config.yaml."""
+    ConfigContainer(
+        model=model_config,
+        train=None,
+        optimizer=None,
+        scheduler=None,
+        dataset=None,
+        logger=None,
+        tokenizer=None,
+        checkpoint=None,
+    ).to_yaml(str(directory / "run_config.yaml"))
+
+
 class TestLLaDA15BuilderConfig:
     """Builder-backed ModelConfig path for LLaDA1.5."""
 
@@ -351,20 +365,41 @@ class TestLLaDA15BuilderConfig:
     def test_run_config_round_trip_restores_layer_spec(self, tmp_path):
         model_config = LLaDA15Bridge().hf_config_to_model_config(_make_hf_config())
 
-        ConfigContainer(
-            model=model_config,
-            train=None,
-            optimizer=None,
-            scheduler=None,
-            dataset=None,
-            logger=None,
-            tokenizer=None,
-            checkpoint=None,
-        ).to_yaml(str(tmp_path / "run_config.yaml"))
+        _save_run_config(model_config, tmp_path)
         loaded, _ = load_model_config(str(tmp_path))
 
         assert type(loaded) is BridgeGPTModelConfig
         assert loaded.transformer_layer_spec is llada15_layer_spec
+
+    @pytest.mark.parametrize("saved_cpu_init", [True, False])
+    @pytest.mark.parametrize("use_cpu_init", [False, True])
+    def test_load_builds_on_requested_device(self, tmp_path, saved_cpu_init, use_cpu_init):
+        """The load request, not the flag a CPU import saved, decides where the model is built."""
+        model_config = LLaDA15Bridge().hf_config_to_model_config(_make_hf_config())
+        # AutoBridge.import_ckpt() builds on CPU and saves use_cpu_initialization=True.
+        model_config.transformer.use_cpu_initialization = saved_cpu_init
+        _save_run_config(model_config, tmp_path)
+        loaded, _ = load_model_config(str(tmp_path))
+        assert loaded.transformer.use_cpu_initialization is saved_cpu_init
+
+        model = [object()]
+        cpu_init_at_build = []
+
+        def build_distributed_models(*args, **kwargs):
+            cpu_init_at_build.append(loaded.transformer.use_cpu_initialization)
+            return model
+
+        with (
+            patch.object(loaded.get_builder_cls(), "build_distributed_models", build_distributed_models),
+            patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection"),
+            patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint"),
+        ):
+            result = build_and_load_model(
+                str(tmp_path), loaded, use_cpu_init=use_cpu_init, skip_temp_dist_context=True
+            )
+
+        assert result is model
+        assert cpu_init_at_build == [use_cpu_init]
 
     def test_legacy_private_layer_spec_target_resolves(self):
         """Provider checkpoints saved before the rename name the spec by its private alias."""

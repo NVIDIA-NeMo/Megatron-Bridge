@@ -14,13 +14,15 @@
 
 """Unit tests for the builder-backed Sarvam MoE model config."""
 
+from unittest.mock import patch
+
 import pytest
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.sarvam.sarvam_config import SarvamMoEModelConfig, _get_sarvam_moe_pipeline_layout
 from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.model_load_save import load_model_config
+from megatron.bridge.training.model_load_save import build_and_load_model, load_model_config
 
 
 def _model_config(**overrides) -> SarvamMoEModelConfig:
@@ -45,6 +47,20 @@ def _model_config(**overrides) -> SarvamMoEModelConfig:
     )
     values.update(overrides)
     return SarvamMoEBridge().hf_config_to_model_config(PretrainedConfig(**values))
+
+
+def _save_run_config(model_config: SarvamMoEModelConfig, directory) -> None:
+    """Write the model config as a checkpoint's run_config.yaml."""
+    ConfigContainer(
+        model=model_config,
+        train=None,
+        optimizer=None,
+        scheduler=None,
+        dataset=None,
+        logger=None,
+        tokenizer=None,
+        checkpoint=None,
+    ).to_yaml(str(directory / "run_config.yaml"))
 
 
 class TestSarvamMoEModelConfigFinalize:
@@ -103,16 +119,7 @@ class TestSarvamMoEModelConfigCheckpoint:
         model_config.finalize()
         expected_layout = _get_sarvam_moe_pipeline_layout(pp)
 
-        ConfigContainer(
-            model=model_config,
-            train=None,
-            optimizer=None,
-            scheduler=None,
-            dataset=None,
-            logger=None,
-            tokenizer=None,
-            checkpoint=None,
-        ).to_yaml(str(tmp_path / "run_config.yaml"))
+        _save_run_config(model_config, tmp_path)
         loaded, _ = load_model_config(str(tmp_path))
 
         assert type(loaded) is SarvamMoEModelConfig
@@ -121,3 +128,33 @@ class TestSarvamMoEModelConfigCheckpoint:
         loaded.finalize()
         if expected_layout is not None:
             assert loaded.pipeline_model_parallel_layout.input_data == expected_layout
+
+    @pytest.mark.parametrize("saved_cpu_init", [True, False])
+    @pytest.mark.parametrize("use_cpu_init", [False, True])
+    def test_load_builds_on_requested_device(self, tmp_path, saved_cpu_init, use_cpu_init):
+        """The load request, not the flag a CPU import saved, decides where the model is built."""
+        model_config = _model_config()
+        # AutoBridge.import_ckpt() builds on CPU and saves use_cpu_initialization=True.
+        model_config.transformer.use_cpu_initialization = saved_cpu_init
+        _save_run_config(model_config, tmp_path)
+        loaded, _ = load_model_config(str(tmp_path))
+        assert loaded.transformer.use_cpu_initialization is saved_cpu_init
+
+        model = [object()]
+        cpu_init_at_build = []
+
+        def build_distributed_models(*args, **kwargs):
+            cpu_init_at_build.append(loaded.transformer.use_cpu_initialization)
+            return model
+
+        with (
+            patch.object(loaded.get_builder_cls(), "build_distributed_models", build_distributed_models),
+            patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection"),
+            patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint"),
+        ):
+            result = build_and_load_model(
+                str(tmp_path), loaded, use_cpu_init=use_cpu_init, skip_temp_dist_context=True
+            )
+
+        assert result is model
+        assert cpu_init_at_build == [use_cpu_init]
