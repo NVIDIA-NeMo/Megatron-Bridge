@@ -126,7 +126,7 @@ $CKPT_PATH/
     __0_0.distcp         # sharded weights (~15 GB bf16)
     common.pt
     metadata.json
-    run_config.yaml      # serialized GPTModelProvider config
+    run_config.yaml      # serialized builder-backed BridgeGPTModelConfig
     train_state.pt
     tokenizer/           # embedded HF tokenizer + chat template
   latest_checkpointed_iteration.txt
