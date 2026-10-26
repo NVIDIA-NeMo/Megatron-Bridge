@@ -1404,6 +1404,8 @@ class AutoBridge(Generic[MegatronModelT]):
         # state: enabled weight quantizers -> this quantized checkpoint, folded weights -> BF16 with
         # quantizer sidecars.
         from megatron.bridge.models.conversion.modelopt_utils import (
+            _raise_distributed_errors,
+            _world_group,
             check_exportable_quantizers,
             check_fused_sibling_scales,
             save_safetensors_shards,
@@ -1421,10 +1423,15 @@ class AutoBridge(Generic[MegatronModelT]):
         check_exportable_quantizers(model)
         if export_plan is None:
             export_plan = self.build_hf_modelopt_export_plan(model)
-        self._save_hf_artifacts(path, source_path)
-
         rank = dist.get_rank() if dist.is_initialized() else 0
         output_path = Path(path).resolve()
+        # Rank 0 saves the artifacts; fail the other ranks too before the export collectives.
+        error = None
+        try:
+            self._save_hf_artifacts(path, source_path)
+        except Exception as exception:
+            error = f"{type(exception).__name__}: {exception}"
+        _raise_distributed_errors(error, _world_group(), f"ModelOpt HF export to {output_path} failed")
         tensors = self.export_hf_weights_modelopt(
             model, cpu=True, show_progress=show_progress, export_plan=export_plan
         )
@@ -1436,7 +1443,6 @@ class AutoBridge(Generic[MegatronModelT]):
                     scales[name] = tensor
                 yield name, tensor
 
-        error = None
         try:
             if rank == 0:
                 previous_weight_files = _existing_safetensors_files(output_path)
@@ -1459,12 +1465,7 @@ class AutoBridge(Generic[MegatronModelT]):
             for _ in tensors:
                 pass
 
-        if dist.is_initialized():
-            errors = [None] * dist.get_world_size()
-            dist.all_gather_object(errors, error)
-            error = "; ".join(dict.fromkeys(item for item in errors if item is not None)) or None
-        if error is not None:
-            raise RuntimeError(f"ModelOpt HF export to {output_path} failed: {error}")
+        _raise_distributed_errors(error, _world_group(), f"ModelOpt HF export to {output_path} failed")
 
     def _save_hf_artifacts(self, path: str | Path, source_path: Optional[Union[str, Path]]) -> Any:
         """Check the bridge supports HF export and save the config and tokenizer artifacts on rank 0.

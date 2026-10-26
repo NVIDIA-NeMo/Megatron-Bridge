@@ -613,7 +613,10 @@ def _make_export_hook(task: WeightConversionTask) -> HFExportHook:
         if state is None:
             raise RuntimeError(f"Missing ModelOpt export state for {hf_name}")
         prefix = hf_name.removesuffix(".weight")
-        exported = export_quantized_weight_tensors(tensor, state, tensor.dtype)
+        # TODO: Drop the float32 cast once nvidia-modelopt includes NVIDIA/Model-Optimizer#3005: earlier
+        # versions round a per-tensor FP8 weight in its own dtype, unlike fake quantization.
+        dtype = torch.float32 if getattr(state, "quantization_format", None) == "fp8" else tensor.dtype
+        exported = export_quantized_weight_tensors(tensor, state, dtype)
         remaining_names.discard(hf_name)
         if not remaining_names:
             transformed_states = None
@@ -859,6 +862,7 @@ _FUSED_SIBLING_PROJECTIONS = (
 )
 _SHARED_SIBLING_SCALES = ("weight_scale_2", "input_scale")
 _EXPORTED_QUANTIZER = re.compile(r"(?:^|\.)(?:\w*weight_quantizer|input_quantizer)(?:\.\d+)?$")
+_WEIGHT_QUANTIZER = re.compile(r"(?:^|\.)\w*weight_quantizer(?:\.\d+)?$")
 
 
 def check_fused_sibling_scales(tensors: Mapping[str, torch.Tensor]) -> None:
@@ -892,18 +896,24 @@ def check_exportable_quantizers(model: list[torch.nn.Module]) -> None:
     """Fail on every rank when any rank holds an enabled quantizer the export would drop.
 
     Only weight and input quantizers become checkpoint tensors; e.g. KV-cache (``k_bmm_quantizer``)
-    and output quantizers have no deployment format here yet.
+    and output quantizers have no deployment format here yet, and an input quantizer is exported only
+    with its layer's weight quantizer.
     """
     from modelopt.torch.quantization.nn import TensorQuantizer
 
-    unsupported = sorted(
-        {
+    unsupported = set()
+    for chunk in model:
+        enabled = [
+            name for name, module in chunk.named_modules() if isinstance(module, TensorQuantizer) and module.is_enabled
+        ]
+        unsupported.update(name for name in enabled if not _EXPORTED_QUANTIZER.search(name))
+        weight_layers = {_WEIGHT_QUANTIZER.sub("", name) for name in enabled if _WEIGHT_QUANTIZER.search(name)}
+        unsupported.update(
             name
-            for chunk in model
-            for name, module in chunk.named_modules()
-            if isinstance(module, TensorQuantizer) and module.is_enabled and not _EXPORTED_QUANTIZER.search(name)
-        }
-    )
+            for name in enabled
+            if name.endswith("input_quantizer") and name.rpartition(".")[0] not in weight_layers
+        )
+    unsupported = sorted(unsupported)
     error = None
     if unsupported:
         error = f"ModelOpt HF export cannot carry these enabled quantizers: {unsupported[:4]}"

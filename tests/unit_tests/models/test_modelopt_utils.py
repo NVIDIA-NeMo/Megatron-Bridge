@@ -125,6 +125,26 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
 
 
 @pytest.mark.unit
+def test_fp8_export_matches_fake_quantization_of_a_bf16_weight():
+    torch.manual_seed(0)
+    module = torch.nn.Linear(64, 64, bias=False).to(torch.bfloat16)
+    mtq.quantize(
+        module,
+        copy.deepcopy(mtq.FP8_DEFAULT_CFG),
+        lambda candidate: candidate(torch.randn(2, 64, dtype=torch.bfloat16)),
+    )
+    hf_name = "model.layers.0.self_attn.o_proj.weight"
+    task = _task(ColumnParallelMapping("projection.weight", hf_name), module)
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    exported = dict(modelopt_utils.prepare_modelopt_export_tasks(plan)[0].export_hook(hf_name, module.weight))
+
+    scale = exported["model.layers.0.self_attn.o_proj.weight_scale"]
+    dequantized = (exported[hf_name].float() * scale).to(torch.bfloat16)
+    assert torch.equal(dequantized, module.weight_quantizer(module.weight))
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("quant_algo", ["NVFP4", "W4A16_NVFP4"])
 @pytest.mark.parametrize("tied", [False, True])
 @pytest.mark.parametrize("remote_embedding", [False, True])
@@ -1251,9 +1271,16 @@ def test_export_rejects_enabled_quantizers_it_would_drop():
     with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
         modelopt_utils.check_exportable_quantizers([model])
 
+    # An activation-only layer would be exported unquantized.
+    model.attention.k_bmm_quantizer.disable()
+    model.projection.output_quantizer.disable()
+    model.projection.weight_quantizer.disable()
+    with pytest.raises(RuntimeError, match=r"\['projection\.input_quantizer'\]"):
+        modelopt_utils.check_exportable_quantizers([model])
+
 
 class _StreamingBridge(AutoBridge):
-    """Streams one tensor from every rank, or fails like a stale export plan."""
+    """Streams one tensor from every rank, or fails like a stale export plan or a rank-0 artifact save."""
 
     def __init__(self, case):
         self.case = case
@@ -1263,6 +1290,8 @@ class _StreamingBridge(AutoBridge):
         return MegatronModelBridge()
 
     def _save_hf_artifacts(self, path, source_path):
+        if self.case == "artifacts" and torch.distributed.get_rank() == 0:
+            raise OSError("tokenizer save failed")
         if self.case == "success" and torch.distributed.get_rank() == 0:
             (Path(path) / "config.json").write_text("{}")
 
@@ -1295,16 +1324,21 @@ def _save_failure_worker(rank, world_size, init_file, out_dir, case):
             config = json.loads((Path(out_dir) / "config.json").read_text())
             assert config["quantization_config"] == {"quant_method": "modelopt"}
         else:
-            # A config.json missing at finalization fails rank 0 only; a stale plan fails every rank.
-            match = "plan validation failed" if case == "stale_plan" else "FileNotFoundError"
-            with pytest.raises(RuntimeError, match=match):
+            # Artifact saving and a config.json missing at finalization fail rank 0 only; a stale plan
+            # fails every rank.
+            errors = {
+                "stale_plan": "plan validation failed",
+                "artifacts": "OSError",
+                "finalization": "FileNotFoundError",
+            }
+            with pytest.raises(RuntimeError, match=errors[case]):
                 save()
     finally:
         torch.distributed.destroy_process_group()
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("case", ["success", "stale_plan", "finalization"])
+@pytest.mark.parametrize("case", ["success", "stale_plan", "artifacts", "finalization"])
 def test_save_fails_on_every_rank_when_any_rank_fails(tmp_path, case):
     torch.multiprocessing.spawn(
         _save_failure_worker,
