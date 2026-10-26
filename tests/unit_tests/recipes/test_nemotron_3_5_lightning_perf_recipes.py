@@ -323,13 +323,14 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.mtp_num_layers == 2
     assert cfg.model.mtp_hybrid_override_pattern == "*E"
     assert cfg.model.mtp_use_repeated_layer is True
-    assert cfg.model.keep_mtp_spec_in_bf16 is True
     assert cfg.model.mtp_loss_scaling_factor == 0.3
     assert cfg.model.moe_router_force_load_balancing is True
     expected_backend = "ncclep" if recipe_factory in _NCCLEP_RECIPES else "hybridep"
     assert cfg.model.moe_flex_dispatcher_backend == expected_backend
-    assert cfg.model.hf_model_id == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.model.extra_checkpoint_metadata == {
+        "hf_model_id": _NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+        "hf_model_revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+    }
     assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
 

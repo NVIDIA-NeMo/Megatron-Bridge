@@ -39,6 +39,11 @@ from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
+from megatron.bridge.models.hybrid.hybrid_builder import (
+    DEFAULT_MAMBA_CHUNK_SIZE,
+    configure_mamba_chunk_size,
+    use_local_core_attention,
+)
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -48,19 +53,6 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MAMBA_CHUNK_SIZE = 128
-
-
-def _configure_mamba_chunk_size(stack_spec: ModuleSpec, chunk_size: int) -> ModuleSpec:
-    """Return a stack spec whose Mamba mixer uses the requested scan chunk size."""
-    if chunk_size == DEFAULT_MAMBA_CHUNK_SIZE:
-        return stack_spec
-
-    configured_spec = copy.deepcopy(stack_spec)
-    mixer_spec = configured_spec.submodules.mamba_layer.submodules.mixer
-    mixer_spec.params = {**mixer_spec.params, "chunk_size": chunk_size}
-    return configured_spec
 
 
 def modelopt_hybrid_stack_spec(config: "HybridModelProvider | None" = None) -> ModuleSpec:
@@ -274,14 +266,9 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
             resolved_spec = hybrid_stack_spec
 
         if self.attention_backend in {AttnBackend.local, "local"}:
-            from megatron.core.transformer.dot_product_attention import DotProductAttention
+            resolved_spec = use_local_core_attention(resolved_spec)
 
-            resolved_spec = copy.deepcopy(resolved_spec)
-            attention_layer = getattr(resolved_spec.submodules, "attention_layer", None)
-            if attention_layer is not None:
-                attention_layer.submodules.self_attention.submodules.core_attention = DotProductAttention
-
-        return _configure_mamba_chunk_size(resolved_spec, self.mamba_chunk_size)
+        return configure_mamba_chunk_size(resolved_spec, self.mamba_chunk_size)
 
     def _copy_config_without_runtime_process_groups(self, *, deep: bool) -> Self:
         """Copy this config without the runtime-only process-group collection."""
