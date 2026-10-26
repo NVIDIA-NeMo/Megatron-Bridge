@@ -143,7 +143,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-01</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -152,7 +152,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 1 --hf-model ByteDance-Seed/BAGEL-7B-MoT --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b --megatron-path work/model-verification/bagel/hf-to-megatron --torch-dtype bfloat16</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 1 --hf-model ByteDance-Seed/BAGEL-7B-MoT --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b --megatron-path work/model-verification/bagel/hf-to-megatron --torch-dtype bfloat16 --bagel-repo work/dependencies/Bagel</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">

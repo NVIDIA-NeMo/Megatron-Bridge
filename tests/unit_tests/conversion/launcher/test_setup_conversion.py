@@ -405,6 +405,8 @@ def test_roundtrip_rejects_cpu_backend():
             "export",
             ("--device", "gpu", "--gpus-per-node", "2", "--tp", "2", "--hf-path", "/export path"),
         ),
+        ("import", ("--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel checkout")),
+        ("import", ("--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel;checkout")),
     ],
 )
 def test_local_gpu_rejects_worker_value_requiring_shell_quoting(command, options):
@@ -414,6 +416,40 @@ def test_local_gpu_rejects_worker_value_requiring_shell_quoting(command, options
 
     with pytest.raises(ValueError, match="cannot pass model IDs or paths containing whitespace"):
         module._validate_args(args)
+
+
+def test_local_gpu_accepts_shell_safe_bagel_repo():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel")
+
+    module._validate_args(args)
+
+
+def test_slurm_gpu_import_quotes_bagel_repo():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse(
+        module,
+        "--executor",
+        "slurm",
+        "--device",
+        "gpu",
+        "--gpus-per-node",
+        "1",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--bagel-repo",
+        "/tmp/Bagel checkout",
+    )
+    module._validate_args(args)
+
+    task, _ = module._build_task(args)
+
+    assert task.args[task.args.index("--bagel-repo") + 1] == "'/tmp/Bagel checkout'"
 
 
 def test_local_cpu_executor_uses_one_process_without_launcher():
