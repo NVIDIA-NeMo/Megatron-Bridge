@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib.util
+import shlex
 import sys
 import types
 from pathlib import Path
@@ -610,3 +611,87 @@ def test_parse_env_rejects_inline_secret_values(monkeypatch):
 
     with pytest.raises(ValueError, match="accepts NAME only"):
         module._parse_env(["HF_TOKEN=secret"])
+
+
+def _capture_submitted_task(module, monkeypatch, argv):
+    submitted = []
+
+    class _Experiment:
+        def __init__(self, *_args, **_kwargs):
+            self.jobs = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, task, **_kwargs):
+            submitted.append(task)
+
+        def run(self, **_kwargs):
+            pass
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**{"inline": "", "path": "", "args": [], **kwargs})
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    module.main(argv)
+    return submitted[0]
+
+
+def test_slurm_pyxis_task_runs_from_container_repo_root(monkeypatch):
+    """Slurm Pyxis conversion resolves relative paths from the container checkout."""
+    module = _load_setup_conversion_module()
+    megatron_path = "work/model-verification/card/imported-megatron"
+
+    task = _capture_submitted_task(
+        module,
+        monkeypatch,
+        [
+            "import",
+            "--executor",
+            "slurm",
+            "--device",
+            "gpu",
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            megatron_path,
+            "--bagel-repo",
+            "work/dependencies/Bagel",
+            "--submission-dry-run",
+        ],
+    )
+
+    assert task.entrypoint == "bash"
+    assert task.env["PYTHONPATH"].startswith("/opt/Megatron-Bridge/src:")
+    lines = task.inline.splitlines()
+    assert lines[:2] == ["set -e", "cd /opt/Megatron-Bridge"]
+    assert lines[2].startswith("exec python /opt/Megatron-Bridge/scripts/conversion/run_conversion.py import ")
+    assert f" --megatron-path {shlex.quote(megatron_path)}" in lines[2]
+    assert lines[2].endswith(" --bagel-repo work/dependencies/Bagel")
+
+
+def test_local_task_is_not_wrapped(monkeypatch):
+    """Local conversion still submits the plain Python worker script."""
+    module = _load_setup_conversion_module()
+
+    task = _capture_submitted_task(
+        module, monkeypatch, ["import", "--hf-model", "hf/model", "--megatron-path", "work/checkpoint"]
+    )
+
+    assert task.inline == ""
+    assert task.entrypoint == "python"
+    assert task.path == str(REPO_ROOT / "scripts/conversion/run_conversion.py")
+    assert task.args[:3] == ["import", "--device", "cpu"]

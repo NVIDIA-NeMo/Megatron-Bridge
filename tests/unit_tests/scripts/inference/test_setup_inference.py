@@ -389,6 +389,7 @@ def test_main_submission_wait_detach_and_dry_run_modes(
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
     monkeypatch.setattr(module, "_build_task", lambda *_args: sentinel_task)
+    monkeypatch.setattr(module, "run_from_container_repo_root", lambda task: task)
 
     module.main(_launcher_args("--prompt", "hello", *extra_options))
 
@@ -418,6 +419,47 @@ def test_main_propagates_synchronous_inference_failure(monkeypatch):
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
     monkeypatch.setattr(module, "_build_task", lambda *_args: object())
+    monkeypatch.setattr(module, "run_from_container_repo_root", lambda task: task)
 
     with pytest.raises(RuntimeError, match="text-generation=FAILED"):
         module.main(_launcher_args("--prompt", "hello"))
+
+
+def test_main_runs_pyxis_task_from_container_repo_root(monkeypatch):
+    """Slurm Pyxis inference resolves relative model paths from the container checkout."""
+    module = _load_setup_inference_module()
+    submitted = []
+
+    class _Experiment:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, task, **_kwargs):
+            submitted.append(task)
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**{"inline": "", "path": "", "args": [], **kwargs})
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+
+    module.main(
+        _launcher_args(
+            "--task", "hf-inference", "--submission-dry-run", "--hf-model", "work/model-verification/card/hf"
+        )
+    )
+
+    task = submitted[0]
+    assert task.entrypoint == "bash"
+    assert task.inline == (
+        "set -e\ncd /opt/Megatron-Bridge\n"
+        "exec python /opt/Megatron-Bridge/skills/create-model-verification-card/scripts/verify_hf_inference.py"
+        " --hf-model work/model-verification/card/hf\n"
+    )

@@ -244,6 +244,12 @@ def _raise_on_failed_tasks(experiment: run.Experiment) -> None:
         raise RuntimeError(f"Inference failed: {', '.join(unsuccessful)}")
 
 
+def run_from_container_repo_root(task: run.Script) -> run.Script:
+    """Run the Pyxis worker from the container checkout instead of NeMo-Run's job directory."""
+    command = " ".join([shlex.quote(task.entrypoint), shlex.quote(task.path), *task.args])
+    return run.Script(inline=f"set -e\ncd /opt/Megatron-Bridge\nexec {command}\n", entrypoint="bash", env=task.env)
+
+
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     """Parse launch arguments and preserve all selected-task arguments."""
     return _build_parser().parse_known_args(argv)
@@ -266,6 +272,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
+    task = run_from_container_repo_root(task)
 
     with run.Experiment(args.experiment_name or "inference") as experiment:
         experiment.add(task, executor=executor, name=args.task)
