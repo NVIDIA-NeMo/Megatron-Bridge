@@ -18,6 +18,7 @@ Locks in the MTP mapping layout: per-MTP-layer HC head, separate ``e_proj``
 and ``h_proj`` mappings, and no deprecated concatenated ``eh_proj`` path.
 """
 
+import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -777,6 +778,8 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
             mhc_num_residual_streams=4,
             mhc_sinkhorn_iterations=20,
             moe_shared_expert_intermediate_size=1024,
+            v_head_dim=512,
+            qk_pos_emb_head_dim=64,
         )
 
         with patch.object(MegatronModelBridge, "megatron_to_hf_config", return_value={}):
@@ -786,6 +789,132 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
         assert hf_config["o_groups"] == 8
         assert hf_config["o_lora_rank"] == 1024
         assert hf_config["hc_mult"] == 4
+        assert hf_config["head_dim"] == 512
+        assert hf_config["partial_rotary_factor"] == 0.125
+
+    def test_megatron_to_hf_config_leaves_training_overrides_to_the_reference(self):
+        """Import pins seq_length, moe_aux_loss_coeff and rotary_percent, so they cannot describe the HF model."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="WEWECEHE",
+            v_head_dim=512,
+            qk_pos_emb_head_dim=64,
+            output_projection_groups=8,
+            output_projection_lora_rank=1024,
+        )
+        generic_config = {
+            "max_position_embeddings": 4096,
+            "router_aux_loss_coef": 0.0,
+            "aux_loss_alpha": 0.0,
+            "rope_theta": 10000.0,
+            "partial_rotary_factor": 1.0,
+            "head_dim": 64,
+            "qk_rope_head_dim": 64,
+        }
+
+        with patch.object(MegatronModelBridge, "megatron_to_hf_config", return_value=generic_config):
+            hf_config = DeepSeekV4Bridge.megatron_to_hf_config(provider)
+
+        for hf_name in ("max_position_embeddings", "router_aux_loss_coef", "aux_loss_alpha", "rope_theta"):
+            assert hf_name not in hf_config
+        assert (hf_config["head_dim"], hf_config["qk_rope_head_dim"], hf_config["partial_rotary_factor"]) == (
+            512,
+            64,
+            0.125,
+        )
+
+
+# DeepSeek-V4-Flash config.json (legacy key names) cut to four layers plus MTP, like the GPU truncation checks.
+_DEEPSEEK_V4_FLASH_FOUR_LAYER_CONFIG = {
+    "architectures": ["DeepseekV4ForCausalLM"],
+    "attention_bias": False,
+    "attention_dropout": 0.0,
+    "bos_token_id": 0,
+    "compress_ratios": [0, 0, 4, 128, 0],
+    "compress_rope_theta": 160000,
+    "eos_token_id": 1,
+    "expert_dtype": "fp4",
+    "hc_eps": 1e-06,
+    "hc_mult": 4,
+    "hc_sinkhorn_iters": 20,
+    "head_dim": 512,
+    "hidden_act": "silu",
+    "hidden_size": 4096,
+    "index_head_dim": 128,
+    "index_n_heads": 64,
+    "index_topk": 512,
+    "initializer_range": 0.02,
+    "max_position_embeddings": 1048576,
+    "model_type": "deepseek_v4",
+    "moe_intermediate_size": 2048,
+    "n_routed_experts": 256,
+    "n_shared_experts": 1,
+    "norm_topk_prob": True,
+    "num_attention_heads": 64,
+    "num_experts_per_tok": 6,
+    "num_hash_layers": 3,
+    "num_hidden_layers": 4,
+    "num_key_value_heads": 1,
+    "num_nextn_predict_layers": 1,
+    "o_groups": 8,
+    "o_lora_rank": 1024,
+    "q_lora_rank": 1024,
+    "qk_rope_head_dim": 64,
+    "rms_norm_eps": 1e-06,
+    "rope_scaling": {
+        "beta_fast": 32,
+        "beta_slow": 1,
+        "factor": 16,
+        "original_max_position_embeddings": 65536,
+        "type": "yarn",
+    },
+    "rope_theta": 10000,
+    "routed_scaling_factor": 1.5,
+    "scoring_func": "sqrtsoftplus",
+    "sliding_window": 128,
+    "swiglu_limit": 10.0,
+    "tie_word_embeddings": False,
+    "topk_method": "noaux_tc",
+    "torch_dtype": "bfloat16",
+    "vocab_size": 129280,
+}
+
+
+class TestDeepSeekV4CheckpointConfigExport:
+    """``convert.sh export`` rebuilds the HF config from the checkpoint through ``AutoBridge.from_auto_config``."""
+
+    def test_from_auto_config_reproduces_the_reference_config(self, tmp_path):
+        pytest.importorskip("transformers.models.deepseek_v4")
+        from transformers import AutoConfig
+
+        from megatron.bridge import AutoBridge
+        from megatron.bridge.training.config import ConfigContainer
+
+        hf_dir = tmp_path / "hf"
+        hf_dir.mkdir()
+        (hf_dir / "config.json").write_text(json.dumps(_DEEPSEEK_V4_FLASH_FOUR_LAYER_CONFIG))
+        reference = AutoConfig.from_pretrained(hf_dir)
+        provider = AutoBridge.from_hf_config(reference).to_megatron_provider(load_weights=False)
+        checkpoint_dir = tmp_path / "checkpoint"
+        checkpoint_dir.mkdir()
+        ConfigContainer(
+            model=provider,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        ).to_yaml(str(checkpoint_dir / "run_config.yaml"))
+
+        rebuilt = AutoBridge.from_auto_config(str(checkpoint_dir), str(hf_dir)).hf_pretrained
+
+        # The export writes this JSON, so it must match the reference byte for byte.
+        assert rebuilt.to_json_string() == reference.to_json_string()
+        # Native configs derive qk_rope_head_dim from head_dim and partial_rotary_factor; a re-import must
+        # keep v_head_dim > qk_pos_emb_head_dim, which MCore asserts for the DSv4 hybrid attention.
+        reimported = AutoBridge.from_hf_config(rebuilt).to_megatron_provider(load_weights=False)
+        assert (reimported.v_head_dim, reimported.qk_pos_emb_head_dim) == (512, 64)
 
 
 class TestDeepSeekV4HybridMappingLayout:

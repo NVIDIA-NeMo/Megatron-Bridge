@@ -733,6 +733,17 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             "moe_intermediate_size", 1
         )
 
+        # Invert the import's MLA geometry: head_dim -> v_head_dim, qk_rope_head_dim -> qk_pos_emb_head_dim.
+        # Import pins rotary_percent to 1.0, but Transformers derives qk_rope_head_dim as
+        # head_dim * partial_rotary_factor, so export the factor that reproduces the RoPE width.
+        hf_cfg["head_dim"] = provider.v_head_dim
+        hf_cfg["partial_rotary_factor"] = provider.qk_pos_emb_head_dim / provider.v_head_dim
+
+        # Import replaces the context length and router aux-loss coefficient with training settings, and this
+        # export keeps the reference config's RoPE parameters, so let the reference supply these fields as well.
+        for hf_name in ("max_position_embeddings", "router_aux_loss_coef", "aux_loss_alpha", "rope_theta"):
+            hf_cfg.pop(hf_name, None)
+
         return hf_cfg
 
     # ------------------------------------------------------------------
