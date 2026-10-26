@@ -3695,6 +3695,33 @@ class TestCheckpointConfig:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_also_save_hf_checkpoint_accepts_builder_source_metadata_during_container_validation(self):
+        """Test that a builder-backed config's recorded source satisfies HF extra export validation."""
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+            seq_length=512,
+            extra_checkpoint_metadata={"hf_model_id": "hf/model"},
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=create_test_gpt_dataset_config(sequence_length=512),
+            tokenizer_config=create_test_tokenizer_config(tokenizer_model=None),
+            checkpoint_config=create_test_checkpoint_config(also_save_hf_checkpoint=True),
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_also_save_hf_checkpoint_accepts_tokenizer_model_during_container_validation(self):
         """Test that tokenizer.tokenizer_model satisfies HF extra export validation."""
         checkpoint_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True)

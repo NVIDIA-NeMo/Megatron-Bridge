@@ -623,8 +623,16 @@ def build_modelopt_export_plan(
     conversion_tasks: list[WeightConversionTask | None],
     *,
     model: list[torch.nn.Module],
+    tied_weight_aliases: dict[str, str] | None = None,
 ) -> ModelOptExportPlan:
-    """Prepare canonical ModelOpt export state without encoding a quantization format."""
+    """Prepare canonical ModelOpt export state without encoding a quantization format.
+
+    Args:
+        conversion_tasks: Weight conversion tasks, including remote pipeline-stage tasks.
+        model: Megatron model chunks used to capture quantization state.
+        tied_weight_aliases: HF alias-to-source weight names that share export specifications
+            even when the alias has no separate conversion task.
+    """
     # ModelOpt converts quantizer state into deployment scales from the owning
     # weight task. Amax mappings are only part of the fake-quant refit path.
     concrete_tasks = [
@@ -747,6 +755,16 @@ def build_modelopt_export_plan(
         raise RuntimeError("No supported ModelOpt quantized weights were found")
 
     from modelopt.torch.export.quantized_weight_export import build_hf_quantization_config
+
+    # Tied output weights may have no task, but deployment still needs their spec.
+    # Copy explicit None too: a BF16 embedding must keep its tied head unquantized.
+    for alias, source_name in (tied_weight_aliases or {}).items():
+        if source_name not in named_specs:
+            raise ValueError(f"Missing ModelOpt export spec for tied source {source_name}")
+        source_spec = named_specs[source_name]
+        if alias in named_specs and named_specs[alias] != source_spec:
+            raise ValueError(f"Inconsistent ModelOpt export spec for tied weight {alias}")
+        named_specs[alias] = source_spec
 
     quantization_config = build_hf_quantization_config(named_specs)
 
