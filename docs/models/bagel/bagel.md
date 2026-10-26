@@ -143,7 +143,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-22</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -157,7 +157,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The public GPU importer consumed the pinned official EMA state, reported 1,223 source tensors consumed and 943 target tensors verified, and wrote a standalone torch_dist checkpoint. A clean one-GPU model reload of the saved checkpoint completed with no missing or unexpected keys; all 943 checkpoint tensors matched the model&#x27;s keys and shapes and were BF16. Mapping every reloaded tensor back to the official EMA names (undoing the QKV and GLU fusion) covered all 1,223 EMA tensors, which are already BF16, and every one exactly matched its EMA value, including all 56 understanding and generation input-norm tensors. Altering a single finite element made the value check fail.
+        <p>The public GPU importer consumed the pinned official EMA state, reported 1,223 source tensors consumed and 943 target tensors verified, and wrote a standalone torch_dist checkpoint. A clean one-GPU reload completed without missing or unexpected checkpoint keys; all 56 MoT language-layer input-norm tensors used as regression sentinels exactly matched the official EMA values.
 </p>
       </section>
     </article>

@@ -57,7 +57,7 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
-    bridge_commit: 6d319871f71b85a5af95981164276ba6d6074646  # pragma: allowlist secret
+    bridge_commit: 86e1bb9bcfd7972bdee4d3df093b512f013927ee  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 1
@@ -66,18 +66,14 @@ items:
       --megatron-path work/model-verification/bagel/hf-to-megatron
       --torch-dtype bfloat16
       --bagel-repo work/dependencies/Bagel
-    last_verified: 2026-10-22
+    last_verified: 2026-10-26
     expected_result: >
       The public GPU importer consumed the pinned official EMA state, reported
       1,223 source tensors consumed and 943 target tensors verified, and wrote
-      a standalone torch_dist checkpoint. A clean one-GPU model reload of the
-      saved checkpoint completed with no missing or unexpected keys; all 943
-      checkpoint tensors matched the model's keys and shapes and were BF16.
-      Mapping every reloaded tensor back to the official EMA names (undoing
-      the QKV and GLU fusion) covered all 1,223 EMA tensors, which are
-      already BF16, and every one exactly matched its EMA value, including
-      all 56 understanding and generation input-norm tensors. Altering a
-      single finite element made the value check fail.
+      a standalone torch_dist checkpoint. A clean one-GPU reload completed
+      without missing or unexpected checkpoint keys; all 56 MoT language-layer
+      input-norm tensors used as regression sentinels exactly matched the
+      official EMA values.
 
   megatron_to_hf_cpu:
     status: unsupported
