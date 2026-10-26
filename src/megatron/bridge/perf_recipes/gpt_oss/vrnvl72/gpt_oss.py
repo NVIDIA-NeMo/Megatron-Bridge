@@ -160,8 +160,12 @@ def gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
 
 
 def gpt_oss_120b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× VRNVL72, BF16 (alias of GB300)."""
+    """GPT-OSS 120B pretrain: 64× VRNVL72, BF16, NCCL EP (alias of GB300)."""
     cfg = gpt_oss_120b_pretrain_64gpu_gb300_bf16_config()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -173,6 +177,8 @@ def gpt_oss_120b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
