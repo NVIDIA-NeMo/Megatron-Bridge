@@ -164,7 +164,10 @@ RUN GO_GIT_VERSION=5.19.2 && \
 
 WORKDIR /workspace
 
-RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json
+# uv caches unpacked wheels, including PyNvVideoCodec's bundled FFmpeg libraries.
+# Installed packages use copy mode, so remove the build cache from the final image.
+RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
+    rm -rf /opt/uv_cache
 
 ARG NVIDIA_BUILD_ID
 ENV NVIDIA_BUILD_ID=${NVIDIA_BUILD_ID:-<unknown>}
