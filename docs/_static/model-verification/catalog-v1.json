@@ -3,7 +3,7 @@
   "models": [
     {
       "architecture": "BagelForConditionalGeneration",
-      "base_container": "nvcr.io/nvidia/nemo:26.10.rc7",
+      "base_container": "nvcr.io/nvidia/nemo:26.10.rc9",
       "bridge_commit": "adddd2ee2bf09786b1f131065c6d6bc6fbc7b934",
       "entries": [
         {
@@ -136,17 +136,17 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "bagel-pretrain-h100",
-          "expected_result": "The clean public-data run completes 10 BF16 optimizer steps on 8 H100s at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and total loss with no skipped or NaN iterations. The final step reports CE 0.9161252, MSE 0.3264586, and total loss 1.242584. The final-10 averages include first-step compilation and are 13,032.040 ms and 183.170 model TFLOP/s/GPU; 2,828.721 token slots/GPU/s uses the fixed 36,864 maximum packed sequence slots rather than variable logical tokens. The post-setup configuration and the iteration-10 checkpoint are persisted.\n",
+          "expected_result": "The clean public-data run completes 10 BF16 optimizer steps on 8 H100s at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and total loss with no skipped or NaN iterations. The final step reports CE 0.9137746, MSE 0.3264609, and total loss 1.240236. The final-10 averages include first-step compilation and are 12,667.250 ms and 190.070 model TFLOP/s/GPU; 2,910.182 token slots/GPU/s uses the fixed 36,864 maximum packed sequence slots rather than variable logical tokens. The post-setup configuration and the iteration-10 model, optimizer, RNG, and per-DP dataloader state are persisted. A separate same-topology public-launcher load restored step 10 and exited without executing an additional optimizer step.\n",
           "hardware": "H100",
-          "last_verified": "2026-10-21",
+          "last_verified": "2026-10-26",
           "metrics": {
-            "final_loss": 1.242584,
-            "initial_loss": 0.9580548,
-            "last_10_steps_model_tflops_per_gpu_avg": 183.17,
-            "last_10_steps_step_time_ms_avg": 13032.04,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 2828.721,
-            "peak_allocated_memory_gib": 57.227,
-            "peak_reserved_memory_gib": 70.196
+            "final_loss": 1.240236,
+            "initial_loss": 0.9577008,
+            "last_10_steps_model_tflops_per_gpu_avg": 190.07,
+            "last_10_steps_step_time_ms_avg": 12667.25,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 2910.182,
+            "peak_allocated_memory_gib": 57.262,
+            "peak_reserved_memory_gib": 72.337
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.H100",
@@ -281,21 +281,19 @@
             "megatron_fsdp": "optim_grads_params"
           },
           "entry_id": "bagel-pretrain-fsdp-h100",
-          "expected_result": "The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations. Steps 21-30 average 8,362.810 ms, 215.750 model TFLOP/s/GPU, 21.815% MFU, and 4,408.088 token slots/GPU/s using 36,864 maximum packed sequence slots and GBS 32 across 32 GPUs. Peak allocated/reserved memory is 58.371/60.828 GiB. Do not compare this run with official BAGEL: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.\n",
+          "expected_result": "The 32-GPU TP1/PP1/CP1/DP32 real-data run must complete exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations in the recorded container, with standalone step-time, model TFLOP/s/GPU, token-slot, and peak memory metrics. Do not compare this run with official BAGEL: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.\n",
           "hardware": "H100",
-          "last_verified": "2026-10-21",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 10.48961,
-            "initial_loss": 14.63695,
-            "last_10_steps_model_tflops_per_gpu_avg": 215.75,
-            "last_10_steps_step_time_ms_avg": 8362.81,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 4408.088,
-            "peak_allocated_memory_gib": 58.371,
-            "peak_reserved_memory_gib": 60.828
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain_fsdp.H100",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "pretrain_fsdp"
         }
@@ -305,7 +303,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "bagel",
       "source_card": "examples/model_verification_cards/bagel/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. The H100 FSDP leaf records standalone raw metrics for a real-data BAGEL training run using the official BAGEL Qwen2 FLOPs formula. It must not be compared directly with the official BAGEL run: Bridge used block-23 language-model recompute without EMA, while the official run used full recompute and performed an EMA update. This card claims clean-commit GPU import, bounded 8-GPU pretraining, and 32-GPU pretraining performance verification. Direct deterministic image-understanding inference was also smoke-tested, but remains unverified until the generic public inference launcher supports BAGEL. Fine-tuning and checkpoint-resume verification remain incomplete or unsupported.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. The H100 FSDP leaf awaits a real-data BAGEL run in the recorded container; its throughput uses the official BAGEL Qwen2 FLOPs formula and must not be compared directly with the official BAGEL run, which uses full recompute and an EMA update. This card claims clean-commit GPU import and bounded 8-GPU pretraining verification. Direct deterministic image-understanding inference was also smoke-tested, but remains unverified until the generic public inference launcher supports BAGEL. Fine-tuning and checkpoint-resume verification remain incomplete or unsupported.\n",
       "title": "bagel_7b_mot"
     },
     {

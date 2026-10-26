@@ -20,7 +20,6 @@ pytestmark = pytest.mark.unit
 # the public command topology: (sequence_or_pack_length, global_batch_size, GPUs).
 TRAINING_THROUGHPUT_INPUTS = {
     ("bagel", "pretrain", "H100"): (36864, 8, 8),
-    ("bagel", "pretrain_fsdp", "H100"): (36864, 32, 32),
     ("beam", "pretrain", "H200"): (4096, 256, 128),
     ("beam", "pretrain", "GB200"): (4096, 256, 64),
     ("beam", "sft", "H200"): (8192, 8, 128),
