@@ -276,6 +276,36 @@ uv run python -m torch.distributed.run --nproc_per_node 4 pretrain_quantized_lla
     checkpoint.pretrained_checkpoint=/models/llama3_8b_fp8_init
 ```
 
+### Scale Learning (LSQ)
+
+ModelOpt's learnable-scale algorithm (quantization algorithm `method: lsq`) makes the NVFP4 per-block weight scales trainable parameters (`_amax_pre` / `_amax_post`), trained alone (scale-only) or together with the weights.
+
+1. Quantize with a learnable-scale recipe, e.g. ModelOpt's `general/qad/nvfp4_lsq-mse_init-fp8_kv` (static-block NVFP4 requires `tensor_model_parallel_size=1`).
+2. Restore the checkpoint as in the QAT workflow above. Megatron Bridge gives the scales of expert weights the expert-data-parallel reduction group.
+3. Optionally give the scales their own optimizer parameter group:
+
+```python
+from megatron.bridge.training.post_training.lsq import LSQOptimizerConfigOverrideProvider
+
+cfg.optimizer_config_override_provider = LSQOptimizerConfigOverrideProvider(
+    scale_lr=3e-5,      # peak LR of the scales; follows the main LR schedule
+    scale_min_lr=None,  # None uses optimizer.min_lr
+    scale_wd_mult=0.0,  # no weight decay on the scales
+)
+```
+
+For scale-only training, register the freeze hook; the frozen weights take no gradient buffer or optimizer state:
+
+```python
+from megatron.bridge.training.post_training.lsq import freeze_all_but_lsq_scales
+
+cfg.model.register_pre_wrap_hook(freeze_all_but_lsq_scales)
+# With a ModelConfig instead of a model provider:
+# cfg.model.pre_wrap_hooks.append(freeze_all_but_lsq_scales)
+```
+
+The hook can run before or after the ModelOpt state is restored, and needs a ModelOpt version that computes scale gradients through frozen weights. ModelOpt's [`examples/megatron_bridge/distill.py`](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge) exposes both as `--lsq_scale_lr` and `--lsq_scale_only`.
+
 ### Supported Models For QAT
 
 | Model | Support |
