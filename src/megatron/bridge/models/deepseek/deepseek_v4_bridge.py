@@ -62,11 +62,13 @@ Megatron-Core prerequisites:
 """
 
 from collections.abc import Sequence
-from typing import Dict, Mapping
+from typing import Any, Dict, Mapping
 
 import torch
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.transformer.enums import AttnBackend
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -78,10 +80,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelConfig
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import transformer_engine_hybrid_stack_spec
-from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
 try:
@@ -139,7 +140,9 @@ def deepseek_v4_supports_fused_dsa_kernels() -> bool:
 
 
 def set_deepseek_v4_pipeline_model_parallel_layout(
-    model_cfg: MLAModelProvider, *, logical_layers_per_stage: Sequence[int] | None = None
+    model_cfg: DeepSeekV4HybridModelProvider | DeepSeekV4ModelConfig,
+    *,
+    logical_layers_per_stage: Sequence[int] | None = None,
 ) -> None:
     """Set matching native hybrid segments and pipeline layout metadata.
 
@@ -150,7 +153,7 @@ def set_deepseek_v4_pipeline_model_parallel_layout(
     Configurations without a hybrid pattern retain the legacy GPT layout.
 
     Args:
-        model_cfg: DeepSeek-V4 provider to configure in place.
+        model_cfg: DeepSeek-V4 provider or model config to configure in place.
         logical_layers_per_stage: Optional block counts in VPP-major, PP-minor
             order. Otherwise distribute logical blocks as evenly as possible.
     """
@@ -495,6 +498,9 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     naming implications of this split.
     """
 
+    MODEL_CONFIG_CLASS = DeepSeekV4ModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
+
     # ------------------------------------------------------------------
     # Provider configuration
     # ------------------------------------------------------------------
@@ -527,9 +533,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             layout.append(stage)
         return layout
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV4HybridModelProvider:
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Map a DeepSeek-V4 HF config to ``DeepSeekV4ModelConfig`` kwargs.
+
+        The provider path reuses these kwargs, so ``DeepSeekV4HybridModelProvider`` keeps its
+        configuration.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
         use_dsa_kernel_fusion = (
             torch.cuda.is_available()
@@ -537,42 +547,11 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             and deepseek_v4_supports_fused_dsa_kernels()
         )
 
-        # ---- Attention ----
-        provider.experimental_attention_variant = "dsv4_hybrid"
-        provider.multi_latent_attention = True
-        # HybridModel builds its heterogeneous per-layer stack from the hybrid layer
-        # pattern (set below) via the standard hybrid stack. That config-aware spec
-        # reuses GPT's dsv4_hybrid attention module for the C/H/W symbols, so the
-        # attention layers are numerically identical to the GPT-form dsv4_hybrid path.
-        # Keep a named factory so checkpoint reload does not deserialize the
-        # unused module templates in the expanded MCore stack.
-        provider.hybrid_stack_spec = transformer_engine_hybrid_stack_spec
-        provider.qk_layernorm = True
-        provider.normalization = "RMSNorm"
-        provider.add_bias_linear = False
-
-        # V4 MLA geometry
-        # head_dim = 512 (nope_dim + rope_dim = 448 + 64)
-        provider.v_head_dim = hf_config.head_dim  # 512
-        provider.qk_pos_emb_head_dim = hf_config.qk_rope_head_dim  # 64
-        # HF's partial_rotary_factor (0.125) is relative to head_dim (512); the rope split is
-        # already fully encoded by qk_pos_emb_head_dim (64). The generic partial_rotary_factor
-        # -> rotary_percent mapping would shrink the rope cache to 64*0.125 = 8 dims: the
-        # unfused path then silently rotates only 8 of 64 rope dims, and the fused MLA rope
-        # kernel reads cos/sin out of bounds (garbage values -> the SFT loss NaN).
-        provider.rotary_percent = 1.0
-        # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
-        provider.q_lora_rank = hf_config.q_lora_rank  # 1024
-        provider.output_projection_groups = hf_config.o_groups  # 8
-        provider.output_projection_lora_rank = hf_config.o_lora_rank  # 1024
-
         # ---- Rotary embeddings (YaRN) ----
         # Two separate RoPE bases in V4:
         #   - compress_rope_theta for compressed-KV layers
         #   - rope_theta for pure sliding-window layers (layers 0,1)
         # Megatron keeps the regular and compressed CSA RoPE bases separately.
-        provider.apply_rope_fusion = True
-        provider.rope_type = "yarn"
         rope_params = getattr(hf_config, "rope_scaling", None) or getattr(hf_config, "rope_parameters", None) or {}
         if "compress" in rope_params:
             main_rope_params = rope_params.get("main", {})
@@ -580,19 +559,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         else:
             main_rope_params = rope_params
             compress_rope_params = rope_params
-        provider.rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
-        provider.csa_compress_rotary_base = float(
-            getattr(hf_config, "compress_rope_theta", compress_rope_params.get("rope_theta", provider.rotary_base))
-        )  # 160000
-        provider.rotary_scaling_factor = float(compress_rope_params["factor"])  # 16
-        provider.original_max_position_embeddings = int(
-            compress_rope_params["original_max_position_embeddings"]
-        )  # 65536
-        provider.beta_fast = float(compress_rope_params.get("beta_fast", 32))
-        provider.beta_slow = float(compress_rope_params.get("beta_slow", 1))
-        # DSv4 has no mscale in HF config; Set both equal to cancel out (like DSv3).
-        provider.mscale = 1.0
-        provider.mscale_all_dim = 1.0
+        rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
 
         # ---- CSA (Compressed Sparse Attention) ----
         # Legacy configs ship compress_ratios, while native Transformers configs
@@ -612,88 +579,126 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         # ---- Hybrid layer pattern ----
         # Split each logical DSv4 layer into an attention-only layer (symbol from its
         # compression ratio) + a MoE-only layer, then append one "/WE" MTP depth per
-        # nextn-predict layer. HybridModelProvider.finalize() combines the main pattern
-        # with mtp_hybrid_override_pattern and derives num_layers from it.
+        # nextn-predict layer. The Hybrid finalize() combines the main pattern with
+        # mtp_hybrid_override_pattern and derives num_layers from it.
         main_pattern = _dsv4_hybrid_layer_pattern(_cr, num_hidden_layers)
-        provider.hybrid_layer_pattern = main_pattern
-        provider.num_layers = len(main_pattern)
         mtp_pattern = _DSV4_MTP_HYBRID_PATTERN if _mtp else ""
         if _mtp:
-            provider.mtp_hybrid_override_pattern = mtp_pattern
+            config_kwargs["mtp_hybrid_override_pattern"] = mtp_pattern
 
-        # Per-hybrid-layer compression ratios (doubled relative to the flat GPT-form list:
-        # each logical layer -> [attn_ratio, 0]; each MTP depth -> [0, 0]).
-        provider.csa_compress_ratios = _dsv4_hybrid_csa_compress_ratios(main_pattern, mtp_pattern, _mtp)
-        provider.csa_window_size = hf_config.sliding_window  # 128
+        config_kwargs.update(
+            # ---- Attention ----
+            experimental_attention_variant="dsv4_hybrid",
+            multi_latent_attention=True,
+            # HybridModel builds its heterogeneous per-layer stack from the hybrid layer
+            # pattern (set below) via the standard hybrid stack. That config-aware spec
+            # reuses GPT's dsv4_hybrid attention module for the C/H/W symbols, so the
+            # attention layers are numerically identical to the GPT-form dsv4_hybrid path.
+            # Keep a named factory so checkpoint reload does not deserialize the
+            # unused module templates in the expanded MCore stack.
+            hybrid_stack_spec=transformer_engine_hybrid_stack_spec,
+            qk_layernorm=True,
+            normalization="RMSNorm",
+            add_bias_linear=False,
+            # V4 MLA geometry
+            # head_dim = 512 (nope_dim + rope_dim = 448 + 64)
+            v_head_dim=hf_config.head_dim,  # 512
+            qk_pos_emb_head_dim=hf_config.qk_rope_head_dim,  # 64
+            # HF's partial_rotary_factor (0.125) is relative to head_dim (512); the rope split is
+            # already fully encoded by qk_pos_emb_head_dim (64). The generic partial_rotary_factor
+            # -> rotary_percent mapping would shrink the rope cache to 64*0.125 = 8 dims: the
+            # unfused path then silently rotates only 8 of 64 rope dims, and the fused MLA rope
+            # kernel reads cos/sin out of bounds (garbage values -> the SFT loss NaN).
+            rotary_percent=1.0,
+            # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
+            q_lora_rank=hf_config.q_lora_rank,  # 1024
+            output_projection_groups=hf_config.o_groups,  # 8
+            output_projection_lora_rank=hf_config.o_lora_rank,  # 1024
+            apply_rope_fusion=True,
+            rope_type="yarn",
+            rotary_base=rotary_base,
+            csa_compress_rotary_base=float(
+                getattr(hf_config, "compress_rope_theta", compress_rope_params.get("rope_theta", rotary_base))
+            ),  # 160000
+            rotary_scaling_factor=float(compress_rope_params["factor"]),  # 16
+            original_max_position_embeddings=int(compress_rope_params["original_max_position_embeddings"]),  # 65536
+            beta_fast=float(compress_rope_params.get("beta_fast", 32)),
+            beta_slow=float(compress_rope_params.get("beta_slow", 1)),
+            # DSv4 has no mscale in HF config; Set both equal to cancel out (like DSv3).
+            mscale=1.0,
+            mscale_all_dim=1.0,
+            hybrid_layer_pattern=main_pattern,
+            num_layers=len(main_pattern),
+            # Per-hybrid-layer compression ratios (doubled relative to the flat GPT-form list:
+            # each logical layer -> [attn_ratio, 0]; each MTP depth -> [0, 0]).
+            csa_compress_ratios=_dsv4_hybrid_csa_compress_ratios(main_pattern, mtp_pattern, _mtp),
+            csa_window_size=hf_config.sliding_window,  # 128
+            # DSA indexer geometry (matches index_n_heads / index_head_dim / index_topk in config)
+            dsa_indexer_n_heads=hf_config.index_n_heads,  # 64
+            dsa_indexer_head_dim=hf_config.index_head_dim,  # 128
+            dsa_indexer_topk=hf_config.index_topk,  # 512
+            dsa_kernel_backend="cudnn" if use_dsa_kernel_fusion else "none",
+            # ---- Hyper-Connections (mHC) ----
+            enable_mhc_connections=True,
+            mhc_num_residual_streams=hf_config.hc_mult,  # 4
+            use_fused_mhc=use_blackwell_fused_kernels,
+            mhc_sinkhorn_iterations=hf_config.hc_sinkhorn_iters,  # 20
+            # ---- MoE ----
+            gated_linear_unit=True,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=False,  # V4 uses post-topk normalisation
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_flex_dispatcher_num_sms=16,
+            moe_permute_fusion_into_hybridep=False,
+            moe_router_load_balancing_type="noaux_tc",
+            moe_shared_expert_overlap=True,
+            moe_router_score_function=hf_config.scoring_func,  # "sqrtsoftplus"
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            moe_aux_loss_coeff=0.0,
+            moe_router_topk=hf_config.num_experts_per_tok,  # 6
+            moe_router_topk_scaling_factor=hf_config.routed_scaling_factor,  # 1.5
+            # Hash routing. MCore counts MoE positions in the hybrid pattern rather than all
+            # hybrid symbols, so this remains the logical HF hash-layer count.
+            moe_num_hash_layers=_dsv4_num_hash_layers(hf_config),  # 3 for DSv4 Flash
+            hash_moe_vocab_size=hf_config.vocab_size,  # 129280
+            # SwiGLU activation clamp
+            activation_func_clamp_value=hf_config.swiglu_limit,  # 10.0
+            # MoE placement is driven by the hybrid layer pattern (the E symbols), not by
+            # moe_layer_freq; keep it uniform so HybridModel never treats a layer as dense.
+            moe_layer_freq=1,
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size * hf_config.n_shared_experts,
+            # ---- MTP ----
+            mtp_num_layers=getattr(hf_config, "num_nextn_predict_layers", 0) or None,
+            # ---- Misc ----
+            share_embeddings_and_output_weights=bool(hf_config.tie_word_embeddings),
+            gradient_accumulation_fusion=True,
+            bias_dropout_fusion=True,
+            cross_entropy_fusion_impl="te",
+            cross_entropy_loss_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            hidden_dropout=0.0,
+            attention_softmax_in_fp32=False,
+            make_vocab_size_divisible_by=1280,
+            seq_length=4096,
+            # HybridModelProvider default that the builder config does not share.
+            attention_backend=AttnBackend.flash,
+        )
+        return config_kwargs
 
-        # DSA indexer geometry (matches index_n_heads / index_head_dim / index_topk in config)
-        provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
-        provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
-        provider.dsa_indexer_topk = hf_config.index_topk  # 512
-        provider.dsa_kernel_backend = "cudnn" if use_dsa_kernel_fusion else "none"
-
-        # ---- Hyper-Connections (mHC) ----
-        provider.enable_mhc_connections = True
-        provider.mhc_num_residual_streams = hf_config.hc_mult  # 4
-        provider.use_fused_mhc = use_blackwell_fused_kernels
-        provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
-
-        # ---- MoE ----
-        provider.gated_linear_unit = True
-        provider.moe_grouped_gemm = True
-        provider.moe_router_pre_softmax = False  # V4 uses post-topk normalisation
-        provider.moe_token_dispatcher_type = "flex"
-        provider.moe_flex_dispatcher_backend = "hybridep"
-        provider.moe_flex_dispatcher_num_sms = 16
-        provider.moe_permute_fusion_into_hybridep = False
-        provider.moe_router_load_balancing_type = "noaux_tc"
-        provider.moe_shared_expert_overlap = True
-        provider.moe_router_score_function = hf_config.scoring_func  # "sqrtsoftplus"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_dtype = "fp32"
-        provider.moe_permute_fusion = True
-        provider.moe_aux_loss_coeff = 0.0
-        provider.moe_router_topk = hf_config.num_experts_per_tok  # 6
-        provider.norm_topk_prob = hf_config.norm_topk_prob
-        provider.moe_router_topk_scaling_factor = hf_config.routed_scaling_factor  # 1.5
-
-        # Hash routing. MCore counts MoE positions in the hybrid pattern rather than all
-        # hybrid symbols, so this remains the logical HF hash-layer count.
-        provider.moe_num_hash_layers = _dsv4_num_hash_layers(hf_config)  # 3 for DSv4 Flash
-        provider.hash_moe_vocab_size = hf_config.vocab_size  # 129280
-
-        # SwiGLU activation clamp
-        provider.activation_func_clamp_value = hf_config.swiglu_limit  # 10.0
-
-        # MoE placement is driven by the hybrid layer pattern (the E symbols), not by
-        # moe_layer_freq; keep it uniform so HybridModel never treats a layer as dense.
-        provider.moe_layer_freq = 1
-        provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
-
-        # ---- MTP ----
-        provider.mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or None
-
-        # ---- Misc ----
-        provider.share_embeddings_and_output_weights = bool(hf_config.tie_word_embeddings)
-        provider.gradient_accumulation_fusion = True
-        provider.bias_dropout_fusion = True
-        provider.cross_entropy_fusion_impl = "te"
-        provider.cross_entropy_loss_fusion = True
-        provider.masked_softmax_fusion = True
-        provider.persist_layer_norm = True
-        provider.hidden_dropout = 0.0
-        provider.attention_softmax_in_fp32 = False
-        provider.make_vocab_size_divisible_by = 1280
-        provider.seq_length = 4096
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     # ------------------------------------------------------------------
     # Export: HF config reconstruction
     # ------------------------------------------------------------------
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: DeepSeekV4HybridModelProvider) -> dict:
+    def megatron_to_hf_config(cls, provider: DeepSeekV4HybridModelProvider | DeepSeekV4ModelConfig) -> dict:
         hf_cfg = super(DeepSeekV4Bridge, cls).megatron_to_hf_config(provider)
 
         # Recover the flat GPT-form view (one entry per logical DSv4 layer) from the
