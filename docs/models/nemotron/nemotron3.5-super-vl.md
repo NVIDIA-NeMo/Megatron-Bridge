@@ -215,12 +215,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --hf-revision 1f8953f7f0935358e3605150d22bc15df062061c --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --trust-remote-code</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --hf-revision 1f8953f7f0935358e3605150d22bc15df062061c --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 2 --ep 4 --etp 1 --trust-remote-code</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed BF16 GPU import on four GB200 GPUs and the paired export passed with all 43,079 source tensors exact in keys, shapes, dtypes and values against the pinned revision. Compared 248,906,833,960 source bytes, including language, MTP, image encoder, projector, temporal embedder and the vision summary-index buffer. This establishes conversion, not training or numerical forward parity.
+        <p>Two-node, eight-GPU distributed BF16 import and paired export passed on H100 and GB200 with all 43,079 source tensors exact in keys, shapes, dtypes and values. Compared 248,906,833,960 source bytes, including language, MTP, image encoder, projector, temporal embedder and the vision summary-index buffer. This establishes conversion, not training or numerical forward parity.
 </p>
       </section>
     </article>
@@ -261,12 +261,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --trust-remote-code --distributed-save</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 4 --etp 1 --trust-remote-code --distributed-save</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Export on four GB200 GPUs passed the saved round-trip comparison for all 43,079 tensors against the pinned revision with no missing or extra keys and zero value differences. The command reads the source package from the Hub default branch, which resolved to the pinned revision. Exact conversion is separate from forward-logit correlation.
+        <p>Saved round-trip comparison passed on H100 and GB200 for all 43,079 tensors with no missing or extra keys and zero value differences. The H100 exported package reloaded through native Transformers and performed bounded image generation. Exact conversion is separate from forward-logit correlation. The export command reads the source package from the Hub default branch; the card revision does not pin that command.
 </p>
       </section>
     </article>
