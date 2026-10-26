@@ -242,7 +242,7 @@ class TestPerfConfigIntegration:
             (
                 "wan",
                 "megatron.bridge.perf_recipes.wan.h100.wan:wan_14b_pretrain_32gpu_h100_bf16_config",
-                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "CUDA_DEVICE_MAX_CONNECTIONS": 1},
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 16, "CUDA_DEVICE_MAX_CONNECTIONS": 1},
             ),
         ],
     )

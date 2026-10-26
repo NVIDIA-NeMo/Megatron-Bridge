@@ -27,11 +27,14 @@ from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optiona
 import torch
 import torch.distributed as dist
 import transformers
+import yaml
 from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
+from pydantic import BaseModel
 
 
 if TYPE_CHECKING:
+    from megatron.bridge.models.conversion.modelopt_utils import ModelOptExportPlan
     from megatron.bridge.models.conversion.param_mapping import LocalHFParam, LocalMXFP8Param
     from megatron.bridge.peft.base import PEFT
 
@@ -335,6 +338,55 @@ def _check_current_pp_stage_only_support(stream_fn: Callable[..., Any], owner: o
     _check_streaming_argument_support(stream_fn, owner, "current_pp_stage_only")
 
 
+MODELOPT_QUANTIZER_STATE_FILE = "quantizer_state.pth"
+MODELOPT_QUANTIZER_RECIPE_FILE = "quant_recipe.yaml"
+MODELOPT_QUANTIZER_RECIPE_FORMAT = "modelopt_quantizer_recipe"
+MODELOPT_QUANTIZER_RECIPE_VERSION = 1
+
+
+def _save_modelopt_quantizer_sidecars(
+    path: Path, quantizer_recipe: dict[str, dict[str, Any]], quant_tensors: dict[str, torch.Tensor]
+) -> None:
+    """Write ModelOpt quantizer ranges and recipe under HF names, e.g. for vLLM fake-quant serving.
+
+    ``quantizer_state.pth`` holds the tensors (e.g. ``_amax``) of the enabled quantizers and
+    ``quant_recipe.yaml`` their properties-only ModelOpt state. Neither is written when no
+    quantizer is enabled (e.g. weight-only formats whose weights were folded), so the export
+    stays a plain checkpoint.
+    """
+
+    class _RecipeDumper(yaml.SafeDumper):
+        # Spell out every entry: anchors would make an edit of one quantizer change all its aliases.
+        def ignore_aliases(self, data):
+            return True
+
+    # Quantizer states can record runtime dtypes and shapes; store dtypes by name, shapes as lists,
+    # and config objects (e.g. a disabled RotateConfig) as plain mappings.
+    _RecipeDumper.add_representer(torch.dtype, lambda dumper, dtype: dumper.represent_str(str(dtype)))
+    _RecipeDumper.add_representer(torch.Size, lambda dumper, size: dumper.represent_list(list(size)))
+    _RecipeDumper.add_multi_representer(
+        BaseModel, lambda dumper, config: dumper.represent_dict(config.model_dump(mode="json"))
+    )
+
+    state_path = path / MODELOPT_QUANTIZER_STATE_FILE
+    recipe_path = path / MODELOPT_QUANTIZER_RECIPE_FILE
+    if not quantizer_recipe:
+        state_path.unlink(missing_ok=True)
+        recipe_path.unlink(missing_ok=True)
+        return
+    path.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {name: tensor for name, tensor in quant_tensors.items() if name.rpartition(".")[0] in quantizer_recipe},
+        state_path,
+    )
+    recipe = {
+        "format": MODELOPT_QUANTIZER_RECIPE_FORMAT,
+        "version": MODELOPT_QUANTIZER_RECIPE_VERSION,
+        "quantizers": quantizer_recipe,
+    }
+    recipe_path.write_text(yaml.dump(recipe, Dumper=_RecipeDumper, sort_keys=False))
+
+
 class AutoBridge(Generic[MegatronModelT]):
     """
     Automatically select and instantiate the appropriate bridge for a model.
@@ -473,6 +525,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
         from megatron.bridge.training.model_load_save import load_model_config
+        from megatron.bridge.training.utils.checkpoint_utils import get_hf_source_from_model_config
 
         checkpoint_path = Path(megatron_path)
         if not checkpoint_path.exists():
@@ -501,11 +554,8 @@ class AutoBridge(Generic[MegatronModelT]):
         text_reference = None
         if getattr(megatron_cfg, "hf_model_text_only", False) is True:
             # A replacement reference repository need not contain the source revision.
-            revision = (
-                getattr(megatron_cfg, "hf_model_revision", None)
-                if str(hf_model_id) == str(getattr(megatron_cfg, "hf_model_id", None))
-                else None
-            )
+            source_id, source_revision = get_hf_source_from_model_config(megatron_cfg)
+            revision = source_revision if str(hf_model_id) == str(source_id) else None
             text_reference = cls.from_hf_pretrained(
                 hf_model_id,
                 text_only=True,
@@ -884,61 +934,136 @@ class AutoBridge(Generic[MegatronModelT]):
             **({"current_pp_stage_only": True} if current_pp_stage_only else {}),
         )
 
-    def export_hf_weights_modelopt(
+    def build_hf_modelopt_export_plan(
         self,
         model: MegatronModelT | list[MegatronModelT],
-        quant_mode: str = "nvfp4",
-        cpu: bool = False,
-        show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
-        ignore_patterns: Optional[List[str]] = None,
-        merge_adapter_weights: bool = True,
-    ) -> Iterable["HFWeightTuple"]:
-        """Export Megatron weights to HuggingFace ModelOpt deployment format.
+    ) -> "ModelOptExportPlan":
+        """Prepare canonical real-quant tensors and configuration for streaming export.
 
         Args:
             model: Megatron model instance or list of instances.
-            quant_mode: ModelOpt quantization mode to export. Currently supports
-                ``"nvfp4"`` and ``"w4a16_nvfp4"``.
-            cpu: Whether to move exported tensors to CPU before yielding.
-            show_progress: Display progress bar during base Hugging Face weight export.
             conversion_tasks: Pre-built conversion tasks. If not provided, tasks will be built
                 automatically from the models.
-            ignore_patterns: Hugging Face parameter name patterns that should remain unquantized.
-                Scale tensor suffixes and the optional ``model.`` prefix are ignored when matching.
-            merge_adapter_weights: Whether to gather and merge LoRA adapter weights into the base
-                tensors during export.
-
-        Yields:
-            HFWeightTuple: Named tuples containing Hugging Face parameter names and tensors. Quantized
-            weights yield the packed weight under the original ``*.weight`` name followed by the
-            corresponding ``*.weight_scale`` and ``*.weight_scale_2`` tensors.
-
-        Raises:
-            RuntimeError: If a matched quantized Megatron parameter uses a qformat unsupported by
-                ``quant_mode``.
         """
         from megatron.bridge.models.conversion.modelopt_utils import build_modelopt_export_plan
 
         if not isinstance(model, list):
             model = [model]
+        bridge = self._model_bridge
         if conversion_tasks is None:
-            conversion_tasks = self._model_bridge.build_conversion_tasks(self.hf_pretrained, model)
-        export_tasks = build_modelopt_export_plan(
+            from modelopt.torch.quantization.nn import AnyQuantizer
+
+            # ModelOpt reads quantizer state from each owning weight, not separate HF mappings.
+            conversion_tasks = bridge.build_conversion_tasks(
+                self.hf_pretrained, model, exclude_module_types=AnyQuantizer
+            )
+        tied_weight_aliases = {}
+        unwrapped_model = model_bridge.unwrap_model(model)[0]
+        if bridge._share_embeddings_and_output_weights(unwrapped_model):
+            registry = bridge.mapping_registry()
+            for task in conversion_tasks:
+                if task is None:
+                    continue
+                alias = bridge._get_tied_output_hf_name(task, registry)
+                if alias is not None:
+                    tied_weight_aliases[alias] = task.mapping.hf_param
+        return build_modelopt_export_plan(
             conversion_tasks,
             model=model,
-            bridge=self._model_bridge,
-            quant_mode=quant_mode,
-            ignore_patterns=ignore_patterns or [],
+            tied_weight_aliases=tied_weight_aliases,
         )
-        hf_weights = self.export_hf_weights(
+
+    def export_hf_weight_groups_modelopt(
+        self,
+        model: MegatronModelT | list[MegatronModelT],
+        *,
+        cpu: bool = False,
+        show_progress: bool = True,
+        export_plan: Optional["ModelOptExportPlan"] = None,
+        merge_adapter_weights: bool = True,
+    ) -> Iterable[tuple["HFWeightTuple", ...]]:
+        """Export one materialized ModelOpt output group per conversion task.
+
+        Args:
+            model: Megatron model instance or virtual-pipeline model list.
+            cpu: Move each exported tensor to CPU before yielding it.
+            show_progress: Display conversion progress.
+            export_plan: Reusable plan built by :meth:`build_hf_modelopt_export_plan`.
+            merge_adapter_weights: Must remain ``True``. Unmerged adapter export is
+                not supported by this API.
+
+        Yields:
+            One tuple per conversion task. Empty tuples preserve tasks that emit no
+            tensors on a given topology.
+
+        Note:
+            This is a distributed collective stream. Every rank must consume groups
+            in identical order, including empty groups and the terminal
+            ``StopIteration``. A group is collective-complete before it is yielded;
+            callers must synchronize rank-local consumers before requesting the next
+            group.
+
+        Raises:
+            NotImplementedError: If unmerged adapters or custom Hugging Face export
+                overrides are requested.
+        """
+        if not merge_adapter_weights:
+            raise NotImplementedError("ModelOpt export does not support unmerged adapter weights")
+        if type(self).export_hf_weights is not AutoBridge.export_hf_weights:
+            raise NotImplementedError(
+                "Grouped ModelOpt export does not support AutoBridge subclasses "
+                "with custom HuggingFace export behavior"
+            )
+        bridge = self._model_bridge
+        if type(bridge).stream_weights_megatron_to_hf is not MegatronModelBridge.stream_weights_megatron_to_hf:
+            raise NotImplementedError(
+                "Grouped ModelOpt export does not support model bridges with custom HuggingFace export behavior"
+            )
+        if not isinstance(model, list):
+            model = [model]
+        if export_plan is None:
+            export_plan = self.build_hf_modelopt_export_plan(model)
+        from megatron.bridge.models.conversion.modelopt_utils import (
+            prepare_modelopt_export_tasks,
+        )
+
+        yield from bridge._stream_weight_groups_megatron_to_hf(
+            model,
+            self.hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=prepare_modelopt_export_tasks(export_plan),
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
+    def export_hf_weights_modelopt(
+        self,
+        model: MegatronModelT | list[MegatronModelT],
+        *,
+        cpu: bool = False,
+        show_progress: bool = True,
+        export_plan: Optional["ModelOptExportPlan"] = None,
+        merge_adapter_weights: bool = True,
+    ) -> Iterable["HFWeightTuple"]:
+        """Export canonical ModelOpt deployment tensors from a prepared plan."""
+        if not merge_adapter_weights:
+            raise NotImplementedError("ModelOpt export does not support unmerged adapter weights")
+        if not isinstance(model, list):
+            model = [model]
+        if export_plan is None:
+            export_plan = self.build_hf_modelopt_export_plan(model)
+        from megatron.bridge.models.conversion.modelopt_utils import (
+            prepare_modelopt_export_tasks,
+        )
+
+        yield from self.export_hf_weights(
             model,
             cpu=cpu,
             show_progress=show_progress,
-            conversion_tasks=export_tasks,
+            conversion_tasks=prepare_modelopt_export_tasks(export_plan),
             merge_adapter_weights=merge_adapter_weights,
         )
-        yield from hf_weights
 
     def export_hf_weights_quant(
         self,
@@ -1390,11 +1515,20 @@ class AutoBridge(Generic[MegatronModelT]):
         )
         model_instance = self._get_model_instance(model)
         quant_tensors = None
+        quantizer_recipe = None
         # Import lazily so Bridge conversion modules can load before ModelOpt
         # registers its Megatron-Bridge plugin hooks.
         from modelopt.torch.quantization.utils import is_quantized
 
-        if is_quantized(model_instance):
+        # Building the recipe is collective, so decide on every rank from all chunks: a pipeline
+        # stage can hold no quantizers (e.g. only the embedding).
+        quantized = any(is_quantized(chunk) for chunk in model)
+        if is_distributed:
+            per_rank = [None] * dist.get_world_size()
+            dist.all_gather_object(per_rank, quantized)
+            quantized = any(per_rank)
+        if quantized:
+            quantizer_recipe = bridge.build_modelopt_quantizer_recipe(self.hf_pretrained, model)
             quant_tensors = {}
 
             def _filter_quant(gen):
@@ -1465,12 +1599,10 @@ class AutoBridge(Generic[MegatronModelT]):
             for filename in previous_weight_files - saved_filenames:
                 (output_path / filename).unlink(missing_ok=True)
 
-        # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
-        if quant_tensors:
-            if rank == 0:
-                sidecar_path = Path(path) / "modelopt_weights.pt"
-                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(quant_tensors, sidecar_path)
+        # Save the quantizer sidecars after the main generator is consumed (rank 0 only). A model
+        # without quantizers still removes stale ones, so they never describe other weights.
+        if rank == 0:
+            _save_modelopt_quantizer_sidecars(output_path, quantizer_recipe or {}, quant_tensors or {})
 
         if is_distributed:
             dist.barrier()
@@ -1953,6 +2085,11 @@ class AutoBridge(Generic[MegatronModelT]):
         weights, initialize distributed state, finalize the config, or build a
         model.
 
+        The Hugging Face source id and revision are recorded in the config's
+        ``extra_checkpoint_metadata``. A source projected to its language model
+        with ``text_only=True`` also sets ``hf_model_text_only``, so a restored
+        config reopens the same projection.
+
         Returns:
             Serializable model config linked to its model builder.
 
@@ -1971,6 +2108,8 @@ class AutoBridge(Generic[MegatronModelT]):
         if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):
             hf_name_or_path = getattr(self.hf_pretrained, "name_or_path", None)
         self._set_source_metadata(model_config, hf_model_id=hf_name_or_path, hf_model_revision=self.hf_model_revision)
+        if self.text_only:
+            model_config.hf_model_text_only = True
 
         return model_config
 
@@ -2257,6 +2396,8 @@ class AutoBridge(Generic[MegatronModelT]):
         self,
         megatron_model: Union[MegatronModelT, List[MegatronModelT]],
         hf_path: str | Path | None = None,
+        *,
+        exclude_param_patterns: tuple[str, ...] = (),
     ) -> List["WeightConversionTask"]:
         """Get the conversion tasks for weight conversion between HuggingFace and Megatron formats.
 
@@ -2272,6 +2413,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 virtual pipeline stage) that participate in the conversion.
             hf_path: Optional path to load HF weights from. If None, uses weights
                 from the bridge's hf_pretrained instance.
+            exclude_param_patterns: Glob patterns for local parameter and persistent-buffer
+                names to exclude before mapping validation. Defaults to no exclusions.
 
         Returns:
             List[WeightConversionTask]: List of conversion tasks that would be executed.
@@ -2326,7 +2469,11 @@ class AutoBridge(Generic[MegatronModelT]):
             else:
                 pre_trained = self._pretrained_wrapper_cls.from_pretrained(hf_path)
 
-        return self._model_bridge.build_conversion_tasks(pre_trained, megatron_model)
+        return self._model_bridge.build_conversion_tasks(
+            pre_trained,
+            megatron_model,
+            **({"exclude_param_patterns": exclude_param_patterns} if exclude_param_patterns else {}),
+        )
 
     def stream_weights_hf_to_megatron(
         self,

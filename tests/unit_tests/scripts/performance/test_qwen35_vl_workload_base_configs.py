@@ -35,6 +35,7 @@ from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
 )
 from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
     _build_qwen35_vl_35b_a3b_gb300_bf16,
+    _build_qwen35_vl_397b_a17b_gb300_fp8mx,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
@@ -500,6 +501,9 @@ def test_qwen35_vl_397b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pyt
     assert config.model.recompute_modules == ["gdn_norm_out"]
     assert config.model.moe_flex_dispatcher_backend == "ncclep"
     assert config.model.moe_use_grouped_tensor is True
+    # Built on the GB300 MXFP8 base, not the tuned GB300 recipe: the Adam moments stay in FP32.
+    assert config.optimizer.use_precision_aware_optimizer is False
+    assert config.model.moe_permute_fusion_into_hybridep is False
     assert getattr(config.model, "use_grouped_gemm_for_shared_expert", False) is False
     assert getattr(config.model, "overlap_dispatch_backward_with_experts_wgrad", False) is False
 
@@ -553,10 +557,7 @@ _MISSING = object()
     ("recipe_fn", "gb300_recipe_fn"),
     [
         (qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config, qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config),
-        (
-            qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
-            qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
-        ),
+        (qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config, _build_qwen35_vl_397b_a17b_gb300_fp8mx),
     ],
     ids=recipe_factory_id,
 )
@@ -581,6 +582,68 @@ def test_qwen35_vl_vrnvl72_fp8mx_model_settings_exist_on_the_provider(
     }
 
     assert "max_vision_cuda_graph_seq_length" in changed
+    provider_fields = {field.name for field in dataclasses.fields(Qwen35VLMoEModelProvider)}
+    assert changed <= provider_fields, sorted(changed - provider_fields)
+
+
+def test_qwen35_vl_397b_gb300_fp8mx_uses_the_tuned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default GB300 397B MXFP8 benchmark adds the tuned settings to its MXFP8 base, on real provider fields."""
+    from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
+
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config()
+    base = _build_qwen35_vl_397b_a17b_gb300_fp8mx()
+
+    _assert_cutedsl_grouped_mlp(config)
+    assert config.model.vision_cuda_graph_impl == "transformer_engine"
+    assert config.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    # The cap covers the real-data vision sequences at MBS 1, so the mock images fit under it.
+    assert config.model.max_vision_cuda_graph_seq_length == 1029
+    assert config.model.max_vision_cuda_graph_seq_length >= (
+        config.train.micro_batch_size * config.dataset.num_images * _vision_patches_per_mock_image(config)
+    )
+    assert config.model.recompute_granularity == "selective"
+    assert config.model.recompute_modules == ["core_attn", "gdn_norm_out"]
+
+    assert config.optimizer.use_precision_aware_optimizer is True
+    assert config.optimizer.main_params_dtype == torch.float32
+    assert config.optimizer.main_grads_dtype == torch.float32
+    assert config.optimizer.exp_avg_dtype == torch.bfloat16
+    assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    # FP32 main parameters and gradients are the defaults, so only the moments change.
+    optimizer_changed = {
+        name
+        for name in vars(config.optimizer).keys() | vars(base.optimizer).keys()
+        if getattr(config.optimizer, name, _MISSING) != getattr(base.optimizer, name, _MISSING)
+    }
+    assert optimizer_changed == {"use_precision_aware_optimizer", "exp_avg_dtype", "exp_avg_sq_dtype"}
+
+    # The environment is the base's plus exactly these settings.
+    assert config.env_vars == {
+        **base.env_vars,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 128,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 128,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+
+    # Only these model fields differ from the MXFP8 base, and the real provider declares each of them.
+    changed = {
+        name
+        for name in vars(config.model).keys() | vars(base.model).keys()
+        if getattr(config.model, name, _MISSING) != getattr(base.model, name, _MISSING)
+    }
+    assert changed == {
+        "max_vision_cuda_graph_seq_length",
+        "moe_mlp_glu_interleave_size",
+        "recompute_granularity",
+        "recompute_modules",
+        "use_transformer_engine_op_fuser",
+        "vision_cuda_graph_impl",
+        "vision_cuda_graph_scope",
+    }
     provider_fields = {field.name for field in dataclasses.fields(Qwen35VLMoEModelProvider)}
     assert changed <= provider_fields, sorted(changed - provider_fields)
 
