@@ -121,13 +121,118 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
     assert plan.quantization_config["config_groups"]["group_0"]["targets"] == ["Linear"]
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("quant_algo", ["NVFP4", "W4A16_NVFP4"])
+@pytest.mark.parametrize("tied", [False, True])
+@pytest.mark.parametrize("remote_embedding", [False, True])
+def test_public_modelopt_plan_preserves_tied_embedding_metadata(monkeypatch, quant_algo, tied, remote_embedding):
+    class EmbeddingBridge(MegatronModelBridge):
+        def provider_bridge(self, hf_pretrained):
+            raise NotImplementedError
+
+        def mapping_registry(self):
+            return MegatronMappingRegistry(
+                ColumnParallelMapping("embedding.word_embeddings.weight", "model.embed_tokens.weight"),
+                ColumnParallelMapping("output_layer.weight", "lm_head.weight"),
+            )
+
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=tied)
+    model.embedding = torch.nn.Embedding(8, 16, dtype=torch.bfloat16)
+    model.projection = _nvfp4_linear()
+    if quant_algo == "W4A16_NVFP4":
+        model.projection.input_quantizer.disable()
+    embedding_task = _task(
+        ColumnParallelMapping("embedding.word_embeddings.weight", "model.embed_tokens.weight"),
+        model.embedding,
+        global_name="embedding.word_embeddings.weight",
+    )
+    tasks = [
+        embedding_task,
+        _task(ColumnParallelMapping("projection.weight", "model.projection.weight"), model.projection),
+    ]
+    if remote_embedding:
+        embedding_source = modelopt_utils._capture_source_spec(embedding_task)
+        tasks[0] = replace(embedding_task, megatron_module=None, param_weight=None)
+        monkeypatch.setattr(
+            modelopt_utils,
+            "_sync_source_specs",
+            lambda local, _group: {**local, embedding_task.global_param_name: embedding_source},
+        )
+
+    baseline = modelopt_utils.build_modelopt_export_plan(tasks, model=[model])
+    bridge = SimpleNamespace(_model_bridge=EmbeddingBridge())
+    plan = AutoBridge.build_hf_modelopt_export_plan(bridge, model, [None, *tasks])
+
+    assert plan.quantization_config["quant_algo"] == quant_algo
+    assert "model.embed_tokens" in plan.quantization_config["ignore"]
+    assert ("lm_head" in plan.quantization_config["ignore"]) is tied
+    for actual, expected in zip(plan.conversion_tasks, baseline.conversion_tasks, strict=True):
+        assert actual.param_weight is expected.param_weight
+        assert replace(actual, param_weight=None) == replace(expected, param_weight=None)
+    assert plan.quantized_params == baseline.quantized_params
+    assert plan.local_quantization_specs == baseline.local_quantization_specs
+    if not tied:
+        assert plan.quantization_config == baseline.quantization_config
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("source_quantized", [False, True])
+def test_modelopt_plan_alias_copies_actual_spec(monkeypatch, source_quantized):
+    module = _fp8_linear()
+    source_module = _fp8_linear() if source_quantized else torch.nn.Linear(4, 4, bias=False)
+    source_name = "model.embed_tokens.weight"
+    alias = "lm_head.weight"
+    tasks = [
+        _task(ColumnParallelMapping("projection.weight", "model.projection.weight"), module),
+        _task(ColumnParallelMapping("embedding.weight", source_name), source_module, global_name="embedding.weight"),
+    ]
+    original_builder = weight_export.build_hf_quantization_config
+    captured = {}
+
+    def capture_builder(named_specs):
+        captured.update(named_specs)
+        return original_builder(named_specs)
+
+    monkeypatch.setattr(weight_export, "build_hf_quantization_config", capture_builder)
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[module], tied_weight_aliases={alias: source_name})
+
+    assert captured[alias] is captured[source_name]
+    assert (captured[alias] is not None) is source_quantized
+    assert ("lm_head" in plan.quantization_config["ignore"]) is not source_quantized
+    assert len(plan.conversion_tasks) == len(tasks)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("case", ["missing-source", "conflicting-alias", "matching-alias"])
+def test_modelopt_plan_validates_tied_alias_spec(case):
+    module = _fp8_linear()
+    source_name = "model.embed_tokens.weight"
+    alias = "lm_head.weight"
+    embedding = torch.nn.Linear(4, 4, bias=False)
+    tasks = [
+        _task(ColumnParallelMapping("projection.weight", "model.projection.weight"), module),
+        _task(ColumnParallelMapping("embedding.weight", source_name), embedding, global_name="embedding.weight"),
+    ]
+    if case != "missing-source":
+        alias_module = module if case == "conflicting-alias" else embedding
+        tasks.append(_task(ColumnParallelMapping("output.weight", alias), alias_module, global_name="output.weight"))
+    source = "missing.weight" if case == "missing-source" else source_name
+    if case == "matching-alias":
+        plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[module], tied_weight_aliases={alias: source})
+        assert "lm_head" in plan.quantization_config["ignore"]
+        assert len(plan.conversion_tasks) == len(tasks)
+    else:
+        message = "Missing ModelOpt export spec" if case == "missing-source" else "Inconsistent ModelOpt export spec"
+        with pytest.raises(ValueError, match=message):
+            modelopt_utils.build_modelopt_export_plan(tasks, model=[module], tied_weight_aliases={alias: source})
+
+
 @pytest.mark.parametrize("cached_names", [False, True])
 @pytest.mark.parametrize("quantization", ["fp8", "static_nvfp4"])
 def test_public_modelopt_plan_excludes_quantizer_state_before_mapping_validation(
     monkeypatch, cached_names, quantization
 ):
-    monkeypatch.setenv("ENABLE_BRIDGE_QUANT_MAPPING", "1")
-
     class ProjectionBridge(MegatronModelBridge):
         def provider_bridge(self, hf_pretrained):
             raise NotImplementedError
