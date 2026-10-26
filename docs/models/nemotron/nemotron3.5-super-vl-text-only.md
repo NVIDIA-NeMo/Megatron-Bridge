@@ -159,7 +159,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-20</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -173,7 +173,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Two-node, eight-GPU distributed import and paired export passed on H100 and GB200. All 42,683 language tensors, including 1,040 MTP tensors, matched in keys, shapes, dtypes and values across the saved round trip. Compared 247,222,108,160 source tensor bytes; no media tensors were exported. This establishes weight conversion, not forward or training parity.
+        <p>Two-node, eight-GPU distributed import and paired export passed on H100 at this commit (GB200 passed at 3a5b4f61, which has identical conversion code). All 42,683 language tensors, including 1,040 MTP tensors, matched in keys, shapes, dtypes and values across the saved round trip. Compared 247,222,108,160 source tensor bytes; no media tensors were exported. This establishes weight conversion, not forward or training parity.
 </p>
       </section>
     </article>
@@ -205,7 +205,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-20</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -219,7 +219,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exported a standalone native NemotronHForCausalLM checkpoint with unprefixed language and MTP weights and zero media tensors. All 42,683 tensors matched the source exactly, including 1,040 MTP tensors. The tokenizer was preserved, native HF config loading and normal text bridge dispatch passed, and the tensor-name/shape structure matched Nemotron 3 Super. This does not claim identical weights to that model.
+        <p>Exported a standalone native NemotronHForCausalLM checkpoint with unprefixed language and MTP weights and zero media tensors. All 42,683 tensors matched the source exactly, including 1,040 MTP tensors, on H100 at this commit. The tokenizer was preserved, native HF config loading and normal text bridge dispatch passed, and the tensor-name/shape structure matched Nemotron 3 Super; these checks and GB200 ran at 3a5b4f61, which has identical conversion code. This does not claim identical weights to that model.
 </p>
       </section>
     </article>
