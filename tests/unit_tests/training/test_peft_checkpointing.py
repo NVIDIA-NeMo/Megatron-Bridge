@@ -25,6 +25,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.utils import unwrap_model
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.base import PEFT
@@ -570,7 +571,7 @@ class TestPEFTCheckpointLoading:
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
-            mock_unwrap_model.return_value = mock_model
+            mock_unwrap_model.side_effect = unwrap_model
 
             # Create mock pg_collection
             mock_pg_collection = Mock()
@@ -696,7 +697,7 @@ class TestPEFTCheckpointLoading:
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
-            mock_unwrap_model.return_value = mock_model
+            mock_unwrap_model.side_effect = unwrap_model
 
             # Create mock pg_collection
             mock_pg_collection = Mock()
@@ -840,7 +841,7 @@ class TestPEFTCheckpointLoading:
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
-            mock_unwrap_model.return_value = mock_model
+            mock_unwrap_model.side_effect = unwrap_model
 
             # Create mock pg_collection
             mock_pg_collection = Mock()
