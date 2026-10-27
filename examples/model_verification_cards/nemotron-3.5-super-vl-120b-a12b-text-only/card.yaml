@@ -234,6 +234,7 @@ items:
         model.expert_model_parallel_size=64 model.moe_token_dispatcher_type=flex
         model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false
         model.moe_router_force_load_balancing=false
+        env_vars.NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=64 env_vars.NVLINK_DOMAIN_SIZE=72 env_vars.USE_MNNVL=1
         optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32
         optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32
         mixed_precision.grad_reduce_in_fp32=true ddp.grad_reduce_in_fp32=true
@@ -427,6 +428,7 @@ items:
         model.expert_model_parallel_size=16 model.moe_token_dispatcher_type=flex
         model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false
         model.moe_router_force_load_balancing=false
+        env_vars.NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=16 env_vars.NVLINK_DOMAIN_SIZE=72 env_vars.USE_MNNVL=1
         optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32
         optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32
         ddp.grad_reduce_in_fp32=true
