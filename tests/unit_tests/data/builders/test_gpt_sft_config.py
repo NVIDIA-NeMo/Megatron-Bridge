@@ -1104,3 +1104,42 @@ def test_deprecated_config_rejects_runtime_objects_in_legacy_kwargs(tmp_path):
 
     with pytest.raises(TypeError, match="declarative values"):
         config.validate()
+
+
+def test_chat_mask_source_reaches_dataset_kwargs():
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root="data",
+        preprocessing=ChatSFTPreprocessingConfig(mask_source="generation"),
+    )
+
+    kwargs = normalize_gpt_sft_dataset_kwargs(config)
+
+    assert kwargs["chat_loss_mode"] == "assistant"
+    assert kwargs["chat_mask_source"] == "generation"
+    default = GPTSFTDatasetConfig(seq_length=128, dataset_root="data", preprocessing=ChatSFTPreprocessingConfig())
+    assert "chat_mask_source" not in normalize_gpt_sft_dataset_kwargs(default)
+
+
+def test_default_mask_source_keeps_existing_cache_identities(monkeypatch):
+    """Introducing mask_source must not move data materialized or packed before it existed."""
+    monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: f"cache/{name}")
+    source = HFDatasetSourceConfig(path_or_dataset="json")
+
+    def config(**preprocessing):
+        return GPTSFTDatasetConfig(
+            seq_length=128,
+            hf_dataset=source,
+            preprocessing=ChatSFTPreprocessingConfig(**preprocessing),
+            do_validation=False,
+            do_test=False,
+        )
+
+    default = config()
+    explicit_default = config(mask_source="auto")
+    generation = config(mask_source="generation")
+
+    assert builder_mod._preprocessing_identity(default.preprocessing) == {"loss_mode": "assistant"}
+    assert resolve_gpt_sft_dataset_root(default) == resolve_gpt_sft_dataset_root(explicit_default)
+    assert resolve_gpt_sft_dataset_root(default) != resolve_gpt_sft_dataset_root(generation)
+    assert builder_mod._packing_fingerprint(default, None) != builder_mod._packing_fingerprint(generation, None)

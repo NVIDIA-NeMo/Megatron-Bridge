@@ -938,12 +938,15 @@ class GPTSFTChatDataset(GPTSFTDataset):
     Supports both legacy special token-based formatting and modern HuggingFace chat templates.
     """
 
+    mask_source: Literal["auto", "generation"] = "auto"
+
     def __init__(
         self,
         file_path: str,
         tokenizer: MegatronTokenizer,
         use_hf_tokenizer_chat_template: bool = True,
         loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
+        mask_source: Literal["auto", "generation"] = "auto",
         tool_schemas: str | dict | None = None,
         **kwargs,
     ):
@@ -971,6 +974,8 @@ class GPTSFTChatDataset(GPTSFTDataset):
             use_hf_tokenizer_chat_template: If True, use HuggingFace tokenizer's ``apply_chat_template``. Defaults to
                 True; set to False only for the legacy special-token formatter.
             loss_mode: Assistant-only, final-assistant-turn, or full-sequence loss.
+            mask_source: ``auto`` infers assistant boundaries from the template; ``generation`` trusts the
+                chat template's ``{% generation %}`` mask with a single render (assistant loss only).
             tool_schemas: Tool schemas for function calling (JSON string or dict)
             **kwargs: Additional arguments passed to parent GPTSFTDataset
         """
@@ -978,6 +983,11 @@ class GPTSFTChatDataset(GPTSFTDataset):
         self.loss_mode = loss_mode
         if self.loss_mode not in {"assistant", "last_turn", "full"}:
             raise ValueError("Chat SFT loss_mode must be assistant, last_turn, or full.")
+        if mask_source not in {"auto", "generation"}:
+            raise ValueError("Chat SFT mask_source must be auto or generation.")
+        if mask_source == "generation" and loss_mode != "assistant":
+            raise ValueError("Chat SFT mask_source='generation' requires loss_mode='assistant'.")
+        self.mask_source = mask_source
         self.tool_schemas = tool_schemas
 
         # Parse tool_schemas if it's a JSON string
@@ -1044,6 +1054,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
                 self.tokenizer,
                 self.tool_schemas,
                 loss_mode=self.loss_mode,
+                mask_source=self.mask_source,
             )
 
         # store metadata in dataset, in case user may have keys required in the prediction json files

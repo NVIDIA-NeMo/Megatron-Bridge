@@ -72,6 +72,7 @@ _SEMANTIC_DATASET_KWARGS = {
     "answer_only_loss",
     "chat",
     "chat_loss_mode",
+    "chat_mask_source",
     "label_key",
     "prompt_completion_config",
     "prompt_template",
@@ -79,6 +80,18 @@ _SEMANTIC_DATASET_KWARGS = {
     "truncation_method",
     "use_hf_tokenizer_chat_template",
 }
+
+
+def _preprocessing_identity(preprocessing: SFTPreprocessingConfig) -> dict[str, Any]:
+    """Return the cache identity of a preprocessing config.
+
+    Options still at their default are omitted, so introducing an option does not invalidate
+    packed or materialized data built before it existed.
+    """
+    identity = asdict(preprocessing)
+    if identity.get("mask_source") == "auto":
+        del identity["mask_source"]
+    return identity
 
 
 def _default_gpt_sft_preprocessing() -> PromptCompletionSFTPreprocessingConfig:
@@ -196,7 +209,7 @@ def _packing_fingerprint(config: "GPTSFTDatasetConfig", dataset_kwargs: dict[str
         "seed": config.seed,
         "preprocessing_explicit": config.preprocessing is not None,
         "preprocessing_type": type(preprocessing).__name__,
-        "preprocessing": asdict(preprocessing),
+        "preprocessing": _preprocessing_identity(preprocessing),
         "dataset_kwargs": dataset_kwargs,
         "data_blends": _gpt_sft_blend_identity(config),
     }
@@ -451,7 +464,7 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
         "validation_seed": config.seed if config.hf_validation_proportion is not None else None,
         "do_validation": config.do_validation,
         "do_test": config.do_test,
-        "preprocessing": asdict(preprocessing),
+        "preprocessing": _preprocessing_identity(preprocessing),
         "preprocessing_type": type(preprocessing).__name__,
     }
     encoded_identity = json.dumps(
@@ -485,6 +498,8 @@ def normalize_gpt_sft_dataset_kwargs(config: GPTSFTDatasetConfig) -> dict[str, A
             "use_hf_tokenizer_chat_template": True,
             "chat_loss_mode": preprocessing.loss_mode,
         }
+        if preprocessing.mask_source != "auto":
+            preprocessing_kwargs["chat_mask_source"] = preprocessing.mask_source
     else:
         preprocessing_kwargs = {
             "chat": False,
@@ -719,6 +734,7 @@ def build_gpt_sft_split(
     chat = options.pop("chat", False)
     use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", True)
     chat_loss_mode = options.pop("chat_loss_mode", "assistant")
+    chat_mask_source = options.pop("chat_mask_source", "auto")
     tool_schemas = options.pop("tool_schemas", None)
     dataset_init_kwargs = {
         "file_path": path_str,
@@ -770,6 +786,7 @@ def build_gpt_sft_split(
             **dataset_init_kwargs,
             use_hf_tokenizer_chat_template=use_hf_tokenizer_chat_template,
             loss_mode=chat_loss_mode,
+            mask_source=chat_mask_source,
             tool_schemas=tool_schemas,
             enable_in_batch_packing=enable_in_batch_packing,
             in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,

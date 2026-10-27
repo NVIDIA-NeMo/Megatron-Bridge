@@ -2378,3 +2378,82 @@ def test_normalize_hf_vlm_example_keeps_structured_conversation_and_top_level_me
     assert normalized.videos is None
     assert normalized.audio == "audio-payload"
     assert normalized.tools == example["tools"]
+
+
+class _RenderCountingGenerationTokenizer:
+    """Generation-tagged template that leaves each end-of-turn token out of the generation mask."""
+
+    eos_id = 99
+    added_tokens_decoder = {}
+
+    def __init__(self, chat_template="{% generation %}{{ content }}{% endgeneration %}"):
+        self._tokenizer = self
+        self.chat_template = chat_template
+        self.renders = 0
+
+    def apply_chat_template(self, conversation, return_assistant_tokens_mask=False, **kwargs):
+        del kwargs
+        self.renders += 1
+        input_ids, mask = [], []
+        for message in conversation:
+            if message["role"] == "assistant":
+                input_ids += [102, 3, 4, 103]
+                mask += [0, 1, 1, 0]
+            else:
+                input_ids += [100, 20]
+                mask += [0, 0]
+        result = {"input_ids": input_ids}
+        if return_assistant_tokens_mask:
+            result["assistant_masks"] = mask
+        return result
+
+
+_TWO_TURN_EXAMPLE = {
+    "messages": [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "second answer"},
+    ]
+}
+
+
+def test_generation_mask_source_uses_the_template_mask_with_one_render():
+    tokenizer = _RenderCountingGenerationTokenizer()
+
+    tokenized = tokenize_chat_example(_TWO_TURN_EXAMPLE, tokenizer, mask_source="generation")
+
+    assert tokenizer.renders == 1
+    assert tokenized.input_ids.tolist() == [100, 20, 102, 3, 4, 103, 100, 20, 102, 3, 4, 103]
+    # The end-of-turn token is outside the template's generation block, so it must stay unsupervised.
+    assert tokenized.assistant_mask.tolist() == [False, False, False, True, True, False] * 2
+
+
+def test_generation_mask_source_requires_a_generation_block():
+    tokenizer = _RenderCountingGenerationTokenizer(chat_template="{{ content }}")
+
+    with pytest.raises(ValueError, match="mask_source='generation' requires a chat template"):
+        tokenize_chat_example(_TWO_TURN_EXAMPLE, tokenizer, mask_source="generation")
+
+
+@pytest.mark.parametrize("loss_mode", ["last_turn", "full"])
+def test_generation_mask_source_requires_assistant_loss(loss_mode):
+    with pytest.raises(ValueError, match="requires loss_mode='assistant'"):
+        tokenize_chat_example(
+            _TWO_TURN_EXAMPLE, _RenderCountingGenerationTokenizer(), loss_mode=loss_mode, mask_source="generation"
+        )
+
+
+def test_unknown_mask_source_is_rejected():
+    with pytest.raises(ValueError, match="mask_source must be auto or generation"):
+        tokenize_chat_example(_TWO_TURN_EXAMPLE, _RenderCountingGenerationTokenizer(), mask_source="boundaries")
+
+
+def test_chat_preprocess_forwards_mask_source_without_per_message_renders():
+    tokenizer = _RenderCountingGenerationTokenizer()
+
+    result = _chat_preprocess(_TWO_TURN_EXAMPLE, tokenizer, loss_mode="assistant", mask_source="generation")
+
+    # One render for the conversation and one for the final assistant boundary; never one per message.
+    assert tokenizer.renders == 2
+    assert result["loss_mask"].tolist() == [False, False, False, True, True, False] * 2
