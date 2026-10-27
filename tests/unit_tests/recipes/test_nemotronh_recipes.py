@@ -661,7 +661,6 @@ def test_nemotron_3_5_lightning_8k_fsdp_recipe_preserves_convergence_contract():
     assert cuda_graph_module_names(cfg.model) == []
     assert getattr(cfg.model, "init_model_with_meta_device", False) is False
     assert getattr(reference.model, "init_model_with_meta_device", False) is False
-    assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.num_distributed_optimizer_instances == 1
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"

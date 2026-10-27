@@ -77,7 +77,6 @@ def _run_setup(
             gtp_remat_nccl_ub=False,
             use_decentralized_pg=False,
             use_gloo_process_groups=False,
-            use_megatron_fsdp=False,
             use_torch_fsdp2=False,
         ),
         ft=None,
@@ -169,7 +168,7 @@ def test_setup_builds_model_config_and_binds_its_runtime_config(kind: str) -> No
             assert kwargs["pg_collection"] is not None
             return model
 
-    ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False)
+    ddp_config = SimpleNamespace(use_megatron_fsdp=False, overlap_grad_reduce=False, overlap_param_gather=False)
     with patch.object(type(model_config), "get_builder_cls", return_value=RecordingBuilder):
         optimizer, _ = _run_setup(model_config, model, ddp_config, build_model=True)
 
@@ -195,7 +194,9 @@ def test_setup_installs_callbacks_on_scheduler_config(kind: str, chunk_count: in
     chunks = [FakeDDP(runtime)]
     if chunk_count == 2:
         chunks.append(FakeDDP(TransformerConfig(num_layers=1, hidden_size=8, num_attention_heads=2)))
-    ddp_config = SimpleNamespace(overlap_grad_reduce=overlap, overlap_param_gather=overlap, align_param_gather=True)
+    ddp_config = SimpleNamespace(
+        use_megatron_fsdp=False, overlap_grad_reduce=overlap, overlap_param_gather=overlap, align_param_gather=True
+    )
     optimizer, pg_collection = _run_setup(provider, chunks, ddp_config)
 
     config = get_model_config(chunks[0])
@@ -221,7 +222,7 @@ def test_setup_installs_callbacks_on_scheduler_config(kind: str, chunk_count: in
 def test_scheduler_finalizes_once_after_setup(forward_only: bool) -> None:
     provider, runtime = _make_configs("copied_omni")
     model = FakeDDP(runtime)
-    ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False)
+    ddp_config = SimpleNamespace(use_megatron_fsdp=False, overlap_grad_reduce=False, overlap_param_gather=False)
     finalizer = Mock()
     with patch.object(training_setup, "finalize_model_grads", finalizer):
         _, pg_collection = _run_setup(provider, [model], ddp_config)
