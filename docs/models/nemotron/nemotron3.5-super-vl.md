@@ -165,7 +165,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-21</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -179,7 +179,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Two-node, eight-GPU distributed BF16 import and paired export passed on H100 and GB200 with all 43,079 source tensors exact in keys, shapes, dtypes and values. Compared 248,906,833,960 source bytes, including language, MTP, image encoder, projector, temporal embedder and the vision summary-index buffer. This establishes conversion, not training or numerical forward parity.
+        <p>Two-node, eight-GPU distributed BF16 import and paired export passed on H100 at this commit with all 43,079 source tensors exact in keys, shapes, dtypes and values (GB200 passed at 3a5b4f61, which has identical conversion code). Compared 248,906,833,960 source bytes, including language, MTP, image encoder, projector, temporal embedder and the vision summary-index buffer. This establishes conversion, not training or numerical forward parity.
 </p>
       </section>
     </article>
@@ -211,7 +211,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-21</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -225,7 +225,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Saved round-trip comparison passed on H100 and GB200 for all 43,079 tensors with no missing or extra keys and zero value differences. The H100 exported package reloaded through native Transformers and performed bounded image generation. Exact conversion is separate from forward-logit correlation. The export command reads the source package from the Hub default branch; the card revision does not pin that command.
+        <p>Saved round-trip comparison passed on H100 at this commit for all 43,079 tensors with no missing or extra keys and zero value differences (GB200 passed at 3a5b4f61, which has identical conversion code). The H100 exported package reloaded through native Transformers and performed bounded image generation. Exact conversion is separate from forward-logit correlation. The export command reads the source package from the Hub default branch; the card revision does not pin that command.
 </p>
       </section>
     </article>
