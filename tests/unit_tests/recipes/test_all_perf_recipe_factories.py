@@ -118,4 +118,7 @@ def test_benchmark_optimizer_precision_is_independent_of_library_defaults(
     assert cfg.optimizer.main_params_dtype == getattr(torch, main_params_dtype)
     assert cfg.optimizer.exp_avg_dtype == getattr(torch, moments_dtype)
     assert cfg.optimizer.exp_avg_sq_dtype == getattr(torch, moments_dtype)
+    if factory_name == "deepseek_v3_pretrain_1024gpu_h100_bf16_config":
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+        assert cfg.ddp.grad_reduce_in_fp32 is False
     cfg.optimizer.finalize()

@@ -34,7 +34,15 @@ Library recipes use FP32 optimizer state by default, with
 gradients, and Adam moments in FP32. Model compute and gradient communication
 can still use other precisions, such as BF16.
 
-Low-precision optimizer state saves memory, but can affect convergence. Rounding
+**DeepSeek-V3 is the exception:** its pretraining recipes retain BF16 Adam
+moments with `use_precision_aware_optimizer=True`, while keeping master weights,
+main gradients, and gradient accumulation in FP32. The
+[DeepSeek-V3 technical report, section 3.3.3](https://arxiv.org/html/2412.19437v2#S3.SS3.SSS3)
+reports no observable degradation from BF16 moments compared with FP32. This is
+an author-reported result, not a convergence comparison of this Bridge implementation.
+It does not establish the same behavior for DeepSeek-V4 or other models.
+
+For other models, low-precision optimizer state saves memory, but can affect convergence. Rounding
 small optimizer updates can lead to slower convergence or higher final loss,
 even when training appears stable. It can also cause loss spikes or divergence.
 Use it only as a last resort when the model still does not fit after trying

@@ -32,6 +32,8 @@ def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     # Preserve benchmark optimizer precision independently of library defaults.
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16

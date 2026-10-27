@@ -45,6 +45,11 @@ _UNSUPPORTED_FACTORY_KEYS = {
         "qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config",
     ),
 }
+# Only these original DeepSeek-V3 pretraining recipes have the documented exception.
+_BF16_MOMENT_FACTORY_KEYS = {
+    ("megatron.bridge.recipes.deepseek.h100.deepseek_v3", "deepseek_v3_pretrain_1024gpu_h100_bf16_config"),
+    ("megatron.bridge.recipes.deepseek.h100.deepseek_v3", "deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config"),
+}
 _RUNNABLE_RECIPE_FACTORIES = tuple(
     factory for factory in _RECIPE_FACTORIES if recipe_factory_key(factory) not in _UNSUPPORTED_FACTORY_KEYS
 )
@@ -61,6 +66,7 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_all_recipe_factories_are_exported() -> None:
     """Every canonical factory remains available from the public recipe package."""
     canonical = {recipe_factory_key(factory) for factory in _RECIPE_FACTORIES}
+    assert _BF16_MOMENT_FACTORY_KEYS <= canonical
     assert exported_recipe_factory_keys(_RECIPES_PACKAGE) == canonical
     assert {recipe_factory_key(factory) for factory in _UNSUPPORTED_RECIPE_FACTORIES} == _UNSUPPORTED_FACTORY_KEYS
     for factory in _RECIPE_FACTORIES:
@@ -82,9 +88,17 @@ def test_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> 
     assert isinstance(cfg, ConfigContainer)
 
     # Check effective defaults after inheritance, including compatibility aliases.
-    assert cfg.optimizer.use_precision_aware_optimizer is False
-    for field_name in ("main_params_dtype", "main_grads_dtype", "exp_avg_dtype", "exp_avg_sq_dtype"):
+    uses_bf16_moments = recipe_factory_key(recipe_factory) in _BF16_MOMENT_FACTORY_KEYS
+    assert cfg.optimizer.use_precision_aware_optimizer is uses_bf16_moments
+    for field_name in ("main_params_dtype", "main_grads_dtype"):
         assert getattr(cfg.optimizer, field_name) == torch.float32, field_name
+    moments_dtype = torch.bfloat16 if uses_bf16_moments else torch.float32
+    for field_name in ("exp_avg_dtype", "exp_avg_sq_dtype"):
+        assert getattr(cfg.optimizer, field_name) == moments_dtype, field_name
+    if uses_bf16_moments:
+        # FP32 optimizer input alone does not ensure FP32 gradient accumulation.
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is True
+        assert cfg.ddp.grad_reduce_in_fp32 is True
     assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
     if cfg.ddp.use_megatron_fsdp:
         assert cfg.ddp.megatron_fsdp_use_decoupled_grad is False
