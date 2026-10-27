@@ -336,3 +336,37 @@ def test_disabled_vision_recompute_allows_graphs_with_full_decoder_recompute():
     assert config.recompute_granularity is None
     assert config.recompute_modules == []
     assert config.cuda_graph_impl == "local_transformer_engine"
+
+
+@pytest.mark.parametrize("language_sp", [False, True])
+@pytest.mark.parametrize("vision_sp", [False, True])
+def test_vision_sequence_parallel_is_independent(language_sp, vision_sp):
+    parent = _megatron_base(
+        tensor_model_parallel_size=2,
+        sequence_parallel=language_sp,
+        vision_sequence_parallel=vision_sp,
+    )
+    config = get_vision_model_config(_hf_config(), parent)
+    assert config.sequence_parallel is vision_sp
+    assert parent.sequence_parallel is language_sp
+
+
+@pytest.mark.parametrize("language_sp", [False, True])
+def test_vision_sequence_parallel_default_preserves_legacy_behavior(language_sp):
+    parent = _megatron_base(tensor_model_parallel_size=2, sequence_parallel=language_sp)
+    assert get_vision_model_config(_hf_config(), parent).sequence_parallel is False
+
+
+def test_vision_sp_spec_can_be_built_before_mimo_injects_vision_tp():
+    # MIMO replaces the provider's language TP with the vision module's TP.
+    parent = _megatron_base(vision_sequence_parallel=True, tensor_model_parallel_size=1)
+    assert get_vision_model_config(_hf_config(), parent).sequence_parallel
+
+
+@pytest.mark.parametrize("implementation", ["transformer_engine", "local", "local_transformer_engine"])
+def test_vision_sp_rejects_vision_cuda_graphs(implementation):
+    parent = _megatron_base(
+        vision_sequence_parallel=True, tensor_model_parallel_size=2, vision_cuda_graph_impl=implementation
+    )
+    with pytest.raises(ValueError, match="requires vision_cuda_graph_impl='none'"):
+        get_vision_model_config(_hf_config(), parent)

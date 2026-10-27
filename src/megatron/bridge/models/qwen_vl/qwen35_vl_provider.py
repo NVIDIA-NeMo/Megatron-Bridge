@@ -202,6 +202,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # Independent of language sequence_parallel; the vision merger remains TP-only.
+    vision_sequence_parallel: bool = False
     # "inherit" preserves legacy decoder-policy inheritance; None disables vision recompute.
     vision_recompute_granularity: Literal["inherit", "full", "selective"] | None = "inherit"
     vision_recompute_method: Literal["uniform", "block"] | None = None
@@ -247,6 +249,9 @@ class Qwen35VLModelProvider(GPTModelProvider):
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL dense model instance with vision and language components."""
+        from megatron.bridge.models.qwen_vl.grad_finalize import configure_qwen35vl_grad_finalize
+
+        configure_qwen35vl_grad_finalize(self)
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype
@@ -460,6 +465,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # Independent of language sequence_parallel; the vision merger remains TP-only.
+    vision_sequence_parallel: bool = False
     # "inherit" preserves legacy decoder-policy inheritance; None disables vision recompute.
     vision_recompute_granularity: Literal["inherit", "full", "selective"] | None = "inherit"
     vision_recompute_method: Literal["uniform", "block"] | None = None
@@ -512,6 +519,9 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 or Qwen3.6 VL model with vision and language components."""
+        from megatron.bridge.models.qwen_vl.grad_finalize import configure_qwen35vl_grad_finalize
+
+        configure_qwen35vl_grad_finalize(self)
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype

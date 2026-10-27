@@ -440,3 +440,54 @@ def test_vision_recompute_config_round_trip(provider_cls, granularity, method, n
         method,
         num_layers,
     )
+
+
+@pytest.mark.parametrize("provider_type", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])
+@pytest.mark.parametrize("language_sp", [False, True])
+@pytest.mark.parametrize("vision_sp", [False, True])
+def test_independent_vision_sp_provider_and_mimo_spec(provider_type, language_sp, vision_sp):
+    from dataclasses import fields, replace
+
+    provider = provider_type(
+        num_layers=2,
+        hidden_size=64,
+        num_attention_heads=4,
+        num_query_groups=2,
+        tensor_model_parallel_size=2,
+        sequence_parallel=language_sp,
+        vision_sequence_parallel=vision_sp,
+    )
+    assert "vision_sequence_parallel" in {field.name for field in fields(provider)}
+    restored = replace(provider)
+    assert restored.sequence_parallel is language_sp
+    assert restored.vision_sequence_parallel is vision_sp
+    vision_spec = restored.build_vision_encoder_spec()
+    assert vision_spec.params["transformer_config"].sequence_parallel is vision_sp
+
+
+@pytest.mark.parametrize("language_tp,vision_tp", [(1, 2), (2, 1)])
+def test_mimo_resolves_vision_tp_before_validating_sp(language_tp, vision_tp):
+    from megatron.core.transformer.spec_utils import build_module
+
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+    provider = Qwen35VLModelProvider(
+        num_layers=2,
+        hidden_size=64,
+        num_attention_heads=4,
+        num_query_groups=2,
+        tensor_model_parallel_size=language_tp,
+        vision_sequence_parallel=True,
+    )
+    encoder = provider.build_vision_encoder_spec()
+    modality = ModuleSpec(module=object, submodules={"encoders": {"vision": encoder}})
+    mimo = MegatronMIMOProvider(language_model_spec=ModuleSpec(module=object))
+    groups = Mock()
+    groups.tp.size.return_value = vision_tp
+    injected = mimo._inject_pg_collection_into_modality_spec(modality, groups)
+    resolved_encoder = injected.submodules["encoders"]["vision"]
+    assert resolved_encoder.params["transformer_config"].tensor_model_parallel_size == vision_tp
+    assert encoder.params["transformer_config"].tensor_model_parallel_size == language_tp
+    if vision_tp == 1:
+        with pytest.raises(ValueError, match="vision tensor-parallel group larger than one"):
+            build_module(resolved_encoder)

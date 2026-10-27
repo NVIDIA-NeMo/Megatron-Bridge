@@ -218,11 +218,14 @@ def test_setup_installs_callbacks_on_scheduler_config(kind: str, chunk_count: in
 
 
 @pytest.mark.parametrize("forward_only", [False, True])
-def test_scheduler_finalizes_once_after_setup(forward_only: bool) -> None:
+@pytest.mark.parametrize("custom", [False, True])
+def test_scheduler_finalizes_once_after_setup(forward_only: bool, custom: bool) -> None:
     provider, runtime = _make_configs("copied_omni")
     model = FakeDDP(runtime)
     ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False)
     finalizer = Mock()
+    if custom:
+        runtime.finalize_model_grads_func = finalizer
     with patch.object(training_setup, "finalize_model_grads", finalizer):
         _, pg_collection = _run_setup(provider, [model], ddp_config)
     runtime.timers = None

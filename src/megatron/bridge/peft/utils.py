@@ -1096,6 +1096,8 @@ def finalize_model_grads_with_expert_adapter_sync(
     model: list[nn.Module],
     num_tokens: torch.Tensor | None = None,
     pg_collection: ProcessGroupCollection | None = None,
+    *,
+    base_finalizer: Callable | None = None,
     **kwargs: object,
 ) -> None:
     """Run Megatron-Core's ``finalize_model_grads``, then :func:`allreduce_expert_parallel_replicated_grads`.
@@ -1107,10 +1109,12 @@ def finalize_model_grads_with_expert_adapter_sync(
         model: List of model chunks.
         num_tokens: Optional global token count used by MCore for per-token loss scaling.
         pg_collection: Process groups for MCore's finalize step; its ``ep`` group drives the EP sum.
+        base_finalizer: Model-specific finalizer, or Core's standard finalizer.
         **kwargs: Forwarded to ``finalize_model_grads`` (for example ``force_all_reduce``).
     """
 
-    finalize_model_grads(model, num_tokens, pg_collection=pg_collection, **kwargs)
+    finalizer = base_finalizer or finalize_model_grads
+    finalizer(model, num_tokens, pg_collection=pg_collection, **kwargs)
     allreduce_expert_parallel_replicated_grads(model, ep_group=_get_process_group(pg_collection, "ep"))
 
 

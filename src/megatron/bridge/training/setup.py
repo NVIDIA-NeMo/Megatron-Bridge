@@ -682,12 +682,34 @@ def _update_model_config_funcs(
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
-        finalize_func = finalize_model_grads
+        finalize_func = model_config.finalize_model_grads_func or finalize_model_grads
+        # Rebind process groups on repeated setup without nesting our wrappers.
+        if isinstance(finalize_func, partial) and "pg_collection" in (finalize_func.keywords or {}):
+            keywords = {k: v for k, v in finalize_func.keywords.items() if k != "pg_collection"}
+            finalize_func = (
+                partial(finalize_func.func, *finalize_func.args, **keywords)
+                if keywords or finalize_func.args
+                else finalize_func.func
+            )
+        if isinstance(finalize_func, partial) and finalize_func.func is finalize_model_grads_with_expert_adapter_sync:
+            base_finalizer = finalize_func.keywords.get("base_finalizer") or finalize_model_grads
+            keywords = {k: v for k, v in finalize_func.keywords.items() if k != "base_finalizer"}
+            finalize_func = (
+                partial(base_finalizer, *finalize_func.args, **keywords)
+                if keywords or finalize_func.args
+                else base_finalizer
+            )
+        elif finalize_func is finalize_model_grads_with_expert_adapter_sync:
+            finalize_func = finalize_model_grads
         if peft_enabled:
             # Shared expert adapters are replicated across EP: sum their gradients once per step after the DP
             # sync instead of once per layer and microbatch.
             enable_expert_parallel_grad_sync_in_finalize(model)
-            finalize_func = finalize_model_grads_with_expert_adapter_sync
+            finalize_func = (
+                finalize_model_grads_with_expert_adapter_sync
+                if finalize_func is finalize_model_grads
+                else partial(finalize_model_grads_with_expert_adapter_sync, base_finalizer=finalize_func)
+            )
         model_config.finalize_model_grads_func = partial(finalize_func, pg_collection=pg_collection)
         model_config.grad_scale_func = optimizer.scale_loss
 

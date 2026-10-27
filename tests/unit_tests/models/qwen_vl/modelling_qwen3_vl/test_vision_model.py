@@ -57,6 +57,7 @@ def _vision_model_shell(config: Qwen3VLTransformerConfig) -> Qwen3VLVisionModel:
     m = Qwen3VLVisionModel.__new__(Qwen3VLVisionModel)
     nn.Module.__init__(m)
     m.config = config
+    m.tp_group = None
     return m
 
 
@@ -469,3 +470,36 @@ class TestQwen3VLVisionPatchMergerPaddedRowsTE:
                 torch.testing.assert_close(grads_p[name], grads_u[name], msg=name)
         finally:
             parallel_state.destroy_model_parallel()
+
+
+def test_sp_padding_is_an_isolated_packed_attention_sequence():
+    from megatron.core.packed_seq_params import PackedSeqParams
+
+    boundaries = torch.tensor([0, 3, 5, 7], dtype=torch.int32)
+    original = PackedSeqParams(
+        qkv_format="thd", cu_seqlens_q=boundaries, cu_seqlens_kv=boundaries, max_seqlen_q=3, max_seqlen_kv=3
+    )
+    packed, mask = _vision_forward_packed_attention_setup(
+        use_cuda_graph_padding=False,
+        hidden_states=torch.zeros(8, 1, 64),
+        original_seq_len=7,
+        seq_len=8,
+        grid_thw=torch.tensor([[1, 1, 3], [2, 1, 2]]),
+        build_packed_seq_params=lambda grid: original,
+    )
+    assert mask is None
+    assert packed.qkv_format == "thd"
+    torch.testing.assert_close(packed.cu_seqlens_q, torch.tensor([0, 3, 5, 7, 8], dtype=torch.int32))
+    torch.testing.assert_close(packed.cu_seqlens_q, packed.cu_seqlens_kv)
+    assert packed.max_seqlen_q == packed.max_seqlen_kv == 3
+    torch.testing.assert_close(original.cu_seqlens_q, boundaries)
+
+
+def test_vision_sp_rejects_actual_single_rank_tp_group():
+    from unittest.mock import Mock
+
+    config = _minimal_vision_config(tensor_model_parallel_size=2, sequence_parallel=True)
+    groups = Mock()
+    groups.tp.size.return_value = 1
+    with pytest.raises(ValueError, match="vision tensor-parallel group larger than one"):
+        Qwen3VLVisionModel(config, None, None, pg_collection=groups)

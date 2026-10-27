@@ -165,7 +165,7 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.normalization = "LayerNorm"
 
     config.tp_comm_overlap = False
-    config.sequence_parallel = False
+    config.sequence_parallel = getattr(megatron_config, "vision_sequence_parallel", False)
     config.context_parallel_size = 1
     config.pipeline_model_parallel_size = 1
     config.num_layers_in_first_pipeline_stage = None
@@ -192,6 +192,8 @@ def get_vision_model_config(hf_config, megatron_config=None):
     else:
         config.cuda_graph_impl = "none"
         clear_cuda_graph_modules(config)
+    if config.sequence_parallel and config.cuda_graph_impl != "none":
+        raise ValueError("Vision sequence parallelism currently requires vision_cuda_graph_impl='none'.")
     if config.recompute_granularity == "full" and config.cuda_graph_impl not in (
         "none",
         "full_iteration",

@@ -653,3 +653,55 @@ def test_update_model_config_funcs_installs_expert_adapter_grad_sync_for_peft_on
     assert transformer_config.grad_scale_func is optimizer.scale_loss
     hook_handle.remove.assert_called_once()
     assert not hasattr(peft_model.weight, "_expert_parallel_grad_hook")
+
+
+@pytest.mark.parametrize("peft_enabled", [False, True])
+def test_setup_preserves_custom_finalizer_and_rebinds_groups(peft_enabled):
+    from functools import partial
+
+    from megatron.bridge.peft import utils as peft_utils
+
+    config = _make_gpt_model_config().transformer
+    ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False)
+    optimizer = Mock()
+    model = torch.nn.Linear(2, 2)
+    custom = Mock()
+    # Preserve caller arguments while replacing the runtime process-group binding.
+    config.finalize_model_grads_func = partial(custom, source="model", pg_collection="stale")
+    with patch.object(peft_utils, "allreduce_expert_parallel_replicated_grads") as adapter_sync:
+        for group in ("first", "rebuilt"):
+            _update_model_config_funcs(
+                [model], config, ddp_config, optimizer, pg_collection=group, peft_enabled=peft_enabled
+            )
+        tokens = torch.tensor(7)
+        groups = SimpleNamespace(ep="expert")
+        config.finalize_model_grads_func([model], tokens, pg_collection=groups, force_all_reduce=True)
+    custom.assert_called_once_with([model], tokens, source="model", pg_collection=groups, force_all_reduce=True)
+    assert adapter_sync.call_count == int(peft_enabled)
+
+
+@pytest.mark.parametrize("peft_enabled", [False, True])
+def test_setup_preserves_bound_peft_finalizer_arguments(peft_enabled):
+    from functools import partial
+
+    from megatron.bridge.peft import utils as peft_utils
+
+    config = _make_gpt_model_config().transformer
+    custom = Mock()
+    config.finalize_model_grads_func = partial(
+        finalize_model_grads_with_expert_adapter_sync,
+        base_finalizer=partial(custom, source="model"),
+        pg_collection="stale",
+        force_all_reduce=True,
+    )
+    model = torch.nn.Linear(2, 2)
+    groups = SimpleNamespace(ep="expert")
+    ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False)
+    with patch.object(peft_utils, "allreduce_expert_parallel_replicated_grads") as adapter_sync:
+        for _ in range(2):
+            _update_model_config_funcs(
+                [model], config, ddp_config, Mock(), pg_collection=groups, peft_enabled=peft_enabled
+            )
+        config.finalize_model_grads_func([model], None)
+    custom.assert_called_once_with([model], None, source="model", pg_collection=groups, force_all_reduce=True)
+    assert adapter_sync.call_count == int(peft_enabled)
