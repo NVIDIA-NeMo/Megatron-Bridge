@@ -14,9 +14,10 @@ summary: >
   2048-token offline packs aligned to eight tokens, and assistant-only loss.
   H100 and GB200 use byte-identical packed training and validation files;
   their training metrics count padded token slots, not supervised tokens.
-  The public revision is intentionally blank; results must not be interpreted
-  as bound to an immutable public release revision. Refreshed SFT and PEFT,
-  dependent export, merge, and reload checks are recorded for H100 and GB200.
+  Inference and H100 PEFT are re-verified at the public revision below.
+  The retained eight-GPU conversion and CPU forward results do not establish
+  verification at this revision. Refreshed SFT and PEFT, dependent export,
+  merge, and reload checks are recorded for H100 and GB200.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, manual_forward_pass, inference]
@@ -30,7 +31,7 @@ verification_index:
       unverified: [pretrain, sft_long_context, checkpoint_resume]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16
-  hf_revision:
+  hf_revision: 1f8953f7f0935358e3605150d22bc15df062061c  # pragma: allowlist secret
   architecture: NemotronHForCausalLM
   min_transformers_version: "5.12.1"
 verification_environment:
@@ -52,6 +53,7 @@ items:
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 2 --gpus-per-node 4
       --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16
+      --hf-revision 1f8953f7f0935358e3605150d22bc15df062061c
       --text-only --trust-remote-code --torch-dtype bfloat16
       --tp 1 --pp 2 --ep 4 --etp 1
       --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron
@@ -89,6 +91,8 @@ items:
       The tokenizer was preserved, native HF config loading and normal text
       bridge dispatch passed, and the tensor-name/shape structure matched
       Nemotron 3 Super. This does not claim identical weights to that model.
+      The export command reads the source package from the Hub default branch;
+      the card revision does not pin that command.
   manual_forward_pass:
     status: verified
     precision: bf16
@@ -96,24 +100,26 @@ items:
       ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4
       --task model-comparison
       --hf_model_path work/model-verification/nemotron-3.5-super-vl-text-only/hf
+      --hf-revision 1f8953f7f0935358e3605150d22bc15df062061c
       --megatron_model_path work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000
-      --hf-logits-path work/model-verification/nemotron-3.5-super-vl-text-only/hf-reference.pt
+      --hf-device cpu
       --prompt $'<|im_start|>system\n<|im_end|>\n<|im_start|>user\nWhat is two plus two?<|im_end|>\n<|im_start|>assistant\n<think></think>'
       --tp 1 --pp 1 --ep 4 --etp 1 --trust-remote-code
-    last_verified: 2026-09-27
+    last_verified: 2026-10-20
     expected_result: >
       The maintained public comparison passed on four GB200 GPUs with the
-      native 22-token chat prompt and a separately saved native-VL HF
-      no-media reference for the identical source weights and input. This
-      compares that reference with the saved text-only Megatron checkpoint;
-      standalone text HF reload is verified separately below.
+      native 22-token chat prompt. Rank 0 runs the Hugging Face reference
+      forward of the exported text-only checkpoint in-process on CPU, so the
+      item needs no separately saved reference; the host must hold the BF16
+      checkpoint in memory. This compares that exported HF checkpoint with
+      the saved text-only Megatron checkpoint.
       The next token matches: 16489 (Two).
       Cosine similarity is 0.999996; maximum and mean absolute logit
-      differences are 0.500000 and 0.063002. Bash ANSI-C quoting preserves
+      differences are 0.500000 and 0.071173. Bash ANSI-C quoting preserves
       the native prompt's newline characters.
       This is single-prompt forward correlation, not strict probability
-      equality, generation, or MTP forward verification. Regenerate the HF
-      reference if the checkpoint changes. The public revision remains unbound.
+      equality, generation, or MTP forward verification. The public revision
+      remains unbound.
   inference:
     status: verified
     precision: bf16
@@ -126,10 +132,10 @@ items:
       --tp 1 --pp 1 --ep 4 --etp 1 --max_new_tokens 32 --max_seq_length 256
       --temperature 0 --top_k 1 --use-coordinator --coordinator-host 127.0.0.1
       --return-log-probs --skip-prompt-log-probs --trust-remote-code
-    last_verified: 2026-09-27
+    last_verified: 2026-10-21
     expected_result: >
       The maintained cached text-generation path completed on four GB200
-      GPUs, using the same native 22-token chat prompt as the comparison.
+      GPUs, using the native chat prompt in the command.
       The literal completion was "Two plus two equals four." Generated 7
       tokens including EOS under the 32-token maximum, confirmed by the
       returned per-token log probabilities. Greedy sampling used temperature
@@ -384,19 +390,26 @@ items:
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-peft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-21
       metrics:
-        initial_loss: 0.6401206
-        final_loss: 0.6625465
-        last_10_steps_step_time_ms_avg: 8122.16
-        last_10_steps_model_tflops_per_gpu_avg: 21.22
-        last_10_steps_tokens_per_second_per_gpu_avg: 252.14967447083043
+        initial_loss: 0.653011
+        final_loss: 0.6625877
+        last_10_steps_step_time_ms_avg: 8459.2
+        last_10_steps_model_tflops_per_gpu_avg: 20.44
+        last_10_steps_tokens_per_second_per_gpu_avg: 242.10327217703798
       expected_result: >
-        Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
-        Uses the native Nemotron 3 Super PEFT recipe on 16 H100 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1.
-        Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3.
-        LoRA rank/alpha 32/32 targets native language projections with zero dropout. Native adapter and trained router-bias buffers reloaded exactly; full merge, strict HF reload and one matched numerical fixture passed. Standalone HF adapter export does not preserve trained router-bias buffers.
-        Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+        Completed 500 finite LoRA optimizer steps on 16 H100 GPUs with zero
+        skipped or NaN iterations and complete checkpoints at steps 250 and 500.
+        Starts from the card's text-only import of the pinned revision and uses
+        the card's text-only HF export for model config and tokenizer, with no
+        media modules. Uses the native Nemotron 3 Super PEFT recipe at
+        TP8/PP1/EP16/ETP1, packed sequence length 2048 and recipe GBS/MBS 16/1
+        on Tulu 3 offline-packed data, with natural HybridEP routing, FP32
+        optimizer state and two shared MTP prediction depths at loss scale 0.3.
+        LoRA rank/alpha 32/32 targets native language projections with zero
+        dropout. Losses are the logged LM loss. Token rates are padded slots,
+        not supervised-token counts. This is bounded support verification, not
+        full convergence or a cross-model convergence comparison.
     GB200:
       status: verified
       precision: bf16
