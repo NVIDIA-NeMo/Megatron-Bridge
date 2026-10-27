@@ -495,7 +495,7 @@ def test_nemotron_3_5_lightning_8k_convergence_recipe_uses_perf_execution_policy
     assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 2
 
-    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.model.cuda_graph_impl == "none"
@@ -519,10 +519,8 @@ def test_nemotron_3_5_lightning_8k_convergence_recipe_uses_perf_execution_policy
     assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
-    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
-    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
-    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
-    assert "USE_MNNVL" not in cfg.env_vars
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
 
 
 def test_nemotron_3_5_lightning_h100_and_gb200_differ_only_in_execution_policy():
@@ -547,8 +545,6 @@ def test_nemotron_3_5_lightning_h100_and_gb200_differ_only_in_execution_policy()
     gb200.model.recompute_modules = h100.model.recompute_modules
     gb200.model.recompute_method = h100.model.recompute_method
     gb200.model.recompute_num_layers = h100.model.recompute_num_layers
-    gb200.model.moe_flex_dispatcher_backend = h100.model.moe_flex_dispatcher_backend
-    gb200.model.moe_use_grouped_tensor = h100.model.moe_use_grouped_tensor
     gb200.ddp.average_in_collective = h100.ddp.average_in_collective
     gb200.checkpoint.save_interval = h100.checkpoint.save_interval
     gb200.env_vars = h100.env_vars

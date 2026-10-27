@@ -200,22 +200,8 @@ def nemotron_3_5_lightning_pretrain_8k_config() -> ConfigContainer:
     cfg.model.recompute_num_layers = None
     cfg.ddp.average_in_collective = False
     cfg.checkpoint.save_interval = 50
-    # GB200 runs the NCCL EP flex backend; the H100 base configures HybridEP, so drop its
-    # NVLink-domain topology keys and select the NCCL EP dispatcher mode instead.
-    cfg.model.moe_flex_dispatcher_backend = "ncclep"
-    cfg.model.moe_use_grouped_tensor = True
-    cfg.env_vars = {
-        name: value
-        for name, value in cfg.env_vars.items()
-        if name
-        not in (
-            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
-            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
-            "NVLINK_DOMAIN_SIZE",
-            "USE_MNNVL",
-        )
-    }
-    cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] = 1
+    cfg.env_vars["NVLINK_DOMAIN_SIZE"] = 72
+    cfg.env_vars["USE_MNNVL"] = 1
     return cfg
 
 
