@@ -104,7 +104,7 @@ def test_muse_glimmer_pretrain_owns_resume_checkpoint_contract() -> None:
     assert cfg.scheduler.lr_warmup_iters == 40
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.optimizer.lr == pytest.approx(3e-4)
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.dataset.num_workers == 4
     assert cfg.checkpoint.save_interval == 50
     assert cfg.checkpoint.load is None

@@ -19,6 +19,7 @@ import inspect
 from collections.abc import Callable
 
 import pytest
+import torch
 
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.training.config import ConfigContainer
@@ -79,6 +80,15 @@ def test_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> 
     cfg = recipe_factory()
 
     assert isinstance(cfg, ConfigContainer)
+
+    # Check effective defaults after inheritance, including compatibility aliases.
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    for field_name in ("main_params_dtype", "main_grads_dtype", "exp_avg_dtype", "exp_avg_sq_dtype"):
+        assert getattr(cfg.optimizer, field_name) == torch.float32, field_name
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
+    if cfg.ddp.use_megatron_fsdp:
+        assert cfg.ddp.megatron_fsdp_use_decoupled_grad is False
+    cfg.optimizer.finalize()
     for section in (
         "model",
         "train",

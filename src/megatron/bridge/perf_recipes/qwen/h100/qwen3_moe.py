@@ -34,6 +34,7 @@ from megatron.bridge.recipes.qwen.h100.qwen3_moe import (
 def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× H100, BF16, EP=16."""
     cfg = _qwen3_30b_a3b_default_pretrain_config()
+    cfg.optimizer.use_precision_aware_optimizer = True
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.moe_permute_fusion_into_hybridep = True

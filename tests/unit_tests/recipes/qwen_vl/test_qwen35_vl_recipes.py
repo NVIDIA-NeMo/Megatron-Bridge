@@ -662,9 +662,9 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 1
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
-    assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
 
 

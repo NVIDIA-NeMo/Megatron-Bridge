@@ -27,6 +27,25 @@ Training mode follows the recipe and dataset type:
 
 For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for a local JSONL split directory or `per_split_data_source_manifest_path` for MLM-style JSONL blends. Do not use `data_path` for SFT/PEFT JSONL sources.
 
+## Optimizer state defaults
+
+Library recipes use `use_precision_aware_optimizer=False` and FP32 main parameters,
+main gradients, and Adam moments. Model compute precision (BF16/FP8), gradient
+communication precision, and optimizer state precision are separate settings.
+Performance recipes retain their benchmark optimizer settings.
+
+Reduced optimizer state requires explicit opt-in. Promoting it into a library
+recipe requires convergence evidence compared with the standard FP32-state
+optimizer under matched training conditions; finite-loss runs, throughput gains,
+and checkpoint-resume checks alone do not establish this equivalence.
+
+Restoring FP32 state increases memory for recipes that previously used reduced
+state. Their prior memory/throughput measurements apply to the pinned commits
+recorded in verification cards. Revalidate optimizer initialization, steady-state
+training and checkpoint memory on your allocation; topology or selective recompute
+may need adjustment. This default change does not establish target-scale memory
+fit or cross-optimizer checkpoint-resume compatibility.
+
 ## Overriding configuration
 
 Recipes are provided through a {py:class}`~bridge.training.config.ConfigContainer` object. This is a dataclass that holds all configuration objects needed for training. You can find a more detailed overview of the `ConfigContainer` [here](training/config-container-overview.md).

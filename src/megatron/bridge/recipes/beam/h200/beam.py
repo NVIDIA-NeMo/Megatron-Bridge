@@ -153,8 +153,8 @@ def beam_pretrain_128gpu_h200_bf16_config(hf_path: str | None = None) -> ConfigC
     """Return a pre-training config for Beam on 16 H200 nodes.
 
     Parallelism: TP=2, PP=1, EP=128, SP (DP=64). GBS 256 at 4K tokens is four micro-batches per data-parallel
-    rank. The precision-aware optimizer keeps BF16 gradients and Adam moments, which is what fits 501B
-    parameters on 128 H200 GPUs; the recipe never selects a pretrained checkpoint.
+    rank. Optimizer main parameters, gradients, and Adam moments use FP32. Memory fit on this allocation
+    must be revalidated after restoring FP32 state; the recipe never selects a pretrained checkpoint.
 
     Args:
         hf_path: Optional local HF checkpoint used instead of the pinned Hub revision.
@@ -182,11 +182,11 @@ def beam_pretrain_128gpu_h200_bf16_config(hf_path: str | None = None) -> ConfigC
     cfg.optimizer.adam_eps = 1e-8
     cfg.optimizer.clip_grad = 1.0
     cfg.optimizer.use_distributed_optimizer = True
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.mixed_precision = bf16_mixed()

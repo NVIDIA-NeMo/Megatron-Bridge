@@ -163,11 +163,11 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         weight_decay=0.1,
         clip_grad=1.0,
     )
-    opt_cfg.use_precision_aware_optimizer = True
+    opt_cfg.use_precision_aware_optimizer = False
     opt_cfg.main_grads_dtype = torch.float32
     opt_cfg.main_params_dtype = torch.float32
-    opt_cfg.exp_avg_dtype = torch.bfloat16
-    opt_cfg.exp_avg_sq_dtype = torch.bfloat16
+    opt_cfg.exp_avg_dtype = torch.float32
+    opt_cfg.exp_avg_sq_dtype = torch.float32
     opt_cfg.adam_beta1 = 0.9
     opt_cfg.adam_beta2 = 0.95
     opt_cfg.adam_eps = 1e-20

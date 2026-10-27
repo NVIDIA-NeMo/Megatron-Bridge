@@ -408,7 +408,7 @@ def qwen3_8b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
