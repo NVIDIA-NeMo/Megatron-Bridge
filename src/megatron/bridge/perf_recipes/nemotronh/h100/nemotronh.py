@@ -20,7 +20,6 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
     _apply_nemotron_3_nano_perf_defaults,
     _benchmark_common,
-    _enable_nemotron_3_5_lightning_full_cuda_graph,
     _perf_precision,
     nemotron_3_nano_pretrain_config,
 )
@@ -262,5 +261,4 @@ def nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
-    _enable_nemotron_3_5_lightning_full_cuda_graph(cfg)
     return cfg

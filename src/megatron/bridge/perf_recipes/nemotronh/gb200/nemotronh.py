@@ -756,5 +756,4 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_USE_FAST_MATH": 1,
     }
-    _enable_nemotron_3_5_lightning_full_cuda_graph(cfg)
     return cfg

@@ -461,5 +461,4 @@ def nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
-    _enable_nemotron_3_5_lightning_full_cuda_graph(cfg)
     return cfg
