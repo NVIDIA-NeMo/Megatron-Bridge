@@ -167,12 +167,15 @@ class TestStep35BridgeConfigKwargs:
         assert kwargs["head_wise_attn_gate"] is True
         assert kwargs["layer_types"] == hf_config.layer_types
 
-    def test_attention_output_gate_mapped_by_base_bridge_path(self):
-        # HF Step-3.5-Flash can carry ``attention_output_gate`` verbatim into
-        # the base provider kwargs. Step35Bridge.provider_bridge normalizes it
-        # later when ``head_wise_attn_gate`` is also enabled.
-        hf_config = _make_hf_config(attention_output_gate=True)
+    @pytest.mark.parametrize("native_head_wise_gate", [True, False])
+    def test_attention_output_gate_mapped_by_base_bridge_path(self, monkeypatch, native_head_wise_gate):
+        # Without head-wise gating, an explicit HF ``attention_output_gate``
+        # passes through the canonical kwargs unchanged, whichever gate the
+        # installed MCore supports. The head-wise cases are covered below.
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: native_head_wise_gate)
+        hf_config = _make_hf_config(attention_output_gate=True, use_head_wise_attn_gate=False)
         kwargs = Step35Bridge().hf_config_to_provider_kwargs(hf_config)
+        assert kwargs["head_wise_attn_gate"] is False
         assert kwargs["attention_output_gate"] is True
 
     def test_attention_output_gate_entry_in_config_mapping(self):
