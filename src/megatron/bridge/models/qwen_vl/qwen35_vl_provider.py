@@ -132,6 +132,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
 
     modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
     MODEL_CLASS: ClassVar[type[Qwen3VLModel] | None] = None
+    # The MIMO language spec wires the MTP block, so MIMO keeps MTP layers instead of dropping them.
+    mimo_supports_mtp: ClassVar[bool] = True
 
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
@@ -233,9 +235,11 @@ class Qwen35VLModelProvider(GPTModelProvider):
         """Build the language transformer-block spec."""
         return _qwen35_build_language_block_spec(self, vp_stage, pp_rank)
 
-    def build_mtp_spec(self, vp_stage: Optional[int] = None) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
+    def build_mtp_spec(
+        self, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+    ) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
         """Build the MTP block spec."""
-        return _qwen35_build_mtp_block_spec(self, vp_stage)
+        return _qwen35_build_mtp_block_spec(self, vp_stage, pp_rank)
 
     def build_vision_encoder_spec(self) -> ModuleSpec:
         """Build the vision encoder spec."""
@@ -367,6 +371,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     """
 
     modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
+    # The MIMO language spec wires the MTP block, so MIMO keeps MTP layers instead of dropping them.
+    mimo_supports_mtp: ClassVar[bool] = True
 
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
@@ -498,9 +504,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         """Build the language transformer-block spec."""
         return _qwen35_build_language_block_spec(self, vp_stage, pp_rank)
 
-    def build_mtp_spec(self, vp_stage: Optional[int] = None) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
+    def build_mtp_spec(
+        self, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+    ) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
         """Build the MTP block spec (or ``None`` when MTP is disabled)."""
-        return _qwen35_build_mtp_block_spec(self, vp_stage)
+        return _qwen35_build_mtp_block_spec(self, vp_stage, pp_rank)
 
     def build_vision_encoder_spec(self) -> ModuleSpec:
         """Build the vision encoder spec."""
@@ -563,17 +571,22 @@ def _qwen35_build_language_block_spec(
 def _qwen35_build_mtp_block_spec(
     provider: GPTModelProvider,
     vp_stage: Optional[int],
+    pp_rank: Optional[int] = None,
 ) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
     """Build the MTP block spec."""
     from megatron.bridge.models.gpt_provider import mtp_block_spec
 
-    mtp_spec = mtp_block_spec(provider, vp_stage=vp_stage)
+    mtp_spec = mtp_block_spec(provider, vp_stage=vp_stage, pp_rank=pp_rank)
     _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
     return mtp_spec
 
 
 def _qwen35_build_language_model_spec(provider: GPTModelProvider, pp_rank: Optional[int] = 0) -> ModuleSpec:
-    """Build the Qwen3VL language model spec."""
+    """Build the Qwen3VL language model spec.
+
+    MegatronMIMO builds this spec without the MPU globals, so both block specs get the
+    explicit ``pp_rank``. The MTP block is only built on the stage that owns it.
+    """
     return ModuleSpec(
         module=Qwen3VLGPTModel,
         params={
@@ -589,7 +602,7 @@ def _qwen35_build_language_model_spec(provider: GPTModelProvider, pp_rank: Optio
             "rotary_percent": provider.rotary_percent,
             "rotary_base": provider.rotary_base,
             "scatter_embedding_sequence_parallel": False,
-            "mtp_block_spec": None,
+            "mtp_block_spec": provider.build_mtp_spec(pp_rank=pp_rank),
         },
     )
 

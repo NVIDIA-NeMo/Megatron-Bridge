@@ -4,6 +4,7 @@
 import pytest
 import torch
 import yaml
+from megatron.core import parallel_state
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 
@@ -13,9 +14,14 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     ModuleParallelismConfig,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
-from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
+    _TRANSFORMERS_HAS_QWEN3_5,
+    Qwen35VLModelProvider,
+    Qwen35VLMoEModelProvider,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.instantiate_utils import instantiate
 from megatron.bridge.utils.yaml_utils import safe_yaml_representers
@@ -88,6 +94,72 @@ class TestQwen35VLProviderMIMOAPI:
 
         assert spec.params["logit_dtype"] is torch.float32
 
+    @pytest.mark.parametrize("provider_cls", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])
+    def test_advertises_mimo_mtp_support(self, provider_cls):
+        assert provider_cls.mimo_supports_mtp is True
+
+    def test_language_model_spec_builds_mtp_for_requested_stage(self, monkeypatch):
+        provider = _make_language_provider(mtp_num_layers=1)
+        monkeypatch.setattr(
+            provider, "build_language_spec", lambda vp_stage=None, pp_rank=None: ModuleSpec(module=object)
+        )
+        mtp_spec_calls = []
+
+        def mtp_block_spec(config, vp_stage=None, pp_rank=None):
+            mtp_spec_calls.append((config, vp_stage, pp_rank))
+            return None
+
+        monkeypatch.setattr("megatron.bridge.models.gpt_provider.mtp_block_spec", mtp_block_spec)
+
+        spec = provider.build_language_model_spec(pp_rank=3)
+
+        assert mtp_spec_calls == [(provider, None, 3)]
+        assert spec.params["mtp_block_spec"] is None
+
+
+class TestQwen35VLMIMOMTPSpec:
+    """The MIMO language spec builds the MTP block from an explicit pipeline rank."""
+
+    @staticmethod
+    def _tiny_provider(**overrides) -> Qwen35VLModelProvider:
+        kwargs = dict(
+            num_layers=4,
+            hidden_size=64,
+            ffn_hidden_size=128,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=16,
+            linear_key_head_dim=16,
+            linear_value_head_dim=16,
+            linear_num_key_heads=2,
+            linear_num_value_heads=4,
+            mtp_num_layers=1,
+        )
+        kwargs.update(overrides)
+        return _make_language_provider(**kwargs)
+
+    @pytest.mark.parametrize("pp_size", [1, 2])
+    def test_mtp_block_only_on_last_stage_without_mpu(self, monkeypatch, pp_size):
+        def fail(*args, **kwargs):
+            raise AssertionError("MIMO builds language specs before the MPU globals are set")
+
+        monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_rank", fail)
+        provider = self._tiny_provider(pipeline_model_parallel_size=pp_size)
+
+        for pp_rank in range(pp_size):
+            mtp_spec = provider.build_language_model_spec(pp_rank=pp_rank).params["mtp_block_spec"]
+            if pp_rank < pp_size - 1:
+                assert mtp_spec is None
+                continue
+            assert len(mtp_spec.layer_specs) == 1
+            mtp_layer = mtp_spec.layer_specs[0].submodules.mtp_model_layer
+            assert mtp_layer.submodules.self_attention.module is Qwen3VLSelfAttention
+
+    def test_no_mtp_block_without_mtp_layers(self):
+        provider = self._tiny_provider(mtp_num_layers=None)
+
+        assert provider.build_language_model_spec(pp_rank=0).params["mtp_block_spec"] is None
+
 
 class TestMegatronMIMOProviderFactory:
     def test_from_standard_provider_builds_base_provider(self, monkeypatch):
@@ -130,7 +202,7 @@ class TestMegatronMIMOProviderFactory:
         assert qwen_visual_spec.module is Qwen3VLVisionModel
         assert "pg_collection" not in qwen_visual_spec.params
 
-    def test_from_standard_provider_forces_mtp_off(self, monkeypatch):
+    def test_from_standard_provider_keeps_mtp(self, monkeypatch):
         language_provider = _make_language_provider()
         language_provider.mtp_num_layers = 4
         monkeypatch.setattr(
@@ -138,13 +210,23 @@ class TestMegatronMIMOProviderFactory:
             "build_language_spec",
             lambda vp_stage=None, pp_rank=None: ModuleSpec(module=object),
         )
+        mtp_spec = ModuleSpec(module=object)
+        mtp_spec_ranks = []
 
-        MegatronMIMOProvider.from_standard_provider(
+        def build_mtp_spec(vp_stage=None, pp_rank=None):
+            mtp_spec_ranks.append(pp_rank)
+            return mtp_spec
+
+        monkeypatch.setattr(language_provider, "build_mtp_spec", build_mtp_spec)
+
+        provider = MegatronMIMOProvider.from_standard_provider(
             standard_provider=language_provider,
             megatron_mimo_parallelism_config=_make_parallelism_config(),
         )
 
-        assert language_provider.mtp_num_layers is None
+        assert language_provider.mtp_num_layers == 4
+        assert provider.language_model_spec.params["mtp_block_spec"] is mtp_spec
+        assert mtp_spec_ranks == [0]
 
     def test_from_standard_provider_canonicalizes_zero_mtp_to_none(self, monkeypatch):
         language_provider = _make_language_provider()
