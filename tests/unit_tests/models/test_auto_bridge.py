@@ -27,6 +27,8 @@ import torch
 import transformers
 import yaml
 from megatron.core import parallel_state
+from megatron.core.transformer.module import Float16Module
+from megatron.core.transformer.moe.router import TopKRouter
 from safetensors.torch import save_file
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import (
@@ -933,6 +935,76 @@ class TestAutoBridge:
 
         assert len(models) == 1
         assert models[0].config is model_config.transformer
+
+    @pytest.mark.parametrize("wrapper", ["default", "custom", "none"])
+    def test_get_model_wrapper_keeps_float32_router_tensors(self, monkeypatch, wrapper):
+        """Mixed-precision wrapping keeps FP32 router tensors bit-identical, as the provider path does."""
+        if not torch.cuda.is_available():
+            # MCore allocates router buffers on torch.cuda.current_device().
+            monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+        bridge = AutoBridge.from_hf_config(_make_tiny_llama_config(dtype="bfloat16"))
+        model_config = bridge.get_model_config()
+        overrides = {
+            "transformer_impl": "local",
+            "use_cpu_initialization": True,
+            "bias_activation_fusion": False,
+            "masked_softmax_fusion": False,
+            "persist_layer_norm": False,
+            "bias_dropout_fusion": False,
+            "apply_rope_fusion": False,
+            "gradient_accumulation_fusion": False,
+            "cross_entropy_loss_fusion": False,
+            "num_moe_experts": 4,
+            "moe_router_topk": 2,
+            "moe_ffn_hidden_size": 32,
+            "moe_router_score_function": "sigmoid",
+            "moe_router_enable_expert_bias": True,
+            "moe_router_load_balancing_type": "none",
+            "moe_token_dispatcher_type": "allgather",
+        }
+        for name, value in overrides.items():
+            setattr(model_config, name, value)
+        expected = []
+
+        def write_float32_router_tensors(models):
+            # Write FP32 values that bf16 cannot represent before wrapping, as HF weight loading does.
+            for module in models[0].modules():
+                if isinstance(module, TopKRouter):
+                    module.expert_bias.copy_(torch.linspace(-0.3, 0.3, module.expert_bias.numel()) + 1e-4)
+                    # Keep the router weight in FP32 the way MiniMax-M3's pre-wrap hook does.
+                    weight = torch.linspace(-0.05, 0.05, module.weight.numel()).view_as(module.weight) + 1e-6
+                    module.weight.data = weight.to(module.weight.device)
+                    module._keep_in_float32_parameter_names = ("weight",)
+                    expected.append((module, module.expert_bias.clone(), module.weight.detach().clone()))
+            return models
+
+        model_config.pre_wrap_hooks.append(write_float32_router_tensors)
+        wrapped_modules = []
+
+        def custom_wrapper(config, module):
+            wrapped_modules.append(module)
+            return Float16Module(config, module)
+
+        wrapper_kwargs = {
+            "default": {},
+            "custom": {"mixed_precision_wrapper": custom_wrapper},
+            "none": {"mixed_precision_wrapper": None},
+        }[wrapper]
+
+        try:
+            models = bridge.get_model(model_config, load_weights=False, wrap_with_ddp=False, **wrapper_kwargs)
+        finally:
+            if parallel_state.is_initialized():
+                parallel_state.destroy_model_parallel()
+            if torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
+
+        assert isinstance(models[0], Float16Module) is (wrapper != "none")
+        assert wrapped_modules == ([models[0].module] if wrapper == "custom" else [])
+        assert len(expected) == model_config.num_layers
+        for router, expert_bias, weight in expected:
+            torch.testing.assert_close(router.expert_bias, expert_bias, rtol=0, atol=0)
+            torch.testing.assert_close(router.weight, weight, rtol=0, atol=0)
 
     def test_from_pretrained_with_additional_kwargs(self):
         """Test from_pretrained with various kwargs."""

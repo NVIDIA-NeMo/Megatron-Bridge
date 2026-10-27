@@ -141,6 +141,11 @@ Use `load_weights=False` for random initialization. A bridge created with
 `from_hf_config()` has no weights, so it requires `load_weights=False` or an
 explicit `hf_path`.
 
+For bf16 and fp16 configs, `get_model()` wraps each stage in Megatron Core's
+`Float16Module` unless you pass `mixed_precision_wrapper=None`. Like the
+provider path, the wrap keeps MoE router expert biases, and parameters that a
+module lists in `_keep_in_float32_parameter_names`, in FP32.
+
 Training recipes for builder-backed families store the result of
 `get_model_config()` in `ConfigContainer.model`. The training setup recognizes
 `ModelConfig` and calls its `ModelBuilder` directly; it does not create a
