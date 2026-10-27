@@ -49,6 +49,7 @@ from megatron.core.dist_checkpointing.strategies.torch import (
     _get_filesystem_reader,
 )
 from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
+from megatron.core.distributed import DistributedDataParallel
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer, distrib_optimizer
@@ -56,6 +57,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
+from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import (
     get_model_config,
     get_pg_rank,
@@ -97,6 +99,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_run_config_filename,
     get_checkpoint_tracker_filename,
     get_checkpoint_train_state_filename,
+    get_hf_source_from_model_config,
     is_checkpoint_iteration_directory,
     is_hf_checkpoint_dir,
     join_paths,
@@ -118,6 +121,15 @@ from megatron.bridge.utils.safe_pickle import energon_torch_load
 # MCore main uses FQN-safe optimizer keys; the supported dev pin still uses tuple keys.
 _get_legacy_grad_dtypes = getattr(distrib_optimizer, "get_legacy_grad_dtypes", None)
 _CHECKPOINT_FORMAT_VERSION = 3.1 if _get_legacy_grad_dtypes is not None else 3.0
+# The supported dev pin predates per-rank object loading.
+_FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS = (
+    "per_rank_object_load" in inspect.signature(FullyParallelLoadStrategyWrapper).parameters
+)
+
+# The supported dev pin exposes a load-only policy and has no save-side opt-out.
+_FULLY_PARALLEL_SAVE_HAS_VALIDATION_POLICY = (
+    "validate_access_integrity" in inspect.signature(FullyParallelSaveStrategyWrapper).parameters
+)
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -1012,7 +1024,8 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
 
     Resolution order (first non-empty wins):
       1. ``cfg.checkpoint.hf_source_path`` — explicit override.
-      2. ``cfg.model.hf_model_id`` — populated by ``AutoBridge.to_megatron_provider`` (preferred).
+      2. The source recorded on ``cfg.model`` by ``AutoBridge`` (preferred): ``extra_checkpoint_metadata``
+         for builder-backed configs, ``hf_model_id`` for providers.
       3. ``cfg.tokenizer.tokenizer_model`` — may be a tokenizer file path; only used as fallback when
          the above are unset (recipes that point this at an HF model id still work).
 
@@ -1025,7 +1038,7 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
         return ckpt_cfg.hf_source_path
     model_cfg = getattr(cfg, "model", None)
     if model_cfg is not None:
-        hf_id = getattr(model_cfg, "hf_model_id", None)
+        hf_id, _ = get_hf_source_from_model_config(model_cfg)
         if hf_id:
             return hf_id
     tokenizer_cfg = getattr(cfg, "tokenizer", None)
@@ -1054,18 +1067,14 @@ def _build_auto_bridge_for_save(cfg: ConfigContainer, hf_source: Optional[str] =
     if not source:
         raise ValueError(
             "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
-            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
-            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
-            "an HF model id."
+            "Set cfg.checkpoint.hf_source_path, record the source on cfg.model (AutoBridge and recipes "
+            "do this), or set cfg.tokenizer.tokenizer_model when it points at an HF model id."
         )
     trust_remote_code = bool(getattr(cfg.checkpoint, "hf_trust_remote_code", False))
     text_only = getattr(cfg.model, "hf_model_text_only", False) is True
     # Initialization and artifact templates may override the original HF source.
-    revision = (
-        getattr(cfg.model, "hf_model_revision", None)
-        if str(source) == str(getattr(cfg.model, "hf_model_id", None))
-        else None
-    )
+    recorded_id, recorded_revision = get_hf_source_from_model_config(cfg.model)
+    revision = recorded_revision if str(source) == str(recorded_id) else None
     cache_key = (str(source), bool(trust_remote_code))
     if text_only:
         cache_key += (text_only, revision)
@@ -1532,11 +1541,19 @@ def save_checkpoint(
                             logger.debug("Failed to plug in the read metadata from the load strategy...")
 
                 if ckpt_cfg.fully_parallel_save:
+                    validation_kwargs = (
+                        {"validate_access_integrity": ckpt_cfg.ckpt_load_validate_sharding_integrity}
+                        if _FULLY_PARALLEL_SAVE_HAS_VALIDATION_POLICY
+                        else {}
+                    )
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
                         _checkpoint_dp_cp_group(pg_collection),
                         ckpt_cfg.ckpt_assume_constant_structure,
+                        **validation_kwargs,
                     )
+            if _FULLY_PARALLEL_SAVE_HAS_VALIDATION_POLICY and not ckpt_cfg.ckpt_load_validate_sharding_integrity:
+                validate_sharding_integrity = False
             # MegatronMIMO + torch_dist can hit known access-pattern validation failures
             # for nested DDP language model tensors in PP>1 runs when
             # fully_parallel_save is disabled. Keep validation enabled otherwise.
@@ -1556,6 +1573,7 @@ def save_checkpoint(
                 validate_access_integrity=validate_sharding_integrity,
                 preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
                 content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
+                verify_integrity=ckpt_cfg.verify_integrity,
             )
             # [ModelOpt]: save sharded modelopt_state (skip if model is empty, e.g., low-memory save mode).
             # We always anchor modelopt_state at the iteration directory (``checkpoint_name``) so
@@ -1672,7 +1690,7 @@ def save_checkpoint(
                             previous_step = int(previous_metadata)
 
                 train_state_dict["floating_point_operations_so_far"] = torch.tensor(
-                    num_floating_point_operations_so_far, dtype=torch.float32
+                    num_floating_point_operations_so_far, dtype=torch.float64
                 )
                 if MultiStorageClientFeature.is_enabled():
                     msc = MultiStorageClientFeature.import_package()
@@ -2810,6 +2828,10 @@ def _process_state_dict_for_model_glu_interleaving(
 
 def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
     """Helper function to load state dict with fallback for missing extra states."""
+    # These delegating wrappers discard the incompatible-key return value.
+    # Keep FSDP adapters wrapped: they own load-time prefixing and weight refresh.
+    module = unwrap_model(module, module_instances=(DistributedDataParallel, Float16Module))
+
     if HAVE_MEGATRON_FSDP and isinstance(module, MegatronFSDP):
         # Because the state dictionary was generated from the nested module of Megatron-FSDP,
         # but MegatronFSDP.load_state_dict() is called at MegatronFSDP(torch.nn.Module).
@@ -2909,6 +2931,7 @@ def _load_checkpoint_from_path(
         - num_floating_point_operations_so_far: The total FLOPs computed so far.
     """
     cfg = state.cfg
+    wrapped_model = model
     model = unwrap_model(model)
     pg_collection = pg_collection or get_pg_collection(model)
     ckpt_format = cfg.checkpoint.ckpt_format
@@ -3096,7 +3119,8 @@ def _load_checkpoint_from_path(
             gen_sd_rerun_state = rerun_state_machine.state_dict(
                 data_iterator=None, ckpt_format=ckpt_format, force=True
             )
-            ignore_rerun_state = False
+            # Request idle shards for strict loading, but preserve the current run's mode.
+            ignore_rerun_state = not rerun_state_machine.validate_state_dict(state_dict["rerun_state_machine"])
         else:
             gen_sd_rerun_state = None
             if not tp_pp_match:
@@ -3336,14 +3360,15 @@ def _load_checkpoint_from_path(
         )
         load_strict = False if is_peft_resume else strict
 
-        if len(model) == 1:
-            _load_model_state_dict(model[0], state_dict["model"], load_strict)
+        if len(wrapped_model) == 1:
+            # MFSDP V2's adapter also refreshes BF16 compute weights after loading main weights.
+            _load_model_state_dict(wrapped_model[0], state_dict["model"], load_strict)
         else:
-            for i in range(len(model)):
+            for i, model_chunk in enumerate(wrapped_model):
                 model_key = "model%d" % i
                 if model_key not in state_dict:
                     continue
-                _load_model_state_dict(model[i], state_dict[model_key], load_strict)
+                _load_model_state_dict(model_chunk, state_dict[model_key], load_strict)
 
     checkpoint_version = get_checkpoint_version()
     print_rank_0(f" checkpoint version {checkpoint_version}")
@@ -3836,10 +3861,20 @@ def _load_global_dist_base_checkpoint(
     )
     load_strategy = TorchDistLoadShardedStrategy()
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _checkpoint_dp_cp_group(pg_collection))
+        per_rank_objects = getattr(ckpt_cfg, "ckpt_fully_parallel_load_per_rank_objects", False)
+        if per_rank_objects and not _FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS:
+            raise ValueError("Per-rank checkpoint object loading is not supported by the installed Megatron-Core.")
+        object_load_kwargs = (
+            {"per_rank_object_load": per_rank_objects} if _FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS else {}
+        )
+        load_strategy = FullyParallelLoadStrategyWrapper(
+            load_strategy,
+            _checkpoint_dp_cp_group(pg_collection),
+            **object_load_kwargs,
+        )
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
-    validate_sharding_integrity = True
+    validate_sharding_integrity = ckpt_cfg.ckpt_load_validate_sharding_integrity
     if is_megatron_mimo and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
         validate_sharding_integrity = False
     if cfg is not None:
@@ -3855,6 +3890,7 @@ def _load_global_dist_base_checkpoint(
         load_strategy,
         strict=ckpt_cfg.dist_ckpt_strictness,
         validate_access_integrity=validate_sharding_integrity,
+        verify_integrity=ckpt_cfg.verify_integrity,
     )
     # MCore's return_* strictness modes append missing and unexpected key sets.
     if isinstance(state_dict, tuple):

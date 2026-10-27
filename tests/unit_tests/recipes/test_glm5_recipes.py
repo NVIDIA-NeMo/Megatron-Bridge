@@ -22,6 +22,7 @@ from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
 from megatron.bridge.recipes.glm import gb200
 from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
 from megatron.bridge.recipes.glm.h100 import glm5
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 
 
 pytestmark = pytest.mark.unit
@@ -127,13 +128,36 @@ def test_glm52_h100_recipe_topologies(recipe, world_size, pp, cp, ep, gbs, steps
     assert cfg.train.global_batch_size == gbs
     assert cfg.train.micro_batch_size == 1
     assert cfg.train.train_iters == steps
-    assert cfg.model.dsa_kernel_backend == "cudnn"
+    # The FlashMLA kernels behind the cuDNN DSA backend are built without H100 support.
+    assert cfg.model.dsa_kernel_backend == "tilelang"
     assert cfg.model.mtp_num_layers == 1
     assert cfg.model.dsa_indexer_loss_coeff == 0.001
     assert cfg.model.dsa_indexer_use_sparse_loss is True
     assert cfg.model.moe_router_force_load_balancing is False
     assert world_size % (pp * cp) == 0
     assert world_size % (pp * ep) == 0
+
+
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        glm5.glm52_pretrain_416gpu_h100_bf16_config,
+        glm5.glm52_sft_416gpu_h100_bf16_config,
+        glm5.glm52_sft_608gpu_h100_bf16_200k_config,
+        glm5.glm52_peft_208gpu_h100_bf16_config,
+    ],
+)
+def test_glm52_h100_recipes_use_hybridep(recipe) -> None:
+    cfg = recipe()
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["USE_MNNVL"] == 0
+    assert COMMON_RECIPE_ENV_VARS.items() <= cfg.env_vars.items()
+    # HybridEP and TileLang compile their kernels one pipeline stage after another during the first step.
+    assert cfg.dist.distributed_timeout_minutes == 240
 
 
 def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:

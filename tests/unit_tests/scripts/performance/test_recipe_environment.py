@@ -1222,6 +1222,7 @@ def test_runner_applies_determinism_before_environment_export():
         "RECIPE_ENV": 1,
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
         "NCCL_ALGO": "Ring",
+        "NCCL_EP_HT_EM_AG_SCAN_MODE": "1",
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
         "MAMBA_DETERMINISTIC": "1",
         "CAUSAL_CONV1D_DETERMINISTIC": "1",

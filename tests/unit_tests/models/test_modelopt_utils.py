@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import copy
+import json
 from dataclasses import replace
+from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -121,13 +124,138 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
     assert plan.quantization_config["config_groups"]["group_0"]["targets"] == ["Linear"]
 
 
+@pytest.mark.unit
+def test_fp8_export_matches_fake_quantization_of_a_bf16_weight():
+    torch.manual_seed(0)
+    module = torch.nn.Linear(64, 64, bias=False).to(torch.bfloat16)
+    mtq.quantize(
+        module,
+        copy.deepcopy(mtq.FP8_DEFAULT_CFG),
+        lambda candidate: candidate(torch.randn(2, 64, dtype=torch.bfloat16)),
+    )
+    hf_name = "model.layers.0.self_attn.o_proj.weight"
+    task = _task(ColumnParallelMapping("projection.weight", hf_name), module)
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    exported = dict(modelopt_utils.prepare_modelopt_export_tasks(plan)[0].export_hook(hf_name, module.weight))
+
+    scale = exported["model.layers.0.self_attn.o_proj.weight_scale"]
+    dequantized = (exported[hf_name].float() * scale).to(torch.bfloat16)
+    assert torch.equal(dequantized, module.weight_quantizer(module.weight))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("quant_algo", ["NVFP4", "W4A16_NVFP4"])
+@pytest.mark.parametrize("tied", [False, True])
+@pytest.mark.parametrize("remote_embedding", [False, True])
+def test_public_modelopt_plan_preserves_tied_embedding_metadata(monkeypatch, quant_algo, tied, remote_embedding):
+    class EmbeddingBridge(MegatronModelBridge):
+        def provider_bridge(self, hf_pretrained):
+            raise NotImplementedError
+
+        def mapping_registry(self):
+            return MegatronMappingRegistry(
+                ColumnParallelMapping("embedding.word_embeddings.weight", "model.embed_tokens.weight"),
+                ColumnParallelMapping("output_layer.weight", "lm_head.weight"),
+            )
+
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=tied)
+    model.embedding = torch.nn.Embedding(8, 16, dtype=torch.bfloat16)
+    model.projection = _nvfp4_linear()
+    if quant_algo == "W4A16_NVFP4":
+        model.projection.input_quantizer.disable()
+    embedding_task = _task(
+        ColumnParallelMapping("embedding.word_embeddings.weight", "model.embed_tokens.weight"),
+        model.embedding,
+        global_name="embedding.word_embeddings.weight",
+    )
+    tasks = [
+        embedding_task,
+        _task(ColumnParallelMapping("projection.weight", "model.projection.weight"), model.projection),
+    ]
+    if remote_embedding:
+        embedding_source = modelopt_utils._capture_source_spec(embedding_task)
+        tasks[0] = replace(embedding_task, megatron_module=None, param_weight=None)
+        monkeypatch.setattr(
+            modelopt_utils,
+            "_sync_source_specs",
+            lambda local, _group: {**local, embedding_task.global_param_name: embedding_source},
+        )
+
+    baseline = modelopt_utils.build_modelopt_export_plan(tasks, model=[model])
+    bridge = SimpleNamespace(_model_bridge=EmbeddingBridge())
+    plan = AutoBridge.build_hf_modelopt_export_plan(bridge, model, [None, *tasks])
+
+    assert plan.quantization_config["quant_algo"] == quant_algo
+    assert "model.embed_tokens" in plan.quantization_config["ignore"]
+    assert ("lm_head" in plan.quantization_config["ignore"]) is tied
+    for actual, expected in zip(plan.conversion_tasks, baseline.conversion_tasks, strict=True):
+        assert actual.param_weight is expected.param_weight
+        assert replace(actual, param_weight=None) == replace(expected, param_weight=None)
+    assert plan.quantized_params == baseline.quantized_params
+    assert plan.local_quantization_specs == baseline.local_quantization_specs
+    if not tied:
+        assert plan.quantization_config == baseline.quantization_config
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("source_quantized", [False, True])
+def test_modelopt_plan_alias_copies_actual_spec(monkeypatch, source_quantized):
+    module = _fp8_linear()
+    source_module = _fp8_linear() if source_quantized else torch.nn.Linear(4, 4, bias=False)
+    source_name = "model.embed_tokens.weight"
+    alias = "lm_head.weight"
+    tasks = [
+        _task(ColumnParallelMapping("projection.weight", "model.projection.weight"), module),
+        _task(ColumnParallelMapping("embedding.weight", source_name), source_module, global_name="embedding.weight"),
+    ]
+    original_builder = weight_export.build_hf_quantization_config
+    captured = {}
+
+    def capture_builder(named_specs):
+        captured.update(named_specs)
+        return original_builder(named_specs)
+
+    monkeypatch.setattr(weight_export, "build_hf_quantization_config", capture_builder)
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[module], tied_weight_aliases={alias: source_name})
+
+    assert captured[alias] is captured[source_name]
+    assert (captured[alias] is not None) is source_quantized
+    assert ("lm_head" in plan.quantization_config["ignore"]) is not source_quantized
+    assert len(plan.conversion_tasks) == len(tasks)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("case", ["missing-source", "conflicting-alias", "matching-alias"])
+def test_modelopt_plan_validates_tied_alias_spec(case):
+    module = _fp8_linear()
+    source_name = "model.embed_tokens.weight"
+    alias = "lm_head.weight"
+    embedding = torch.nn.Linear(4, 4, bias=False)
+    tasks = [
+        _task(ColumnParallelMapping("projection.weight", "model.projection.weight"), module),
+        _task(ColumnParallelMapping("embedding.weight", source_name), embedding, global_name="embedding.weight"),
+    ]
+    if case != "missing-source":
+        alias_module = module if case == "conflicting-alias" else embedding
+        tasks.append(_task(ColumnParallelMapping("output.weight", alias), alias_module, global_name="output.weight"))
+    source = "missing.weight" if case == "missing-source" else source_name
+    if case == "matching-alias":
+        plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[module], tied_weight_aliases={alias: source})
+        assert "lm_head" in plan.quantization_config["ignore"]
+        assert len(plan.conversion_tasks) == len(tasks)
+    else:
+        message = "Missing ModelOpt export spec" if case == "missing-source" else "Inconsistent ModelOpt export spec"
+        with pytest.raises(ValueError, match=message):
+            modelopt_utils.build_modelopt_export_plan(tasks, model=[module], tied_weight_aliases={alias: source})
+
+
 @pytest.mark.parametrize("cached_names", [False, True])
 @pytest.mark.parametrize("quantization", ["fp8", "static_nvfp4"])
 def test_public_modelopt_plan_excludes_quantizer_state_before_mapping_validation(
     monkeypatch, cached_names, quantization
 ):
-    monkeypatch.setenv("ENABLE_BRIDGE_QUANT_MAPPING", "1")
-
     class ProjectionBridge(MegatronModelBridge):
         def provider_bridge(self, hf_pretrained):
             raise NotImplementedError
@@ -1036,3 +1164,185 @@ def test_grouped_modelopt_export_rejects_custom_model_bridge_export(monkeypatch)
                 export_plan=SimpleNamespace(),
             )
         )
+
+
+@pytest.mark.unit
+def test_plan_config_lists_unquantized_matrices_but_not_vectors():
+    norm = torch.nn.LayerNorm(32)
+    model = torch.nn.Module()
+    model.projection, model.unquantized, model.norm = _nvfp4_linear(), _nvfp4_linear(), norm
+    model.unquantized.weight_quantizer.disable()
+    model.unquantized.input_quantizer.disable()
+    tasks = [
+        _task(ColumnParallelMapping("projection.weight", "model.layers.0.mlp.up_proj.weight"), model.projection),
+        _task(
+            ColumnParallelMapping("unquantized.weight", "model.layers.0.mlp.gate.weight"),
+            model.unquantized,
+            global_name="decoder.layers.0.unquantized.weight",
+        ),
+        _task(
+            ColumnParallelMapping("norm.weight", "model.layers.0.input_layernorm.weight"),
+            norm,
+            global_name="decoder.layers.0.norm.weight",
+        ),
+    ]
+
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[model])
+
+    assert plan.quantization_config["ignore"] == ["model.layers.0.mlp.gate"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("max_shard_size", [1, 1 << 20])
+def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size):
+    from safetensors.torch import load_file
+
+    (tmp_path / "model.safetensors").write_bytes(b"stale")
+    tensors = {
+        "model.weight": torch.arange(4, dtype=torch.uint8),
+        "model.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
+        "model.input_scale": torch.tensor(0.5),
+    }
+
+    saved = modelopt_utils.save_safetensors_shards(iter(tensors.items()), tmp_path, max_shard_size=max_shard_size)
+
+    loaded = {}
+    for filename in saved - {"model.safetensors.index.json"}:
+        loaded.update(load_file(tmp_path / filename))
+    assert loaded.keys() == tensors.keys()
+    for name, tensor in tensors.items():
+        assert loaded[name].dtype == tensor.dtype and torch.equal(loaded[name].float(), tensor.float()), name
+    if max_shard_size == 1:
+        index = json.loads((tmp_path / "model.safetensors.index.json").read_text())
+        assert set(index["weight_map"]) == tensors.keys() and set(index["weight_map"].values()) == saved - {
+            "model.safetensors.index.json"
+        }
+        assert len(saved) == 4
+    else:
+        assert saved == {"model.safetensors"}
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+@pytest.mark.unit
+def test_shard_writer_rejects_duplicate_names(tmp_path):
+    tensors = [("model.weight", torch.ones(1)), ("model.weight", torch.ones(1))]
+    with pytest.raises(ValueError, match="Duplicate"):
+        modelopt_utils.save_safetensors_shards(iter(tensors), tmp_path, max_shard_size=1 << 20)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("projections", "scale", "matching"),
+    [
+        (("q_proj", "k_proj", "v_proj"), "input_scale", True),
+        (("q_proj", "k_proj", "v_proj"), "input_scale", False),
+        (("gate_proj", "up_proj"), "weight_scale_2", False),
+        (("q_a_proj", "kv_a_proj_with_mqa"), "input_scale", False),
+        (("q_proj", "o_proj"), "input_scale", True),  # Not fused: different scales are fine.
+    ],
+)
+def test_fused_sibling_scales_must_match(projections, scale, matching):
+    tensors = {
+        f"model.layers.0.self_attn.{projection}.{scale}": torch.tensor(1.0 if matching or index else 2.0)
+        for index, projection in enumerate(projections)
+    }
+    tensors["model.layers.1.self_attn.q_proj.input_scale"] = torch.tensor(3.0)  # Another layer.
+    if "o_proj" in projections:
+        tensors["model.layers.0.self_attn.o_proj.input_scale"] = torch.tensor(4.0)
+
+    if matching:
+        modelopt_utils.check_fused_sibling_scales(tensors)
+    else:
+        with pytest.raises(ValueError, match=projections[0]):
+            modelopt_utils.check_fused_sibling_scales(tensors)
+
+
+@pytest.mark.unit
+def test_export_rejects_enabled_quantizers_it_would_drop():
+    model = torch.nn.Module()
+    model.projection = _nvfp4_linear()
+    model.attention = torch.nn.Module()
+    model.attention.k_bmm_quantizer = mtq.nn.TensorQuantizer()
+    model.attention.k_bmm_quantizer.disable()
+    modelopt_utils.check_exportable_quantizers([model])
+
+    model.attention.k_bmm_quantizer.enable()
+    model.projection.output_quantizer.enable()
+    with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
+        modelopt_utils.check_exportable_quantizers([model])
+
+    # An activation-only layer would be exported unquantized.
+    model.attention.k_bmm_quantizer.disable()
+    model.projection.output_quantizer.disable()
+    model.projection.weight_quantizer.disable()
+    with pytest.raises(RuntimeError, match=r"\['projection\.input_quantizer'\]"):
+        modelopt_utils.check_exportable_quantizers([model])
+
+
+class _StreamingBridge(AutoBridge):
+    """Streams one tensor from every rank, or fails like a stale export plan or a rank-0 artifact save."""
+
+    def __init__(self, case):
+        self.case = case
+
+    @property
+    def _model_bridge(self):
+        return MegatronModelBridge()
+
+    def _save_hf_artifacts(self, path, source_path):
+        if self.case == "artifacts" and torch.distributed.get_rank() == 0:
+            raise OSError("tokenizer save failed")
+        if self.case == "success" and torch.distributed.get_rank() == 0:
+            (Path(path) / "config.json").write_text("{}")
+
+    def export_hf_weights_modelopt(self, model, **kwargs):
+        if self.case == "stale_plan":
+            raise ValueError("ModelOpt export plan validation failed")
+        yield HFWeightTuple("model.weight", torch.ones(2, 2))
+
+
+def _save_failure_worker(rank, world_size, init_file, out_dir, case):
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=60),
+    )
+    try:
+
+        def save():
+            _StreamingBridge(case).save_hf_pretrained_modelopt(
+                [torch.nn.Linear(2, 2)],
+                out_dir,
+                export_plan=SimpleNamespace(quantization_config={"quant_method": "modelopt"}),
+                show_progress=False,
+            )
+
+        if case == "success":
+            save()
+            config = json.loads((Path(out_dir) / "config.json").read_text())
+            assert config["quantization_config"] == {"quant_method": "modelopt"}
+        else:
+            # Artifact saving and a config.json missing at finalization fail rank 0 only; a stale plan
+            # fails every rank.
+            errors = {
+                "stale_plan": "plan validation failed",
+                "artifacts": "OSError",
+                "finalization": "FileNotFoundError",
+            }
+            with pytest.raises(RuntimeError, match=errors[case]):
+                save()
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("case", ["success", "stale_plan", "artifacts", "finalization"])
+def test_save_fails_on_every_rank_when_any_rank_fails(tmp_path, case):
+    torch.multiprocessing.spawn(
+        _save_failure_worker,
+        args=(2, str(tmp_path / "dist-init"), str(tmp_path), case),
+        nprocs=2,
+        join=True,
+    )

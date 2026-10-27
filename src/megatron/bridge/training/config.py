@@ -593,7 +593,8 @@ class CheckpointConfig(MTrainCheckpointConfig):
     points to a HuggingFace directory).
 
     When unset, Bridge resolves a source in this order (see training checkpointing helpers):
-      1. ``cfg.model.hf_model_id`` (preferred when populated by recipes / AutoBridge);
+      1. the source recorded on ``cfg.model`` by recipes / AutoBridge (preferred):
+         ``extra_checkpoint_metadata["hf_model_id"]`` for builder-backed configs, ``hf_model_id`` for providers;
       2. ``cfg.tokenizer.tokenizer_model`` (fallback; may refer to tokenizer assets rather than model ids).
 
     Explicit ``hf_source_path`` always overrides both when set.
@@ -1167,8 +1168,8 @@ class ConfigContainer(Container):
 
         MFSDP V2 owns its sharded parameter and gradient storage, so it must use
         its dedicated optimizer rather than Bridge's distributed-optimizer path.
-        Checkpointing and tensor/pipeline parallelism remain intentionally unsupported
-        upstream and are rejected here before model construction.
+        Tensor/pipeline parallelism remains unsupported and is rejected here
+        before model construction. Checkpoints use the fsdp_dtensor format.
         """
         unsupported_parallelisms = (
             "tensor_model_parallel_size",
@@ -1191,7 +1192,8 @@ class ConfigContainer(Container):
         if self.rng.data_parallel_random_init:
             raise ValueError("MFSDP V2 does not support data_parallel_random_init.")
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
-            raise ValueError("MFSDP V2 checkpoint save and load are not yet supported.")
+            if self.checkpoint.ckpt_format != "fsdp_dtensor":
+                raise ValueError("MFSDP V2 requires the fsdp_dtensor checkpointing format.")
         if self.checkpoint.pretrained_checkpoint is not None:
             raise ValueError("MFSDP V2 checkpoint loading is not yet supported.")
         if self.optimizer.loss_scale is not None:
@@ -1221,16 +1223,17 @@ class ConfigContainer(Container):
             return
         if self.checkpoint.hf_source_path:
             return
-        if getattr(self.model, "hf_model_id", None):
+        # Builder-backed configs record their source in metadata, providers in hf_model_id.
+        metadata = getattr(self.model, "extra_checkpoint_metadata", None) or {}
+        if metadata.get("hf_model_id") or getattr(self.model, "hf_model_id", None):
             return
         if getattr(self.tokenizer, "tokenizer_model", None):
             return
 
         raise ValueError(
             "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
-            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
-            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
-            "an HF model id."
+            "Set cfg.checkpoint.hf_source_path, record the source on cfg.model (AutoBridge and recipes "
+            "do this), or set cfg.tokenizer.tokenizer_model when it points at an HF model id."
         )
 
     def _validate_thd_per_token_loss_mode(self, feature: str) -> None:

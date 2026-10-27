@@ -39,6 +39,17 @@ image transforms, and flow-matching utilities directly. Imports are lazy, so
 other Bridge models do not require the extra or the checkout. BAGEL commands
 fail with an installation hint when either is unavailable.
 
+NeMo Framework containers do not ship `opencv-python-headless` (see the
+[container notes](../../../docker/common/README.md)), but the official BAGEL
+image transforms import `cv2`. Training and the image-understanding inference
+example need it; checkpoint conversion does not. Without it, BAGEL training
+stops while building the dataset. Add the version locked in `uv.lock` to the
+image that runs the job, for example in a derived image:
+
+```bash
+pip install --no-deps opencv-python-headless==4.11.0.86
+```
+
 ## Launch Pretraining
 
 The following example uses the 32-GPU H100 recipe and a previously initialized

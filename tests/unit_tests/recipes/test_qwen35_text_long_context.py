@@ -79,15 +79,16 @@ def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.recompute_modules == ["gdn_norm_out", "moe"]
+    # The builder-backed model config declares transformer fields on its nested transformer config.
     assert {
         "gdn_kernel_backend",
         "gdn_pre_gated_delta_rule_fusion",
         "gdn_gated_output_norm_fusion",
-    } <= {field.name for field in fields(cfg.model)}
+    } <= {field.name for field in fields(cfg.model.transformer)}
     assert cfg.model.gdn_kernel_backend == "transformer_engine"
     assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
     assert cfg.model.gdn_gated_output_norm_fusion is False
-    assert not any(name.startswith("vision_recompute_") for name in dir(cfg.model))
+    assert not any(name.startswith("vision_recompute_") for name in [*dir(cfg.model), *dir(cfg.model.transformer)])
     assert cfg.model.apply_rope_fusion is False
     assert cfg.model.cuda_graph_impl == "none"
     assert cfg.model.moe_router_force_load_balancing is False
