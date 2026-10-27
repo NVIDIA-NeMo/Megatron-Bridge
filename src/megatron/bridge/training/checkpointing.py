@@ -126,6 +126,11 @@ _FULLY_PARALLEL_LOAD_HAS_PER_RANK_OBJECTS = (
     "per_rank_object_load" in inspect.signature(FullyParallelLoadStrategyWrapper).parameters
 )
 
+# The supported dev pin exposes a load-only policy and has no save-side opt-out.
+_FULLY_PARALLEL_SAVE_HAS_VALIDATION_POLICY = (
+    "validate_access_integrity" in inspect.signature(FullyParallelSaveStrategyWrapper).parameters
+)
+
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
 
@@ -1536,11 +1541,19 @@ def save_checkpoint(
                             logger.debug("Failed to plug in the read metadata from the load strategy...")
 
                 if ckpt_cfg.fully_parallel_save:
+                    validation_kwargs = (
+                        {"validate_access_integrity": ckpt_cfg.ckpt_load_validate_sharding_integrity}
+                        if _FULLY_PARALLEL_SAVE_HAS_VALIDATION_POLICY
+                        else {}
+                    )
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
                         _checkpoint_dp_cp_group(pg_collection),
                         ckpt_cfg.ckpt_assume_constant_structure,
+                        **validation_kwargs,
                     )
+            if _FULLY_PARALLEL_SAVE_HAS_VALIDATION_POLICY and not ckpt_cfg.ckpt_load_validate_sharding_integrity:
+                validate_sharding_integrity = False
             # MegatronMIMO + torch_dist can hit known access-pattern validation failures
             # for nested DDP language model tensors in PP>1 runs when
             # fully_parallel_save is disabled. Keep validation enabled otherwise.
@@ -3861,7 +3874,7 @@ def _load_global_dist_base_checkpoint(
         )
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
-    validate_sharding_integrity = True
+    validate_sharding_integrity = ckpt_cfg.ckpt_load_validate_sharding_integrity
     if is_megatron_mimo and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
         validate_sharding_integrity = False
     if cfg is not None:
