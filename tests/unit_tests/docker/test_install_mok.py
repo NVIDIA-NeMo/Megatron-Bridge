@@ -48,8 +48,16 @@ class TestInstallMok(unittest.TestCase):
             "if name == 'realpath':\n"
             "    sys.stdout.write(str(Path(args[-1]).resolve()) + '\\n')\n"
             "elif name == 'nvcc':\n"
-            "    assert args == ['--list-gpu-code'], args\n"
-            "    sys.stdout.write(os.environ['MOK_TEST_COMPILER_TARGETS'])\n"
+            "    if args == ['--list-gpu-code']:\n"
+            "        sys.stdout.write(os.environ['MOK_TEST_LISTED_TARGETS'])\n"
+            "    else:\n"
+            "        assert len(args) == 6 and args[:2] == ['-cubin', '-gencode'] and args[4] == '-o', args\n"
+            "        target = Path(args[5]).stem\n"
+            "        assert args[2] == 'arch=compute_' + target.removeprefix('sm_') + ',code=' + target, args\n"
+            "        assert '__global__ void mok_arch_probe()' in Path(args[3]).read_text()\n"
+            "        if target not in os.environ['MOK_TEST_COMPILER_TARGETS'].split():\n"
+            "            sys.exit(1)\n"
+            "        Path(args[5]).write_bytes(b'' if os.environ.get('MOK_TEST_EMPTY_PROBE') else b'compiled cubin')\n"
             "elif name == 'git':\n"
             "    if args[0] == 'init':\n"
             "        scripts = Path(args[1]) / 'scripts'\n"
@@ -78,6 +86,7 @@ class TestInstallMok(unittest.TestCase):
             (self.bin / name).symlink_to(tool)
 
     def _run(self, *, revision=REVISION, **overrides):
+        self.record.unlink(missing_ok=True)
         env = {key: value for key, value in os.environ.items() if key != "MOK_ARCH"}
         return subprocess.run(
             ["bash", str(INSTALLER), revision, str(self.directory / "wheels")],
@@ -87,6 +96,7 @@ class TestInstallMok(unittest.TestCase):
                 "CUDA_HOME": str(self.directory),
                 "MOK_TEST_RECORD": str(self.record),
                 "MOK_TEST_COMPILER_TARGETS": TARGETS,
+                "MOK_TEST_LISTED_TARGETS": "sm_100\nsm_103\nsm_107\n",
                 "MOK_TEST_WHEEL_TARGETS": TARGETS,
                 **overrides,
             },
@@ -114,6 +124,33 @@ class TestInstallMok(unittest.TestCase):
             with self.subTest(arch=arch):
                 result = self._run(MOK_ARCH=arch, MOK_TEST_COMPILER_TARGETS=cubin, MOK_TEST_WHEEL_TARGETS=cubin)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                probes = [command for command in self._commands() if command["name"] == "nvcc"]
+                self.assertEqual(len(probes), 1)
+                self.assertEqual(probes[0]["args"][2], f"arch=compute_{cubin.removeprefix('sm_')},code={cubin}")
+
+    def test_compiles_specific_targets_when_listing_only_reports_base_names(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = self._commands()
+        probes = [command for command in commands if command["name"] == "nvcc"]
+        self.assertEqual(len(probes), 3)
+        self.assertEqual(
+            [command["args"][2] for command in probes],
+            [f"arch=compute_{target.removeprefix('sm_')},code={target}" for target in TARGETS.split()],
+        )
+        self.assertTrue(all(command["args"][0] == "-cubin" for command in probes))
+        self.assertTrue(all(not Path(command["args"][3]).parent.exists() for command in probes))
+        first_git = next(index for index, command in enumerate(commands) if command["name"] == "git")
+        self.assertTrue(all(command["name"] != "nvcc" for command in commands[first_git:]))
+
+    def test_empty_compiler_output_fails_before_fetching_source(self):
+        result = self._run(MOK_TEST_EMPTY_PROBE="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot build sm_100a", result.stderr)
+        commands = self._commands()
+        self.assertFalse(any(command["name"] == "git" for command in commands))
+        probe = next(command for command in commands if command["name"] == "nvcc")
+        self.assertFalse(Path(probe["args"][3]).parent.exists(), "Failed probe must be cleaned up")
 
     def test_missing_rubin_cubin_fails_default_build(self):
         result = self._run(MOK_TEST_WHEEL_TARGETS="sm_100a sm_103a")
@@ -127,7 +164,11 @@ class TestInstallMok(unittest.TestCase):
         result = self._run(MOK_TEST_COMPILER_TARGETS="sm_100a\nsm_103a\n")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot build sm_107a", result.stderr)
-        self.assertFalse(any(command["name"] == "git" for command in self._commands()))
+        commands = self._commands()
+        self.assertFalse(any(command["name"] == "git" for command in commands))
+        probes = [command for command in commands if command["name"] == "nvcc"]
+        self.assertEqual(len(probes), 3)
+        self.assertTrue(all(not Path(command["args"][3]).parent.exists() for command in probes))
 
     def test_unsupported_architecture_fails_before_fetching_source(self):
         result = self._run(MOK_ARCH="SM90")

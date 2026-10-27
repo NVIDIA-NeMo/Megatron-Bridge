@@ -39,16 +39,25 @@ esac
 
 export NVCC="${CUDA_HOME:-/usr/local/cuda}/bin/nvcc"
 export MOK_NVCC="${NVCC}"
-SUPPORTED_CUBINS=$("${NVCC}" --list-gpu-code)
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "${WORK_DIR}"' EXIT
+
+# Some toolkits list only base names (sm_100), even when sm_100a is supported.
+# Compile the exact gencode pairs used by MoK instead of trusting that listing.
+PROBE_DIR="${WORK_DIR}/compiler-probe"
+mkdir "${PROBE_DIR}"
+cat > "${PROBE_DIR}/arch_probe.cu" <<'CUDA'
+extern "C" __global__ void mok_arch_probe() {}
+CUDA
 for MOK_CUBIN in "${MOK_CUBINS[@]}"; do
-    if ! grep -Fxq "${MOK_CUBIN}" <<< "${SUPPORTED_CUBINS}"; then
+    if ! "${NVCC}" -cubin -gencode "arch=compute_${MOK_CUBIN#sm_},code=${MOK_CUBIN}" \
+        "${PROBE_DIR}/arch_probe.cu" -o "${PROBE_DIR}/${MOK_CUBIN}.cubin" \
+        || [[ ! -s "${PROBE_DIR}/${MOK_CUBIN}.cubin" ]]; then
         echo "${NVCC} cannot build ${MOK_CUBIN}; use a base toolkit supporting every requested MoK target" >&2
         exit 1
     fi
 done
-
-WORK_DIR=$(mktemp -d)
-trap 'rm -rf "${WORK_DIR}"' EXIT
+rm -rf "${PROBE_DIR}"
 
 git init "${WORK_DIR}"
 git -C "${WORK_DIR}" remote add origin https://github.com/QiZhangNV/mixture-of-kittens.git
