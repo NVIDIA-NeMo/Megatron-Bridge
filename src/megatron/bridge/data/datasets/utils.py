@@ -945,7 +945,6 @@ def _chat_preprocess(
     tokenizer: MegatronTokenizer,
     tool_schemas: dict[str, Any] | list[dict[str, Any]] | None = None,
     loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
-    mask_source: Literal["auto", "generation"] = "auto",
 ) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
@@ -967,7 +966,6 @@ def _chat_preprocess(
         tool_schemas - Optional tool_schemas to supply to apply_chat_template, these will be superseded
            by tools supplied with the message
         loss_mode - Assistant-only, final-assistant-turn, or full-sequence loss
-        mask_source - "auto" infers assistant boundaries; "generation" trusts the template's generation mask
 
     Output:
         {
@@ -994,7 +992,6 @@ def _chat_preprocess(
             tool_schemas=tool_schemas,
             skipped_tokens=extract_skipped_token_ids(tokenizer),
             loss_mode=loss_mode,
-            mask_source=mask_source,
             return_final_assistant_start=True,
         )
     except ValueError as error:

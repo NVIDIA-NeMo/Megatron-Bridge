@@ -804,7 +804,6 @@ def tokenize_chat_example(
     loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
     return_final_assistant_start: bool = False,
     final_assistant_span: Literal["content", "turn"] = "content",
-    mask_source: Literal["auto", "generation"] = "auto",
 ) -> TokenizedConversation:
     """Render, tokenize, and construct the assistant mask for one chat row.
 
@@ -813,19 +812,9 @@ def tokenize_chat_example(
     remain the responsibility of their respective dataset/collate layers.
     GPT dataset callers may request the final assistant boundary for generation
     metadata; ``last_turn`` loss infers it automatically.
-
-    ``mask_source="auto"`` infers assistant turn boundaries from the template and uses the template's
-    ``{% generation %}`` mask only as a fallback. ``mask_source="generation"`` trusts that mask exactly:
-    it needs no boundary inference, so a long multi-turn row renders once instead of once per message,
-    and it fails explicitly if the template has no generation block or the mask is unusable.
-    It requires ``loss_mode="assistant"``.
     """
     if loss_mode not in {"assistant", "last_turn", "full"}:
         raise ValueError("Chat SFT loss_mode must be assistant, last_turn, or full.")
-    if mask_source not in {"auto", "generation"}:
-        raise ValueError("mask_source must be auto or generation.")
-    if mask_source == "generation" and loss_mode != "assistant":
-        raise ValueError("mask_source='generation' requires loss_mode='assistant'.")
     if final_assistant_span not in {"content", "turn"}:
         raise ValueError("final_assistant_span must be content or turn.")
     conversation = normalize_chat_conversation(example_or_conversation)
@@ -903,20 +892,6 @@ def tokenize_chat_example(
         return TokenizedConversation(
             input_ids=input_ids,
             assistant_mask=full_mask,
-            conversation=conversation,
-            final_assistant_start=generation_assistant_start,
-        )
-
-    if mask_source == "generation":
-        if returned_mask is None:
-            raise ValueError(
-                "mask_source='generation' requires a chat template with {% generation %} blocks that returns "
-                "an assistant mask for every token."
-            )
-        _warn_if_all_masked(returned_mask, example_or_conversation, warn_on_all_masked=warn_on_all_masked)
-        return TokenizedConversation(
-            input_ids=input_ids,
-            assistant_mask=returned_mask,
             conversation=conversation,
             final_assistant_start=generation_assistant_start,
         )

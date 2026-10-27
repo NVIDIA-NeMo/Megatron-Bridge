@@ -50,24 +50,14 @@ class ChatSFTPreprocessingConfig:
         loss_mode: Tokens that contribute to the loss. ``assistant`` trains all
             assistant turns, ``last_turn`` trains only the final assistant span,
             and ``full`` trains the complete rendered conversation.
-        mask_source: How assistant tokens are located. ``auto`` infers turn boundaries from the
-            template and falls back to its ``{% generation %}`` mask. ``generation`` trusts the
-            template's ``{% generation %}`` mask exactly and renders the conversation once, which
-            is much faster on long multi-turn trajectories. It requires a generation-tagged
-            template and the GPT-SFT dataset path.
     """
 
     loss_mode: Literal["assistant", "last_turn", "full"] = "assistant"
-    mask_source: Literal["auto", "generation"] = "auto"
 
     def validate(self) -> None:
         """Validate chat preprocessing settings."""
         if self.loss_mode not in {"assistant", "last_turn", "full"}:
             raise ValueError("Chat SFT loss_mode must be assistant, last_turn, or full.")
-        if self.mask_source not in {"auto", "generation"}:
-            raise ValueError("Chat SFT mask_source must be auto or generation.")
-        if self.mask_source == "generation" and self.loss_mode != "assistant":
-            raise ValueError("Chat SFT mask_source='generation' requires loss_mode='assistant'.")
 
 
 @dataclass(kw_only=True)

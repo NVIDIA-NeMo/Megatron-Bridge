@@ -107,10 +107,6 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
         if self.seq_length <= 0:
             raise ValueError("seq_length must be greater than 0.")
         validate_sft_preprocessing_config(self.preprocessing)
-        if getattr(self.preprocessing, "mask_source", "auto") != "auto":
-            raise ValueError(
-                "Direct Hugging Face SFT does not support ChatSFTPreprocessingConfig.mask_source; use GPTSFTDatasetConfig."
-            )
         self._validate_sources()
         if self.validation_source is not None:
             self.validation_source = as_hf_dataset_source(self.validation_source)

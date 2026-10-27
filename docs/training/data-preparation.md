@@ -266,8 +266,6 @@ dataset = DirectHFSFTDatasetConfig(
 
 Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Media references in JSON rows must be resolvable by every worker; for large local media collections that need managed sharding and asset loading, use Energon. Collator callables are runtime builder inputs, not serializable config fields.
 
-For chat data on the text GPT-SFT path (`GPTSFTDatasetConfig`), `ChatSFTPreprocessingConfig(loss_mode="assistant")` locates assistant tokens by inferring turn boundaries, which renders the conversation once per message prefix. On long multi-turn trajectories this dominates data-loading time. When the tokenizer's chat template already marks assistant output with `{% generation %}` blocks, set `mask_source="generation"` to trust that mask exactly and render the conversation once. The mask is used as the template defines it, so a template without generation blocks fails with an explicit error instead of producing an empty loss mask. This option requires `loss_mode="assistant"` and is not supported by `DirectHFSFTDatasetConfig`. The default, `mask_source="auto"`, keeps the existing behavior. See `examples/agentic_sft` for an end-to-end use.
-
 For paired text that must not use a model chat template, select prompt-completion preprocessing instead. The prompt and completion are tokenized separately, and `loss_mode="completion"` masks the prompt:
 
 ```python

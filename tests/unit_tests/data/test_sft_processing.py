@@ -458,30 +458,3 @@ def test_gpt_prompt_completion_preserves_test_and_runtime_options():
 def test_prompt_completion_config_validation(config, message):
     with pytest.raises(ValueError, match=message):
         config.validate()
-
-
-def test_chat_mask_source_defaults_to_auto_and_validates():
-    assert ChatSFTPreprocessingConfig().mask_source == "auto"
-    ChatSFTPreprocessingConfig(mask_source="generation").validate()
-
-    with pytest.raises(ValueError, match="mask_source must be auto or generation"):
-        ChatSFTPreprocessingConfig(mask_source="boundaries").validate()
-
-
-@pytest.mark.parametrize("loss_mode", ["last_turn", "full"])
-def test_generation_mask_source_requires_assistant_loss_mode(loss_mode):
-    with pytest.raises(ValueError, match="requires loss_mode='assistant'"):
-        ChatSFTPreprocessingConfig(loss_mode=loss_mode, mask_source="generation").validate()
-
-
-def test_direct_hf_sft_rejects_generation_mask_source():
-    config = DirectHFSFTDatasetConfig(
-        seq_length=16,
-        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
-        preprocessing=ChatSFTPreprocessingConfig(mask_source="generation"),
-        do_validation=False,
-        do_test=False,
-    )
-
-    with pytest.raises(ValueError, match="does not support ChatSFTPreprocessingConfig.mask_source"):
-        config.validate()
