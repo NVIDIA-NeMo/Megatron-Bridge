@@ -367,9 +367,15 @@ class Qwen35TokenClassificationBridge(Qwen35VLBridge):
     builder-backed config that ``Qwen35VLBridge`` uses.
     """
 
+    # Restore the base rejection instead of inheriting the Qwen3.5-VL builder mapping.
     MODEL_CONFIG_CLASS = None
     USE_MODEL_CONFIG_FOR_CONVERSION = False
+    hf_config_to_model_config_kwargs = MegatronModelBridge.hf_config_to_model_config_kwargs
     PROVIDER_CLASS = Qwen35TokenClassificationModelProvider
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Map the base Qwen3.5-VL fields for the classification provider."""
+        return super().hf_config_to_model_config_kwargs(hf_config)
 
     def provider_bridge(
         self,
