@@ -17,7 +17,7 @@ summary: >
   Inference and H100 PEFT are re-verified at the public revision below.
   The retained eight-GPU conversion and CPU forward results do not establish
   verification at this revision. Refreshed SFT and PEFT, dependent export,
-  merge, and reload checks are recorded for H100 and GB200.
+  and reload checks are recorded for H100 and GB200.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, manual_forward_pass, inference]
@@ -250,18 +250,18 @@ items:
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-sft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-27
       metrics:
-        initial_loss: 0.5975891
-        final_loss: 0.5676602
-        last_10_steps_step_time_ms_avg: 6013.67
-        last_10_steps_model_tflops_per_gpu_avg: 14.42
-        last_10_steps_tokens_per_second_per_gpu_avg: 170.2787149943379
+        initial_loss: 0.6108874
+        final_loss: 0.5677395
+        last_10_steps_step_time_ms_avg: 7115.13
+        last_10_steps_model_tflops_per_gpu_avg: 12.33
+        last_10_steps_tokens_per_second_per_gpu_avg: 143.9186634678495
       expected_result: >
         Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
         Uses the native Nemotron 3 Super SFT recipe on 64 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1.
         Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3.
-        Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality.
+        Final export and native HF reload passed; they do not establish general probability equality.
         Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
   sft_export_inference:
     H100:
@@ -316,7 +316,7 @@ items:
           --prompt "What is two plus two?" --max-new-tokens 32
           --chat-template --disable-thinking --device cuda --device-map balanced
           --dtype bfloat16 --require-gpu-only
-      last_verified: 2026-09-27
+      last_verified: 2026-10-27
       expected_result: >
         Exported the final step-500 language checkpoint through its standalone
         native text source, retaining 42,683 language tensors including 1,040
@@ -327,8 +327,7 @@ items:
         generated exactly 7 tokens, stopping at EOS before the 32-token maximum. The literal
         completion was "Two plus two equals four.". This validates full-model
         export and one greedy completion, not native HF MTP execution or broad
-        numerical equivalence. The separate matched six-position forward
-        comparison also passed without changing numerical tolerances.
+        numerical equivalence.
   sft_long_context:
     H100:
       status: unverified
@@ -444,18 +443,18 @@ items:
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-peft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-27
       metrics:
-        initial_loss: 0.6392546
-        final_loss: 0.6631947
-        last_10_steps_step_time_ms_avg: 13720.5
-        last_10_steps_model_tflops_per_gpu_avg: 12.72
-        last_10_steps_tokens_per_second_per_gpu_avg: 149.26569731423783
+        initial_loss: 0.6527908
+        final_loss: 0.6626218
+        last_10_steps_step_time_ms_avg: 12216.59
+        last_10_steps_model_tflops_per_gpu_avg: 14.07
+        last_10_steps_tokens_per_second_per_gpu_avg: 167.64088833299635
       expected_result: >
         Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
         Uses the native Nemotron 3 Super PEFT recipe on 16 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1.
         Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3.
-        LoRA rank/alpha 32/32 targets native language projections with zero dropout. Native adapter and trained router-bias buffers reloaded exactly; full merge, strict HF reload and one matched numerical fixture passed. Standalone HF adapter export does not preserve trained router-bias buffers.
+        LoRA rank/alpha 32/32 targets native language projections with zero dropout. Standalone HF adapter export does not preserve trained router-bias buffers.
         Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
   checkpoint_resume:
     H100:
