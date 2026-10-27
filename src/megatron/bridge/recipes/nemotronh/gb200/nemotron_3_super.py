@@ -12,12 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GB200 pretraining recipe for Nemotron 3 Super."""
+"""GB200 training recipes for Nemotron 3 Super.
+
+For BF16 finetuning through ``scripts/training/run_recipe.py``, select
+``--recipe nemotron_3_super_sft_64gpu_gb200_bf16_config --mode sft`` on 64 GPUs
+or ``--recipe nemotron_3_super_peft_16gpu_gb200_bf16_config --mode lora`` on
+16 GPUs, together with a pretrained checkpoint and an SFT dataset. These
+recipes include the HybridEP NVL72 environment; no topology environment
+variable overrides are needed when all ranks occupy one NVL72 domain.
+"""
 
 import torch
 
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
+    nemotron_3_super_peft_16gpu_h100_bf16_config,
     nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_config,
 )
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -106,4 +117,81 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config(
     return cfg
 
 
-__all__ = ["nemotron_3_super_pretrain_64gpu_gb200_bf16_config"]
+def nemotron_3_super_sft_64gpu_gb200_bf16_config(
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
+) -> ConfigContainer:
+    """Return the BF16 SFT config for 64 GB200 GPUs in one NVL72 domain.
+
+    Retains the H100 recipe's training objective, batch size, optimizer and
+    checkpoint policy while selecting TP8/EP64 and multi-node NVLink HybridEP.
+    The allocation must place all expert-parallel ranks in one NVLink domain.
+
+    Args:
+        hf_path: Hugging Face model identifier or local source directory.
+        text_only: Use only the language model of a multimodal source.
+        revision: Immutable Hugging Face source revision.
+        trust_remote_code: Allow custom code from the selected source.
+
+    Returns:
+        GB200 SFT configuration with its HybridEP environment included.
+    """
+    cfg = nemotron_3_super_sft_16gpu_h100_bf16_config(
+        hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.env_vars.update(
+        NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=64,
+        NVLINK_DOMAIN_SIZE=72,
+        USE_MNNVL=1,
+    )
+    return cfg
+
+
+def nemotron_3_super_peft_16gpu_gb200_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
+) -> ConfigContainer:
+    """Return the BF16 PEFT config for 16 GB200 GPUs in one NVL72 domain.
+
+    Retains the H100 recipe's adapters, training objective, optimizer and
+    checkpoint policy while selecting multi-node NVLink HybridEP for TP8/EP16.
+    The allocation must place all expert-parallel ranks in one NVLink domain.
+
+    Args:
+        peft_scheme: LoRA, DoRA, or a custom PEFT configuration.
+        hf_path: Hugging Face model identifier or local source directory.
+        text_only: Use only the language model of a multimodal source.
+        revision: Immutable Hugging Face source revision.
+        trust_remote_code: Allow custom code from the selected source.
+
+    Returns:
+        GB200 PEFT configuration with its HybridEP environment included.
+    """
+    cfg = nemotron_3_super_peft_16gpu_h100_bf16_config(
+        peft_scheme, hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.env_vars.update(
+        NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=16,
+        NVLINK_DOMAIN_SIZE=72,
+        USE_MNNVL=1,
+    )
+    return cfg
+
+
+__all__ = [
+    "nemotron_3_super_pretrain_64gpu_gb200_bf16_config",
+    "nemotron_3_super_sft_64gpu_gb200_bf16_config",
+    "nemotron_3_super_peft_16gpu_gb200_bf16_config",
+]

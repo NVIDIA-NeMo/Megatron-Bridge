@@ -32,7 +32,9 @@ import torch
 
 from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_super import (
+    nemotron_3_super_peft_16gpu_gb200_bf16_config,
     nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+    nemotron_3_super_sft_64gpu_gb200_bf16_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_peft_16gpu_h100_bf16_config,
@@ -56,6 +58,8 @@ from tests.unit_tests.recipes.recipe_test_utils import nemotron_h_model_config
         nemotron_3_super_pretrain_config,
         nemotron_3_super_pretrain_16gpu_h100_bf16_config,
         nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+        nemotron_3_super_sft_64gpu_gb200_bf16_config,
+        nemotron_3_super_peft_16gpu_gb200_bf16_config,
         nemotron_3_super_sft_config,
         nemotron_3_super_sft_16gpu_h100_bf16_config,
         nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
@@ -479,3 +483,51 @@ class TestNemotron3Super16GpuH100:
         assert config.ddp.average_in_collective is False
         assert config.ddp.overlap_grad_reduce is False
         assert config.ddp.overlap_param_gather is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("gb200_recipe", "h100_recipe", "expert_parallel_size"),
+    [
+        (nemotron_3_super_sft_64gpu_gb200_bf16_config, nemotron_3_super_sft_16gpu_h100_bf16_config, 64),
+        (nemotron_3_super_peft_16gpu_gb200_bf16_config, nemotron_3_super_peft_16gpu_h100_bf16_config, 16),
+    ],
+)
+def test_gb200_finetuning_owns_topology_and_preserves_training_contract(
+    gb200_recipe, h100_recipe, expert_parallel_size
+):
+    from megatron.bridge import recipes
+
+    assert getattr(recipes, gb200_recipe.__name__) is gb200_recipe
+    original = h100_recipe()
+    actual = gb200_recipe()
+    assert original.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert original.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert original.env_vars["USE_MNNVL"] == 0
+    assert actual.model.tensor_model_parallel_size == 8
+    assert actual.model.expert_model_parallel_size == expert_parallel_size
+    assert actual.model.moe_token_dispatcher_type == "flex"
+    assert actual.model.moe_flex_dispatcher_backend == "hybridep"
+    assert actual.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expert_parallel_size
+    assert actual.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert actual.env_vars["USE_MNNVL"] == 1
+
+    # Compare the complete configs so unrelated objective, optimizer, MTP,
+    # adapter and checkpoint changes cannot hide behind the topology fix.
+    original.model.expert_model_parallel_size = expert_parallel_size
+    original.model.moe_token_dispatcher_type = "flex"
+    original.env_vars.update(
+        NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=expert_parallel_size,
+        NVLINK_DOMAIN_SIZE=72,
+        USE_MNNVL=1,
+    )
+    assert actual.to_dict() == original.to_dict()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_gb200_peft_preserves_adapter_scheme(peft_scheme):
+    config = nemotron_3_super_peft_16gpu_gb200_bf16_config(peft_scheme)
+    expected = nemotron_3_super_peft_16gpu_h100_bf16_config(peft_scheme)
+    assert type(config.peft) is type(expected.peft)
+    assert config.to_dict()["peft"] == expected.to_dict()["peft"]
