@@ -57,11 +57,6 @@ RUN    pushd /opt/Export-Deploy && \
         echo "Container built with NeMo-Run commit hash: $NEMO_RUN_COMMIT" && \
     popd
 
-# cuDNN Frontend is replaced after the sync below with this ref of NVIDIA/cudnn-frontend
-# (feat/1.29.0-megatron). Docker-only: outside fw_pyproject.toml and uv.lock. Set empty to keep the
-# PyPI wheel.
-ARG CUDNN_FRONTEND_GIT_REF=8924d4b41fd678ba1b98cd7f98bb78b222637573
-
 # Sync environment
 COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
 COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
@@ -76,16 +71,8 @@ RUN \
     BASE_RUNTIME_UV_ARGS="" && \
     if [ "${MBRIDGE_PRESERVE_BASE_RUNTIME:-False}" = "True" ]; then \
         BASE_RUNTIME_UV_ARGS="--no-install-package nvidia-cudnn-frontend --no-install-package transformer-engine --no-install-package transformer-engine-torch"; \
-    elif [ -n "$CUDNN_FRONTEND_GIT_REF" ]; then \
-        BASE_RUNTIME_UV_ARGS="--no-install-package nvidia-cudnn-frontend"; \
     fi && \
     uv sync --no-cache-dir --all-groups --inexact ${BASE_RUNTIME_UV_ARGS} && \
-    if [ -n "$CUDNN_FRONTEND_GIT_REF" ] && [ "${MBRIDGE_PRESERVE_BASE_RUNTIME:-False}" != "True" ]; then \
-        uv pip install --no-config --no-cache-dir --no-deps --reinstall \
-            "nvidia-cudnn-frontend @ git+https://github.com/NVIDIA/cudnn-frontend.git@${CUDNN_FRONTEND_GIT_REF}" && \
-        CUDNN_FRONTEND_GIT_REF="$CUDNN_FRONTEND_GIT_REF" python -c \
-            'import importlib.metadata as m, json, os, sys; source = m.distribution("nvidia-cudnn-frontend").read_text("direct_url.json"); sys.exit(0 if json.loads(source)["vcs_info"]["commit_id"] == os.environ["CUDNN_FRONTEND_GIT_REF"] else "cuDNN Frontend Git ref mismatch")'; \
-    fi && \
     python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
     uv pip list && \
     chmod +x print_sha.sh && \
@@ -97,7 +84,6 @@ RUN \
 ##
 ##############################################################################
 
-# PyNvVideoCodec 2.0.5 replaces the base image's vulnerable FFmpeg 8.1.1 libraries.
 RUN pip install "fastapi==0.139.1" \
     "starlette==1.3.1" \
     "prometheus-fastapi-instrumentator>=8.0.0" \
@@ -117,10 +103,11 @@ RUN pip install "fastapi==0.139.1" \
     "jupyterlab>=4.5.10" \
     "jupyter-server>=2.20.0" \
     "mistune>=3.3.0" \
-    "pynvvideocodec==2.0.5" \
-    "GitPython>=3.1.62,<4" && \
-    # Address CVE from transitive dependency
-    pip uninstall -y opencv-python-headless nvidia-dali-cuda130
+    "GitPython>=3.2.1,<4" && \
+    # pip targets system Python; explicitly remove the virtualenv copy too.
+    uv pip uninstall --python /opt/venv/bin/python opencv-python-headless && \
+    uv pip uninstall --python /usr/bin/python3 --system --break-system-packages \
+        opencv-python-headless nvidia-dali-cuda130 pynvvideocodec
 
 # Remove PyTorch's bundled third-party onnx source tree (build artifact, not used at runtime).
 # The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
@@ -177,7 +164,10 @@ RUN GO_GIT_VERSION=5.19.2 && \
 
 WORKDIR /workspace
 
-RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json
+# uv caches unpacked wheels, including PyNvVideoCodec's bundled FFmpeg libraries.
+# Installed packages use copy mode, so remove the build cache from the final image.
+RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
+    uv cache clean
 
 ARG NVIDIA_BUILD_ID
 ENV NVIDIA_BUILD_ID=${NVIDIA_BUILD_ID:-<unknown>}
