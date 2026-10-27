@@ -59,6 +59,7 @@ def generation_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
             "megatron.bridge.utils.common_utils",
             disable_mtp_for_inference=lambda model: None,
             get_last_rank=lambda: 0,
+            maybe_initialize_distributed=lambda: None,
             print_rank_0=lambda message: None,
         ),
     }

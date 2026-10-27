@@ -72,6 +72,7 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
+from megatron.bridge.training import checkpointing
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -256,6 +257,7 @@ def test_native_nemotron_text_selection_is_a_noop(tmp_path):
     assert not bridge.text_only
     assert not bridge.hf_pretrained._text_only
     assert not bridge.to_megatron_provider(load_weights=False).hf_model_text_only
+    assert not bridge.get_model_config().hf_model_text_only
     assert config.num_nextn_predict_layers == 1
 
 
@@ -280,18 +282,21 @@ def test_text_only_reopening_same_source_preserves_pinned_wrapper(tmp_path):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("builder", [False, True], ids=["provider", "builder"])
 @pytest.mark.parametrize("reference_id", ["org/vl", "org/vl-mirror", "org/text-export"])
-def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, reference_id):
+def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, reference_id, builder):
     full_config = _mock_nemotron_35_super_vl_hf_config()
     full_config.llm_config = PretrainedConfig(**full_config.llm_config.to_dict())
     source = PreTrainedCausalLM.from_pretrained("org/vl", revision="pinned")
     source.config = full_config
     selected = AutoBridge(Nemotron35SuperVLBridge().text_only_pretrained(source))
-    provider = selected.to_megatron_provider(load_weights=False)
+    provider = selected.get_model_config() if builder else selected.to_megatron_provider(load_weights=False)
     assert provider.mtp_num_layers == 1
     assert provider.mtp_use_repeated_layer
     # Match the Super training recipe: use the physical block at two depths.
     provider.mtp_num_layers = 2
+    # Builder-backed configs are restored from run_config.yaml through their serialized form.
+    saved = type(provider).from_dict(provider.as_dict()) if builder else provider
     reference = selected
     if reference_id == "org/text-export":
         native_source = PreTrainedCausalLM.from_pretrained(reference_id, revision="text-revision")
@@ -299,7 +304,7 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, referen
         reference = AutoBridge(native_source)
     (tmp_path / "run_config.yaml").touch()
     with (
-        patch("megatron.bridge.training.model_load_save.load_model_config", return_value=(provider, None)),
+        patch("megatron.bridge.training.model_load_save.load_model_config", return_value=(saved, None)),
         patch.object(AutoBridge, "from_hf_pretrained", return_value=reference) as load,
     ):
         restored = AutoBridge.from_auto_config(str(tmp_path), reference_id, trust_remote_code=True)
@@ -329,6 +334,33 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, referen
     # A second training/export cycle must keep the same physical HF count.
     reimported.mtp_num_layers = 2
     assert NemotronHBridge.megatron_to_hf_config(reimported)["num_nextn_predict_layers"] == 1
+
+
+@pytest.mark.unit
+def test_super_text_only_builder_preserves_checkpoint_provenance(monkeypatch):
+    full_config = _mock_nemotron_35_super_vl_hf_config()
+    full_config.llm_config = PretrainedConfig(**full_config.llm_config.to_dict())
+    source = PreTrainedCausalLM.from_pretrained("org/vl", revision="pinned")
+    source.config = full_config
+    selected = AutoBridge(Nemotron35SuperVLBridge().text_only_pretrained(source))
+
+    model_config = selected.get_model_config()
+    restored = type(model_config).from_dict(model_config.as_dict())
+
+    assert restored.hf_model_text_only is True
+    assert restored.extra_checkpoint_metadata == {"hf_model_id": "org/vl", "hf_model_revision": "pinned"}
+
+    # Sidecar export and HF initialization reopen the pinned language projection of the source.
+    monkeypatch.setattr(checkpointing, "_AUTO_BRIDGE_CACHE", {})
+    load = Mock(return_value=object())
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", load)
+    cfg = SimpleNamespace(
+        model=restored,
+        checkpoint=SimpleNamespace(hf_source_path=None, hf_trust_remote_code=True),
+        tokenizer=SimpleNamespace(tokenizer_model="org/vl"),
+    )
+    checkpointing._build_auto_bridge_for_save(cfg)
+    load.assert_called_once_with("org/vl", text_only=True, revision="pinned", trust_remote_code=True)
 
 
 def test_public_nemotron_omni_architecture_is_registered():

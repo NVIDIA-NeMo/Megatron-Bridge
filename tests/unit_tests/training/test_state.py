@@ -99,9 +99,6 @@ class TestTrainState:
             "skipped_train_samples",
             "consumed_valid_samples",
             "floating_point_operations_so_far",
-            "do_train",
-            "do_valid",
-            "do_test",
         }
         assert set(state_dict.keys()) == expected_keys
 
@@ -113,9 +110,6 @@ class TestTrainState:
         assert state_dict["skipped_train_samples"].dtype == torch.int64
         assert state_dict["consumed_valid_samples"].dtype == torch.int64
         assert state_dict["floating_point_operations_so_far"].dtype == torch.float64
-        assert state_dict["do_train"].dtype == torch.bool
-        assert state_dict["do_valid"].dtype == torch.bool
-        assert state_dict["do_test"].dtype == torch.bool
 
         # Check values
         assert state_dict["step"].item() == 42
@@ -123,9 +117,6 @@ class TestTrainState:
         assert state_dict["skipped_train_samples"].item() == 25
         assert state_dict["consumed_valid_samples"].item() == 100
         assert state_dict["floating_point_operations_so_far"].item() == 2000
-        assert state_dict["do_train"].item() is True
-        assert state_dict["do_valid"].item() is False
-        assert state_dict["do_test"].item() is True
 
     def test_load_state_dict(self):
         """Test loading state from state dictionary."""
@@ -141,7 +132,7 @@ class TestTrainState:
             "do_test": torch.tensor(False, dtype=torch.bool),
         }
 
-        state = TrainState()
+        state = TrainState(do_train=True, do_valid=False, do_test=True)
         state.load_state_dict(state_dict)
 
         assert state.step == 75
@@ -149,12 +140,39 @@ class TestTrainState:
         assert state.skipped_train_samples == 40
         assert state.consumed_valid_samples == 150
         assert state.floating_point_operations_so_far == 3000.5
-        assert state.do_train is False
-        assert state.do_valid is True
-        assert state.do_test is False
+        # Legacy checkpoints may include these keys, but flags are runtime state.
+        assert state.do_train is True
+        assert state.do_valid is False
+        assert state.do_test is True
+
+    def test_load_state_dict_without_dataloader_flags(self):
+        """Test loading a train state saved without the dataloader flags.
+
+        Megatron-LM train-state checkpoints no longer persist do_train/do_valid/do_test,
+        so loading them must keep the current flag values instead of failing.
+        """
+        state_dict = {
+            "step": torch.tensor(20, dtype=torch.int64),
+            "consumed_train_samples": torch.tensor(640, dtype=torch.int64),
+            "skipped_train_samples": torch.tensor(0, dtype=torch.int64),
+            "consumed_valid_samples": torch.tensor(64, dtype=torch.int64),
+            "floating_point_operations_so_far": torch.tensor(1234.5, dtype=torch.float64),
+        }
+
+        state = TrainState(do_train=True, do_valid=False, do_test=True)
+        state.load_state_dict(state_dict)
+
+        assert state.step == 20
+        assert state.consumed_train_samples == 640
+        assert state.skipped_train_samples == 0
+        assert state.consumed_valid_samples == 64
+        assert state.floating_point_operations_so_far == 1234.5
+        assert state.do_train is True
+        assert state.do_valid is False
+        assert state.do_test is True
 
     def test_round_trip_serialization(self):
-        """Test that state_dict -> load_state_dict preserves all values."""
+        """Test that serialization preserves progress, not runtime dataloader flags."""
         # Create original state with various values
         original_state = TrainState(
             step=123,
@@ -180,9 +198,9 @@ class TestTrainState:
         assert new_state.skipped_train_samples == original_state.skipped_train_samples
         assert new_state.consumed_valid_samples == original_state.consumed_valid_samples
         assert new_state.floating_point_operations_so_far == original_state.floating_point_operations_so_far
-        assert new_state.do_train == original_state.do_train
-        assert new_state.do_valid == original_state.do_valid
-        assert new_state.do_test == original_state.do_test
+        assert new_state.do_train is False
+        assert new_state.do_valid is False
+        assert new_state.do_test is False
 
     def test_state_dict_with_defaults(self):
         """Test state_dict with default values."""
@@ -195,9 +213,6 @@ class TestTrainState:
         assert state_dict["skipped_train_samples"].item() == 0
         assert state_dict["consumed_valid_samples"].item() == 0
         assert state_dict["floating_point_operations_so_far"].item() == 0
-        assert state_dict["do_train"].item() is False
-        assert state_dict["do_valid"].item() is False
-        assert state_dict["do_test"].item() is False
 
 
 class TestFaultToleranceState:
