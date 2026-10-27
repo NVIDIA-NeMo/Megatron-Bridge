@@ -48,6 +48,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
 from tests.unit_tests.recipes.recipe_test_utils import nemotron_h_model_config
 
 
@@ -493,7 +494,7 @@ class TestNemotron3Super16GpuH100:
         (nemotron_3_super_peft_16gpu_gb200_bf16_config, nemotron_3_super_peft_16gpu_h100_bf16_config, 16),
     ],
 )
-def test_gb200_finetuning_owns_topology_and_preserves_training_contract(
+def test_gb200_finetuning_owns_execution_policy_and_preserves_training_contract(
     gb200_recipe, h100_recipe, expert_parallel_size
 ):
     from megatron.bridge import recipes
@@ -511,11 +512,37 @@ def test_gb200_finetuning_owns_topology_and_preserves_training_contract(
     assert actual.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expert_parallel_size
     assert actual.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert actual.env_vars["USE_MNNVL"] == 1
+    assert actual.optimizer.use_precision_aware_optimizer is False
+    for name in ("main_grads_dtype", "main_params_dtype", "exp_avg_dtype", "exp_avg_sq_dtype"):
+        assert getattr(actual.optimizer, name) == torch.float32
+    assert actual.mixed_precision.grad_reduce_in_fp32 is True
+    assert actual.ddp.grad_reduce_in_fp32 is True
+    assert actual.checkpoint.async_save is False
+    assert actual.checkpoint.exit_on_missing_checkpoint is True
+    assert actual.ddp.check_for_nan_in_grad is True
+    assert actual.ddp.check_for_large_grads is True
+    assert actual.rerun_state_machine.check_for_nan_in_loss is True
+    assert actual.checkpoint.load == original.checkpoint.load
+    assert actual.checkpoint.load_optim == original.checkpoint.load_optim
+    assert actual.checkpoint.load_rng == original.checkpoint.load_rng
 
-    # Compare the complete configs so unrelated objective, optimizer, MTP,
-    # adapter and checkpoint changes cannot hide behind the topology fix.
+    # Only the GB200 execution/precision policy differs. Preserve objective,
+    # LR schedule, MTP, adapters, dataset and normal checkpoint resume behavior.
     original.model.expert_model_parallel_size = expert_parallel_size
     original.model.moe_token_dispatcher_type = "flex"
+    original.model.moe_shared_expert_overlap = False
+    original.model.moe_router_force_load_balancing = False
+    original.optimizer.use_precision_aware_optimizer = False
+    original.optimizer.main_grads_dtype = torch.float32
+    original.optimizer.main_params_dtype = torch.float32
+    original.optimizer.exp_avg_dtype = torch.float32
+    original.optimizer.exp_avg_sq_dtype = torch.float32
+    original.mixed_precision = bf16_mixed()
+    original.mixed_precision.grad_reduce_in_fp32 = True
+    original.ddp.grad_reduce_in_fp32 = True
+    original.ddp.check_for_large_grads = True
+    original.checkpoint.async_save = False
+    original.checkpoint.exit_on_missing_checkpoint = True
     original.env_vars.update(
         NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=expert_parallel_size,
         NVLINK_DOMAIN_SIZE=72,

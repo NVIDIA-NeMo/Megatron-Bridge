@@ -117,6 +117,35 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config(
     return cfg
 
 
+def _configure_gb200_finetuning(cfg: ConfigContainer) -> None:
+    """Apply the shared GB200 finetuning precision and execution policy."""
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.env_vars.update(
+        NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=cfg.model.expert_model_parallel_size,
+        NVLINK_DOMAIN_SIZE=72,
+        USE_MNNVL=1,
+    )
+
+    # GB200 finetuning keeps master parameters, moments and reductions in FP32.
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+
+    cfg.checkpoint.async_save = False
+    cfg.checkpoint.exit_on_missing_checkpoint = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.check_for_large_grads = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
+
+
 def nemotron_3_super_sft_64gpu_gb200_bf16_config(
     *,
     hf_path: str | None = None,
@@ -126,8 +155,9 @@ def nemotron_3_super_sft_64gpu_gb200_bf16_config(
 ) -> ConfigContainer:
     """Return the BF16 SFT config for 64 GB200 GPUs in one NVL72 domain.
 
-    Retains the H100 recipe's training objective, batch size, optimizer and
-    checkpoint policy while selecting TP8/EP64 and multi-node NVLink HybridEP.
+    Uses TP8/EP64 and multi-node NVLink HybridEP, FP32 optimizer state and
+    gradient reduction, synchronous saves, and numerical validation.
+    Retains the H100 recipe's objective, batch size, and learning-rate policy.
     The allocation must place all expert-parallel ranks in one NVLink domain.
 
     Args:
@@ -143,13 +173,7 @@ def nemotron_3_super_sft_64gpu_gb200_bf16_config(
         hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
     )
     cfg.model.expert_model_parallel_size = 64
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.env_vars.update(
-        NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=64,
-        NVLINK_DOMAIN_SIZE=72,
-        USE_MNNVL=1,
-    )
+    _configure_gb200_finetuning(cfg)
     return cfg
 
 
@@ -163,8 +187,9 @@ def nemotron_3_super_peft_16gpu_gb200_bf16_config(
 ) -> ConfigContainer:
     """Return the BF16 PEFT config for 16 GB200 GPUs in one NVL72 domain.
 
-    Retains the H100 recipe's adapters, training objective, optimizer and
-    checkpoint policy while selecting multi-node NVLink HybridEP for TP8/EP16.
+    Uses TP8/EP16 and multi-node NVLink HybridEP, FP32 optimizer state and
+    gradient reduction, synchronous saves, and numerical validation.
+    Retains the H100 recipe's adapters, objective, and learning-rate policy.
     The allocation must place all expert-parallel ranks in one NVLink domain.
 
     Args:
@@ -180,13 +205,7 @@ def nemotron_3_super_peft_16gpu_gb200_bf16_config(
     cfg = nemotron_3_super_peft_16gpu_h100_bf16_config(
         peft_scheme, hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
     )
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.env_vars.update(
-        NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=16,
-        NVLINK_DOMAIN_SIZE=72,
-        USE_MNNVL=1,
-    )
+    _configure_gb200_finetuning(cfg)
     return cfg
 
 

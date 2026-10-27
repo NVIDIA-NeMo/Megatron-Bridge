@@ -498,6 +498,33 @@ HYBRIDEP_ON_H100_RECIPE = (
     "./scripts/training/train.sh --recipe a_h100_bf16_config model.expert_model_parallel_size=16 "
     "model.moe_token_dispatcher_type=flex"
 )
+
+
+@pytest.mark.parametrize(
+    ("item", "recipe"),
+    [
+        ("sft", "nemotron_3_super_sft_64gpu_gb200_bf16_config"),
+        ("peft", "nemotron_3_super_peft_16gpu_gb200_bf16_config"),
+    ],
+)
+def test_text_only_gb200_commands_use_recipe_execution_defaults(item: str, recipe: str) -> None:
+    card = yaml.safe_load((CARDS_DIR / "nemotron-3.5-super-vl-120b-a12b-text-only" / "card.yaml").read_text())
+    tokens = shlex.split(card["items"][item]["GB200"]["command"])
+    assert tokens[tokens.index("--recipe") + 1] == recipe
+    recipe_owned = (
+        "env_vars.",
+        "optimizer.",
+        "mixed_precision.",
+        "ddp.",
+        "rerun_state_machine.",
+        "model.moe_",
+        "model.expert_model_parallel_size=",
+        "checkpoint.async_save=",
+        "checkpoint.exit_on_missing_checkpoint=",
+    )
+    assert not [token for token in tokens if token.lstrip("+").startswith(recipe_owned)]
+
+
 TOPOLOGY = (
     "env_vars.NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN={ranks} env_vars.NVLINK_DOMAIN_SIZE=72 env_vars.USE_MNNVL=1"
 )
