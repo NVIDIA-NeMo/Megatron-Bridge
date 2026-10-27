@@ -760,6 +760,106 @@ class TestTrainingLog:
         # Anchor advanced to the current cumulative for the next interval.
         assert mock_global_state._flops_at_last_log == pytest.approx(prev_flops + 8.0e12)
 
+    @mock.patch("megatron.bridge.training.utils.train_utils.record_training_metrics")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_telemetry_metrics_recorded_before_counters_reset(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_record_training_metrics,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """At a log boundary, telemetry gets the interval's step time, TFLOP/s, and skipped count."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 8
+        # Log boundary (10 % 5 == 0); the interval timer reports 0.5 s for its one (skipped) iteration.
+        mock_global_state.train_state.step = 10
+        mock_global_state._flops_at_last_log = 100.0e12
+        mock_global_state.train_state.floating_point_operations_so_far = 108.0e12
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=1,
+            grad_norm=None,
+            params_norm=None,
+            num_zeros_in_grad=None,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        mock_record_training_metrics.assert_called_once_with(
+            step_duration_ms=pytest.approx(500.0),
+            throughput_tflops=pytest.approx(8.0e12 / 0.5 / 8 / 1e12),
+            skipped_iters=1,
+        )
+        assert total_loss_dict["skipped iterations"] == 0
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.record_training_metrics")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    def test_telemetry_metrics_not_recorded_between_log_boundaries(
+        self,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_record_training_metrics,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Between log boundaries (101 % 5 != 0) no metric is recorded."""
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 8
+        mock_global_state.train_state.step = 101
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=self.get_fresh_total_loss_dict(),
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=None,
+            params_norm=None,
+            num_zeros_in_grad=None,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        mock_record_training_metrics.assert_not_called()
+
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
