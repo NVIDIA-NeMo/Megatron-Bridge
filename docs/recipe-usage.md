@@ -27,24 +27,25 @@ Training mode follows the recipe and dataset type:
 
 For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for a local JSONL split directory or `per_split_data_source_manifest_path` for MLM-style JSONL blends. Do not use `data_path` for SFT/PEFT JSONL sources.
 
-## Optimizer state defaults
+## Optimizer state precision
 
-Library recipes use `use_precision_aware_optimizer=False` and FP32 main parameters,
-main gradients, and Adam moments. Model compute precision (BF16/FP8), gradient
-communication precision, and optimizer state precision are separate settings.
-Performance recipes retain their benchmark optimizer settings.
+Library recipes use FP32 optimizer state by default, with
+`use_precision_aware_optimizer=False`. This keeps the main parameters, main
+gradients, and Adam moments in FP32. Model compute and gradient communication
+can still use other precisions, such as BF16.
 
-Reduced optimizer state requires explicit opt-in. Promoting it into a library
-recipe requires convergence evidence compared with the standard FP32-state
-optimizer under matched training conditions; finite-loss runs, throughput gains,
-and checkpoint-resume checks alone do not establish this equivalence.
+Low-precision optimizer state saves memory, but can affect convergence. Rounding
+small optimizer updates can lead to slower convergence or higher final loss,
+even when training appears stable. It can also cause loss spikes or divergence.
+Use it only as a last resort when the model still does not fit after trying
+parameter and optimizer sharding, activation recomputation, or optimizer offload.
+If you enable it, compare convergence against FP32 optimizer state under the same
+training conditions. See the [NeMo AutoModel mixed-precision training guide](https://docs.nvidia.com/nemo/automodel/development/mixed-precision-training)
+for more background.
 
-Restoring FP32 state increases memory for recipes that previously used reduced
-state. Their prior memory/throughput measurements apply to the pinned commits
-recorded in verification cards. Revalidate optimizer initialization, steady-state
-training and checkpoint memory on your allocation; topology or selective recompute
-may need adjustment. This default change does not establish target-scale memory
-fit or cross-optimizer checkpoint-resume compatibility.
+FP32 optimizer state uses more memory. Check memory usage through optimizer
+initialization, training, and checkpoint saving on your target allocation.
+Performance recipes may use lower-precision state for benchmarking.
 
 ## Overriding configuration
 
