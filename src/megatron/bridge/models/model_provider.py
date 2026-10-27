@@ -608,6 +608,7 @@ def get_model(
     *,
     pg_collection: ProcessGroupCollection,
     use_layer_wise_distributed_optimizer: bool = False,
+    use_layer_wise_param_layout: bool = True,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -631,6 +632,8 @@ def get_model(
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
         use_layer_wise_distributed_optimizer: Build shard-aligned DDP layouts for layer-wise optimizers.
+        use_layer_wise_param_layout: Use padded, shard-aligned layouts when layer-wise optimization
+            is enabled. False preserves compact buffers and whole-parameter optimizer ownership.
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
@@ -736,6 +739,7 @@ def get_model(
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
             pg_collection=pg_collection,
         )
 
