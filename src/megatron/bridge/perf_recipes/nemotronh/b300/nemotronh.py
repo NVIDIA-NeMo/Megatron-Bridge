@@ -20,6 +20,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_nano_perf_defaults,
     _apply_nemotron_3_super_perf_defaults,
     _benchmark_common,
+    _enable_nemotron_3_5_lightning_full_cuda_graph,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     load_quantization_recipe,
@@ -391,6 +392,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    _enable_nemotron_3_5_lightning_full_cuda_graph(cfg)
     return cfg
 
 
@@ -425,6 +427,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    _enable_nemotron_3_5_lightning_full_cuda_graph(cfg)
     return cfg
 
 
@@ -458,4 +461,5 @@ def nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    _enable_nemotron_3_5_lightning_full_cuda_graph(cfg)
     return cfg

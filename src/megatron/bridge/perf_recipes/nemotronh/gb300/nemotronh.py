@@ -23,6 +23,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_gtp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
+    _enable_nemotron_3_5_lightning_full_cuda_graph,
     _enable_nemotron_3_5_lightning_full_iteration,
     _enable_nemotron_3_super_full_iteration,
     _nemotron_3_super_nvfp4_precision,
@@ -623,6 +624,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    _enable_nemotron_3_5_lightning_full_cuda_graph(cfg)
     return cfg
 
 
@@ -743,4 +745,5 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_USE_FAST_MATH": 1,
     }
+    _enable_nemotron_3_5_lightning_full_cuda_graph(cfg)
     return cfg

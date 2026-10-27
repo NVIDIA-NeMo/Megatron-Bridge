@@ -31,7 +31,7 @@ from megatron.bridge.training.mixed_precision import (
     nemotron_3_super_bf16_with_nvfp4_mixed,
     nemotron_3_ultra_bf16_with_nvfp4_mixed,
 )
-from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules, set_full_iteration_cuda_graph
 
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
@@ -41,6 +41,16 @@ _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
 # NVLink domain (HSDP), matching ``--num-distributed-optimizer-instances $((nodes/16))``
 # in the reference Megatron-LM launch script.
 _GB300_NVLINK_DOMAIN_GPUS = 64
+
+
+def _enable_nemotron_3_5_lightning_full_cuda_graph(cfg: ConfigContainer) -> None:
+    """Capture the whole Nemotron 3.5 Lightning training iteration in a single CUDA graph."""
+    cfg.model.cuda_graph_impl = "full_iteration"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.moe_expert_rank_capacity_factor = 1.1
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+    cfg.dataset.create_attention_mask = False
 
 
 def _apply_nemotron_3_nano_perf_defaults(cfg: ConfigContainer) -> None:
