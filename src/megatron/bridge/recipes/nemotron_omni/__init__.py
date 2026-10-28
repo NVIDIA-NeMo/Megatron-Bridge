@@ -24,10 +24,12 @@ for _suffix in (
     "",
     ".h100",
     ".gb200",
+    ".gb300",
     ".nemotron_omni",
     ".nemotron_35_super_vl",
     ".h100.nemotron_omni",
     ".h100.nemotron_35_super_vl",
     ".gb200.nemotron_35_super_vl",
+    ".gb300.nemotron_35_super_vl",
 ):
     sys.modules[__name__ + _suffix] = import_module("megatron.bridge.recipes.nemotronh_multimodal" + _suffix)

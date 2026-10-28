@@ -22,6 +22,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 import yaml
 from megatron.core import parallel_state
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
@@ -460,6 +461,10 @@ class TestLoadMegatronModel:
             moe_grouped_gemm=True,
             moe_expert_rank_capacity_factor=1.5,
             moe_paged_stash=True,
+            # Paged stash on the non-op-fuser GroupedTensor path requires fused SwiGLU.
+            gated_linear_unit=True,
+            activation_func=F.silu,
+            bias_activation_fusion=True,
         )
         provider.finalize()
         kwargs = dict(

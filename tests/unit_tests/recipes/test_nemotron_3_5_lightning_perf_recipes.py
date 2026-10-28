@@ -99,9 +99,13 @@ _GB300_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
 )
-# The GB200, GB300 and VRNVL72 BF16 and MXFP8 perf recipes dispatch through NCCL EP (no HybridEP topology in
-# their environment).
+# The B200, B300, GB200, GB300 and VRNVL72 BF16 and MXFP8 perf recipes dispatch through NCCL EP (no HybridEP
+# topology in their environment).
 _NCCLEP_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
@@ -355,7 +359,7 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
 
     base_env = base_cfg.env_vars
     if recipe_factory in _NCCLEP_RECIPES and base_cfg.model.moe_flex_dispatcher_backend == "hybridep":
-        # The GB200 Lightning benchmarks dispatch through NCCL EP while their Nemotron 3 Nano bases keep HybridEP.
+        # These Lightning benchmarks dispatch through NCCL EP while their Nemotron 3 Nano bases keep HybridEP.
         base_env = {name: value for name, value in base_env.items() if name not in HYBRID_EP_ENV_NAMES}
         base_env["NCCL_EP_HT_EM_PULL_PUSH"] = 1
 
@@ -583,8 +587,16 @@ def test_b200_b300_perf_recipe_topology(
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
     assert cfg.model.moe_hybridep_num_sms == expected_hybridep_sms
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
-    assert cfg.env_vars["USE_MNNVL"] == 0
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    if recipe_factory in _NCCLEP_RECIPES:
+        assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+        assert cfg.model.moe_use_grouped_tensor is True
+        assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+        assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    else:
+        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+        assert cfg.env_vars["USE_MNNVL"] == 0
     assert ("NCCL_IGNORE_CPU_AFFINITY" in cfg.env_vars) is expect_b300_affinity
 
 
