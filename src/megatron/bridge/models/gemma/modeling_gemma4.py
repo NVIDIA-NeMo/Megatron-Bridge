@@ -1042,7 +1042,7 @@ def _gemma4_checkpointed_forward(
     input_ids: "Optional[Tensor]" = None,
     per_layer_inputs: "Optional[Tensor]" = None,
 ):
-    """MCore recompute helper variant that carries Gemma4 PLE through checkpoint args."""
+    """MCore recompute helper variant that carries Gemma4 PLE and shared K/V through checkpoint args."""
     from contextlib import nullcontext
 
     from megatron.core import tensor_parallel
@@ -1064,6 +1064,16 @@ def _gemma4_checkpointed_forward(
     assert not is_dual_rope or len(rotary_pos_emb) == 2, "Dual RoPE input length is not equal to 2"
     rotary_pos_emb = rotary_pos_emb if is_dual_rope else (None, rotary_pos_emb)
 
+    # KV-shared layers read the K/V that their source layer stored during its forward. A checkpointed
+    # forward runs without autograd, so pass the stored K/V between chunks as checkpoint inputs and
+    # outputs; otherwise the shared layers' gradients never reach the source layers.
+    kv_sources = [
+        layer.self_attention
+        for layer in self.layers
+        if getattr(getattr(layer, "self_attention", None), "store_full_length_kv", False)
+    ]
+    shared_kv = [None] * (2 * len(kv_sources))
+
     def custom(start: int, end: int):
         def custom_forward(
             hidden_states,
@@ -1074,8 +1084,11 @@ def _gemma4_checkpointed_forward(
             rotary_pos_emb_global,
             padding_mask=None,
             per_layer_inputs=None,
+            *shared_kv,
         ):
             rotary_pos_emb = (rotary_pos_emb_local, rotary_pos_emb_global) if is_dual_rope else rotary_pos_emb_global
+            for source, key, value in zip(kv_sources, shared_kv[0::2], shared_kv[1::2]):
+                source._stored_kv = None if key is None else (key, value)
 
             for index in range(start, end):
                 layer = self.layers[index]
@@ -1119,18 +1132,32 @@ def _gemma4_checkpointed_forward(
 
                 if isinstance(hidden_states, tuple):
                     hidden_states = hidden_states[0]
-            return hidden_states, context
+
+            shared_kv = []
+            for source in kv_sources:
+                shared_kv.extend(source._stored_kv or (None, None))
+                source._stored_kv = None
+            return (hidden_states, context, *shared_kv)
 
         return custom_forward
 
     def chunk_runner(start: int, end: int, use_checkpoint: bool):
-        nonlocal hidden_states, context
+        nonlocal hidden_states, context, shared_kv
         cf = custom(start, end)
         # Unpack the RoPE tuple as torch cannot save tuples for backward pass.
-        args = (hidden_states, attention_mask, context, context_mask, *rotary_pos_emb, padding_mask, per_layer_inputs)
+        args = (
+            hidden_states,
+            attention_mask,
+            context,
+            context_mask,
+            *rotary_pos_emb,
+            padding_mask,
+            per_layer_inputs,
+            *shared_kv,
+        )
         if use_checkpoint:
             if self.config.fp8 or self.config.fp4:
-                hidden_states, context = te_checkpoint(
+                hidden_states, context, *shared_kv = te_checkpoint(
                     cf,
                     self.config.distribute_saved_activations,
                     tensor_parallel.random.get_cuda_rng_tracker,
@@ -1138,11 +1165,11 @@ def _gemma4_checkpointed_forward(
                     *args,
                 )
             else:
-                hidden_states, context = tensor_parallel.checkpoint(
+                hidden_states, context, *shared_kv = tensor_parallel.checkpoint(
                     cf, self.config.distribute_saved_activations, *args
                 )
         else:
-            hidden_states, context = cf(*args)
+            hidden_states, context, *shared_kv = cf(*args)
 
         if self.config.recompute_method == "uniform":
             if (end - 1 + layer_offset) in extract_layer_indices:
