@@ -2,6 +2,7 @@
 
 Reference implementations:
 - **Builder-backed config and conversion:** Muse Glimmer (`src/megatron/bridge/models/muse_glimmer/`)
+- **Builder-backed HybridModel VLM with audio:** Nemotron Omni (`src/megatron/bridge/models/nemotron_omni/`)
 - **Megatron vision encoder:** Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
 - **HF vision encoder:** Gemma3-VL (`src/megatron/bridge/models/gemma_vl/`)
 
