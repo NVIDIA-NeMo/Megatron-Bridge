@@ -254,6 +254,24 @@ def test_builder_rejects_text_prompt_completion_for_nemotron_omni(monkeypatch, p
         build_direct_hf_sft_split(config, config.source, 1, processor_type())
 
 
+@pytest.mark.parametrize("loss_mode", ["last_turn", "full"])
+@pytest.mark.parametrize("processor_name", _NEMOTRON_OMNI_PROCESSOR_NAMES)
+def test_builder_rejects_non_assistant_chat_loss_for_nemotron_omni(monkeypatch, processor_name, loss_mode):
+    row = {"conversation": [{"role": "user", "content": "question"}]}
+    processor_type = type(processor_name, (_Tokenizer,), {})
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: [row])
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        preprocessing=ChatSFTPreprocessingConfig(loss_mode=loss_mode),
+        do_validation=False,
+        do_test=False,
+    )
+
+    with pytest.raises(ValueError, match="supports only assistant chat loss"):
+        build_direct_hf_sft_split(config, config.source, 1, processor_type())
+
+
 def test_builder_preserves_canonical_conversation_key_for_multimodal_collators(monkeypatch):
     row = {
         "messages": [
