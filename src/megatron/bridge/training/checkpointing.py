@@ -3853,7 +3853,9 @@ def _restore_scheduler_runtime_overrides(
     if optimizer is None or getattr(optimizer, "is_stub_optimizer", False) or scheduler is None:
         print_rank_0("WARNING: scheduler override requires an optimizer and scheduler; skipping runtime LR bounds.")
         return
-    if built_lr_bounds is not None and len(built_lr_bounds) != len(optimizer.param_groups):
+    if built_lr_bounds is not None and [bounds["default_config"] for bounds in built_lr_bounds] != [
+        group.get("default_config", True) for group in optimizer.param_groups
+    ]:
         print_rank_0(
             "WARNING: optimizer param groups changed while loading the checkpoint; per-group LR overrides "
             "are reset to the base LR."
