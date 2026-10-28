@@ -23,7 +23,7 @@ Reference: https://huggingface.co/zai-org/GLM-4.5V
 """
 
 import types
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import transformers
@@ -34,7 +34,6 @@ from torch import Tensor
 from transformers.models.glm4v.modeling_glm4v import Glm4vModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.utils.packed_seq_utils import (
     repack_mcore_thd_position_ids,
     unpack_mcore_thd_tensor_for_position_ids,
@@ -43,9 +42,7 @@ from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_gra
 
 
 if TYPE_CHECKING:
-    from megatron.core.models.gpt import GPTModel
     from megatron.core.packed_seq_params import PackedSeqParams
-    from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 def is_transformers_min_version(version):
@@ -71,15 +68,10 @@ class GLM45VModel(MegatronModule):
     while the language model forward pass uses Megatron's optimized implementation.
 
     Args:
-        config (GPTModelProvider | TransformerConfig): Model provider, or the vision-language transformer
-            config of a builder-backed model config. Either one carries the vision config and token IDs.
+        config (GPTModelProvider): Model provider containing configuration for language and vision modules.
         pre_process (bool, optional): Whether to construct the vision tower and projector. Default: True.
         post_process (bool, optional): Whether to apply post-processing. Default: True.
         vp_stage (Optional[int], optional): Pipeline stage for model parallelism. Default: None.
-        build_language_model (Callable, optional): Builds the language model from ``pre_process``,
-            ``post_process`` and ``vp_stage``. Defaults to the provider's ``provide_language_model()``.
-        pg_collection (ProcessGroupCollection, optional): Process groups a builder passes. Defaults to the
-            provider's.
 
     Attributes:
         pre_process (bool): If True, enables vision and multimodal components.
@@ -112,17 +104,12 @@ class GLM45VModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider | TransformerConfig,
+        config: GPTModelProvider,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
-        *,
-        build_language_model: Optional[Callable[..., "GPTModel"]] = None,
-        pg_collection: Optional["ProcessGroupCollection"] = None,
     ) -> None:
         super().__init__(config=config)
-        if pg_collection is not None:
-            self.pg_collection = pg_collection
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -145,14 +132,12 @@ class GLM45VModel(MegatronModule):
             hook_hf_module_setattr_for_tp_grad_sync(self.visual)
 
         # Initialize Megatron language model
-        if build_language_model is None:
-            build_language_model = self.config.provide_language_model
-        self.language_model = build_language_model(
+        self.language_model = self.config.provide_language_model(
             pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
         )
 
         # Finalize grad requires these to be bound with module
-        self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
+        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
         # Monkey-patch methods from HuggingFace Mistral3Model
@@ -237,11 +222,7 @@ class GLM45VModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
             if self.config.sequence_parallel:
-                # A builder passes the model its process groups; a provider carries them.
-                pg_collection = getattr(self, "pg_collection", None)
-                if pg_collection is None:
-                    pg_collection = self.config._pg_collection
-                tp_group = pg_collection.tp if pg_collection is not None else None
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         # Compute MRoPE position_ids on ALL pipeline stages

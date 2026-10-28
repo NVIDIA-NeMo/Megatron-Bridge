@@ -30,11 +30,9 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import save_megatron_mimo_model
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
 from megatron.bridge.training import model_load_save
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.model_load_save import (
@@ -598,42 +596,6 @@ class TestLoadMegatronModel:
         loaded_provider, _ = load_model_config(str(tmp_path))
 
         assert loaded_provider.pipeline_model_parallel_layout == expected_layout
-
-    def test_load_model_config_preserves_finalized_builder_pipeline_layout(self, tmp_path):
-        """Verify builder-backed checkpoints retain a finalized custom pipeline layout."""
-        model_config = BridgeGPTModelConfig(
-            transformer=BridgeTransformerConfig(
-                num_layers=2,
-                hidden_size=16,
-                num_attention_heads=2,
-                pipeline_model_parallel_size=2,
-                pipeline_model_parallel_layout=[["embedding", "decoder"], ["decoder", "loss"]],
-            ),
-            vocab_size=128,
-        )
-        model_config.finalize()
-
-        assert isinstance(model_config.pipeline_model_parallel_layout, PipelineParallelLayerLayout)
-        expected_layout = model_config.pipeline_model_parallel_layout.input_data
-
-        config = ConfigContainer(
-            model=model_config,
-            train=None,
-            optimizer=None,
-            scheduler=None,
-            dataset=None,
-            logger=None,
-            tokenizer=None,
-            checkpoint=None,
-        )
-        config.to_yaml(str(tmp_path / "run_config.yaml"))
-
-        loaded_model_config, _ = load_model_config(str(tmp_path))
-
-        assert isinstance(loaded_model_config, BridgeGPTModelConfig)
-        assert loaded_model_config.pipeline_model_parallel_layout == expected_layout
-        loaded_model_config.finalize()
-        assert loaded_model_config.pipeline_model_parallel_layout.input_data == expected_layout
 
     def test_read_saved_builder_model_targets(self, tmp_path):
         """The checkpoint target scan preserves serialized builder model targets."""

@@ -17,8 +17,6 @@
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
-
 from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideMixin
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -55,7 +53,7 @@ class BridgeGPTModelConfig(ModelConfigOverrideMixin, GPTModelConfig, ModelConfig
         return builder_cls
 
     def as_dict(self) -> dict[str, Any]:
-        """Serialize the config with a symbolic activation function and a restorable pipeline layout."""
+        """Serialize the config with a symbolic activation function."""
         data = super().as_dict()
         transformer_data = data.get("transformer")
         if not isinstance(transformer_data, dict):
@@ -71,12 +69,6 @@ class BridgeGPTModelConfig(ModelConfigOverrideMixin, GPTModelConfig, ModelConfig
             raise ValueError(f"Cannot serialize unregistered activation callable: {activation_func!r}.")
 
         transformer_data["activation_func"] = activation_name
-
-        # finalize() parses the layout into an object that a saved run config cannot restore.
-        # Persist the layout as given, as the provider checkpoint path does.
-        layout = transformer_data.get("pipeline_model_parallel_layout")
-        if isinstance(layout, PipelineParallelLayerLayout):
-            transformer_data["pipeline_model_parallel_layout"] = layout.input_data
         return data
 
     @classmethod

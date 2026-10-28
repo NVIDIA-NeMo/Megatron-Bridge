@@ -13,8 +13,6 @@
 # limitations under the License.
 
 from megatron.bridge.models.glm_vl.glm_45v_bridge import GLM45VBridge
-from megatron.bridge.models.glm_vl.glm_45v_builder import GLM45VModelBuilder
-from megatron.bridge.models.glm_vl.glm_45v_config import GLM45VModelConfig, GLM45VTransformerConfig
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 
@@ -22,8 +20,5 @@ from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 __all__ = [
     "GLM45VModel",
     "GLM45VBridge",
-    "GLM45VModelBuilder",
-    "GLM45VModelConfig",
     "GLM45VModelProvider",
-    "GLM45VTransformerConfig",
 ]

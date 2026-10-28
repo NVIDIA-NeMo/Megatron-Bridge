@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
-
-from transformers import Glm4vMoeForConditionalGeneration, PretrainedConfig
+import torch
+from transformers import Glm4vMoeForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -26,45 +25,57 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
-from megatron.bridge.models.glm_vl.glm_45v_config import GLM45VModelConfig
+from megatron.bridge.models.conversion.transformers_compat import partial_rotary_factor_from_hf, rope_theta_from_hf
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
-@MegatronModelBridge.register_bridge(
-    source=Glm4vMoeForConditionalGeneration, target=GLM45VModel, provider=GLM45VModelProvider
-)
+@MegatronModelBridge.register_bridge(source=Glm4vMoeForConditionalGeneration, target=GLM45VModel)
 class GLM45VBridge(MegatronModelBridge):
     """
     Megatron Bridge for GLM 4.5 Vision-Language (VL) Models.
-
-    Example:
-        >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5V")
-        >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = GLM45VModelConfig
-    USE_MODEL_CONFIG_FOR_CONVERSION = True
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GLM45VModelProvider:
+        hf_config = hf_pretrained.config
 
-    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Convert a Hugging Face GLM-4.5V config to builder config kwargs.
+        # GLM 4.5 has separate text_config and vision_config
+        text_config = getattr(hf_config, "text_config", hf_config)
+        moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
+            text_config.num_hidden_layers - text_config.first_k_dense_replace
+        )
 
-        The language-model fields are the GLM-4.5 text bridge's, read from ``text_config``, with the
-        values the vision-language provider has always used where they differ.
-        """
-        text_config = hf_config.text_config
-        config_kwargs = GLM45Bridge().hf_config_to_model_config_kwargs(text_config)
-        config_kwargs.update(
-            position_embedding_type="mrope",
-            mrope_section=[8, 12, 12],
-            # The vision-language models have no MTP layers and route without expert groups.
-            mtp_num_layers=0,
-            moe_router_num_groups=None,
-            moe_router_group_topk=None,
+        provider = GLM45VModelProvider(
+            add_qkv_bias=text_config.attention_bias,
+            kv_channels=text_config.head_dim,
+            hidden_size=text_config.hidden_size,
+            rotary_base=rope_theta_from_hf(text_config),
+            rotary_percent=partial_rotary_factor_from_hf(text_config),
+            init_method_std=text_config.initializer_range,
+            ffn_hidden_size=text_config.intermediate_size,
+            seq_length=text_config.max_position_embeddings,
+            moe_ffn_hidden_size=text_config.moe_intermediate_size,
+            # norm topk prob
+            num_attention_heads=text_config.num_attention_heads,
+            # n group, topk group
+            num_moe_experts=text_config.n_routed_experts,
+            # n shared expert
+            moe_shared_expert_intermediate_size=text_config.moe_intermediate_size,
+            moe_router_topk_scaling_factor=text_config.routed_scaling_factor,
+            moe_router_topk=text_config.num_experts_per_tok,
+            moe_layer_freq=moe_layer_freq,
+            num_layers=text_config.num_hidden_layers,
+            num_query_groups=text_config.num_key_value_heads,
+            layernorm_epsilon=text_config.rms_norm_eps,
+            mtp_num_layers=0,  # No MTP for VL models
+            qk_layernorm=text_config.use_qk_norm,
+            vocab_size=text_config.vocab_size,
+            fp16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.float16),
+            bf16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.bfloat16),
+            params_dtype=self.dtype_from_hf(text_config, default=torch.float32),
             vision_config=hf_config.vision_config,
-            # As on the provider, the token IDs are read from text_config, falling back to the GLM-4.5V values.
+            # VL-specific token IDs
             eos_token_id=getattr(text_config, "eos_token_id", 151329),
             image_start_token_id=getattr(text_config, "image_start_token_id", 151339),
             image_end_token_id=getattr(text_config, "image_end_token_id", 151340),
@@ -73,11 +84,7 @@ class GLM45VBridge(MegatronModelBridge):
             image_token_id=getattr(text_config, "image_token_id", 151363),
             video_token_id=getattr(text_config, "video_token_id", 151364),
         )
-        return config_kwargs
-
-    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Adapt the canonical builder mapping to the deprecated provider path."""
-        return self.hf_config_to_model_config_kwargs(hf_config)
+        return provider
 
     @classmethod
     def get_hf_tokenizer_kwargs(cls) -> dict:

@@ -29,38 +29,29 @@ from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
-def _glm_45v_text_config(**overrides) -> Glm4vMoeTextConfig:
-    """Return a GLM-4.5V text config. The bridge's shared mapping reads it, so it cannot be a Mock."""
-    values = dict(
-        attention_bias=True,
-        head_dim=128,
-        hidden_size=4096,
-        rope_theta=10000.0,
-        partial_rotary_factor=0.5,
-        initializer_range=0.02,
-        intermediate_size=13696,
-        max_position_embeddings=8192,
-        moe_intermediate_size=1536,
-        num_attention_heads=32,
-        n_routed_experts=64,
-        routed_scaling_factor=1.0,
-        num_experts_per_tok=6,
-        num_hidden_layers=46,
-        num_key_value_heads=4,
-        rms_norm_eps=1e-5,
-        use_qk_norm=True,
-        vocab_size=151552,
-        first_k_dense_replace=3,
-        dtype="bfloat16",
-    )
-    values.update(overrides)
-    return Glm4vMoeTextConfig(**values)
-
-
 @pytest.fixture
 def mock_text_config():
-    """Create a GLM-4.5V text config with the VL token IDs."""
-    config = _glm_45v_text_config()
+    """Create a mock text config for GLM-4.5V."""
+    config = Mock()
+    config.attention_bias = True
+    config.head_dim = 128
+    config.hidden_size = 4096
+    config.rope_theta = 10000.0
+    config.partial_rotary_factor = 0.5
+    config.initializer_range = 0.02
+    config.intermediate_size = 13696
+    config.max_position_embeddings = 8192
+    config.moe_intermediate_size = 1536
+    config.num_attention_heads = 32
+    config.n_routed_experts = 64
+    config.routed_scaling_factor = 1.0
+    config.num_experts_per_tok = 6
+    config.num_hidden_layers = 46
+    config.num_key_value_heads = 4
+    config.rms_norm_eps = 1e-5
+    config.use_qk_norm = True
+    config.vocab_size = 151552
+    config.first_k_dense_replace = 3
     # Token IDs
     config.eos_token_id = 151329
     config.image_start_token_id = 151339
@@ -88,7 +79,7 @@ def mock_vision_config():
 @pytest.fixture
 def mock_hf_config(mock_text_config, mock_vision_config):
     """Create a mock HF config for GLM-4.5V."""
-    config = Mock(spec=["text_config", "vision_config"])
+    config = Mock()
     config.text_config = mock_text_config
     config.vision_config = mock_vision_config
     return config
@@ -498,10 +489,30 @@ class TestGLM45VBridgeEdgeCases:
     def test_provider_bridge_with_minimal_config(self, glm_45v_bridge):
         """Test provider_bridge with minimal HF config."""
         minimal_pretrained = Mock(spec=PreTrainedCausalLM)
-        minimal_config = Mock(spec=["text_config", "vision_config"])
+        minimal_config = Mock()
 
-        # Create minimal text config; use defaults for token IDs by not providing them
-        text_config = _glm_45v_text_config()
+        # Create minimal text config
+        text_config = Mock()
+        text_config.attention_bias = True
+        text_config.head_dim = 128
+        text_config.hidden_size = 4096
+        text_config.rope_theta = 10000.0
+        text_config.partial_rotary_factor = 0.5
+        text_config.initializer_range = 0.02
+        text_config.intermediate_size = 13696
+        text_config.max_position_embeddings = 8192
+        text_config.moe_intermediate_size = 1536
+        text_config.num_attention_heads = 32
+        text_config.n_routed_experts = 64
+        text_config.routed_scaling_factor = 1.0
+        text_config.num_experts_per_tok = 6
+        text_config.num_hidden_layers = 46
+        text_config.num_key_value_heads = 4
+        text_config.rms_norm_eps = 1e-5
+        text_config.use_qk_norm = True
+        text_config.vocab_size = 151552
+        text_config.first_k_dense_replace = 3
+        # Use defaults for token IDs by not providing them
 
         # Create minimal vision config
         vision_config = Mock()

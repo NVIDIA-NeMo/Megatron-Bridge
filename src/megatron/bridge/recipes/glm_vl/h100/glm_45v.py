@@ -23,7 +23,6 @@ from typing import List, Optional, Union
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.glm_vl.glm_45v_config import GLM45VModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
@@ -75,9 +74,7 @@ def _get_glm_45v_pipeline_layout(pp_size: int, vp_size: int | None, *, is_peft: 
 
 
 def set_glm_45v_pipeline_model_parallel_layout(
-    model_cfg: GLM45VModelConfig | GPTModelProvider,
-    layout: Optional[Union[str, List[List[str]]]] = None,
-    is_peft: bool = False,
+    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None, is_peft: bool = False
 ) -> None:
     """Set the GLM-4.5V pipeline model parallel layout.
 
@@ -85,7 +82,7 @@ def set_glm_45v_pipeline_model_parallel_layout(
     This function sets up predefined layouts for common PP/VP combinations.
 
     Args:
-        model_cfg: The model config to modify.
+        model_cfg: The model provider configuration to modify.
         layout: Optional custom layout. If None, uses predefined layouts based on PP/VP sizes.
         is_peft: Whether the model is trained with PEFT.
     """
@@ -122,7 +119,7 @@ def glm_45v_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "zai-org/GLM-4.5V"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 8192
 
     # Parallel settings
@@ -279,7 +276,7 @@ def glm_45v_peft_32gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
 
     # Model configuration
     hf_path = "zai-org/GLM-4.5V"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 8192
 
     # Parallel settings - lower EP for PEFT
