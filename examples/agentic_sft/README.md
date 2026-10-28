@@ -113,36 +113,36 @@ cross entropy, zero dropout and an MoE auxiliary-loss coefficient of 0.001 stay 
 
 ## Measured performance
 
-One GB200 node (four GPUs), NeMo 26.10 container, Megatron-Core at the head of #7048, the full 40-layer model with
-MXFP8, CPU optimizer offload, HybridEP and full recompute, global batch 32, on 1,600 mock rows (34.1 M runtime
-tokens, mean 21.3K per sample). Each run is 50 steps; steps 1–10 are excluded because they include one-time
-compilation. Both modes process identical samples in identical order, so step *i* is directly comparable.
+One GB200 node (four GPUs) per run, NeMo 26.10 container, Megatron-Core at the head of #7048, the full 40-layer model with
+MXFP8, CPU optimizer offload, HybridEP and full recompute, global batch 32. Both modes process identical samples in
+identical order, so step *i* is directly comparable. Steps 1–10 are excluded because they include one-time compilation.
 
-| Run | Node | Mean s/step | Median s/step | Runtime tokens/s |
-| --- | --- | ---: | ---: | ---: |
-| `online_static_cp` | A | 47.12 | 42.19 | 14,513 |
-| `online_static_cp` | E | 47.68 | 43.08 | 14,345 |
-| `online_dynamic_cp` | A | 45.30 | 38.71 | 15,098 |
-| `online_dynamic_cp` | D | 46.04 | 39.26 | 14,856 |
+**200 steps on 6,400 mock rows** (136 M runtime tokens, mean 21.3K per sample; steps 11–200 measured):
 
-Dynamic CP is **+4.0%** faster in total than static on the same node (A) and **+3.6%** faster across nodes (E versus D),
-with a median step about 8–9% faster. Rerunning a mode on the same data reproduces its step times, so the difference
-is repeatable rather than noise.
+| Mode | Mean s/step | Median s/step | Runtime tokens/s |
+| --- | ---: | ---: | ---: |
+| `online_static_cp` | 44.47 | 43.05 | 15,302 |
+| `online_dynamic_cp` | 40.60 | 38.17 | 16,763 |
+
+Dynamic CP is **+9.6%** faster in total (95% bootstrap interval +6.0% to +13.2%), with a 12.8% faster median step. It is
+faster in 163 of the 190 paired steps (mean paired difference 3.9 s ± 0.7 s), and in each of five consecutive 38-step
+blocks (+4.4% to +15.7%).
 
 What to expect from this number:
 
-* **The gain is modest, and smaller than the +20.6% the original example reports for its mixed data.** The original
-  measured a static baseline of about 11.9K tokens/s; Bridge's static baseline here is 14.4K tokens/s, so there is
-  less to recover. Dynamic CP reaches about 15.0K tokens/s, roughly where the original's dynamic run was (14.3K).
-* **It depends on the batch.** Step times are deterministic per batch, and a batch can favor either mode: over steps
-  11–32 dynamic was 10–11% faster in both pairs, over steps 33–50 it was 5% slower in both. Static and dynamic each
-  have slow batches, but not the same ones. A window of 40 steps is therefore a limited sample of the workload.
+* **The gain is real but smaller than the +20.6% the original example reports** for its mixed data. The original
+  measured a static baseline of about 11.9K tokens/s; Bridge's static baseline here is 15.3K tokens/s, so there is
+  less to recover. Dynamic CP reaches 16.8K tokens/s.
+* **It depends on the batch, so measure over many steps.** Step times are deterministic per batch (rerunning a mode
+  on the same data reproduces them), and a batch can favor either mode. Two earlier 50-step runs per mode on a different
+  1,600-row dataset gave only +3.6% to +4.0%: dynamic was 10–11% faster over their steps 11–32 and 5% slower over steps
+  33–50. A short window is a limited sample of the workload.
 * Dynamic CP wins by forming fewer microbatches: offline, the two schedulers produce on average 11.3 microbatches per
-  step for dynamic against 13.5 for static, with an equal per-rank token critical path.
+  step for dynamic against 13.5 for static on that dataset, with an equal per-rank token critical path.
 
-Reproduce a pair with the same `--data-dir`, `--train-iters 50` and `--global-batch-size 32`, then use
-`compare_runs.py` as shown above. The loss is not meaningful here: the rows are random tokens, so there is nothing to
-learn.
+Reproduce with the same `--data-dir`, `--train-iters 200` and `--global-batch-size 32` for both modes, then use
+`compare_runs.py` as shown above. The two modes above ran on different nodes; static step times agree across nodes
+within about 1%. The loss is not meaningful here: the rows are random tokens, so there is nothing to learn.
 
 ## Dynamic CP and Megatron-Core
 
