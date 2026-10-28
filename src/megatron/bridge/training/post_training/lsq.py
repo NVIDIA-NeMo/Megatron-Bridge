@@ -80,6 +80,22 @@ def propagate_expert_allreduce_to_lsq_params(model: torch.nn.Module) -> int:
     return num_updated
 
 
+def _check_modelopt_lsq_gradients() -> None:
+    """Raise if the installed ModelOpt leaves some LSQ scales without a gradient in Megatron models.
+
+    Without NVIDIA/Model-Optimizer#3069, the scales of Transformer Engine ``LayerNormLinear`` layers, and of
+    linear layers whose weight is frozen, get no or an all-zero gradient, so training leaves them unchanged.
+    """
+    from modelopt.torch.quantization.plugins.megatron import _MegatronParallelLinear
+
+    # TODO: Replace with a version check once a ModelOpt release includes NVIDIA/Model-Optimizer#3069.
+    if "_forward_impl" not in vars(_MegatronParallelLinear):
+        raise RuntimeError(
+            "LSQ scale learning needs nvidia-modelopt with NVIDIA/Model-Optimizer#3069; the installed version "
+            "computes no gradient for the scales of LayerNormLinear layers and of frozen-weight linear layers."
+        )
+
+
 def freeze_all_but_lsq_scales(model: list[MegatronModule]) -> list[MegatronModule]:
     """Pre-wrap hook for scale-only learning: freeze every parameter except the LSQ scales.
 
@@ -95,10 +111,12 @@ def freeze_all_but_lsq_scales(model: list[MegatronModule]) -> list[MegatronModul
         The same model chunks.
 
     Raises:
+        RuntimeError: If the installed ModelOpt cannot compute the scale gradients.
         ValueError: If the restored ModelOpt state has no LSQ scale parameters.
     """
     import modelopt.torch.opt as mto
 
+    _check_modelopt_lsq_gradients()
     num_scales = num_frozen = 0
     for model_chunk in model:
         for name, param in model_chunk.named_parameters():
@@ -181,6 +199,9 @@ class LSQOptimizerConfigOverrideProvider(OptimizerConfigOverrideProvider):
 
         Returns:
             Mapping from ``ParamKey`` matchers to per-group optimizer overrides, or ``None``.
+
+        Raises:
+            RuntimeError: If the model has LSQ scales and the installed ModelOpt cannot compute their gradients.
         """
         config_overrides = super().build_config_overrides(context) or {}
         optimizer_config = context.optimizer_config
@@ -195,10 +216,12 @@ class LSQOptimizerConfigOverrideProvider(OptimizerConfigOverrideProvider):
             config_overrides[_LSQ_SCALE_PARAM_KEY] = scale_override
 
         model_chunks = context.model if isinstance(context.model, list) else [context.model]
-        if not any(
+        if any(
             param.requires_grad and _LSQ_SCALE_PARAM_KEY.matches(param, name)
             for chunk in model_chunks
             for name, param in chunk.named_parameters()
         ):
+            _check_modelopt_lsq_gradients()
+        else:
             warn_rank_0(f"No trainable LSQ scale parameters {LSQ_SCALE_PARAM_PATTERNS}; quantize with an LSQ recipe.")
         return config_overrides or None

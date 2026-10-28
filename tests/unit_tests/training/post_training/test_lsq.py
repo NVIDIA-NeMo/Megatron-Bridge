@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import modelopt.torch.opt as mto
+import modelopt.torch.quantization.plugins.megatron as modelopt_megatron
 import pytest
 import torch
 from megatron.core.optimizer import OptimizerConfig, ParamKey, _get_param_groups
@@ -105,6 +106,18 @@ class _ToyDistillationModel(torch.nn.Module):
         self.teacher.requires_grad_(False)
 
 
+@pytest.fixture(autouse=True)
+def modelopt_with_lsq_gradients(monkeypatch):
+    """Stand in for a ModelOpt with NVIDIA/Model-Optimizer#3069, which the pinned version may predate."""
+    linear_cls = type("_MegatronParallelLinear", (), {"_forward_impl": lambda self, *args, **kwargs: None})
+    monkeypatch.setattr(modelopt_megatron, "_MegatronParallelLinear", linear_cls)
+
+
+@pytest.fixture
+def modelopt_without_lsq_gradients(monkeypatch):
+    monkeypatch.setattr(modelopt_megatron, "_MegatronParallelLinear", type("_MegatronParallelLinear", (), {}))
+
+
 @pytest.fixture
 def single_rank_process_group(tmp_path):
     """Initialize a single-rank process group; MCore aligns param groups across ranks."""
@@ -178,6 +191,12 @@ class TestFreezeAllButLSQScales:
         assert {name for name, param in model.named_parameters() if param.requires_grad} == scale_names
         assert model.router.frozen_expert_bias
 
+    def test_rejects_modelopt_without_scale_gradients(self, modelopt_without_lsq_gradients):
+        model = _ToyMoEModel()
+        with pytest.raises(RuntimeError, match="Model-Optimizer#3069"):
+            freeze_all_but_lsq_scales([model])
+        assert all(param.requires_grad for param in model.parameters())
+
     def test_rejects_restored_model_without_scales(self):
         with patch.object(mto.ModeloptStateManager, "is_converted", return_value=True):
             with pytest.raises(ValueError, match="No LSQ scale parameters"):
@@ -231,6 +250,11 @@ class TestLSQOptimizerConfigOverrideProvider:
         assert overrides[LSQ_KEY] == {"max_lr": 1e-4, "wd_mult": 0.0}
         for key, value in standard.items():
             assert overrides[key] == value
+
+    def test_rejects_modelopt_without_scale_gradients(self, modelopt_without_lsq_gradients):
+        provider = LSQOptimizerConfigOverrideProvider(scale_lr=1e-4, scale_min_lr=None, scale_wd_mult=0.0)
+        with pytest.raises(RuntimeError, match="Model-Optimizer#3069"):
+            provider.build_config_overrides(_context(_ToyMoEModel(), lr=1e-5, min_lr=1e-6))
 
     @pytest.mark.parametrize(
         ("lr", "min_lr", "scale_lr", "scale_min_lr", "scale_wd_mult", "expected"),
