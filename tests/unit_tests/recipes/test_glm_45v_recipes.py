@@ -15,7 +15,7 @@
 #
 # Test purpose:
 # - Parametrize over all exported GLM-4.5V recipe functions in `megatron.bridge.recipes.glm_vl.glm_45v`.
-# - For each recipe, monkeypatch AutoBridge and the provider to avoid I/O.
+# - For each recipe, monkeypatch AutoBridge to avoid I/O.
 # - Build a config and assert it forms a valid `ConfigContainer`.
 # - Verify dataset provider selection and sanity-check parallelism fields.
 # - Test MoE-specific settings for this MoE VLM model.
@@ -85,9 +85,31 @@ class _FakeAutoBridge:
         """Mock from_hf_pretrained method."""
         return _FakeAutoBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         """Return a fake model config."""
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GLM-4.5V recipes must use get_model_config()")
+
+
+class _BuilderOnlyAutoBridge:
+    """AutoBridge returning a strict GLM-4.5V builder config (46 layers by default)."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str):
+        return _BuilderOnlyAutoBridge()
+
+    def get_model_config(self):
+        from transformers import Glm4vMoeConfig
+
+        from megatron.bridge import AutoBridge
+
+        hf_config = Glm4vMoeConfig(architectures=["Glm4vMoeForConditionalGeneration"])
+        return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GLM-4.5V recipes must use get_model_config()")
 
 
 def _assert_basic_config(cfg):
@@ -396,3 +418,26 @@ def test_glm_45v_pipeline_layout_tracks_supported_cli_topology(
     assert layout[0].count("decoder") == first_stage_decoders[pp_size]
     assert layout[0][0] == "embedding"
     assert layout[-1][-1] == "loss"
+
+
+@pytest.mark.parametrize("recipe_func", _GLM_45V_ALL_FUNCS, ids=lambda func: func.__name__)
+def test_glm_45v_recipes_build_strict_model_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Every recipe builds the builder-backed config and assigns only fields it declares."""
+    from megatron.bridge.models.glm_vl.glm_45v_config import GLM45VModelConfig
+
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _BuilderOnlyAutoBridge)
+
+    cfg = recipe_func()
+
+    _assert_basic_config(cfg)
+    assert isinstance(cfg.model, GLM45VModelConfig)
+    assert cfg.model.position_embedding_type == "mrope"
+    assert cfg.model.vision_config is not None
+    assert len(cfg.model.pipeline_model_parallel_layout) == cfg.model.pipeline_model_parallel_size == 8
+
+    # The recipe-owned layout follows a pipeline override on the builder config too.
+    recipe_runner, _ = _load_recipe_runner_module()
+    cfg.model.pipeline_model_parallel_size = 4
+    recipe_runner.sync_model_pipeline_layout(cfg, cli_overrides=["model.pipeline_model_parallel_size=4"])
+    assert len(cfg.model.pipeline_model_parallel_layout) == 4
+    assert sum(stage.count("decoder") for stage in cfg.model.pipeline_model_parallel_layout) == 46

@@ -105,6 +105,7 @@ from megatron.bridge.models.glm_moe_dsa import (
 )
 from megatron.bridge.models.glm_vl import (
     GLM45VBridge,
+    GLM45VModelConfig,
     GLM45VModelProvider,
 )
 from megatron.bridge.models.gpt_oss import (
@@ -261,6 +262,7 @@ __all__ = [
     "GLM47FlashBridge",
     "GLM5Bridge",
     "GLM45VBridge",
+    "GLM45VModelConfig",
     "GLM45VModelProvider",
     "GPTModelProvider",
     "GPTOSSBridge",
