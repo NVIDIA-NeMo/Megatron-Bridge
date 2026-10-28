@@ -68,4 +68,7 @@ def test_text_9b_pretrain_deterministic_applies_determinism():
     assert cfg.model.gdn_kernel_backend == "torch"
     assert cfg.model.tensor_model_parallel_size == base.model.tensor_model_parallel_size == 1
     assert cfg.train.global_batch_size == base.train.global_batch_size
+    # The unfused cross entropy's FP32 logits do not fit at the recipe's MBS 2 on GB200.
+    assert base.train.micro_batch_size == 2
+    assert cfg.train.micro_batch_size == 1
     assert cfg.env_vars == DETERMINISM_ENV_VARS

@@ -29,6 +29,9 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 _NEMOTRON_3_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+# The Nemotron 3.5 Lightning recipes also build their model from this config (the same 52-layer hybrid stack),
+# so pin it like their tokenizer.
+_NEMOTRON_3_NANO_MODEL_REVISION = "bf77c3174f68ad409e1c2aa60daeb46e32d1c606"  # pragma: allowlist secret
 # Public Nemotron 3.5 Lightning checkpoint used by the Lightning recipe API.
 _NEMOTRON_3_5_LIGHTNING_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
 _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
@@ -37,7 +40,9 @@ _OPENMATHINSTRUCT2_REVISION = "469216e3f46f4dacf476b382e192485ea51a143e"  # prag
 
 def _nemotron_3_nano_finetune_model() -> BridgeHybridModelConfig:
     """Build the Nemotron 3 Nano finetuning model config."""
-    model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).get_model_config()
+    model = AutoBridge.from_hf_pretrained(
+        _NEMOTRON_3_NANO_MODEL_ID, revision=_NEMOTRON_3_NANO_MODEL_REVISION
+    ).get_model_config()
 
     model.seq_length = 2048
     model.apply_rope_fusion = False
@@ -69,7 +74,9 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model Configuration (MoE) - Nemotron 3 Nano 30B-A3B architecture from its HF config
-    cfg.model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).get_model_config()
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _NEMOTRON_3_NANO_MODEL_ID, revision=_NEMOTRON_3_NANO_MODEL_REVISION
+    ).get_model_config()
     # Pretraining may use a tokenizer other than the HF checkpoint tokenizer.
     # Defer the model vocabulary size to the runtime tokenizer.
     cfg.model.vocab_size = None

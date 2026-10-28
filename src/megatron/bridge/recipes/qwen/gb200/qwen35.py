@@ -275,6 +275,9 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigCont
     # Standalone Qwen3.5 override, not part of apply_determinism_overrides: Megatron-Core rejects
     # deterministic_mode with Gated DeltaNet unless the torch kernel backend is used.
     cfg.model.gdn_kernel_backend = "torch"
+    # Without cross-entropy fusion the loss casts the 248K-vocabulary logits to FP32. At MBS 2 that
+    # allocation runs out of memory in the first step on GB200; MBS 1 keeps the global batch.
+    cfg.train.micro_batch_size = 1
 
     # Keep the exact process environment visible on the recipe.
     cfg.env_vars = {
