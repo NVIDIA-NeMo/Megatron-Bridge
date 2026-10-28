@@ -60,7 +60,9 @@ _GB300_NCCLEP_RECIPES = (
 # Ultra NVL8 recipes use the same NCCL EP stack as GB300.
 _ULTRA_NVL8_RECIPES = (
     ("nemotronh.b200.nemotronh", "nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_config"),
+    ("nemotronh.b200.nemotronh", "nemotron_3_ultra_pretrain_256gpu_b200_nvfp4_config"),
     ("nemotronh.b300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_config"),
+    ("nemotronh.b300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_b300_nvfp4_config"),
 )
 
 # VRNVL72 aliases that share the GB300 NCCL EP builder instead of a HybridEP base.
@@ -199,3 +201,26 @@ def test_ultra_nvl8_perf_recipes_use_full_fsdp(module_name: str, factory_name: s
 
     exports = importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
     assert getattr(exports, factory_name) is getattr(_RECIPE_MODULES[module_name], factory_name)
+
+
+@pytest.mark.parametrize(
+    ("module_name", "factory_name"),
+    [(module, factory) for module, factory in _ULTRA_NVL8_RECIPES if "nvfp4" in factory],
+    ids=lambda value: value,
+)
+def test_ultra_nvl8_nvfp4_precision_is_fsdp_compatible(module_name: str, factory_name: str) -> None:
+    cfg = _build(module_name, factory_name)
+
+    assert cfg.mixed_precision.fp4 == "e2m1"
+    assert cfg.mixed_precision.fp4_recipe == "nvfp4"
+    assert cfg.mixed_precision.fp8 is None
+    assert cfg.mixed_precision.fp4_param_gather is False
+    assert cfg.mixed_precision.fp4_param is False
+    assert cfg.mixed_precision.fp8_param_gather is False
+    assert cfg.mixed_precision.first_last_layers_bf16 is True
+    assert cfg.mixed_precision.num_layers_at_start_in_bf16 == 0
+    assert cfg.mixed_precision.num_layers_at_end_in_bf16 == 16
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1

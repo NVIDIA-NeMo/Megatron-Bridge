@@ -24,6 +24,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _nemotron_3_super_nvfp4_precision,
+    _nemotron_3_ultra_nvfp4_precision,
     _perf_precision,
     load_quantization_recipe,
     nemotron_3_nano_pretrain_config,
@@ -285,6 +286,22 @@ def nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
         # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× B200, NVFP4, NCCL EP, Megatron-FSDP.
+
+    TP2 + SP / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192.
+    Inherits the MXFP8 recipe's execution settings, with NVFP4 compute and
+    the final 16 layers in BF16. Primary parameters stay in BF16 because
+    Megatron-FSDP does not support packed NVFP4 parameter storage.
+    """
+    cfg = nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_config()
+    cfg.mixed_precision = _nemotron_3_ultra_nvfp4_precision()
+    cfg.mixed_precision.fp4_param_gather = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.env_vars["NVTE_USE_FAST_MATH"] = 1
     return cfg
 
 
