@@ -29,6 +29,7 @@ from typing import Any
 
 import torch
 from megatron.core.config import set_experimental_flag
+from megatron.core.distributed import DistributedDataParallel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
@@ -508,6 +509,8 @@ class TrainingEngine:
             return
         self._closed = True
         self._runtime.detach(self)
+        for chunk in self._model:
+            _release_ddp_autograd_refs(chunk)
         self._optimizer = None
         self._grad_hooks = None
         self._model = []
@@ -524,6 +527,21 @@ class TrainingEngine:
     def _require_trainable(self, api: str) -> None:
         if not self._trainable:
             raise RuntimeError(f"{api}() requires a trainable engine; this engine was built with trainable=False.")
+
+
+def _release_ddp_autograd_refs(chunk: MegatronModule) -> None:
+    """Break the reference cycle that otherwise keeps a closed DDP model and its buffers on the GPU.
+
+    MCore DDP stores every parameter's ``AccumulateGrad`` node in ``grad_accs`` and registers a hook
+    closure over the DDP module on each node. The cycle parameter -> node -> hook -> DDP -> parameter
+    runs through C++ autograd objects that Python's garbage collector cannot traverse, so the model is
+    never freed unless these references are dropped explicitly.
+    """
+    if not isinstance(chunk, DistributedDataParallel):
+        return
+    if chunk.use_forward_hook and chunk.remove_forward_pre_hook_handles:
+        chunk.disable_forward_pre_hook(param_sync=False)
+    chunk.grad_accs.clear()
 
 
 def _build_frozen_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:

@@ -26,8 +26,10 @@ torchrun / srun with the recipe's world size, e.g.::
 from __future__ import annotations
 
 import argparse
+import gc
 import logging
 import time
+import weakref
 
 import torch
 
@@ -61,6 +63,16 @@ def _memory_gb() -> str:
     return f"allocated {allocated:.1f} GB, reserved {reserved:.1f} GB"
 
 
+def _assert_released(ref: weakref.ReferenceType, label: str) -> None:
+    """Fail if a closed engine's model chunk is still alive; print who holds it for debugging."""
+    gc.collect()
+    chunk = ref()
+    if chunk is None:
+        return
+    holders = sorted({type(r).__name__ for r in gc.get_referrers(chunk)})
+    raise RuntimeError(f"{label} model chunk still referenced after close() by: {holders}")
+
+
 def _param_checksum(model: list[torch.nn.Module]) -> float:
     """Sum |p| over all parameters of all ranks: a collective that proves the model and runtime are usable."""
     local = torch.zeros((), dtype=torch.float64, device="cuda")
@@ -88,10 +100,12 @@ def main() -> None:
         f"[actor] optimizer={type(actor.optimizer).__name__}; param checksum={_param_checksum(actor.model):.6e}"
     )
 
+    actor_chunk_ref = weakref.ref(actor.model[0])
     if args.skip_reference:
         actor.close()
+        _assert_released(actor_chunk_ref, "actor")
         torch.distributed.barrier()
-        print_rank_0(f"[actor] closed; {_memory_gb()}")
+        print_rank_0(f"[actor] closed and released; {_memory_gb()}")
         torch.distributed.destroy_process_group()
         return
 
@@ -106,8 +120,9 @@ def main() -> None:
     checksum_before = _param_checksum(reference.model)
 
     actor.close()
+    _assert_released(actor_chunk_ref, "actor")
     torch.distributed.barrier()
-    print_rank_0(f"[actor] closed; {_memory_gb()}")
+    print_rank_0(f"[actor] closed and released; {_memory_gb()}")
 
     checksum_after = _param_checksum(reference.model)
     if checksum_after != checksum_before:
@@ -116,9 +131,11 @@ def main() -> None:
         )
     print_rank_0(f"[reference] still usable after actor.close(); checksum={checksum_after:.6e}; closed={actor.closed}")
 
+    reference_chunk_ref = weakref.ref(reference.model[0])
     reference.close()
+    _assert_released(reference_chunk_ref, "reference")
     torch.distributed.barrier()
-    print_rank_0(f"[reference] closed; {_memory_gb()}; PHASE A GATE PASSED")
+    print_rank_0(f"[reference] closed and released; {_memory_gb()}; PHASE A GATE PASSED")
     torch.distributed.destroy_process_group()
 
 
