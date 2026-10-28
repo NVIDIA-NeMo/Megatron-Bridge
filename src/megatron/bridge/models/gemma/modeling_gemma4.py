@@ -1058,16 +1058,25 @@ def _gemma4_checkpointed_forward(
         extract_layer_indices = set()
     intermediate_hidden_states = []
 
+    # Gemma4 RoPE is a (local, global) pair. As in MCore's checkpointed_forward, wrap a
+    # single RoPE the same way so custom_forward always takes two RoPE arguments.
+    is_dual_rope = isinstance(rotary_pos_emb, (tuple, list))
+    assert not is_dual_rope or len(rotary_pos_emb) == 2, "Dual RoPE input length is not equal to 2"
+    rotary_pos_emb = rotary_pos_emb if is_dual_rope else (None, rotary_pos_emb)
+
     def custom(start: int, end: int):
         def custom_forward(
             hidden_states,
             attention_mask,
             context,
             context_mask,
-            rotary_pos_emb,
+            rotary_pos_emb_local,
+            rotary_pos_emb_global,
             padding_mask=None,
             per_layer_inputs=None,
         ):
+            rotary_pos_emb = (rotary_pos_emb_local, rotary_pos_emb_global) if is_dual_rope else rotary_pos_emb_global
+
             for index in range(start, end):
                 layer = self.layers[index]
 
@@ -1117,7 +1126,8 @@ def _gemma4_checkpointed_forward(
     def chunk_runner(start: int, end: int, use_checkpoint: bool):
         nonlocal hidden_states, context
         cf = custom(start, end)
-        args = (hidden_states, attention_mask, context, context_mask, rotary_pos_emb, padding_mask, per_layer_inputs)
+        # Unpack the RoPE tuple as torch cannot save tuples for backward pass.
+        args = (hidden_states, attention_mask, context, context_mask, *rotary_pos_emb, padding_mask, per_layer_inputs)
         if use_checkpoint:
             if self.config.fp8 or self.config.fp4:
                 hidden_states, context = te_checkpoint(
