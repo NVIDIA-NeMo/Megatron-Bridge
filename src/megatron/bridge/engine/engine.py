@@ -511,6 +511,20 @@ class TrainingEngine:
         self._runtime.detach(self)
         for chunk in self._model:
             _release_ddp_autograd_refs(chunk)
+        if self._model:
+            # The model config is the provider held by self._cfg; Bridge installed optimizer-bound
+            # callables on it, which would otherwise keep optimizer -> model_chunks -> model alive.
+            model_config = get_model_config(self._model[0])
+            hook_names = (
+                "finalize_model_grads_func",
+                "grad_scale_func",
+                "grad_sync_func",
+                "no_sync_func",
+                "param_sync_func",
+            )
+            for name in hook_names:
+                if hasattr(model_config, name):
+                    setattr(model_config, name, None)
         self._optimizer = None
         self._grad_hooks = None
         self._model = []
