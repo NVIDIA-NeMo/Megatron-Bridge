@@ -146,16 +146,13 @@ def safe_map(fn, iterable, workers=1, ctx="fork"):
         List of results (same order as iterable). Failed items are None with warning logged.
     """
     ctx = mp.get_context(ctx)
-    indexed_inputs = list(enumerate(iterable))
-    worker_count = min(workers, len(indexed_inputs))
-    if not indexed_inputs:
-        return []
-
     input_queue = ctx.Queue()
     output_queue = ctx.Queue()
+    indexed_inputs = list(enumerate(iterable))
+    workers = min(workers, len(indexed_inputs))
     for job in indexed_inputs:
         input_queue.put(job)
-    for _ in range(worker_count):
+    for _ in range(workers):
         input_queue.put(None)  # poison pill
 
     def worker_loop():
@@ -170,7 +167,7 @@ def safe_map(fn, iterable, workers=1, ctx="fork"):
             except Exception as e:
                 output_queue.put((i, False, None, str(e)))
 
-    processes = [ctx.Process(target=worker_loop) for _ in range(worker_count)]
+    processes = [ctx.Process(target=worker_loop) for _ in range(workers)]
     for p in processes:
         p.start()
 
