@@ -29,6 +29,26 @@ from megatron.bridge.utils.common_utils import print_rank_0
 PEFT_RECOMPUTE_PATCHED: WeakSet[torch.nn.Module] = WeakSet()
 
 
+def _native_gradient_boundary_supported() -> bool:
+    """Return whether Megatron's checkpointed forward handles frozen-prefix boundaries itself.
+
+    The PEFT input-grad workaround is needed by older Megatron versions whose
+    reentrant checkpoint path has no explicit boundary handling. Newer versions
+    resolve the first trainable layer in ``checkpointed_forward`` and create the
+    grad leaf there instead; forcing the block input to require grad would bypass
+    that inference. Check the recompute module itself: a Megatron tree can carry
+    ``resolve_gradient_boundary`` in its transformer utilities before the blocks
+    and the checkpointed forward use it, and skipping the hook there would leave
+    adapter gradients at zero. Keep this import lazy so Bridge remains compatible
+    with older Megatron trees.
+    """
+    try:
+        from megatron.core import recompute
+    except (ImportError, AttributeError):
+        return False
+    return callable(getattr(recompute, "resolve_gradient_boundary", None))
+
+
 def _iter_unwrapped_models(model) -> Iterable[torch.nn.Module]:
     """Yield unwrapped Megatron modules regardless of list/list-like inputs."""
     unwrapped = unwrap_model(model)
@@ -84,6 +104,12 @@ def maybe_enable_recompute_inputs_grad(
     recompute_block_types = (TransformerBlock, HybridStack)
 
     patched_registry = PEFT_RECOMPUTE_PATCHED if peft_recompute_patched is None else peft_recompute_patched
+
+    # Megatron's native frozen-prefix boundary already creates the grad leaf at
+    # the first trainable layer. The default PEFT hook would bypass that boundary,
+    # but callers with an explicit predicate still control their own blocks.
+    if block_requires_input_grad is None and _native_gradient_boundary_supported():
+        return patched_registry
 
     try:
         for unwrapped_model in _iter_unwrapped_models(model):
