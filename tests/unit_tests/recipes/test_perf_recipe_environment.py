@@ -53,6 +53,7 @@ _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
     "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
     "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
     "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config",
     "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config",
     "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config",
     "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config",
@@ -68,6 +69,8 @@ _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
     "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config",
 }
+# Mirrors the MLPerf DeepSeek-V3 environment, which differs from the DeepSeek baseline policy.
+_DEEPSEEK_MLPERF_EXEC_RECIPE = "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config"
 
 
 def _function(path: Path, function_name: str) -> ast.FunctionDef:
@@ -222,8 +225,10 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             assert environment["NVTE_USE_FAST_MATH"] == 1
         if path.parts[-3] == "deepseek":
             assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
-            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
-            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+            # MLPerf reserves no SMs for LayerNorm kernels.
+            layernorm_sm_margin = 0 if function_name == _DEEPSEEK_MLPERF_EXEC_RECIPE else 20
+            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == layernorm_sm_margin
+            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == layernorm_sm_margin
             if function_name.endswith("_deterministic_config"):
                 # Bit-exact recipes pin deterministic TE kernels.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
@@ -232,6 +237,9 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
                 "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
             }:
                 # Match the kernel policy across systems; fused SwiGLU dprob uses atomic reductions.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
+            elif function_name == _DEEPSEEK_MLPERF_EXEC_RECIPE:
+                # MLPerf allows nondeterministic Transformer Engine kernels.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
             elif path.parent.name == "gb300" and path.stem == "deepseek_v3":
                 # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale

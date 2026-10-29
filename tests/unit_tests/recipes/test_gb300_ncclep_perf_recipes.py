@@ -64,6 +64,7 @@ _VRNVL72_NCCLEP_RECIPES = (
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config"),
@@ -200,3 +201,48 @@ def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_override
     assert cfg.model.moe_use_grouped_tensor is base.model.moe_use_grouped_tensor is True
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
     assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
+
+
+def test_deepseek_v3_vrnvl72_fp8mx_mlperf_exec_keeps_the_base_training_setup() -> None:
+    module = "deepseek.vrnvl72.deepseek_v3"
+    base = _build(module, "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config")
+    cfg = _build(module, "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config")
+
+    # The A/B changes execution only: data, batch, schedule, routing and router precision match the base.
+    assert type(cfg.dataset) is type(base.dataset)
+    assert cfg.tokenizer.tokenizer_type == base.tokenizer.tokenizer_type
+    assert cfg.model.seq_length == base.model.seq_length
+    assert cfg.train.global_batch_size == base.train.global_batch_size == 4096
+    assert cfg.train.micro_batch_size == base.train.micro_batch_size
+    assert cfg.train.train_iters == base.train.train_iters
+    assert cfg.optimizer.lr == base.optimizer.lr
+    assert cfg.optimizer.min_lr == base.optimizer.min_lr
+    assert cfg.scheduler.lr_warmup_iters == base.scheduler.lr_warmup_iters
+    assert cfg.scheduler.lr_decay_iters == base.scheduler.lr_decay_iters
+    assert cfg.model.moe_router_force_load_balancing is base.model.moe_router_force_load_balancing is True
+    assert cfg.mixed_precision.fp8_recipe == base.mixed_precision.fp8_recipe == "mxfp8"
+    # The bridge sets these on real providers; the offline provider used here may not carry them. MXFP8
+    # token dispatch needs Megatron-LM #7992, so dispatch and combine stay as in the base recipe.
+    for name in ("moe_router_dtype", "moe_aux_loss_coeff", "moe_dispatch_fwd_dtype", "moe_combine_bwd_dtype"):
+        assert getattr(cfg.model, name, None) == getattr(base.model, name, None), name
+
+    # The same 16-stage layout over PP=4 x VP=4, with EP and TP unchanged.
+    assert cfg.model.pipeline_model_parallel_layout == base.model.pipeline_model_parallel_layout
+    assert (cfg.model.pipeline_model_parallel_size, cfg.model.virtual_pipeline_model_parallel_size) == (4, 4)
+    assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size == 32
+    assert cfg.model.tensor_model_parallel_size == base.model.tensor_model_parallel_size == 1
+
+    # MLPerf execution settings.
+    assert cfg.model.moe_flex_dispatcher_num_sms == 64
+    assert cfg.model.moe_expert_rank_capacity_factor == 4
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.5
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.fused_residual_rmsnorm is True
+    assert cfg.model.mla_down_proj_fusion is True
+    assert cfg.model.use_fused_mla_kv_rope_quant is True
+    assert cfg.model.use_grouped_gemm_for_shared_expert is True
+    assert cfg.model.moe_shared_expert_glu_interleave_size == 32
+    assert cfg.model.cuda_graph_warmup_steps == 2
+    assert cfg.optimizer.optimizer_cuda_graph is True
+    assert cfg.dist.use_gloo_process_groups is False
+    assert cfg.dataset.create_attention_mask is False
