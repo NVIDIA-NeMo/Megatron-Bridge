@@ -70,11 +70,13 @@ _RECIPE_FUNCS = [
         "",
         ".h100",
         ".gb200",
+        ".gb300",
         ".nemotron_omni",
         ".nemotron_35_super_vl",
         ".h100.nemotron_omni",
         ".h100.nemotron_35_super_vl",
         ".gb200.nemotron_35_super_vl",
+        ".gb300.nemotron_35_super_vl",
     ],
 )
 def test_legacy_recipe_modules_alias_canonical_modules(suffix):
@@ -88,7 +90,12 @@ def test_top_level_recipe_exports_keep_canonical_functions():
     from megatron.bridge import recipes
     from megatron.bridge.recipes import nemotronh_multimodal
 
-    for package in (nemotronh_multimodal, nemotronh_multimodal.h100, nemotronh_multimodal.gb200):
+    for package in (
+        nemotronh_multimodal,
+        nemotronh_multimodal.h100,
+        nemotronh_multimodal.gb200,
+        nemotronh_multimodal.gb300,
+    ):
         for name in package.__all__:
             value = getattr(package, name)
             if callable(value):

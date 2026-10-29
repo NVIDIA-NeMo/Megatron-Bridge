@@ -13,6 +13,7 @@
 # limitations under the License.
 """B200 performance recipes for Nemotron 3 and 3.5."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
@@ -352,8 +353,11 @@ def nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× B200, BF16."""
+    """Nemotron 3.5 Lightning pretrain: 8× B200, BF16, NCCL EP."""
     cfg = _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_bf16_config())
+    _enable_ncclep(cfg)
+    # Keep expert token counts on device to avoid a host synchronization in each MoE layer.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -365,11 +369,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
+        # NCCL EP dispatcher mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -381,10 +382,13 @@ def nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× B200, MXFP8."""
+    """Nemotron 3.5 Lightning pretrain: 8× B200, MXFP8, NCCL EP."""
     cfg = _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config())
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
+    _enable_ncclep(cfg)
+    # Keep expert token counts on device to avoid a host synchronization in each MoE layer.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -396,11 +400,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
+        # NCCL EP dispatcher mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

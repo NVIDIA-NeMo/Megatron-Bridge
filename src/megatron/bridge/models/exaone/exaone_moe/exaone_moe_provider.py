@@ -23,12 +23,14 @@ import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec, get_gpt_decoder_layer_specs
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_layer import (
     TransformerLayer,
     TransformerLayerSubmodules,
     get_transformer_layer_offset,
 )
 from megatron.core.utils import get_pg_rank
+from megatron.training.models.gpt import GPTModelConfig as MCoreGPTModelConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -41,13 +43,13 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 if TYPE_CHECKING:
-    from megatron.core.transformer import ModuleSpec
+    from megatron.core.transformer import ModuleSpec, TransformerConfig
 
 
 class _MTPDenseLayerSpecsList(list):
     """Return a dense layer spec when MCore asks which spec to use for MTP."""
 
-    def __init__(self, data: list["ModuleSpec"], dense_mtp_spec: "ModuleSpec") -> None:
+    def __init__(self, data: list["ModuleSpec"], dense_mtp_spec: "ModuleSpec | TransformerBlockSubmodules") -> None:
         super().__init__(data)
         self._dense_mtp_spec = dense_mtp_spec
 
@@ -58,11 +60,11 @@ class _MTPDenseLayerSpecsList(list):
 
 
 def _layer_specific_config(
-    config: "GPTModelProvider",
+    config: "TransformerConfig",
     *,
     layer_idx: int,
     is_mtp_layer: bool,
-) -> "GPTModelProvider":
+) -> "TransformerConfig":
     """Return a shallow config copy with EXAONE's per-layer settings applied."""
     layer_config = copy(config)
 
@@ -104,7 +106,7 @@ class ExaoneMoeDecoderLayer(TransformerLayer):
 
     def __init__(
         self,
-        config: "GPTModelProvider",
+        config: "TransformerConfig",
         submodules: TransformerLayerSubmodules,
         layer_number: int = 1,
         hidden_dropout: float | None = None,
@@ -145,8 +147,14 @@ class ExaoneMoeDecoderLayer(TransformerLayer):
         )
 
 
-def build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSpec":
-    """Build EXAONE MoE decoder specs while keeping MTP sub-layers dense."""
+def build_exaone_moe_layer_spec(cfg: "GPTModelProvider | MCoreGPTModelConfig", **kwargs) -> "ModuleSpec":
+    """Build EXAONE MoE decoder specs while keeping MTP sub-layers dense.
+
+    Accepts the legacy provider or a builder-backed GPT model config, whose
+    transformer fields live on ``cfg.transformer``.
+    """
+    is_model_config = isinstance(cfg, MCoreGPTModelConfig)
+    cfg = cfg.transformer if is_model_config else cfg
     block_submodules = get_gpt_decoder_block_spec(cfg, use_transformer_engine=HAVE_TE, **kwargs)
 
     for layer_spec in block_submodules.layer_specs:
@@ -159,6 +167,13 @@ def build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSpe
         dense_cfg.moe_grouped_gemm = False
         dense_mtp_spec = get_gpt_decoder_layer_specs(dense_cfg, use_transformer_engine=HAVE_TE)[-1]
         dense_mtp_spec.module = ExaoneMoeDecoderLayer
+        if is_model_config:
+            # The GPT builder passes layer_specs[-1] on to get_gpt_mtp_block_spec, which accepts a
+            # bare layer spec only when its module is TransformerLayer itself. A one-layer block
+            # spec keeps ExaoneMoeDecoderLayer for the MTP sub-layers.
+            dense_mtp_spec = TransformerBlockSubmodules(
+                layer_specs=[dense_mtp_spec], layer_norm=block_submodules.layer_norm
+            )
         block_submodules.layer_specs = _MTPDenseLayerSpecsList(block_submodules.layer_specs, dense_mtp_spec)
 
     return block_submodules
