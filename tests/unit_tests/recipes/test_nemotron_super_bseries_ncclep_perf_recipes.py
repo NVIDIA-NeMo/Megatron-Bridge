@@ -31,13 +31,18 @@ def test_nemotron_super_bseries_nccl_ep_stack(module, precision: str) -> None:
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_use_grouped_tensor is True
-    expected_ep = 32 if gpu == "b200" and precision != "nvfp4" else 8
-    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == (0 if expected_ep > 8 else 1)
+    expected_ep = 8
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
     assert cfg.model.expert_model_parallel_size == expected_ep
+    assert cfg.model.tensor_model_parallel_size == (2 if gpu == "b200" else 1)
+    assert cfg.model.sequence_parallel is (gpu == "b200")
     assert cfg.train.global_batch_size == 512
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
     assert ("NCCL_IGNORE_CPU_AFFINITY" in cfg.env_vars) == (gpu == "b300")
+    if gpu == "b300":
+        assert cfg.env_vars["NVTE_TENSOR_HANDLE_POOL_SIZE_MB"] == 128
+        assert cfg.env_vars["TORCHINDUCTOR_COMPILE_THREADS"] == 1
 
 
 @pytest.mark.parametrize("module", (b200, b300), ids=("b200", "b300"))

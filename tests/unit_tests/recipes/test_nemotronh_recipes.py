@@ -394,13 +394,13 @@ def test_nemotron_3_super_64gpu_h100_matches_benchmark_execution_configuration()
 @pytest.mark.parametrize(
     ("recipe_name", "expected_ep", "expected_pull_push"),
     [
-        ("nemotron_3_super_pretrain_64gpu_b200_bf16_config", 32, 0),
-        ("nemotron_3_super_pretrain_64gpu_b200_fp8mx_config", 32, 0),
+        ("nemotron_3_super_pretrain_64gpu_b200_bf16_config", 8, 1),
+        ("nemotron_3_super_pretrain_64gpu_b200_fp8mx_config", 8, 1),
         ("nemotron_3_super_pretrain_64gpu_b200_nvfp4_config", 8, 1),
     ],
 )
 def test_nemotron_3_super_64gpu_b200_uses_topology_compatible_nccl_ep(recipe_name, expected_ep, expected_pull_push):
-    """Cross-domain EP32 disables pull/push; the unchanged NVFP4 EP8 recipe retains it."""
+    """All B200 Super precisions keep EP8 within one NVLink domain with pull/push enabled."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
     cfg = getattr(module, recipe_name)()
 
@@ -417,15 +417,17 @@ def test_nemotron_3_super_64gpu_b200_uses_topology_compatible_nccl_ep(recipe_nam
         "nemotron_3_super_pretrain_64gpu_b200_fp8mx_config",
     ],
 )
-def test_nemotron_3_super_64gpu_b200_uses_whole_moe_recompute(recipe_name):
-    """TP1/EP32 uses whole-MoE and layernorm recompute to reduce retained activations."""
+def test_nemotron_3_super_64gpu_b200_uses_selective_recompute_with_scoped_graphs(recipe_name):
+    """TP2/EP8 uses activation, layernorm, and attention recompute with scoped TE graphs."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
     cfg = getattr(module, recipe_name)()
 
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe", "layernorm"]
-    assert cfg.model.cuda_graph_impl == "none"
-    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.recompute_modules == ["moe_act", "layernorm", "core_attn"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["mamba", "attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.sequence_parallel is True
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_tensor_parallel_size == 1
@@ -434,14 +436,14 @@ def test_nemotron_3_super_64gpu_b200_uses_whole_moe_recompute(recipe_name):
 
 
 def test_nemotron_3_super_64gpu_b200_nvfp4_keeps_cuda_graphs_with_light_recompute():
-    """B200 NVFP4 captures Mamba and attention while leaving MoE routing outside capture."""
+    """B200 NVFP4 retains all four measured TE graph scopes with light recompute."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
     cfg = module.nemotron_3_super_pretrain_64gpu_b200_nvfp4_config()
 
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
     assert cfg.model.cuda_graph_impl == "transformer_engine"
-    assert cfg.model.cuda_graph_scope == ["mamba", "attn"]
+    assert cfg.model.cuda_graph_scope == ["mamba", "attn", "moe_router", "moe_preprocess"]
 
 
 def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_policy():

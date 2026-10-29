@@ -50,27 +50,28 @@ def _apply_nemotron_3_5_lightning_defaults(cfg: ConfigContainer) -> ConfigContai
 
 
 def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× B200, BF16, NCCL EP32, whole-MoE recompute."""
+    """Nemotron 3 Super pretrain: 64× B200, BF16, NCCL EP8, TP2, selective recompute."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
-    cfg.model.recompute_modules = ["moe", "layernorm"]
+    cfg.model.recompute_modules = ["moe_act", "layernorm", "core_attn"]
     cfg.model.recompute_granularity = "selective"
 
-    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     _enable_ncclep(cfg)
@@ -87,8 +88,8 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # EP32 spans four NVL8 domains; pull/push mode is single-LSA-team only.
-        "NCCL_EP_HT_EM_PULL_PUSH": 0,
+        # EP8 stays within one NVL8 domain; enable pull/push mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -97,17 +98,17 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× B200, MXFP8, NCCL EP32, whole-MoE recompute."""
+    """Nemotron 3 Super pretrain: 64× B200, MXFP8, NCCL EP8, TP2, selective recompute."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -115,10 +116,11 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
-    cfg.model.recompute_modules = ["moe", "layernorm"]
+    cfg.model.recompute_modules = ["moe_act", "layernorm", "core_attn"]
     cfg.model.recompute_granularity = "selective"
 
-    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     _enable_ncclep(cfg)
@@ -135,8 +137,8 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # EP32 spans four NVL8 domains; pull/push mode is single-LSA-team only.
-        "NCCL_EP_HT_EM_PULL_PUSH": 0,
+        # EP8 stays within one NVL8 domain; enable pull/push mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -168,8 +170,7 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.model.quant_recipe = load_quantization_recipe(str(_TE_QUANT_CFG_PATH))
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    # Router auxiliary-loss CPU-to-CUDA copies are not capture-compatible in this runtime.
-    cfg.model.cuda_graph_scope = ["mamba", "attn"]
+    cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     _enable_ncclep(cfg)

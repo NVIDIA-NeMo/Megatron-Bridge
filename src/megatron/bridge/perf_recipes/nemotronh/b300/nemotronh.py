@@ -80,6 +80,9 @@ def nemotron_3_super_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
+        # Match the cluster exploration's TE handle pool and compilation limits.
+        "NVTE_TENSOR_HANDLE_POOL_SIZE_MB": 128,
+        "TORCHINDUCTOR_COMPILE_THREADS": 1,
         # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
@@ -129,6 +132,9 @@ def nemotron_3_super_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
+        # Match the cluster exploration's TE handle pool and compilation limits.
+        "NVTE_TENSOR_HANDLE_POOL_SIZE_MB": 128,
+        "TORCHINDUCTOR_COMPILE_THREADS": 1,
         # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
@@ -181,6 +187,9 @@ def nemotron_3_super_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
+        # Match the cluster exploration's TE handle pool and compilation limits.
+        "NVTE_TENSOR_HANDLE_POOL_SIZE_MB": 128,
+        "TORCHINDUCTOR_COMPILE_THREADS": 1,
         # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
