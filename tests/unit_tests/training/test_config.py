@@ -5612,6 +5612,25 @@ def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
         restore_get_world_size_safe(original, module)
 
 
+@pytest.mark.parametrize("dense", ["no_shard", "optim", "optim_grads", "optim_grads_params"])
+@pytest.mark.parametrize("expert", [None, "no_shard", "optim_grads_params"])
+def test_fsdp_v2_preserves_sharding_strategies(dense, expert):
+    # MFSDP V2 maps every strategy to DTensor placements, so ZeRO-2 dense with ZeRO-3
+    # experts (as in the DeepSeek-V3 HSDP recipe) must reach Megatron-Core unchanged.
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config())
+    try:
+        cfg.checkpoint.save = cfg.checkpoint.load = None
+        cfg.ddp.megatron_fsdp_version = 2
+        cfg.ddp.data_parallel_sharding_strategy = dense
+        cfg.ddp.expert_data_parallel_sharding_strategy = expert
+        cfg._validate_and_apply_megatron_fsdp_configs()
+        assert cfg.ddp.data_parallel_sharding_strategy == dense
+        assert cfg.ddp.expert_data_parallel_sharding_strategy == expert
+        assert not cfg.ddp.use_distributed_optimizer and not cfg.optimizer.use_distributed_optimizer
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
 class TestGlobalBatchPackingValidation:
     """Global-batch online packing joins the packing taxonomy in ConfigContainer.validate."""
 

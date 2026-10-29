@@ -1222,7 +1222,6 @@ class ConfigContainer(Container):
         if self.model.fp4 or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP4.")
 
-        self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
         self.optimizer.use_distributed_optimizer = False
         self.ddp.overlap_grad_reduce = False
