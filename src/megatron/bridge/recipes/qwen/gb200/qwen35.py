@@ -272,13 +272,11 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigCont
     cfg = qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
     apply_determinism_overrides(cfg)
 
-    # TODO: revert once a deterministic fused GDN kernel is available.
-    # MBS 2 OOMs: with cross-entropy fusion off the FP32 logits take ~7.6 GiB. GBS stays 128.
-    cfg.train.micro_batch_size = 1
-
-    # TODO: revert once a deterministic fused GDN kernel is available.
+    # TODO: revert the two overrides below once a deterministic fused GDN kernel is available.
     # Megatron-Core rejects deterministic_mode with Gated DeltaNet unless the torch backend is used.
     cfg.model.gdn_kernel_backend = "torch"
+    # MBS 2 OOMs: with cross-entropy fusion off the FP32 logits take ~7.6 GiB. GBS stays 128.
+    cfg.train.micro_batch_size = 1
 
     # Keep the exact process environment visible on the recipe.
     cfg.env_vars = {
