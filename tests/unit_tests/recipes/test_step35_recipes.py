@@ -15,11 +15,12 @@
 """
 Unit tests for Step-3.5-Flash recipe configuration builders.
 
-Patterned after DeepSeek / OLMoE recipe tests: monkeypatch ``AutoBridge`` to a
-lightweight fake provider so we exercise the recipe wiring without HF Hub I/O
-or real Megatron-Core layer construction. Also monkeypatches
-``apply_flex_dispatcher_backend`` so the recipe does not poke CUDA device
-properties during tests.
+Monkeypatch ``AutoBridge`` to a builder-only fake that returns a real, strict
+``Step35ModelConfig`` built from a small Step-3.5 config, so the recipe wiring
+runs without HF Hub I/O or real Megatron-Core layer construction and every
+field the recipe sets must be declared by the builder config. Also
+monkeypatches ``apply_flex_dispatcher_backend`` so the recipe does not poke
+CUDA device properties during tests.
 """
 
 import importlib
@@ -28,6 +29,9 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
+from megatron.bridge.models.stepfun.step35_config import Step35ModelConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -39,31 +43,49 @@ _STEP35_RECIPE_FUNCS = [
 ]
 
 
-class _FakeModelCfg:
-    """Stand-in for ``Step35ModelProvider`` returned by ``AutoBridge``."""
-
-    def __init__(self):
-        # Attributes the recipe reads back after assignment (e.g. for
-        # apply_flex_dispatcher_backend) need plausible defaults.
-        self.num_moe_experts = 288
-        self.moe_flex_dispatcher_backend = None
-        self.seq_length = 4096
-        # Fields the recipe never sets explicitly but downstream code may read.
-        self.apply_rope_fusion = False
-        self.pipeline_model_parallel_layout = None
-
-    def finalize(self):
-        return None
+def _step35_hf_config() -> Step35Config:
+    """A small Step-3.5 architecture: dense-first MoE, hybrid attention, one MTP layer."""
+    return Step35Config(
+        hidden_size=128,
+        intermediate_size=256,
+        num_attention_heads=4,
+        num_attention_groups=2,
+        num_hidden_layers=4,
+        vocab_size=512,
+        moe_intermediate_size=64,
+        moe_num_experts=8,
+        moe_top_k=2,
+        share_expert_dims=64,
+        head_dim=32,
+        layer_types=[
+            "full_attention",
+            "sliding_attention",
+            "sliding_attention",
+            "sliding_attention",
+            "full_attention",
+        ],
+        num_nextn_predict_layers=1,
+        moe_layers_enum="2,3",
+        rope_theta=[5e6, 1e4, 1e4, 1e4, 5e6],
+        sliding_window=64,
+        torch_dtype="bfloat16",
+        tie_word_embeddings=False,
+        architectures=["Step3p5ForCausalLM"],
+    )
 
 
 class _FakeBridge:
-    def to_megatron_provider(self, load_weights: bool = False):
-        # Recipe always passes load_weights=False, but we don't gate on it.
-        return _FakeModelCfg()
+    """Return a real strict model config while rejecting the provider API."""
 
     @staticmethod
-    def from_hf_pretrained(hf_path: str):
+    def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
+
+    def get_model_config(self) -> Step35ModelConfig:
+        return AutoBridge.from_hf_config(_step35_hf_config()).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Step-3.5 recipes must use get_model_config(), not the legacy provider API")
 
 
 def _assert_basic_config(cfg):
@@ -102,6 +124,7 @@ def test_each_step35_recipe_builds_config(recipe_func: Callable, monkeypatch):
 
     cfg = recipe_func()
     _assert_basic_config(cfg)
+    assert isinstance(cfg.model, Step35ModelConfig)
 
 
 # ---------------------------------------------------------------------------

@@ -60,10 +60,10 @@ Use the `examples/quantization/quantize.py` script for LLM PTQ:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/quantize.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
+    --hf-model-id Qwen/Qwen3-0.6B \
     --export-quant-cfg fp8 \
     --tp 2 \
-    --megatron-save-path ./llama3_2_1b_fp8
+    --megatron-save-path ./qwen3_0_6b_fp8
 ```
 
 Use the `examples/quantization/quantize_vlm.py` script for VLM PTQ:
@@ -95,8 +95,8 @@ Resume the quantized checkpoint and test with text generation using `examples/qu
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/ptq_generate.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
     --tp 2
 ```
 
@@ -120,20 +120,31 @@ uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/
 
 ### Export
 
-Export the quantized checkpoint to unified HuggingFace format using `examples/quantization/export.py`:
+Export the quantized checkpoint to a quantized HuggingFace checkpoint using `examples/quantization/export.py`:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/export.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
-    --export-dir ./llama3_2_1b_fp8_hf \
-    --tp 2 \
-    --dtype bfloat16
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
+    --export-dir ./qwen3_0_6b_fp8_hf \
+    --tp 2
 ```
 
+The export runs at any tensor, pipeline, expert and expert-tensor parallelism and writes the same checkpoint for all
+of them: packed quantized weights with their scales, and the `quantization_config` in `config.json` that vLLM, SGLang
+and TensorRT-LLM read. Unquantized linear layers are listed in its `ignore` list, derived from the disabled weight
+quantizers. Models it does not cover yet (e.g. KV-cache quantization or Mamba layers) fall back to ModelOpt's
+Megatron exporter, which supports TP=1 only.
+
 **Key Arguments:**
-- `--export-dir` - Output directory for unified HuggingFace checkpoint
-- `--dtype` - Export data type
+- `--export-dir` - Output directory for the quantized HuggingFace checkpoint
+- `--export-extra-modules` - Also export EAGLE / Medusa heads, through ModelOpt's Megatron exporter (TP=1 only)
+
+From Python, save a quantized model directly:
+
+```python
+bridge.save_hf_pretrained_modelopt(megatron_model, "./qwen3_0_6b_fp8_hf")
+```
 
 ### Programmatic ModelOpt Export
 
