@@ -76,21 +76,58 @@ Validation applies every global-batch packing rule and adds these:
 
 `qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config` fine-tunes
 Qwen3.5-35B-A3B on CoderForge-Preview SWE-Rebench trajectories with TP1, PP1,
-CP4, and EP8 on eight GB200 GPUs and a 32K-token cap.
-`examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py` launches
-it. Add these overrides for the static-CP baseline on the same packing path:
+CP4, and EP8 on eight GB200 GPUs and a 32K-token cap. Launch it with the
+recipe runner and a converted pretrained checkpoint:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config --mode sft \
+  checkpoint.pretrained_checkpoint=/path/to/megatron/qwen3.5-35b-a3b \
+  train.train_iters=20 logger.log_interval=1
+```
+
+Add these overrides for the static-CP baseline on the same packing path:
 
 ```bash
 model.dynamic_context_parallel=false model.sequence_packing_scheduler=dp_balanced
 ```
 
-On the recipe's own data, about nine in ten CoderForge trajectories exceed the
-32K cap, so nearly every packed sequence needs the full CP4 group. There,
-dynamic CP runs within noise of static CP4: a median step of 88 s against
-83 s, at about 90 model TFLOP/s per GPU. The example's README lists the
-measurements, including the effect of loader workers and recompute choices.
-Expect gains on streams where a meaningful share of sequences is short enough
-to run on one GPU or a small group.
+### Measured on the recipe's data
+
+Eight GB200 GPUs in one NVL72 rack, NeMo 26.06.01 container, Megatron-Core dev
+pin with [Megatron-LM #7417](https://github.com/NVIDIA/Megatron-LM/pull/7417),
+random initialization, the first 4,000 SWE-Rebench trajectories, and 12 steps
+of which the first four are dropped. Throughput is Bridge's model TFLOP/s per
+GPU.
+
+| Configuration | Median step | Median TFLOP/s per GPU | Peak allocated per GPU |
+|---|---|---|---|
+| Recipe: dynamic CP, full recompute, 16 loader workers | 88 s | 90 | 108 GB |
+| Static CP4 (`dp_balanced`), otherwise identical | 83 s | 93 | 108 GB |
+| Recipe with 2 loader workers | 254 s | 31 | 108 GB |
+| Recipe with selective recompute of `moe_act` and `layernorm` | 75 s over four steps, then NCCL out of memory | 106 | 163 GB |
+
+- About nine in ten of these trajectories are longer than the 32K cap, so
+  nearly every packed sequence needs the full CP4 group and dynamic CP has no
+  short sequences to place on smaller groups. Its median step is 5% slower
+  than static CP4 here, within this run's step-to-step noise. Dynamic CP pays
+  off on streams with a meaningful share of short sequences.
+- GPT-SFT tokenizes each trajectory lazily, which takes about 9 seconds per
+  sample here, and the packing scheduler pulls a whole step's samples at once.
+  With two loader workers the GPUs wait on data; the recipe uses 16.
+- Selective recompute runs about 13% faster per step, but it reserves over
+  170 GB per GPU, and the next communicator dynamic CP creates for a new group
+  size fails to allocate. Full recompute leaves that headroom.
+
+### Example on mixed-length data
+
+[`examples/agentic_sft`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/agentic_sft)
+trains the full 40-layer Qwen3.5-35B-A3B on one four-GPU GB200 node with static
+or dynamic CP, on generated data whose sample lengths follow a mixed
+distribution (half of the samples fit one rank's 16K tokens, 30% need CP2, 20%
+need CP4). On identical data, 200 steps, dynamic CP was 9.6% faster than static
+CP4 in throughput (95% bootstrap interval 6.0% to 13.2%). Its README describes
+the setup and the comparison tool.
 
 ## Models with Wide Attention Heads
 
