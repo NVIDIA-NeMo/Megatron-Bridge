@@ -333,6 +333,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContain
     _enable_nemotron_3_5_lightning_full_iteration(cfg)
     # HybridEP dispatch/combine is exposed at 16 SMs on VRNVL72; 32 SMs shortens the step.
     cfg.model.moe_hybridep_num_sms = 32
+    # Fused top-k/score routing further shortens the VRNVL72 step.
+    cfg.model.moe_router_fusion = True
 
     # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
