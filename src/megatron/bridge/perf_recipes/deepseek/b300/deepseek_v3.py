@@ -13,11 +13,11 @@
 # limitations under the License.
 """B300 performance recipes for DeepSeek V3."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
-    _enable_deepseek_full_iteration,
     _enable_deepseek_transformer_engine_graph,
     _perf_precision,
     deepseek_v3_pretrain_config,
@@ -151,36 +151,23 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration(cfg)
+    _enable_deepseek_transformer_engine_graph(cfg)
+    _enable_ncclep(cfg)
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.fp8_output_proj = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
-        # Transformer Engine overlap settings for this model.
-        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Use cuDNN LayerNorm for this measured baseline.
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
     return cfg
