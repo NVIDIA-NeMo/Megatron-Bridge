@@ -967,10 +967,10 @@ class TestAutoBridge:
         expected = []
 
         def write_float32_router_tensors(models):
-            # Write FP32 values that bf16 cannot represent before wrapping, as HF weight loading does.
+            # Write FP32 values before wrapping, as HF weight loading does; bf16 rounds 1.0001 to 1.0.
             for module in models[0].modules():
                 if isinstance(module, TopKRouter):
-                    module.expert_bias.copy_(torch.linspace(-0.3, 0.3, module.expert_bias.numel()) + 1e-4)
+                    module.expert_bias.copy_(1.0 + 1e-4 * torch.arange(1, module.expert_bias.numel() + 1))
                     # Keep the router weight in FP32 the way MiniMax-M3's pre-wrap hook does.
                     weight = torch.linspace(-0.05, 0.05, module.weight.numel()).view_as(module.weight) + 1e-6
                     module.weight.data = weight.to(module.weight.device)

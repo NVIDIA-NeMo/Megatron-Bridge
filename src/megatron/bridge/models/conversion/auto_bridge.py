@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from megatron.bridge.models.conversion.param_mapping import LocalHFParam, LocalMXFP8Param
     from megatron.bridge.peft.base import PEFT
 
-from megatron.core.transformer.module import Float16Module, MegatronModule
+from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.training.models.base import ModelConfig
 from safetensors.torch import save_file
@@ -64,7 +64,7 @@ from megatron.bridge.models.model_provider import (
     GetModelKwargs,
     ModelParallelKwargs,
     ModelProviderMixin,
-    _apply_mixed_precision_wrapper,
+    build_distributed_models,
 )
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
@@ -342,21 +342,6 @@ def _check_with_megatron_names_support(stream_fn: Callable[..., Any], owner: obj
 def _check_current_pp_stage_only_support(stream_fn: Callable[..., Any], owner: object) -> None:
     """Fail early when a streamer cannot accept PP-local export."""
     _check_streaming_argument_support(stream_fn, owner, "current_pp_stage_only")
-
-
-def _wrap_keeping_float32_tensors(
-    mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule],
-    config: Any,
-    module: MegatronModule,
-) -> MegatronModule:
-    """Wrap one model stage through ``_apply_mixed_precision_wrapper``, as the provider path does.
-
-    MCore's builder calls the wrapper directly. ``Float16Module`` then rounds router ``expert_bias``
-    to the model dtype before MCore casts it back to FP32, and leaves parameters listed in
-    ``_keep_in_float32_parameter_names`` in the model dtype. The helper snapshots both before the
-    cast and restores them afterwards.
-    """
-    return _apply_mixed_precision_wrapper([module], config, mixed_precision_wrapper)[0]
 
 
 MODELOPT_QUANTIZER_STATE_FILE = "quantizer_state.pth"
@@ -2385,14 +2370,10 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.gtp import classify_gtp_remat_chains, configure_gtp_remat
 
             configure_gtp_remat(model_config)
-            builder = model_config.get_builder_cls()(model_config)
             if pg_collection is None:
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
             kwargs.setdefault("data_parallel_random_init", False)
-            mixed_precision_wrapper = kwargs.get("mixed_precision_wrapper", Float16Module)
-            if mixed_precision_wrapper is not None:
-                kwargs["mixed_precision_wrapper"] = partial(_wrap_keeping_float32_tensors, mixed_precision_wrapper)
-            models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            models = build_distributed_models(model_config, pg_collection, **kwargs)
             classify_gtp_remat_chains(models, model_config)
             for model in models:
                 model.model_config = model_config
