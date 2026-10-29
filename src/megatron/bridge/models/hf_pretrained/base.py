@@ -84,6 +84,66 @@ class PreTrainedBase(ABC):
         except OSError:
             pass
 
+    @staticmethod
+    def _copy_cached_hub_files(
+        repo_id: str,
+        target_path: Path,
+        patterns: List[str],
+        *,
+        revision: str | None,
+    ) -> List[str]:
+        """Copy files matching patterns from the local Hugging Face cache snapshot of a Hub repository.
+
+        Used when the Hub cannot be listed, for example with HF_HUB_OFFLINE=1. Each pattern is
+        resolved separately, so a pattern whose files are not all cached does not block the others.
+        Files are matched and placed by their repository-relative paths, as Hub downloads are.
+
+        Args:
+            repo_id: Hugging Face Hub repository ID.
+            target_path: Directory to copy the files into.
+            patterns: File names or glob patterns, matched against repository-relative paths.
+            revision: Hub revision to read from the cache; None uses the cached default branch.
+
+        Returns:
+            List of copied repository-relative file names; empty if nothing matching is cached.
+        """
+        import fnmatch
+
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError:
+            return []
+
+        revision_kwargs = {"revision": revision} if revision is not None else {}
+        copied_files = []
+        for file_spec in patterns:
+            try:
+                # allow_patterns limits huggingface_hub's cached-snapshot completeness check to the
+                # requested files, so unrelated files missing from the cache do not fail the lookup.
+                snapshot_dir = Path(
+                    snapshot_download(
+                        repo_id=repo_id, local_files_only=True, allow_patterns=[file_spec], **revision_kwargs
+                    )
+                )
+            except Exception as exc:
+                logger.debug("No cached files of %s match %s: %s", repo_id, file_spec, exc)
+                continue
+
+            cached_files = sorted(path for path in snapshot_dir.rglob("*") if path.is_file())
+            for file_path in cached_files:
+                repo_file = file_path.relative_to(snapshot_dir).as_posix()
+                if repo_file in copied_files or not fnmatch.fnmatch(repo_file, file_spec):
+                    continue
+                target_file = target_path / repo_file
+                try:
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(file_path, target_file)
+                    copied_files.append(repo_file)
+                except OSError:
+                    # Silently skip files that can't be copied
+                    pass
+        return copied_files
+
     def _copy_custom_modeling_files(
         self,
         source_path: Union[str, Path],
@@ -156,9 +216,17 @@ class PreTrainedBase(ABC):
                             pass
                 self._cleanup_hf_local_dir_cache(target_path)
 
-            except Exception:
-                # If HuggingFace Hub operations fail, silently continue
-                pass
+            except Exception as exc:
+                # The Hub cannot be listed (for example with HF_HUB_OFFLINE=1), so use the files
+                # that loading this revision already placed in the local Hugging Face cache.
+                cached_files = self._copy_cached_hub_files(str(source_path), target_path, patterns, revision=revision)
+                copied_files.extend(file_name for file_name in cached_files if file_name not in copied_files)
+                logger.info(
+                    "Could not list %s on the Hugging Face Hub (%s); copied %s from the local cache.",
+                    source_path,
+                    type(exc).__name__,
+                    cached_files or "no files",
+                )
 
         return copied_files
 

@@ -93,6 +93,9 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         in_batch_packing_pad_to_multiple_of: Per-sample padding multiple used
             only by the in-batch packed path, typically to satisfy CP/SP
             divisibility.
+        return_padding_mask: Whether padded (unpacked) batches carry a boolean
+            ``padding_mask`` (True marks padding). Unless the collate function
+            returns one, it is derived from the collate's 2D ``attention_mask``.
     """
 
     def __init__(
@@ -107,6 +110,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
+        return_padding_mask: bool = False,
     ):
         super().__init__()
         self.processor = processor
@@ -118,6 +122,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         self.pad_to_multiple_of = pad_to_multiple_of
         self.enable_in_batch_packing = enable_in_batch_packing
         self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
+        self.return_padding_mask = return_padding_mask
         collate_key = type(processor).__name__ if processor is not None else "default"
         if collate_fn is not None:
             self._collate_impl = collate_fn
@@ -190,6 +195,16 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
                 "The selected HF VLM collator must enforce seq_length while preserving visual metadata."
             )
 
+        padding_mask = collated.get("padding_mask")
+        if self.return_padding_mask and padding_mask is None and collated.get("cu_seqlens_q") is None:
+            attention_mask = collated.get("attention_mask")
+            if attention_mask is None or attention_mask.dim() != 2:
+                raise ValueError(
+                    "return_padding_mask requires the collate function to return a 2D attention_mask "
+                    "that marks real tokens."
+                )
+            padding_mask = ~attention_mask.bool()
+
         keys = [s.__key__ for s in samples]
         batch_kwargs: Dict = dict(
             **batch_metadata_kwargs(keys=keys),
@@ -199,7 +214,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             labels=collated["labels"],
             loss_mask=collated["loss_mask"],
             attention_mask=collated.get("attention_mask"),
-            padding_mask=collated.get("padding_mask"),
+            padding_mask=padding_mask,
             position_ids=collated["position_ids"],
             visual_inputs=collated.get("visual_inputs"),
             cu_seqlens_q=collated.get("cu_seqlens_q"),

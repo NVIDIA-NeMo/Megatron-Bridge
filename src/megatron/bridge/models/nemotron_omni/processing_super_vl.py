@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bridge-local loading adapter for the native VL processor in Transformers 5.18.0 through 5.20.0.
+"""Bridge-local loading adapter for the native VL processor in Transformers 5.18.0 through 5.20.2.
 
 Imported lazily only by the version-guarded Super-VL pretrained wrapper. Image,
 video and text processing use the upstream implementation without monkey patches
 or changes to the source checkpoint. Loading these exports on unpatched HF 5.18.0
-through 5.20.0 still requires this Bridge adapter because HF insists on an audio extractor.
+through 5.20.2 still requires this Bridge adapter because HF insists on an audio extractor.
 """
 
 import copy

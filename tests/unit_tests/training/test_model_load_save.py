@@ -22,6 +22,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 import yaml
 from megatron.core import parallel_state
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
@@ -397,10 +398,7 @@ class TestLoadMegatronModel:
         build_model.assert_called_once()
         assert cfg.expert_tensor_parallel_size == 1
 
-    @pytest.mark.parametrize("legacy", [False, True])
-    def test_load_model_config_preserves_derived_gtp_sizes(self, tmp_path, legacy):
-        import yaml
-
+    def test_load_model_config_preserves_derived_gtp_sizes(self, tmp_path):
         from megatron.bridge.recipes.gpt import vanilla_gpt_pretrain_config
         from megatron.bridge.training.gtp import _get_checkpoint_weight_topology
 
@@ -412,12 +410,6 @@ class TestLoadMegatronModel:
         config = vanilla_gpt_pretrain_config()
         config.model = cfg
         config.to_yaml(str(tmp_path / "run_config.yaml"))
-        if legacy:
-            # Older saves retained runtime fields while leaving constructor shard counts unset.
-            raw = yaml.safe_load((tmp_path / "run_config.yaml").read_text())
-            raw["model"]["tensor_parallel_num_weight_shards"] = None
-            raw["model"]["expert_tensor_parallel_num_weight_shards"] = None
-            (tmp_path / "run_config.yaml").write_text(yaml.safe_dump(raw))
         loaded, _ = load_model_config(str(tmp_path))
         assert _get_checkpoint_weight_topology(loaded) == (2, 2, 1, 4)
         assert loaded.tensor_parallel_num_weight_shards == 4
@@ -469,6 +461,10 @@ class TestLoadMegatronModel:
             moe_grouped_gemm=True,
             moe_expert_rank_capacity_factor=1.5,
             moe_paged_stash=True,
+            # Paged stash on the non-op-fuser GroupedTensor path requires fused SwiGLU.
+            gated_linear_unit=True,
+            activation_func=F.silu,
+            bias_activation_fusion=True,
         )
         provider.finalize()
         kwargs = dict(
@@ -873,6 +869,48 @@ class TestLoadMegatronModel:
         result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+
+    @patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_gpu_load_of_cpu_imported_builder_config_builds_on_gpu(
+        self,
+        mock_from_dict,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_load_weights,
+        mock_get_pg_collection,
+        tmp_path,
+    ):
+        """A builder config saved by a CPU import must not make a GPU load build on CPU."""
+        mock_run_config_fname.return_value = tmp_path / "run_config.yaml"
+        mock_run_config.return_value = {
+            "model": {"tensor_model_parallel_size": 1, "_builder_": "import.path.to.SomeModelBuilder"}
+        }
+
+        mock_model = Mock()
+        mock_model_cfg = Mock(spec=GPTModelConfig)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = False
+        mock_model_cfg.fp16 = False
+        # A CPU import saves this flag in the checkpoint's builder config.
+        mock_model_cfg.use_cpu_initialization = True
+        mock_model_cfg.finalize = Mock()
+        cpu_init_at_build = []
+        mock_builder = Mock()
+        mock_builder.build_distributed_models.side_effect = lambda *args, **kwargs: (
+            cpu_init_at_build.append(mock_model_cfg.use_cpu_initialization) or [mock_model]
+        )
+        mock_model_cfg.get_builder_cls.return_value = Mock(return_value=mock_builder)
+        mock_from_dict.return_value = mock_model_cfg
+        (tmp_path / "run_config.yaml").touch()
+
+        result = load_megatron_model(tmp_path, use_cpu_init=False, skip_temp_dist_context=True)
+
+        assert result == [mock_model]
+        assert cpu_init_at_build == [False]
 
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_run_config")

@@ -388,8 +388,10 @@ def test_main_resolves_relative_paths_from_repository_root(monkeypatch):
         "optimizer={optimizer:adam,use_precision_aware_optimizer:false}",
     ],
 )
-def test_benchmark_cli_override_wins_over_runtime_default(override):
+def test_benchmark_cli_override_wins_over_runtime_default(override, monkeypatch):
     module, handles = _load_module()
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    monkeypatch.delenv("SLURM_NTASKS", raising=False)
     config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
     handles.recipe_runner.load_recipe.return_value = config
 
@@ -415,8 +417,10 @@ def test_benchmark_cli_override_wins_over_runtime_default(override):
     assert config.optimizer.use_precision_aware_optimizer is False
 
 
-def test_benchmark_optimizer_type_override_recomputes_runtime_default():
+def test_benchmark_optimizer_type_override_recomputes_runtime_default(monkeypatch):
     module, handles = _load_module()
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    monkeypatch.delenv("SLURM_NTASKS", raising=False)
     config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
     handles.recipe_runner.load_recipe.return_value = config
 

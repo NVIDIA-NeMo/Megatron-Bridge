@@ -14,7 +14,9 @@
 # limitations under the License.
 
 
+import hashlib
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -322,6 +324,138 @@ def test_save_artifacts_preserves_generation_config_from_pinned_hub_revision(tmp
     list_repo_files.assert_called_once_with("org/model", revision=expected_revision)
     hf_hub_download.assert_called_once()
     assert (tmp_path / "target" / "generation_config.json").read_text() == generation_config
+
+
+_CACHED_REVISION = "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"  # pragma: allowlist secret
+
+
+def _write_hub_cache_snapshot(cache_dir, repo_id, revision, files, listed_missing=()):
+    """Lay out a Hugging Face Hub cache snapshot the way hf_hub_download leaves it.
+
+    Snapshot entries are symlinks to content-addressed blobs. When ``listed_missing`` names
+    repository files absent from the snapshot, a ``trees/<revision>.json`` listing that includes
+    them is written, as huggingface_hub caches after listing the repository online.
+    """
+    repo_dir = cache_dir / f"models--{repo_id.replace('/', '--')}"
+    snapshot_dir = repo_dir / "snapshots" / revision
+    (repo_dir / "blobs").mkdir(parents=True)
+    for name, content in files.items():
+        blob = repo_dir / "blobs" / hashlib.sha1(content.encode()).hexdigest()
+        blob.write_text(content)
+        link = snapshot_dir / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(os.path.relpath(blob, link.parent))
+    (repo_dir / "refs").mkdir()
+    (repo_dir / "refs" / "main").write_text(revision)
+    if listed_missing:
+        listing = {name: {"size": 1, "blob_id": "0" * 40} for name in [*files, *listed_missing]}
+        (repo_dir / "trees").mkdir()
+        (repo_dir / "trees" / f"{revision}.json").write_text(json.dumps({"format_version": 1, "files": listing}))
+
+
+@pytest.mark.parametrize("revision", [_CACHED_REVISION, None])
+def test_copy_custom_modeling_files_uses_hub_cache_when_hub_is_offline(tmp_path, monkeypatch, revision):
+    """Test Hub sources fall back to the cached snapshot when the Hub cannot be listed."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    _write_hub_cache_snapshot(
+        tmp_path / "hub",
+        "org/model",
+        _CACHED_REVISION,
+        {
+            "config.json": "{}\n",
+            "generation_config.json": '{"top_p": 0.95}\n',
+            "nano_v3_reasoning_parser.py": "# parser\n",
+            "sub/helper.py": "# helper\n",
+        },
+    )
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+
+    base = MockPreTrainedBase()
+    with patch("huggingface_hub.list_repo_files", side_effect=OfflineModeIsEnabled("offline")):
+        copied_files = base._copy_custom_modeling_files(
+            "org/model", target_dir, file_patterns=["generation_config.json", "*.py"], revision=revision
+        )
+
+    assert copied_files == ["generation_config.json", "nano_v3_reasoning_parser.py", "sub/helper.py"]
+    assert (target_dir / "generation_config.json").read_text() == '{"top_p": 0.95}\n'
+    assert (target_dir / "sub" / "helper.py").read_text() == "# helper\n"
+    assert not (target_dir / "generation_config.json").is_symlink()
+    assert not (target_dir / "config.json").exists()
+
+
+def test_copy_custom_modeling_files_uses_incomplete_hub_cache_per_pattern(tmp_path, monkeypatch):
+    """Test files missing from the cached snapshot only skip the patterns that need them."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    _write_hub_cache_snapshot(
+        tmp_path / "hub",
+        "org/model",
+        _CACHED_REVISION,
+        {"generation_config.json": '{"top_p": 0.95}\n', "nano_v3_reasoning_parser.py": "# parser\n"},
+        listed_missing=("model.safetensors", "modeling_custom.py"),
+    )
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+
+    base = MockPreTrainedBase()
+    with patch("huggingface_hub.list_repo_files", side_effect=OfflineModeIsEnabled("offline")):
+        copied_files = base._copy_custom_modeling_files(
+            "org/model", target_dir, file_patterns=["generation_config.json", "*.py"], revision=_CACHED_REVISION
+        )
+
+    assert copied_files == ["generation_config.json"]
+    assert (target_dir / "generation_config.json").read_text() == '{"top_p": 0.95}\n'
+    assert not (target_dir / "nano_v3_reasoning_parser.py").exists()
+
+
+def test_save_artifacts_preserves_generation_config_from_hub_cache_when_offline(tmp_path, monkeypatch):
+    """Test the rejected-generation-config fallback for a cached Hub model with HF_HUB_OFFLINE=1."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    generation_config = '{"temperature": 1.0, "top_p": 0.95}\n'
+    _write_hub_cache_snapshot(
+        tmp_path / "hub",
+        "org/model",
+        _CACHED_REVISION,
+        {"generation_config.json": generation_config},
+        listed_missing=("model.safetensors",),
+    )
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+
+    base = MockPreTrainedBase(model_name_or_path="org/model", revision=_CACHED_REVISION)
+    base._config = Mock()
+    base._generation_config = Mock()
+    base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
+
+    with patch("huggingface_hub.list_repo_files", side_effect=OfflineModeIsEnabled("offline")):
+        base.save_artifacts(tmp_path / "target")
+
+    assert (tmp_path / "target" / "generation_config.json").read_text() == generation_config
+
+
+def test_save_artifacts_reraises_generation_config_error_when_hub_revision_is_not_cached(tmp_path, monkeypatch):
+    """Test an offline export still fails loudly when the source revision is not in the local cache."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path / "empty-hub"))
+    base = MockPreTrainedBase(model_name_or_path="org/model", revision=_CACHED_REVISION)
+    base._config = Mock()
+    base._generation_config = Mock()
+    base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
+
+    with (
+        patch("huggingface_hub.list_repo_files", side_effect=OfflineModeIsEnabled("offline")),
+        pytest.raises(ValueError, match="invalid generation config"),
+    ):
+        base.save_artifacts(tmp_path / "target")
 
 
 def test_save_artifacts_reraises_generation_config_error_without_source_file():

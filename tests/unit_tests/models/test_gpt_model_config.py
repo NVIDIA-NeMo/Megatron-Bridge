@@ -172,8 +172,8 @@ def test_model_config_is_opt_in_per_family() -> None:
     assert MegatronModelBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
     for bridge_class in (LlamaBridge, Qwen3Bridge):
         assert bridge_class.__dict__["MODEL_CONFIG_CLASS"] is BridgeGPTModelConfig
+        assert bridge_class.__dict__["USE_MODEL_CONFIG_FOR_CONVERSION"] is True
     assert MuseGlimmerBridge.__dict__["MODEL_CONFIG_CLASS"] is not None
-    assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
     assert BridgeGPTModelConfig.transformer_config_class is TransformerConfig
     assert not hasattr(MegatronModelBridge, "TRANSFORMER_CONFIG_CLASS")
 
@@ -217,10 +217,12 @@ def test_unmigrated_bridge_keeps_provider_without_warning() -> None:
         vocab_size=256,
     )
 
-    assert Qwen2Bridge.MODEL_CONFIG_CLASS is None
+    class UnmigratedQwen2Bridge(Qwen2Bridge):
+        MODEL_CONFIG_CLASS = None
+
     with warnings.catch_warnings():
         warnings.simplefilter("error", FutureWarning)
-        provider = Qwen2Bridge().provider_bridge(Mock(config=hf_config))
+        provider = UnmigratedQwen2Bridge().provider_bridge(Mock(config=hf_config))
 
     assert provider.position_embedding_type == "rope"
     assert provider.add_qkv_bias is True
