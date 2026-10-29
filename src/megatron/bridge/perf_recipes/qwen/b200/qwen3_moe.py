@@ -571,10 +571,10 @@ def qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
 
 
 def qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
-    """Qwen3 235B-A22B pretrain: 256× B200, NVFP4, full-iteration CG and A2A overlap."""
+    """Qwen3 235B-A22B pretrain: 256× B200, NVFP4, VP=2, full-iteration CG and A2A overlap."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_b200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
-    cfg.model.virtual_pipeline_model_parallel_size = 3
+    cfg.model.virtual_pipeline_model_parallel_size = 2
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     _enable_hybridep_full_iteration_nvfp4(cfg)
