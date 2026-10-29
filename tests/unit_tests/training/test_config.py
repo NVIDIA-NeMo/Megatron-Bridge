@@ -74,6 +74,7 @@ from megatron.bridge.utils.cuda_graph import (
     cuda_graph_module_names,
     set_cuda_graph_modules,
     set_full_iteration_cuda_graph,
+    supports_deferred_result_validation,
 )
 
 
@@ -2664,8 +2665,12 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_cuda_graph_full_iteration_requires_check_for_nan_disabled(self, monkeypatch):
-        """Test that full_iteration CUDA graph requires check_for_nan_in_loss=False."""
+    @pytest.mark.skipif(
+        not supports_deferred_result_validation(),
+        reason="the installed Megatron Core has no deferred result validation for full-iteration CUDA graphs",
+    )
+    def test_cuda_graph_full_iteration_allows_deferred_result_validation(self, monkeypatch):
+        """Test that full_iteration CUDA graph allows the NaN checks through deferred result validation."""
         gpt_model_cfg = create_test_gpt_config(
             use_te_rng_tracker=True,
         )
@@ -2677,17 +2682,62 @@ class TestConfigContainerValidation:
         )
 
         try:
-            # Default check_for_nan_in_loss is True - should fail validation
+            # Defaults: check_for_nan_in_loss=True, rerun_mode="disabled", no spiky-loss check -> allowed.
             assert container.rerun_state_machine.check_for_nan_in_loss is True
-            with pytest.raises(
-                AssertionError,
-                match="check_for_nan_in_loss must be disabled when using full_iteration CUDA graph",
-            ):
+            assert container.rerun_state_machine.rerun_mode == "disabled"
+            container.validate()
+
+            # The gradient NaN check is deferred the same way.
+            container.ddp.check_for_nan_in_grad = True
+            container.validate()
+
+            # Checks that keep host-side history across calls are not supported.
+            container.rerun_state_machine.check_for_spiky_loss = True
+            with pytest.raises(AssertionError, match="check_for_spiky_loss is not supported"):
+                container.validate()
+            container.rerun_state_machine.check_for_spiky_loss = False
+            container.ddp.check_for_large_grads = True
+            with pytest.raises(AssertionError, match="check_for_large_grads is not supported"):
+                container.validate()
+            container.ddp.check_for_large_grads = False
+
+            # A replayed iteration cannot be re-run in place, whichever check is on.
+            container.rerun_state_machine.rerun_mode = "validate_results"
+            with pytest.raises(AssertionError, match="rerun_mode='disabled'"):
+                container.validate()
+            container.rerun_state_machine.check_for_nan_in_loss = False
+            with pytest.raises(AssertionError, match="rerun_mode='disabled'"):
                 container.validate()
 
-            # Setting check_for_nan_in_loss=False should pass validation
+            # Without any result-validation check, other rerun modes stay allowed.
+            container.ddp.check_for_nan_in_grad = False
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("check", ["loss", "grad"])
+    def test_cuda_graph_full_iteration_result_validation_requires_deferred_validation(self, check, monkeypatch):
+        """Test that full_iteration CUDA graph rejects the NaN checks without deferred result validation."""
+        monkeypatch.setattr("megatron.bridge.training.config.supports_deferred_result_validation", lambda: False)
+        gpt_model_cfg = create_test_gpt_config(
+            use_te_rng_tracker=True,
+        )
+        set_full_iteration_cuda_graph(gpt_model_cfg)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            container.rerun_state_machine.check_for_nan_in_loss = check == "loss"
+            container.ddp.check_for_nan_in_grad = check == "grad"
+            with pytest.raises(AssertionError, match="deferred result validation"):
+                container.validate()
+
             container.rerun_state_machine.check_for_nan_in_loss = False
-            container.validate()  # Should pass without error
+            container.ddp.check_for_nan_in_grad = False
+            container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

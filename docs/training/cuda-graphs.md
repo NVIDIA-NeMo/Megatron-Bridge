@@ -89,7 +89,9 @@ Avoid CUDA graphs when any of these are true:
 The most important interactions are:
 
 - `use_te_rng_tracker` and `rng.te_rng_tracker`: required when CUDA graphs are enabled
-- `rerun_state_machine.check_for_nan_in_loss`: must be disabled for `local` + `full_iteration`
+- `rerun_state_machine.check_for_nan_in_loss` and `ddp.check_for_nan_in_grad`: allowed with full-iteration
+  graphs only through Megatron Core's deferred result validation, with `rerun_state_machine.rerun_mode="disabled"`;
+  the spiky-loss and large-gradient checks are not supported with full-iteration graphs
 - MoE routing scopes: `moe` and `moe_router` are mutually exclusive
 - `moe_preprocess`: requires `moe_router`
 - `delay_wgrad_compute`: adds extra constraints when captured scopes include attention or MoE router
@@ -111,8 +113,13 @@ Configure CUDA graphs through:
 - `model.use_te_rng_tracker`
 - `rng.te_rng_tracker`
 
-If you choose `local` with `full_iteration`, disable the loss and gradient NaN
-checks that conflict with full capture.
+With full-iteration graphs, the loss and gradient NaN checks cannot read values on
+the host inside the captured iteration. Megatron Core versions with deferred result
+validation (`RerunStateMachine.capture_deferred_validations`) record a snapshot at
+each check during capture and validate the replayed snapshots after every replay,
+before the optimizer step, so the checks stay on when
+`rerun_state_machine.rerun_mode="disabled"`. With an older Megatron Core, disable
+`rerun_state_machine.check_for_nan_in_loss` and `ddp.check_for_nan_in_grad`.
 
 For exact config snippets and runnable commands, see
 [skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
@@ -189,7 +196,9 @@ The `OptimizerCudaGraphWrapper` is an experimental utility that enables CUDA gra
 
 - Missing TE RNG tracker settings causes an assertion before training starts.
 - Dynamic sequence or batch shapes break capture or replay assumptions.
-- `local` `full_iteration` graphs fail when NaN-loss checking is still enabled.
+- Full-iteration graphs fail validation when a NaN check is enabled and Megatron Core
+  lacks deferred result validation, or when `rerun_state_machine.rerun_mode` is not
+  `"disabled"`.
 - Illegal scope combinations such as `moe` with `moe_router` fail validation.
 - Runs that fit in eager mode can OOM after enabling graphs because buffers stay pinned.
 - Short runs can show neutral or slightly slower replay time if the eager
