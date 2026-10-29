@@ -215,7 +215,14 @@ class NemotronOmniEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
 
 @dataclass(kw_only=True)
 class EnergonDatasetConfig(DataloaderConfig):
-    """Serializable configuration for an Energon-backed multimodal dataset."""
+    """Serializable configuration for an Energon-backed multimodal dataset.
+
+    ``prefetch_factor`` (from :class:`DataloaderConfig`) sets how many batches each Energon loader worker prepares
+    ahead of consumption; ``None`` keeps Energon's default (2). A full-iteration CUDA graph reads all microbatches of
+    an iteration at once, right after the previous step's host sync, so set ``prefetch_factor * max(num_workers, 1)``
+    to at least the microbatches per iteration to keep that read off the critical path. The sample order and the
+    saved loader state do not depend on it.
+    """
 
     path: str | None = None
     seq_length: int
@@ -239,6 +246,8 @@ class EnergonDatasetConfig(DataloaderConfig):
         """Validate declarative fields before training derives dataset settings."""
         if not isinstance(self.path, str) or not self.path.strip():
             raise ValueError("EnergonDatasetConfig.path must be set to a non-empty dataset path.")
+        if self.prefetch_factor is not None and (type(self.prefetch_factor) is not int or self.prefetch_factor < 1):
+            raise ValueError(f"prefetch_factor must be a positive integer when set (got {self.prefetch_factor!r}).")
         if self.seq_length <= 0:
             raise ValueError("seq_length must be greater than 0.")
         if self.micro_batch_size <= 0:
@@ -280,6 +289,7 @@ class EnergonDatasetConfig(DataloaderConfig):
             "batch_size",
             "max_samples_per_sequence",
             "packing_buffer_size",
+            "prefetch_factor",
             "shuffle_buffer_size",
             "split_part",
             "task_encoder",
@@ -431,6 +441,7 @@ class EnergonDatasetBuilder:
             max_samples_per_sequence=self.config.max_samples_per_sequence,
             packing_buffer_size=self.config.packing_buffer_size,
             pg_collection=context.pg_collection,
+            prefetch_factor=self.config.prefetch_factor,
             **self.config.dataset_kwargs,
         )
         train = datamodule.train_dataloader() if build_train else None
