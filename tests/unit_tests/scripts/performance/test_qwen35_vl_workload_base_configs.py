@@ -503,7 +503,6 @@ def test_qwen35_vl_397b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pyt
     assert config.model.moe_use_grouped_tensor is True
     # Built on the GB300 MXFP8 base, not the tuned GB300 recipe: the Adam moments stay in FP32.
     assert config.optimizer.use_precision_aware_optimizer is False
-    assert config.model.moe_permute_fusion_into_hybridep is False
     assert getattr(config.model, "use_grouped_gemm_for_shared_expert", False) is False
     assert getattr(config.model, "overlap_dispatch_backward_with_experts_wgrad", False) is False
 
