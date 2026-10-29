@@ -78,6 +78,20 @@ def _config(**kwargs):
     return SimpleNamespace(**defaults)
 
 
+def _use_cpu_checkpoint_rng(monkeypatch):
+    """Let MCore's real CheckpointFunction run on CPU without touching the global RNG tracker."""
+    monkeypatch.setattr(
+        tensor_parallel.random, "_get_cuda_rng_state", lambda *args, **kwargs: torch.empty(0, dtype=torch.uint8)
+    )
+    monkeypatch.setattr(tensor_parallel.random, "_set_cuda_rng_state", lambda *args, **kwargs: None)
+    # CheckpointFunction calls set_states() on the tracker, which marks it initialized. Left on the global
+    # tracker, that makes later TE modules fork RNG states that were never added.
+    monkeypatch.setattr(
+        tensor_parallel.random, "_CUDA_RNG_STATE_TRACKER", tensor_parallel.random.CudaRNGStatesTracker()
+    )
+    monkeypatch.setattr(tensor_parallel.random, "_CUDA_RNG_STATE_TRACKER_INITIALIZED", True)
+
+
 class TestGemma4RMSNorm:
     def test_matches_hf_style_rms_norm(self):
         norm = Gemma4RMSNorm(_config(), hidden_size=2, eps=1e-6)
@@ -1898,11 +1912,7 @@ class TestGemma4PLEHelpers:
             "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
             FakeTransformerLayer,
         )
-        # Run MCore's real CheckpointFunction on CPU: only the CUDA RNG state is unavailable.
-        monkeypatch.setattr(
-            tensor_parallel.random, "_get_cuda_rng_state", lambda *args, **kwargs: torch.empty(0, dtype=torch.uint8)
-        )
-        monkeypatch.setattr(tensor_parallel.random, "_set_cuda_rng_state", lambda *args, **kwargs: None)
+        _use_cpu_checkpoint_rng(monkeypatch)
         monkeypatch.setattr(mcore_te, "HAVE_TE", True)
         monkeypatch.setattr(mcore_te, "te_checkpoint", fake_te_checkpoint)
         block = SimpleNamespace(
@@ -2006,10 +2016,7 @@ class TestGemma4PLEHelpers:
             "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
             FakeKVSharingLayer,
         )
-        monkeypatch.setattr(
-            tensor_parallel.random, "_get_cuda_rng_state", lambda *args, **kwargs: torch.empty(0, dtype=torch.uint8)
-        )
-        monkeypatch.setattr(tensor_parallel.random, "_set_cuda_rng_state", lambda *args, **kwargs: None)
+        _use_cpu_checkpoint_rng(monkeypatch)
         monkeypatch.setattr(mcore_te, "HAVE_TE", True)
         monkeypatch.setattr(mcore_te, "te_checkpoint", fake_te_checkpoint)
         # Like Gemma 4 E2B/E4B: two source layers store K/V, later layers reuse it instead of their own.
