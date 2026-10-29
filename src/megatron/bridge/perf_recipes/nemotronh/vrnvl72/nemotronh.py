@@ -331,6 +331,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContain
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     _enable_nemotron_3_5_lightning_full_iteration(cfg)
+    # HybridEP dispatch/combine is exposed at 16 SMs on VRNVL72; 32 SMs shortens the step.
+    cfg.model.moe_hybridep_num_sms = 32
 
     # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
