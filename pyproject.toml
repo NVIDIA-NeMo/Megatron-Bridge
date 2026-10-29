@@ -97,8 +97,8 @@ dependencies = [
     "mlflow>=3.16.0",   # CVE-2025-15031, CVE-2026-71211
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
-    "flashinfer-python==0.6.18.post1",  # keep flashinfer-python and flashinfer-cubin in lockstep:
-    "flashinfer-cubin==0.6.18.post1",   # the runtime version-match check fails otherwise
+    "flashinfer-python==0.7.2.post1",   # keep flashinfer-python and flashinfer-cubin in lockstep:
+    "flashinfer-cubin==0.7.2.post1",    # the runtime version-match check fails otherwise
     "fast-hadamard-transform>=1.1.0",
 ]
 
@@ -143,7 +143,7 @@ override-dependencies = [
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
-    "nvidia-cudnn-frontend==1.29.1",
+    "nvidia-cudnn-frontend==1.32.0",                       # Match MCore main (paired with flashinfer 0.7.2)
     # Match MCore main: cuDNN Frontend 1.29 needs the newer TileLang/TVM FFI family.
     "tilelang==0.1.12",
     "apache-tvm-ffi==0.1.11",
