@@ -82,49 +82,61 @@ def _partition_layer_groups(group_sizes: list[int], num_stages: int) -> list[int
     return stage_sizes
 
 
-def finalize_glm_hybrid_pattern(config: Any) -> None:
-    """Validate GLM's physical layout and keep each DSA sharing group within one pipeline stage.
+def _dsa_aligned_hybrid_pattern(config: Any) -> str:
+    """Return the main layer pattern with the pipeline boundaries that ``finalize_glm_hybrid_pattern()`` sets.
 
-    ``GLM5ModelProvider`` and ``GLM5ModelConfig`` run this before their Hybrid finalization. It places
-    DSA-aligned pipeline boundaries, enables sequence parallelism for TP > 1, and derives
-    ``num_layers``, the MTP pattern and the MoE layer schedule from ``hybrid_layer_pattern``.
+    A pattern without ``|`` is split into ``pipeline_model_parallel_size`` stages, each starting on a layer
+    that computes its own DSA top-k indices. A pattern with ``|`` is returned as given. The config is not changed.
+
+    Raises:
+        ValueError: If PP exceeds the number of DSA top-k sharing groups.
+    """
+    main = config.hybrid_layer_pattern.split("/")[0]
+    if "|" in main or config.pipeline_model_parallel_size <= 1:
+        return main
+    blocks = len(main) // 2
+    # Balance complete DSA sharing groups, including the short dense prefix.
+    # This also makes ordinary conversion --pp overrides safe for GLM-5.2.
+    boundaries = [
+        i
+        for i in range(blocks)
+        if not is_dsa_skip_topk_layer(
+            i + 1, config.dsa_indexer_skip_topk_offset or 0, config.dsa_indexer_topk_freq or 1
+        )
+    ] + [blocks]
+    stages = config.pipeline_model_parallel_size
+    if len(boundaries) - 1 < stages:
+        raise ValueError(
+            f"PP={stages} exceeds the {len(boundaries) - 1} DSA top-k sharing groups in {blocks} decoder layers; "
+            "each pipeline stage must start on a layer that computes its own top-k indices."
+        )
+    group_sizes = [end - start for start, end in zip(boundaries, boundaries[1:])]
+    return split_glm_pattern(main, _partition_layer_groups(group_sizes, stages))
+
+
+def validate_glm_hybrid_pattern(config: Any) -> None:
+    """Check GLM's physical layout and training settings without changing the config.
+
+    ``GLM5ModelProvider`` and ``GLM5ModelConfig`` run this before ``finalize_glm_hybrid_pattern()``. The
+    pipeline checks apply to the pattern as finalization sets it, so a pattern without ``|`` is valid for
+    PP > 1: finalization places DSA-aligned boundaries.
 
     Args:
-        config: GLM-5 provider or model config to finalize in place.
+        config: GLM-5 provider or model config to check.
 
     Raises:
         ValueError: If the pattern, pipeline topology or training settings are unsupported.
     """
     if not config.hybrid_layer_pattern:
         raise ValueError("GLM requires an explicit hybrid_layer_pattern.")
-    main = config.hybrid_layer_pattern.split("/")[0]
-    compact = main.replace("|", "")
+    compact = config.hybrid_layer_pattern.split("/")[0].replace("|", "")
     if len(compact) % 2 or any(compact[i : i + 2] not in ("D-", "DE") for i in range(0, len(compact), 2)):
         raise ValueError("GLM requires alternating DSA and dense/MoE layers.")
     if config.virtual_pipeline_model_parallel_size is not None:
         raise ValueError("GLM Hybrid recipes currently support non-VPP execution only.")
     if config.pipeline_model_parallel_layout is not None:
         raise ValueError("Use hybrid_layer_pattern pipe separators instead of a GPT pipeline layout.")
-    if "|" not in main and config.pipeline_model_parallel_size > 1:
-        blocks = len(compact) // 2
-        # Balance complete DSA sharing groups, including the short dense prefix.
-        # This also makes ordinary conversion --pp overrides safe for GLM-5.2.
-        boundaries = [
-            i
-            for i in range(blocks)
-            if not is_dsa_skip_topk_layer(
-                i + 1, config.dsa_indexer_skip_topk_offset or 0, config.dsa_indexer_topk_freq or 1
-            )
-        ] + [blocks]
-        stages = config.pipeline_model_parallel_size
-        if len(boundaries) - 1 < stages:
-            raise ValueError(
-                f"PP={stages} exceeds the {len(boundaries) - 1} DSA top-k sharing groups in {blocks} decoder layers; "
-                "each pipeline stage must start on a layer that computes its own top-k indices."
-            )
-        group_sizes = [end - start for start, end in zip(boundaries, boundaries[1:])]
-        main = split_glm_pattern(main, _partition_layer_groups(group_sizes, stages))
-    segments = main.split("|")
+    segments = _dsa_aligned_hybrid_pattern(config).split("|")
     if len(segments) != config.pipeline_model_parallel_size:
         raise ValueError("GLM requires exactly one nonempty pattern segment per pipeline rank.")
     offset = 0
@@ -143,6 +155,20 @@ def finalize_glm_hybrid_pattern(config: Any) -> None:
         )
     if config.fp8 or config.fp4:
         raise ValueError("GLM Hybrid training currently requires BF16/FP32; FP8 checkpoint import remains supported.")
+
+
+def finalize_glm_hybrid_pattern(config: Any) -> None:
+    """Keep each DSA sharing group within one pipeline stage and derive GLM's layer settings.
+
+    ``GLM5ModelProvider`` and ``GLM5ModelConfig`` run this after ``validate_glm_hybrid_pattern()`` and before
+    their Hybrid finalization. It places DSA-aligned pipeline boundaries, enables sequence parallelism for
+    TP > 1, and derives ``num_layers``, the MTP pattern and the MoE layer schedule from ``hybrid_layer_pattern``.
+
+    Args:
+        config: GLM-5 provider or model config to update in place.
+    """
+    main = _dsa_aligned_hybrid_pattern(config)
+    compact = main.replace("|", "")
     # The Hybrid DSA layer uses AbsorbedMLA, which asserts sequence parallelism whenever TP > 1.
     if config.tensor_model_parallel_size > 1:
         config.sequence_parallel = True
@@ -162,8 +188,9 @@ class GLM5ModelProvider(HybridModelProvider, MLATransformerConfig):
 
     def finalize(self) -> None:
         """Validate physical layout and preserve DSA sharing within each stage."""
+        validate_glm_hybrid_pattern(self)
         finalize_glm_hybrid_pattern(self)
         super().finalize()
 
 
-__all__ = ["GLM5ModelProvider", "finalize_glm_hybrid_pattern"]
+__all__ = ["GLM5ModelProvider", "finalize_glm_hybrid_pattern", "validate_glm_hybrid_pattern"]

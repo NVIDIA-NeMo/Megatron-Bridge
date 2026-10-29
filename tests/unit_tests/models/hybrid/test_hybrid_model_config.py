@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, fields
 from unittest.mock import Mock, patch
 
 import pytest
@@ -205,17 +206,31 @@ class TestFinalize:
         assert config.hybrid_layer_pattern == "M*E-"
         assert config.hybrid_override_pattern is None
 
-    def test_rejects_both_pattern_fields(self) -> None:
+    @pytest.mark.parametrize("method", ["validate", "finalize"])
+    def test_rejects_both_pattern_fields(self, method) -> None:
         config = _make_model_config(hybrid_override_pattern="M*E-")
 
         with pytest.raises(ValueError, match="cannot both be specified"):
-            config.finalize()
+            getattr(config, method)()
 
-    def test_rejects_nonpositive_mamba_chunk_size(self) -> None:
+    @pytest.mark.parametrize("method", ["validate", "finalize"])
+    def test_rejects_nonpositive_mamba_chunk_size(self, method) -> None:
         config = _make_model_config(mamba_chunk_size=0)
 
         with pytest.raises(ValueError, match="mamba_chunk_size must be at least 1"):
-            config.finalize()
+            getattr(config, method)()
+
+    def test_validate_does_not_change_the_config(self) -> None:
+        config = _make_model_config(
+            hybrid_layer_pattern=None,
+            hybrid_override_pattern="ME*-",
+            transformer=dict(num_layers=0, mtp_hybrid_override_pattern="*E", mtp_use_repeated_layer=True),
+        )
+        serialized = config.as_dict()
+
+        config.validate()
+
+        assert config.as_dict() == serialized
 
 
 class TestBuilderStackSpec:
@@ -314,20 +329,26 @@ class TestBuilderStackSpec:
         assert config.hybrid_stack_spec is config_factory
 
 
+def _mla_transformer(**kwargs) -> MLATransformerConfig:
+    values = dict(
+        num_layers=4,
+        hidden_size=128,
+        num_attention_heads=4,
+        ffn_hidden_size=256,
+        activation_func=F.silu,
+        q_lora_rank=None,
+        kv_lora_rank=32,
+        qk_head_dim=16,
+        qk_pos_emb_head_dim=16,
+        v_head_dim=16,
+    )
+    values.update(kwargs)
+    return MLATransformerConfig(**values)
+
+
 def _make_mla_model_config(**kwargs) -> BridgeHybridMLAModelConfig:
     values = dict(
-        transformer=MLATransformerConfig(
-            num_layers=4,
-            hidden_size=128,
-            num_attention_heads=4,
-            ffn_hidden_size=256,
-            activation_func=F.silu,
-            q_lora_rank=None,
-            kv_lora_rank=32,
-            qk_head_dim=16,
-            qk_pos_emb_head_dim=16,
-            v_head_dim=16,
-        ),
+        transformer=_mla_transformer(),
         vocab_size=256,
         hybrid_layer_pattern="*E*E",
         rotary_base=50_000.0,
@@ -363,11 +384,95 @@ class TestMLAConfig:
         config.transformer.rotary_base = 30_000.0
         assert config.rotary_base == 30_000.0
 
+    def test_rotary_settings_are_stored_only_on_the_transformer(self) -> None:
+        """The outer names are constructor arguments, so only the nested config is serialized and overridden."""
+        config = _make_mla_model_config(rotary_percent=0.5)
+        serialized = config.as_dict()
+
+        assert {"rotary_base", "rotary_percent"}.isdisjoint(field.name for field in fields(config))
+        assert {"rotary_base", "rotary_percent"}.isdisjoint(serialized)
+        assert serialized["transformer"]["rotary_base"] == 50_000.0
+        assert serialized["transformer"]["rotary_percent"] == 0.5
+
+    def test_constructor_copies_a_rotary_value_the_transformer_kept_at_its_default(self) -> None:
+        config = _make_mla_model_config(rotary_base=20_000.0, rotary_percent=0.5)
+
+        assert config.transformer.rotary_base == 20_000.0
+        assert config.transformer.rotary_percent == 0.5
+
+    def test_constructor_keeps_the_transformer_rotary_value(self) -> None:
+        config = BridgeHybridMLAModelConfig(
+            transformer=_mla_transformer(rotary_base=20_000.0), vocab_size=256, hybrid_layer_pattern="*E*E"
+        )
+
+        assert config.rotary_base == config.transformer.rotary_base == 20_000.0
+
+    def test_constructor_accepts_matching_rotary_values(self) -> None:
+        config = _make_mla_model_config(transformer=_mla_transformer(rotary_base=50_000.0))
+
+        assert config.transformer.rotary_base == 50_000.0
+
+    @pytest.mark.parametrize(
+        ("name", "nested", "outer"), [("rotary_base", 20_000.0, 50_000.0), ("rotary_percent", 0.5, 0.25)]
+    )
+    def test_constructor_rejects_conflicting_rotary_values(self, name, nested, outer) -> None:
+        message = re.escape(f"{name}={outer!r} conflicts with transformer.{name}={nested!r}")
+
+        with pytest.raises(ValueError, match=message):
+            _make_mla_model_config(transformer=_mla_transformer(**{name: nested}), **{name: outer})
+
+    def test_flat_kwargs_put_rotary_settings_on_the_transformer(self) -> None:
+        model_kwargs, transformer_kwargs = MegatronModelBridge._partition_model_config_kwargs(
+            {"rotary_base": 50_000.0, "rotary_percent": 0.5, "vocab_size": 256},
+            BridgeHybridMLAModelConfig,
+            MLATransformerConfig,
+        )
+
+        assert model_kwargs == {"vocab_size": 256}
+        assert transformer_kwargs == {"rotary_base": 50_000.0, "rotary_percent": 0.5}
+
+    def test_yaml_override_of_the_transformer_value_is_kept(self, tmp_path) -> None:
+        """No stored outer value can replace a nested override when the overrides are merged."""
+
+        @dataclass
+        class _Root:
+            model: BridgeHybridMLAModelConfig
+
+        root = _Root(model=_make_mla_model_config())
+        nested_yaml = tmp_path / "nested.yaml"
+        nested_yaml.write_text("model:\n  transformer:\n    rotary_base: 20000.0\n")
+        flat_yaml = tmp_path / "flat.yaml"
+        flat_yaml.write_text("model:\n  rotary_percent: 0.5\n")
+
+        process_config_with_overrides(root, config_filepath=str(nested_yaml))
+        process_config_with_overrides(root, config_filepath=str(flat_yaml))
+
+        assert root.model.transformer.rotary_base == 20_000.0
+        assert root.model.transformer.rotary_percent == 0.5
+
+    def test_saved_config_keeps_an_edited_transformer_value(self) -> None:
+        serialized = _make_mla_model_config().as_dict()
+        serialized["transformer"]["rotary_base"] = 20_000.0
+
+        restored = ModelConfig.from_dict(serialized)
+
+        assert restored.rotary_base == restored.transformer.rotary_base == 20_000.0
+
+    def test_saved_config_with_conflicting_rotary_values_is_rejected(self) -> None:
+        """A run config that also stores the outer value is checked before the value is copied."""
+        serialized = _make_mla_model_config().as_dict()
+        serialized["rotary_base"] = 50_000.0
+        serialized["transformer"]["rotary_base"] = 20_000.0
+
+        with pytest.raises(ValueError, match="conflicts with transformer.rotary_base"):
+            ModelConfig.from_dict(serialized)
+
     def test_round_trip_restores_the_mla_transformer(self) -> None:
         serialized = _make_mla_model_config().as_dict()
         restored = ModelConfig.from_dict(serialized)
 
-        assert serialized["rotary_base"] == serialized["transformer"]["rotary_base"] == 50_000.0
+        assert "rotary_base" not in serialized
+        assert serialized["transformer"]["rotary_base"] == 50_000.0
         assert isinstance(restored, BridgeHybridMLAModelConfig)
         assert isinstance(restored.transformer, MLATransformerConfig)
         assert restored.rotary_base == 50_000.0
