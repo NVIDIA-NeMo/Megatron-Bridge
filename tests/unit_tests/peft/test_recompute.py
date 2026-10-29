@@ -84,6 +84,7 @@ def _patch_recompute_blocks(monkeypatch):
 @pytest.mark.parametrize("block_cls", [DummyTransformerBlock, DummyHybridStack])
 def test_maybe_enable_recompute_inputs_grad_patches_block(monkeypatch, block_cls):
     _patch_recompute_blocks(monkeypatch)
+    monkeypatch.setattr(recompute_mod, "_native_gradient_boundary_supported", lambda: False)
     recompute_mod.PEFT_RECOMPUTE_PATCHED.clear()
 
     model = DummyModel(block_cls)
@@ -106,6 +107,7 @@ def test_maybe_enable_recompute_inputs_grad_patches_block(monkeypatch, block_cls
 
 def test_recompute_patch_registry_tracks_model_lifetime(monkeypatch):
     _patch_recompute_blocks(monkeypatch)
+    monkeypatch.setattr(recompute_mod, "_native_gradient_boundary_supported", lambda: False)
     recompute_mod.PEFT_RECOMPUTE_PATCHED.clear()
 
     # Python permits ID reuse after an object is collected. Make that reuse
@@ -126,8 +128,11 @@ def test_recompute_patch_registry_tracks_model_lifetime(monkeypatch):
     assert second_model.block.last_input_requires_grad is True
 
 
-def test_maybe_enable_recompute_inputs_grad_recognizes_multi_adapter_parameters(monkeypatch):
+def test_maybe_enable_recompute_inputs_grad_recognizes_multi_adapter_parameters(
+    monkeypatch,
+):
     _patch_recompute_blocks(monkeypatch)
+    monkeypatch.setattr(recompute_mod, "_native_gradient_boundary_supported", lambda: False)
     recompute_mod.PEFT_RECOMPUTE_PATCHED.clear()
 
     model = DummyModel(multi_adapter=True)
@@ -136,3 +141,29 @@ def test_maybe_enable_recompute_inputs_grad_recognizes_multi_adapter_parameters(
     assert len(patched_registry) == 1
     model.block(torch.zeros(2, 2))
     assert model.block.last_input_requires_grad is True
+
+
+def test_maybe_enable_recompute_inputs_grad_skips_native_gradient_boundary(monkeypatch):
+    _patch_recompute_blocks(monkeypatch)
+    monkeypatch.setattr(recompute_mod, "_native_gradient_boundary_supported", lambda: True)
+    recompute_mod.PEFT_RECOMPUTE_PATCHED.clear()
+
+    model = DummyModel(DummyHybridStack)
+    patched_registry = maybe_enable_recompute_inputs_grad(model, set())
+
+    assert not patched_registry
+    input_tensor = torch.zeros(2, 2)
+    model.block(input_tensor)
+    assert model.block.last_input_requires_grad is False
+
+
+def test_native_gradient_boundary_detection_follows_checkpointed_forward(monkeypatch):
+    from megatron.core import recompute as megatron_recompute
+
+    # A Megatron tree with the boundary helpers but without the boundary-aware
+    # checkpointed forward still needs the hook, or adapter gradients stay at zero.
+    monkeypatch.delattr(megatron_recompute, "resolve_gradient_boundary", raising=False)
+    assert recompute_mod._native_gradient_boundary_supported() is False
+
+    monkeypatch.setattr(megatron_recompute, "resolve_gradient_boundary", lambda *args: None, raising=False)
+    assert recompute_mod._native_gradient_boundary_supported() is True
