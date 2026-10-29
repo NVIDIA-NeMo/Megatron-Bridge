@@ -93,12 +93,15 @@ explicitly. Follow Nemotron-H (`src/megatron/bridge/models/nemotronh/nemotron_h_
 
 A HybridModel family with Multi-Latent Attention (MLA) subclasses `BridgeHybridMLAModelConfig`, whose
 nested transformer config is an `MLATransformerConfig`. Megatron Core declares `rotary_base` and
-`rotary_percent` on both configs, and MLA attention reads the nested values, so the outer fields are
-views of them. With an MLA model config, the base mapping maps a YaRN `rope_scaling` dict to the MLA
-fields (`rotary_scaling_factor`, `mscale`, `beta_fast`, ...) and selects `position_embedding_type="rope"`.
-Follow GLM-5 (`src/megatron/bridge/models/glm_moe_dsa/glm5_config.py`), whose config shares its
-DSA-aware `finalize()` with the provider and whose builder resolves a custom stack spec, and
-DeepSeek-V4 (`src/megatron/bridge/models/deepseek/deepseek_v4_config.py`), which adds a transformer
+`rotary_percent` on both configs, and MLA attention reads the nested values, so only the nested config
+stores and serializes them. The outer names are constructor arguments and views of the nested values;
+a constructor value that conflicts with a nested value raises. With an MLA model config, the base
+mapping maps a YaRN `rope_scaling` dict to the MLA fields (`rotary_scaling_factor`, `mscale`,
+`beta_fast`, ...) and selects `position_embedding_type="rope"`. Put checks in the config's
+`validate()`, which must not change the config, and the derived settings in `finalize()`, which runs
+`validate()` first. Follow GLM-5 (`src/megatron/bridge/models/glm_moe_dsa/glm5_config.py`), whose config
+shares its DSA-aware checks and updates with the provider and whose builder resolves a custom stack spec,
+and DeepSeek-V4 (`src/megatron/bridge/models/deepseek/deepseek_v4_config.py`), which adds a transformer
 field that recipes set.
 
 ### When you need a custom config class

@@ -20,6 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from megatron.core.transformer.experimental_attention_variant.dsa import is_dsa_skip_topk_layer
 from transformers import GlmMoeDsaConfig
 
 from megatron.bridge import AutoBridge
@@ -28,7 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedML
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 from megatron.bridge.models.glm_moe_dsa.glm5_config import GLM5ModelBuilder, GLM5ModelConfig
 from megatron.bridge.models.glm_moe_dsa.glm5_hybrid import GLMHybridStack
-from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider, validate_glm_hybrid_pattern
 from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
@@ -487,6 +488,13 @@ _GLM51_OVERRIDES = dict(
 )
 
 
+def _glm52_pattern_split_at_a_dsa_reuse_layer() -> str:
+    """Return GLM-5.2's pattern with one pipeline boundary before a layer that reuses DSA top-k indices."""
+    main = "D-" * 3 + "DE" * 75
+    reuse_layer = next(layer for layer in range(1, 78) if is_dsa_skip_topk_layer(layer + 1, 3, 4))
+    return main[: 2 * reuse_layer] + "|" + main[2 * reuse_layer :]
+
+
 def _same_value(left: object, right: object) -> bool:
     # finalize() creates a new init-method partial on each config.
     if isinstance(left, partial) and isinstance(right, partial):
@@ -554,6 +562,65 @@ class TestGLM5BridgeModelConfig:
 
         with pytest.raises(ValueError, match="non-VPP execution only"):
             model_config.finalize()
+
+    def test_validate_accepts_an_unsplit_pattern_without_changing_the_config(self) -> None:
+        """finalize() places the pipeline boundaries, so validate() checks the pattern it will set."""
+        model_config = GLM5Bridge().hf_config_to_model_config(_glm5_hf_config())
+        model_config.pipeline_model_parallel_size = 4
+        model_config.tensor_model_parallel_size = 2
+        serialized = model_config.as_dict()
+
+        model_config.validate()
+
+        assert model_config.as_dict() == serialized
+        model_config.finalize()
+        assert model_config.hybrid_layer_pattern.split("/")[0].count("|") == 3
+        assert model_config.sequence_parallel is True
+
+    @pytest.mark.parametrize(
+        ("settings", "message"),
+        [
+            ({"pipeline_model_parallel_size": 2, "virtual_pipeline_model_parallel_size": 2}, "non-VPP execution only"),
+            (
+                {
+                    "pipeline_model_parallel_size": 2,
+                    "pipeline_model_parallel_layout": [["embedding"] + ["decoder"] * 39, ["decoder"] * 39 + ["loss"]],
+                },
+                "pipe separators",
+            ),
+            ({"pipeline_model_parallel_size": 40}, r"PP=40 exceeds the \d+ DSA top-k sharing groups"),
+            (
+                {
+                    "pipeline_model_parallel_size": 2,
+                    "hybrid_layer_pattern": _glm52_pattern_split_at_a_dsa_reuse_layer(),
+                },
+                "starts on a DSA reuse layer",
+            ),
+            ({"recompute_granularity": "selective", "recompute_modules": ["core_attn"]}, "core_attn recompute"),
+            ({"fp8": "hybrid"}, "requires BF16/FP32"),
+        ],
+        ids=["vpp", "gpt-layout", "too-many-stages", "reuse-boundary", "core-attn-recompute", "fp8"],
+    )
+    def test_provider_and_model_config_share_validation(self, settings, message) -> None:
+        hf_config = _glm5_hf_config()
+        bridge = GLM5Bridge()
+        model_config = bridge.hf_config_to_model_config(hf_config)
+        with pytest.warns(FutureWarning, match="deprecated for builder-backed models"):
+            provider = bridge.provider_bridge(SimpleNamespace(config=hf_config))
+
+        for config in (model_config, provider):
+            for name, value in settings.items():
+                setattr(config, name, value)
+            derived = ("hybrid_layer_pattern", "num_layers", "moe_layer_freq", "mtp_hybrid_override_pattern")
+            before = {name: getattr(config, name) for name in derived}
+
+            with pytest.raises(ValueError, match=message):
+                validate_glm_hybrid_pattern(config)
+            assert {name: getattr(config, name) for name in derived} == before
+            with pytest.raises(ValueError, match=message):
+                config.finalize()
+        with pytest.raises(ValueError, match=message):
+            model_config.validate()
 
     def test_builder_uses_the_glm_hybrid_stack(self) -> None:
         model_config = GLM5Bridge().hf_config_to_model_config(

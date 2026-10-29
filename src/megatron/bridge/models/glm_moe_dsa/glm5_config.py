@@ -20,7 +20,7 @@ from typing import ClassVar
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.glm_moe_dsa.glm5_hybrid import glm_hybrid_stack_spec
-from megatron.bridge.models.glm_moe_dsa.glm5_provider import finalize_glm_hybrid_pattern
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import finalize_glm_hybrid_pattern, validate_glm_hybrid_pattern
 from megatron.bridge.models.hybrid import BridgeHybridModelBuilder
 from megatron.bridge.models.hybrid.model_config import BridgeHybridMLAModelConfig
 
@@ -29,14 +29,21 @@ from megatron.bridge.models.hybrid.model_config import BridgeHybridMLAModelConfi
 class GLM5ModelConfig(BridgeHybridMLAModelConfig):
     """GLM-5 as DSA, dense and MoE Hybrid layers with MLA, the builder counterpart of ``GLM5ModelProvider``.
 
-    ``finalize()`` places DSA-aligned pipeline boundaries in ``hybrid_layer_pattern`` and derives the
+    ``validate()`` checks GLM's physical layout and training settings without changing the config.
+    ``finalize()`` then places DSA-aligned pipeline boundaries in ``hybrid_layer_pattern`` and derives the
     MTP pattern and MoE layer schedule, as the provider does, before the Hybrid finalization.
     """
 
     builder: ClassVar[str] = "megatron.bridge.models.glm_moe_dsa.glm5_config.GLM5ModelBuilder"
 
+    def validate(self) -> None:
+        """Check the Hybrid settings and GLM's physical layout without changing the config."""
+        super().validate()
+        validate_glm_hybrid_pattern(self)
+
     def finalize(self) -> None:
-        """Validate the physical layout and preserve DSA sharing within each pipeline stage."""
+        """Validate, then preserve DSA sharing within each pipeline stage and derive GLM's layer settings."""
+        self.validate()
         finalize_glm_hybrid_pattern(self)
         super().finalize()
 
