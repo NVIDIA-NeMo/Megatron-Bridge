@@ -68,4 +68,7 @@ def test_text_9b_pretrain_deterministic_applies_determinism():
     assert cfg.model.gdn_kernel_backend == "torch"
     assert cfg.model.tensor_model_parallel_size == base.model.tensor_model_parallel_size == 1
     assert cfg.train.global_batch_size == base.train.global_batch_size
+    # MBS 1 avoids the first-step OOM from the unfused FP32 cross-entropy logits at MBS 2.
+    assert cfg.train.micro_batch_size == 1
+    assert base.train.micro_batch_size == 2
     assert cfg.env_vars == DETERMINISM_ENV_VARS
