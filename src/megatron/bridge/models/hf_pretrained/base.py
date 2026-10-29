@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import fnmatch
 import logging
 import shutil
 from abc import ABC, abstractmethod
@@ -54,6 +55,30 @@ class PreTrainedBase(ABC):
     model_name_or_path: Union[str, Path]
     ARTIFACTS: ClassVar[List[str]] = []
     OPTIONAL_ARTIFACTS: ClassVar[List[str]] = []
+    # Source files of each artifact, copied verbatim on save when the artifact was loaded from the source.
+    SOURCE_ARTIFACT_FILES: ClassVar[Dict[str, List[str]]] = {
+        "tokenizer": [
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "added_tokens.json",
+            "vocab.json",
+            "vocab.txt",
+            "merges.txt",
+            "tokenizer.model",
+            "*.tiktoken",
+            "chat_template.jinja",
+            "chat_template.json",
+        ],
+        "processor": [
+            "processor_config.json",
+            "preprocessor_config.json",
+            "video_preprocessor_config.json",
+            "chat_template.jinja",
+            "chat_template.json",
+        ],
+        "image_processor": ["preprocessor_config.json"],
+    }
 
     def __init__(self, **kwargs):
         self._state_dict_accessor: Optional[StateDict] = None
@@ -230,6 +255,49 @@ class PreTrainedBase(ABC):
 
         return copied_files
 
+    def _mark_artifact_replaced(self, name: str) -> None:
+        """Record that the user set artifact ``name``, so saving serializes it instead of copying source files."""
+        if not hasattr(self, "_replaced_artifacts"):
+            self._replaced_artifacts: set[str] = set()
+        self._replaced_artifacts.add(name)
+
+    def _copy_source_artifact_files(self, save_path: Path, *, revision: str | None) -> None:
+        """Replace the saved tokenizer and processor files with the source checkpoint's own files.
+
+        ``save_pretrained`` re-serializes these artifacts, which can change them, e.g. drop ``vocab.json`` /
+        ``merges.txt`` or switch a fast image processor to the slow one. For each artifact loaded from the
+        source, copy its source files and remove the files saved for it that the source does not have. An
+        artifact without source files keeps its ``save_pretrained`` output.
+        """
+        source_path = getattr(self, "model_name_or_path", None)
+        if source_path is None or self.init_kwargs.get("subfolder"):
+            return
+        replaced = getattr(self, "_replaced_artifacts", set())
+        names = [
+            name
+            for name in (*self.ARTIFACTS, *self.OPTIONAL_ARTIFACTS)
+            if name in self.SOURCE_ARTIFACT_FILES
+            and name not in replaced
+            and getattr(self, f"_{name}", None) is not None
+        ]
+        patterns = list(dict.fromkeys(pattern for name in names for pattern in self.SOURCE_ARTIFACT_FILES[name]))
+        if not patterns:
+            return
+        copied = {
+            Path(file).name
+            for file in self._copy_custom_modeling_files(
+                source_path, save_path, file_patterns=patterns, revision=revision
+            )
+        }
+        for name in names:
+            name_patterns = self.SOURCE_ARTIFACT_FILES[name]
+            if not any(fnmatch.fnmatch(file, pattern) for file in copied for pattern in name_patterns):
+                continue
+            for pattern in name_patterns:
+                for path in save_path.glob(pattern):
+                    if path.name not in copied:
+                        path.unlink()
+
     def save_artifacts(
         self,
         save_directory: Union[str, Path],
@@ -308,6 +376,8 @@ class PreTrainedBase(ABC):
                         "GenerationConfig.save_pretrained() rejected the source artifact; "
                         "preserved the original generation_config.json instead."
                     )
+
+        self._copy_source_artifact_files(save_path, revision=revision)
 
         # Download/copy additional files if specified
         if additional_files:

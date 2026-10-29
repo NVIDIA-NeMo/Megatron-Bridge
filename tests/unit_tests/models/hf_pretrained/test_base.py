@@ -20,7 +20,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 from transformers.configuration_utils import PretrainedConfig
@@ -321,7 +321,8 @@ def test_save_artifacts_preserves_generation_config_from_pinned_hub_revision(tmp
     ):
         base.save_artifacts(tmp_path / "target")
 
-    list_repo_files.assert_called_once_with("org/model", revision=expected_revision)
+    # One listing for the generation config, one for the tokenizer files (none in this repo).
+    assert list_repo_files.call_args_list == [call("org/model", revision=expected_revision)] * 2
     hf_hub_download.assert_called_once()
     assert (tmp_path / "target" / "generation_config.json").read_text() == generation_config
 
@@ -710,7 +711,7 @@ def test_additional_files_empty_list():
 
         source_dir = tmp_path / "source"
         source_dir.mkdir()
-        (source_dir / "vocab.json").write_text('{"vocab": "data"}')
+        (source_dir / "extra.json").write_text('{"extra": "data"}')
 
         target_dir = tmp_path / "target"
 
@@ -724,9 +725,99 @@ def test_additional_files_empty_list():
         base.save_artifacts(target_dir, additional_files=[])
 
         # Verify no additional files were copied
-        assert not (target_dir / "vocab.json").exists()
+        assert not (target_dir / "extra.json").exists()
 
         print("✅ test_additional_files_empty_list passed")
+
+
+class MockPreTrainedProcessorBase(MockPreTrainedBase):
+    """Mock with a processor, whose save_pretrained writes re-serialized files."""
+
+    OPTIONAL_ARTIFACTS = ["generation_config", "processor"]
+
+    def __init__(self, model_name_or_path=None, **kwargs):
+        super().__init__(model_name_or_path=model_name_or_path, **kwargs)
+        self._processor = Mock()
+
+    @property
+    def processor(self):
+        """Mock processor property."""
+        return self._processor
+
+
+def _writes(files):
+    """Return a save_pretrained side effect that writes ``files`` (name -> text) into the save directory."""
+
+    def save_pretrained(save_directory):
+        for name, text in files.items():
+            (Path(save_directory) / name).write_text(text)
+
+    return save_pretrained
+
+
+def _source_with_tokenizer_and_processor(source_dir):
+    source_dir.mkdir()
+    source_files = {
+        "tokenizer.json": '{"source": "tokenizer"}',
+        "tokenizer_config.json": '{"added_tokens_decoder": {}}',
+        "vocab.json": "{}",
+        "merges.txt": "a b",
+        "chat_template.jinja": "{{ messages }}",
+        "preprocessor_config.json": '{"image_processor_type": "Qwen2VLImageProcessorFast"}',
+        "video_preprocessor_config.json": "{}",
+    }
+    for name, text in source_files.items():
+        (source_dir / name).write_text(text)
+    return source_files
+
+
+def test_save_artifacts_copies_source_tokenizer_and_processor_files(tmp_path):
+    """Test source tokenizer / processor files replace their re-serialized versions."""
+    source_files = _source_with_tokenizer_and_processor(tmp_path / "source")
+    target_dir = tmp_path / "target"
+    base = MockPreTrainedProcessorBase(model_name_or_path=str(tmp_path / "source"))
+    base._config = Mock(save_pretrained=Mock())
+    base._tokenizer.save_pretrained.side_effect = _writes(
+        {"tokenizer.json": '{"resaved": true}', "tokenizer_config.json": "{}", "special_tokens_map.json": "{}"}
+    )
+    base._processor.save_pretrained.side_effect = _writes(
+        {
+            "preprocessor_config.json": '{"image_processor_type": "Qwen2VLImageProcessor"}',
+            "processor_config.json": "{}",
+        }
+    )
+
+    base.save_artifacts(target_dir)
+
+    assert {path.name: path.read_text() for path in target_dir.iterdir()} == source_files
+
+
+def test_save_artifacts_keeps_replaced_artifacts_and_skips_absent_ones(tmp_path):
+    """Test a tokenizer set by the user keeps its save_pretrained output and an absent processor copies nothing."""
+    _source_with_tokenizer_and_processor(tmp_path / "source")
+    target_dir = tmp_path / "target"
+    base = MockPreTrainedProcessorBase(model_name_or_path=str(tmp_path / "source"))
+    base._config = Mock(save_pretrained=Mock())
+    base._tokenizer.save_pretrained.side_effect = _writes({"tokenizer.json": '{"user": "tokenizer"}'})
+    base._mark_artifact_replaced("tokenizer")
+    base._processor = None
+
+    base.save_artifacts(target_dir)
+
+    assert {path.name: path.read_text() for path in target_dir.iterdir()} == {
+        "tokenizer.json": '{"user": "tokenizer"}'
+    }
+
+
+def test_causal_lm_setters_mark_artifacts_replaced():
+    """Test PreTrainedCausalLM's artifact setters opt the artifact out of the source copy."""
+    from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+    model = PreTrainedCausalLM("unused")
+    model.tokenizer = Mock()
+    model.processor = None
+
+    assert model._replaced_artifacts == {"tokenizer", "processor"}
 
 
 def main():

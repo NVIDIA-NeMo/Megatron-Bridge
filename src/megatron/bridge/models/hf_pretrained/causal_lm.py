@@ -298,6 +298,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
     def tokenizer(self, value: PreTrainedTokenizer):
         """Set the tokenizer manually."""
         self._tokenizer = value
+        self._mark_artifact_replaced("tokenizer")
 
     @property
     def processor(self) -> ProcessorMixin:
@@ -310,6 +311,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
     def processor(self, value: ProcessorMixin):
         """Set the processor manually."""
         self._processor = value
+        self._mark_artifact_replaced("processor")
 
     @property
     def image_processor(self) -> Optional[Any]:
@@ -322,6 +324,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
     def image_processor(self, value: Any):
         """Set the image processor manually."""
         self._image_processor = value
+        self._mark_artifact_replaced("image_processor")
 
     @property
     def model_name_or_path(self) -> Optional[Union[str, Path]]:

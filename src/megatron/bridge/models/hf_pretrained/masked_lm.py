@@ -173,6 +173,7 @@ class PreTrainedMaskedLM(PreTrainedBase, Generic[MaskedLMType]):
     def tokenizer(self, value: PreTrainedTokenizer):
         """Set the tokenizer manually."""
         self._tokenizer = value
+        self._mark_artifact_replaced("tokenizer")
 
     @property
     def model_name_or_path(self) -> Optional[Union[str, Path]]:

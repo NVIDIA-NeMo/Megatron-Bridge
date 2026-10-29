@@ -97,6 +97,7 @@ class PreTrainedTokenClassification(
     def processor(self, value: ProcessorMixin | None) -> None:
         """Set the multimodal processor manually."""
         self._processor = value
+        self._mark_artifact_replaced("processor")
 
     @property
     def image_processor(self) -> BaseImageProcessor | None:
@@ -109,3 +110,4 @@ class PreTrainedTokenClassification(
     def image_processor(self, value: BaseImageProcessor | None) -> None:
         """Set the image processor manually."""
         self._image_processor = value
+        self._mark_artifact_replaced("image_processor")
