@@ -25,12 +25,16 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.core.transformer import TransformerConfig
 from transformers import PreTrainedConfig
 
 from megatron.bridge.models.common import Serializable
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.training.utils.config_utils import (
     _ConfigContainerBase,
     _materialize_gtp_weight_shards,
+    _prepare_config_for_serialization,
+    _serialize_config_value,
     create_ddp_config,
 )
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
@@ -103,6 +107,67 @@ class ComplexConfigContainer(_ConfigContainerBase):
     nested_data: NestedDataclass
     items: list[str]
     metadata: dict[str, int]
+
+
+@dataclass
+class SerializationConfigContainer(_ConfigContainerBase):
+    model: TransformerConfig
+    metadata: dict
+
+
+def test_bridge_serialization_preserves_nested_layout_and_core_field_policy(tmp_path):
+    model = TransformerConfig(
+        num_layers=1, hidden_size=16, num_attention_heads=2, pipeline_model_parallel_layout="EtL"
+    )
+    model.grad_scale_func = lambda value: value
+    layout = model.pipeline_model_parallel_layout
+    config = SerializationConfigContainer(
+        model=model,
+        metadata={
+            "layouts": [layout],
+            "gtp": {"tensor_model_parallel_size": 2, "gtp_weight_remat_size": 2},
+        },
+    )
+    serialized = config.to_dict()
+    assert serialized["model"]["pipeline_model_parallel_layout"] == "EtL"
+    assert "grad_scale_func" not in serialized["model"]
+    assert serialized["model"]["activation_func"]["_call_"] is False
+    assert serialized["metadata"]["layouts"] == ["EtL"]
+    assert serialized["metadata"]["gtp"]["tensor_parallel_num_weight_shards"] == 4
+    assert model.pipeline_model_parallel_layout is layout
+    assert config.metadata["layouts"][0] is layout
+    assert "tensor_parallel_num_weight_shards" not in config.metadata["gtp"]
+
+    yaml_path = tmp_path / "run_config.yaml"
+    config.to_yaml(str(yaml_path))
+    restored = SerializationConfigContainer.from_yaml(str(yaml_path), mode=InstantiationMode.STRICT)
+    assert restored.model.pipeline_model_parallel_layout.input_data == "EtL"
+    assert restored.to_dict() == serialized
+
+
+def test_preparing_config_does_not_repeat_construction_and_preserves_shared_values():
+    config = SimpleDataclass()
+    with patch.object(SimpleDataclass, "__init__", side_effect=AssertionError("constructor repeated")):
+        prepared = _prepare_config_for_serialization([config, config])
+    assert prepared[0] is prepared[1]
+    assert prepared[0] is not config
+    assert prepared[0] == config
+
+
+def test_builder_config_keeps_builder_and_nested_layout_without_runtime_hooks():
+    transformer = TransformerConfig(
+        num_layers=1, hidden_size=16, num_attention_heads=2, pipeline_model_parallel_layout="EtL"
+    )
+    model = GPTModelConfig(transformer=transformer, vocab_size=128, seq_length=16)
+    model.pre_wrap_hooks.append(lambda module: module)
+    serialized = _serialize_config_value(model)
+    assert serialized["_builder_"] == model.builder
+    assert serialized["transformer"]["pipeline_model_parallel_layout"] == "EtL"
+    assert serialized["transformer"]["activation_func"]["_call_"] is False
+    assert "pre_wrap_hooks" not in serialized
+    assert model.transformer is transformer
+    assert transformer.pipeline_model_parallel_layout.input_data == "EtL"
+    assert len(model.pre_wrap_hooks) == 1
 
 
 @dataclass
@@ -394,13 +459,13 @@ class TestConfigContainer_ToDict:
         assert "_target_" in result
 
 
-class TestConfigContainer_ConvertValueToDict:
-    """Test ConfigContainer._convert_value_to_dict method."""
+class TestConfigValueSerialization:
+    """Test Bridge config value serialization."""
 
     def test_convert_config_container(self):
         """Test converting ConfigContainer instance."""
         config = TestConfigContainer(name="convert_test", value=999)
-        result = TestConfigContainer._convert_value_to_dict(config)
+        result = _serialize_config_value(config)
 
         expected = {
             "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
@@ -414,7 +479,7 @@ class TestConfigContainer_ConvertValueToDict:
     def test_convert_regular_dataclass(self):
         """Test converting regular dataclass."""
         simple = SimpleDataclass(name="simple_test", value=555)
-        result = TestConfigContainer._convert_value_to_dict(simple)
+        result = _serialize_config_value(simple)
 
         expected = {
             "_target_": "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass",
@@ -427,7 +492,7 @@ class TestConfigContainer_ConvertValueToDict:
     def test_convert_list(self):
         """Test converting list with nested dataclasses."""
         items = [SimpleDataclass(name="item1", value=1), "string_item", 42]
-        result = TestConfigContainer._convert_value_to_dict(items)
+        result = _serialize_config_value(items)
 
         assert len(result) == 3
         assert result[0]["_target_"] == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
@@ -438,7 +503,7 @@ class TestConfigContainer_ConvertValueToDict:
     def test_convert_tuple(self):
         """Test converting tuple."""
         items = (SimpleDataclass(name="tuple_item"), "string")
-        result = TestConfigContainer._convert_value_to_dict(items)
+        result = _serialize_config_value(items)
 
         assert len(result) == 2
         assert result[0]["_target_"] == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
@@ -451,7 +516,7 @@ class TestConfigContainer_ConvertValueToDict:
             "value": 123,
             "nested": {"inner": SimpleDataclass(name="inner_config")},
         }
-        result = TestConfigContainer._convert_value_to_dict(data)
+        result = _serialize_config_value(data)
 
         assert result["config"]["_target_"] == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
         assert result["value"] == 123
@@ -474,17 +539,17 @@ class TestConfigContainer_ConvertValueToDict:
         obj = MySerializable()
         assert isinstance(obj, Serializable)  # runtime_checkable sanity check
 
-        result = TestConfigContainer._convert_value_to_dict(obj)
+        result = _serialize_config_value(obj)
 
         assert result == {"_target_": "my.module.MySerializable", "x": 42}
 
     def test_convert_primitive_types(self):
         """Test converting primitive types."""
-        assert TestConfigContainer._convert_value_to_dict(42) == 42
-        assert TestConfigContainer._convert_value_to_dict("string") == "string"
-        assert TestConfigContainer._convert_value_to_dict(True) is True
-        assert TestConfigContainer._convert_value_to_dict(None) is None
-        assert TestConfigContainer._convert_value_to_dict(3.14) == 3.14
+        assert _serialize_config_value(42) == 42
+        assert _serialize_config_value("string") == "string"
+        assert _serialize_config_value(True) is True
+        assert _serialize_config_value(None) is None
+        assert _serialize_config_value(3.14) == 3.14
 
     def test_convert_excludes_private_fields_in_dataclass(self):
         """Test that private fields are excluded from dataclass conversion."""
@@ -495,7 +560,7 @@ class TestConfigContainer_ConvertValueToDict:
             _private_field: str = "private"
 
         obj = DataclassWithPrivate()
-        result = TestConfigContainer._convert_value_to_dict(obj)
+        result = _serialize_config_value(obj)
 
         assert "public_field" in result
         assert "_private_field" not in result
@@ -843,7 +908,7 @@ class TestConfigContainer_CallablesAndPartials:
     def test_dataclass_with_callables_to_dict(self):
         """Test converting dataclass with callables to dict."""
         callable_data = CallableDataclass()
-        result = TestConfigContainer._convert_value_to_dict(callable_data)
+        result = _serialize_config_value(callable_data)
 
         # Verify the structure includes _target_
         assert "_target_" in result
@@ -878,7 +943,7 @@ class TestConfigContainer_CallablesAndPartials:
     def test_partial_function_handling(self):
         """Test handling of functools.partial objects."""
         partial_func = functools.partial(loss_function, reduction="sum")
-        result = TestConfigContainer._convert_value_to_dict(partial_func)
+        result = _serialize_config_value(partial_func)
 
         # Partial functions are callables and may be excluded or handled specially
         # The exact behavior depends on the implementation
@@ -895,7 +960,7 @@ class TestConfigContainer_CallablesAndPartials:
         ]
 
         for i, callable_obj in enumerate(callables_to_test):
-            result = TestConfigContainer._convert_value_to_dict(callable_obj)
+            result = _serialize_config_value(callable_obj)
             print(f"Callable {i} ({type(callable_obj).__name__}) result: {result}")
 
     def test_config_with_callables_roundtrip_behavior(self):
@@ -921,7 +986,7 @@ class TestConfigContainer_CallablesAndPartials:
     def test_callable_dataclass_field_exclusion(self):
         """Test which fields are excluded when dataclass contains callables."""
         callable_data = CallableDataclass()
-        result = TestConfigContainer._convert_value_to_dict(callable_data)
+        result = _serialize_config_value(callable_data)
 
         # Document which fields are preserved vs excluded
         expected_non_callable_fields = ["name", "regular_value"]

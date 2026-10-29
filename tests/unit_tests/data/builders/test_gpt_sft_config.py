@@ -25,7 +25,7 @@ from megatron.bridge.data.builders.gpt_sft import (
 )
 from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.sources.hf import resolve_hf_dataset_source
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 
 
 pytestmark = pytest.mark.unit
@@ -76,7 +76,7 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
         do_test=False,
     )
 
-    serialized = ConfigContainer._convert_value_to_dict(config)
+    serialized = _serialize_config_value(config)
     restored = instantiate(serialized)
 
     assert isinstance(restored, GPTSFTDatasetConfig)
@@ -98,7 +98,7 @@ def test_in_batch_config_round_trip_is_declarative_and_serializable(tmp_path):
         dataloader_type="single",
     )
 
-    serialized = ConfigContainer._convert_value_to_dict(config)
+    serialized = _serialize_config_value(config)
     restored = instantiate(serialized)
 
     assert isinstance(restored, GPTSFTDatasetConfig)
@@ -227,7 +227,7 @@ def test_blend_config_round_trip_is_declarative_and_serializable(tmp_path):
         do_test=False,
     )
 
-    serialized = ConfigContainer._convert_value_to_dict(config)
+    serialized = _serialize_config_value(config)
     restored = instantiate(serialized)
 
     assert isinstance(restored, GPTSFTDatasetConfig)

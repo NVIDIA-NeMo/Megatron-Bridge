@@ -46,13 +46,13 @@ class MambaModelProvider(HybridModelProvider):
 
     def to_cfg_dict(self) -> dict[str, Any]:
         """Serialize without the deprecated ``mamba_stack_spec`` field."""
-        from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+        from megatron.bridge.training.utils.config_utils import _serialize_config_value
 
         result = {"_target_": f"{self.__class__.__module__}.{self.__class__.__qualname__}"}
         for field in fields(self):
             if field.name.startswith("_") or field.name == "mamba_stack_spec":
                 continue
-            result[field.name] = _ConfigContainerBase._convert_value_to_dict(getattr(self, field.name))
+            result[field.name] = _serialize_config_value(getattr(self, field.name))
         return result
 
 

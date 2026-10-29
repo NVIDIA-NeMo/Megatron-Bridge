@@ -27,7 +27,7 @@ from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr impor
     Qwen3ASRConfig,
     Qwen3ASRThinkerConfig,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 
 
 pytestmark = [pytest.mark.unit]
@@ -156,7 +156,7 @@ def test_qwen3_asr_thinker_config_serializes_nested_subconfigs_for_run_config():
         },
     )
 
-    serialized = ConfigContainer._convert_value_to_dict(config)
+    serialized = _serialize_config_value(config)
 
     assert serialized["audio_config"]["d_model"] == 1024
     assert serialized["text_config"]["hidden_size"] == 2048

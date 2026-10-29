@@ -42,7 +42,7 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 from megatron.bridge.utils.instantiate_utils import instantiate
 
 
@@ -315,7 +315,7 @@ class TestQwen35TokenClassificationBridge:
         assert provider.share_embeddings_and_output_weights is False
         serialized_fields = {field.name for field in fields(provider)}
         assert {"num_labels", "classifier_dropout"} <= serialized_fields
-        serialized = ConfigContainer._convert_value_to_dict(provider)
+        serialized = _serialize_config_value(provider)
         assert serialized["_target_"].endswith("Qwen35TokenClassificationModelProvider")
         assert serialized["num_labels"] == 3
         assert serialized["classifier_dropout"] == 0.2
@@ -326,7 +326,7 @@ class TestQwen35TokenClassificationBridge:
 
     def test_provider_reconstructs_classification_head(self, mock_pretrained):
         provider = Qwen35TokenClassificationBridge().provider_bridge(mock_pretrained)
-        restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+        restored = instantiate(_serialize_config_value(provider))
         restored.init_method = lambda weight: torch.nn.init.constant_(weight, 0.125)
         restored.perform_initialization = True
         tp_group = object()

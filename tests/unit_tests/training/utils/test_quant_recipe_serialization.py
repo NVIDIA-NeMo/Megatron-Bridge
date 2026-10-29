@@ -21,7 +21,7 @@ from megatron.training.utils.checkpoint_utils import read_run_config
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.model_load_save import load_model_config
-from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+from megatron.bridge.training.utils.config_utils import _ConfigContainerBase, _serialize_config_value
 from megatron.bridge.utils.instantiate_utils import instantiate, target_allowlist
 
 
@@ -140,7 +140,7 @@ def test_unsupported_quant_recipe_matcher_fails_loudly() -> None:
     recipe = RecipeConfig(matchers=[_UnsupportedMatcher()], config_dict={})
 
     with pytest.raises(TypeError, match="Unsupported quantization recipe matcher type"):
-        _ConfigContainerBase._convert_value_to_dict(recipe)
+        _serialize_config_value(recipe)
 
 
 def test_custom_serializable_matcher_uses_its_config_mapping() -> None:
@@ -149,7 +149,7 @@ def test_custom_serializable_matcher_uses_its_config_mapping() -> None:
         config_dict={"custom": {}},
     )
 
-    serialized = _ConfigContainerBase._convert_value_to_dict(recipe)
+    serialized = _serialize_config_value(recipe)
     restored = instantiate(serialized)
 
     assert isinstance(restored.matchers[0], GlobMatcher)
@@ -162,7 +162,7 @@ def test_dataclass_matcher_uses_base_config_serialization() -> None:
         matchers=[SerializableDataclassMatcher("decoder.layers.0.*", "custom")],
         config_dict={"custom": {}},
     )
-    serialized = _ConfigContainerBase._convert_value_to_dict(recipe)
+    serialized = _serialize_config_value(recipe)
     matcher_target = serialized["matchers"][0]["_target_"]
     target_allowlist.add_exact(matcher_target)
     try:
@@ -179,14 +179,14 @@ def test_recipe_subclass_without_serializer_fails_loudly() -> None:
     recipe = _RecipeConfigSubclass(matchers=[], config_dict={})
 
     with pytest.raises(TypeError, match="RecipeConfig subclasses must implement to_cfg_dict"):
-        _ConfigContainerBase._convert_value_to_dict(recipe)
+        _serialize_config_value(recipe)
 
 
 def test_upstream_recipe_serializer_takes_precedence(monkeypatch) -> None:
     recipe = _quant_recipe()
     monkeypatch.setattr(recipe, "to_cfg_dict", lambda: {"serializer": "upstream"}, raising=False)
 
-    assert _ConfigContainerBase._convert_value_to_dict(recipe) == {"serializer": "upstream"}
+    assert _serialize_config_value(recipe) == {"serializer": "upstream"}
 
 
 def test_recipe_class_reference_is_not_treated_as_legacy_stub(tmp_path) -> None:

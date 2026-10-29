@@ -21,7 +21,7 @@ from megatron.bridge.data.builders.direct_hf_sft import (
     select_direct_hf_sft_collate,
 )
 from megatron.bridge.data.sources.hf import resolve_hf_dataset_source
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
@@ -496,7 +496,7 @@ def test_direct_hf_sft_config_round_trip_is_declarative():
         enable_in_batch_packing=True,
     )
 
-    serialized = ConfigContainer._convert_value_to_dict(config)
+    serialized = _serialize_config_value(config)
     restored = instantiate(serialized)
 
     assert isinstance(restored, DirectHFSFTDatasetConfig)
@@ -543,7 +543,7 @@ def test_prompt_completion_config_round_trip_is_declarative():
         do_test=False,
     )
 
-    restored = instantiate(ConfigContainer._convert_value_to_dict(config))
+    restored = instantiate(_serialize_config_value(config))
 
     assert isinstance(restored.preprocessing, PromptCompletionSFTPreprocessingConfig)
     assert restored.preprocessing.prompt_column == "question"

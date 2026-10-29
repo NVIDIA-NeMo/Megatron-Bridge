@@ -20,7 +20,7 @@ import torch
 
 from megatron.bridge.models import gpt_provider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 from megatron.bridge.utils.instantiate_utils import instantiate
 
 
@@ -97,7 +97,7 @@ class TestGPTModelProvider:
             logit_dtype=torch.float32,
         )
 
-        restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+        restored = instantiate(_serialize_config_value(provider))
 
         assert restored.logit_dtype is torch.float32
 
