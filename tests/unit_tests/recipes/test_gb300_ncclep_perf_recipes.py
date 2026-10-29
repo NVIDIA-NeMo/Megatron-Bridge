@@ -58,9 +58,11 @@ _GB300_NCCLEP_RECIPES = (
 )
 
 # VRNVL72 recipes on NCCL EP: aliases that share the GB300 NCCL EP builder instead of a HybridEP base, and
-# the DeepSeek V3 recipe that mirrors the MLPerf execution settings.
+# the DeepSeek V3 recipe that mirrors the MLPerf execution settings, with its proxies.
 _VRNVL72_NCCLEP_RECIPES = (
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config"),
 )
@@ -208,3 +210,48 @@ def test_deepseek_v3_vrnvl72_fp8mx_mlperf_exec_keeps_the_base_training_setup() -
     assert cfg.optimizer.optimizer_cuda_graph is True
     assert cfg.dist.use_gloo_process_groups is False
     assert cfg.dataset.create_attention_mask is False
+
+
+@pytest.mark.parametrize(
+    ("factory_name", "expert_model_parallel_size", "global_batch_size"),
+    (
+        ("deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config", 32, 4096),
+        ("deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config", 4, 128),
+    ),
+)
+def test_deepseek_v3_vrnvl72_mlperf_exec_proxies_keep_the_parent_execution_settings(
+    factory_name: str, expert_model_parallel_size: int, global_batch_size: int
+) -> None:
+    module = "deepseek.vrnvl72.deepseek_v3"
+    parent = _build(module, "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config")
+    cfg = _build(module, factory_name)
+
+    # A shallower model without pipelining on fewer GPUs.
+    assert cfg.model.num_layers == 13
+    assert (cfg.model.pipeline_model_parallel_size, cfg.model.virtual_pipeline_model_parallel_size) == (1, None)
+    assert cfg.model.expert_model_parallel_size == expert_model_parallel_size
+    assert cfg.train.global_batch_size == global_batch_size
+
+    # The MLPerf execution settings and environment carry over unchanged.
+    assert cfg.env_vars == parent.env_vars
+    for name in (
+        "moe_token_dispatcher_type",
+        "moe_flex_dispatcher_backend",
+        "moe_use_grouped_tensor",
+        "moe_flex_dispatcher_num_sms",
+        "moe_expert_rank_capacity_factor",
+        "moe_paged_stash_buffer_size_factor_cuda",
+        "moe_router_padding_for_quantization",
+        "fused_residual_rmsnorm",
+        "mla_down_proj_fusion",
+        "use_fused_mla_kv_rope_quant",
+        "use_grouped_gemm_for_shared_expert",
+        "moe_shared_expert_glu_interleave_size",
+        "cuda_graph_impl",
+        "cuda_graph_warmup_steps",
+        "fp8_output_proj",
+    ):
+        assert getattr(cfg.model, name) == getattr(parent.model, name), name
+    assert cfg.optimizer.optimizer_cuda_graph is parent.optimizer.optimizer_cuda_graph is True
+    assert cfg.dist.use_gloo_process_groups is parent.dist.use_gloo_process_groups is False
+    assert cfg.dataset.create_attention_mask is parent.dataset.create_attention_mask is False

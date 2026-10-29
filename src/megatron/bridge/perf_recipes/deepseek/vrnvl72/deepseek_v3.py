@@ -472,6 +472,67 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 MLPerf-execution proxy: 13 decoder layers on 64 VRNVL72 GPUs.
+
+    Shrinks ``deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config`` the way
+    ``deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config`` shrinks its parent, for bring-up on
+    fewer GPUs. Keeps GBS=4096, per-layer shapes, EP=32, one MTP layer and every MLPerf execution
+    setting of the parent: NCCL EP tuning, fusions, CUDA graphs, runtime and environment. PP=1
+    without virtual pipelining gives dense DP=64, expert DP=2 and 64 microbatches; EP=32 with the
+    parent's PP=4 would need 128 GPUs. This reduced-depth model does not reproduce the PP=4 x VP=4
+    schedule, at-scale pipeline traffic, convergence or memory use.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config()
+    cfg.model.num_layers = 13
+    # Retain DeepSeek V3's three leading dense layers; shorten its MoE pattern.
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    # Keep this explicit environment identical to the 256-GPU parent.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        # MLPerf inherits 1 from the Megatron Bridge library recipe environment.
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # Keep per-group NCCL communicators instead of world-wide splits for every new group.
+        "TORCH_DIST_USE_NCCL2": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # NCCL EP SM budgets per phase and fused dispatch preparation.
+        "NCCL_EP_COMBINE_SMS": 24,
+        "NCCL_EP_DISPATCH_SMS": 32,
+        "NCCL_EP_HT_UNFUSED_SYNC": 1,
+        "NCCL_EP_PREPROCESS_NUM_SMS": 80,
+        "NCCL_EP_PROLOG_EPILOG_SMS": 148,
+        "NCCL_EP_SHUFFLE_SMS": 128,
+        "NVTE_EP_FUSED_PREPARE_DISPATCH": 1,
+        # Transformer Engine overlap settings; MLPerf reserves no SMs for LayerNorm kernels.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_EXT_MARGIN_SM": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        # Use cuDNN LayerNorm and fuse the MXFP8 quantization of its output.
+        "NVTE_CUDNN_MXFP8_NORM_OUTPUT_IN_INPUT_DTYPE": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_MXFP8_PER_TILE_SWIZZLE": 1,
+        # MLPerf allows nondeterministic Transformer Engine kernels.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+    }
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VRNVL72, NVFP4 with full-iteration CUDA graph."""
     cfg = _build_deepseek_v3_gb300_nvfp4()
@@ -549,8 +610,8 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
 def _apply_deepseek_v3_4gpu_vrnvl72_proxy(cfg: ConfigContainer) -> None:
     """Shrink a 256-GPU VRNVL72 DeepSeek V3 recipe onto one 4-GPU VRNVL72 node.
 
-    Both 4-GPU proxies go through this helper so that every model, parallelism and batch
-    setting matches and only the quantization recipe differs between their profiles.
+    The 4-GPU proxies go through this helper so that every model, parallelism and batch setting
+    matches; the MXFP8 and NVFP4 proxies then differ only in the quantization recipe.
     """
     # Three leading dense layers and ten MoE layers plus one MTP layer, as in the 64-GPU proxies.
     cfg.model.num_layers = 13
@@ -613,6 +674,63 @@ def deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the 256-GPU parent recipes.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 MLPerf-execution proxy: 13 decoder layers and 32 experts on one 4-GPU VRNVL72 node.
+
+    Applies the 4-GPU proxy shape of ``deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config`` to
+    ``deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config`` for single-node bring-up: TP=1,
+    PP=1, EP=4, MBS=1, GBS=128 and one MTP layer, with the parent's per-rank expert work. Keeps every
+    MLPerf execution setting of the parent, including NCCL EP tuning, fusions, CUDA graphs, the MXFP8
+    LM head and the environment. This proxy does not reproduce the PP=4 x VP=4 schedule, at-scale
+    communication, convergence or memory use.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config()
+    _apply_deepseek_v3_4gpu_vrnvl72_proxy(cfg)
+    # The shared proxy shape keeps the LM head in BF16 so the MXFP8 and NVFP4 proxies match; restore
+    # the MXFP8 LM head that MLPerf and the parent recipe use.
+    cfg.model.fp8_output_proj = True
+
+    # Keep this explicit environment identical to the 256-GPU parent.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        # MLPerf inherits 1 from the Megatron Bridge library recipe environment.
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # Keep per-group NCCL communicators instead of world-wide splits for every new group.
+        "TORCH_DIST_USE_NCCL2": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # NCCL EP SM budgets per phase and fused dispatch preparation.
+        "NCCL_EP_COMBINE_SMS": 24,
+        "NCCL_EP_DISPATCH_SMS": 32,
+        "NCCL_EP_HT_UNFUSED_SYNC": 1,
+        "NCCL_EP_PREPROCESS_NUM_SMS": 80,
+        "NCCL_EP_PROLOG_EPILOG_SMS": 148,
+        "NCCL_EP_SHUFFLE_SMS": 128,
+        "NVTE_EP_FUSED_PREPARE_DISPATCH": 1,
+        # Transformer Engine overlap settings; MLPerf reserves no SMs for LayerNorm kernels.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_EXT_MARGIN_SM": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        # Use cuDNN LayerNorm and fuse the MXFP8 quantization of its output.
+        "NVTE_CUDNN_MXFP8_NORM_OUTPUT_IN_INPUT_DTYPE": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_MXFP8_PER_TILE_SWIZZLE": 1,
+        # MLPerf allows nondeterministic Transformer Engine kernels.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg
 
