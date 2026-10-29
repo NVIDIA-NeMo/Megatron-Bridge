@@ -563,6 +563,53 @@ class TestPipelineLayout:
             ["decoder", "mtp", "loss"],
         ]
 
+    @pytest.mark.parametrize(
+        ("bridge_generates_layout", "expected_layout"),
+        [
+            # The bridge regenerates the layout, sized from the checkpoint's MTP depth.
+            (True, [["embedding", "decoder", "decoder"], ["decoder", "decoder", "mtp", "loss"]]),
+            # The bridge keeps the default split, so the saved custom layout is redistributed.
+            (False, [["embedding", "decoder", "decoder", "decoder"], ["decoder", "mtp", "loss"]]),
+        ],
+        ids=["regenerated", "rebalanced"],
+    )
+    def test_restore_reads_nested_builder_fields_for_a_different_pp(
+        self, cli, tmp_path, bridge_generates_layout, expected_layout
+    ):
+        # A builder checkpoint saved with a custom PP=4 layout and exported at PP=2. Its four stages would also fit
+        # PP=2 as two virtual stages each, so only the saved PP size shows that the topology changed.
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  _builder_: megatron.bridge.models.gpt.BridgeGPTModelBuilder\n"
+            "  transformer:\n"
+            "    mtp_num_layers: 1\n"
+            "    pipeline_model_parallel_size: 4\n"
+            "    pipeline_model_parallel_layout:\n"
+            "      - [embedding, decoder]\n"
+            "      - [decoder, decoder]\n"
+            "      - [decoder]\n"
+            "      - [mtp, loss]\n"
+        )
+        requested = []
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                requested.append((pp, mtp_layers))
+                if not bridge_generates_layout:
+                    return None
+                return [["embedding", "decoder", "decoder"], ["decoder", "decoder", *["mtp"] * mtp_layers, "loss"]]
+
+        # The bridge disables MTP for conversion, but the trained checkpoint has an MTP layer.
+        provider = _FakeProvider([])
+        provider.mtp_num_layers = None
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=2)
+
+        assert provider.mtp_num_layers == 1
+        assert requested == [(2, 1)]
+        assert provider.pipeline_model_parallel_layout == expected_layout
+
     def test_restore_keeps_hybrid_segments_saved_with_the_layout(self, cli, tmp_path):
         (tmp_path / "run_config.yaml").write_text(
             "model:\n"
