@@ -12,20 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+import os
+
 import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
 
 from megatron.bridge.data.utils import get_dataset_provider
+from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.setup import setup
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import _finish_train, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
 from megatron.bridge.utils.common_utils import print_rank_0
 from megatron.bridge.utils.decorators import experimental_fn
+
+
+logger = logging.getLogger(__name__)
 
 
 @experimental_fn
@@ -125,79 +133,176 @@ def _pretrain(
 
     config = state.cfg
     dataset_provider = get_dataset_provider(config.dataset)
-    setup_output = setup(state, dataset_provider, restart_store=store)
-    state = setup_output.state
-    model = setup_output.model
-    optimizer = setup_output.optimizer
-    scheduler = setup_output.scheduler
-    train_data_iterator = setup_output.train_data_iterator
-    valid_data_iterator = setup_output.valid_data_iterator
-    test_data_iterator = setup_output.test_data_iterator
-    ckpt_context = setup_output.checkpointing_context
-    pg_collection = setup_output.pg_collection
+    try:
+        setup_output = setup(state, dataset_provider, restart_store=store, callback_manager=callback_manager)
+        state = setup_output.state
+        model = setup_output.model
+        optimizer = setup_output.optimizer
+        scheduler = setup_output.scheduler
+        train_data_iterator = setup_output.train_data_iterator
+        valid_data_iterator = setup_output.valid_data_iterator
+        test_data_iterator = setup_output.test_data_iterator
+        checkpoint_manager = setup_output.checkpoint_manager
+        pg_collection = setup_output.pg_collection
 
-    # TRAINING
-    if not config.validation.skip_train:
-        if state.train_state.do_train and config.train.train_iters > 0:
-            train(
-                forward_step_func,
-                model,
-                optimizer,
-                scheduler,
-                train_data_iterator,
-                valid_data_iterator,
+        # TRAINING
+        if not config.validation.skip_train:
+            if state.train_state.do_train and config.train.train_iters > 0:
+                train(
+                    forward_step_func,
+                    model,
+                    optimizer,
+                    scheduler,
+                    train_data_iterator,
+                    valid_data_iterator,
+                    state,
+                    checkpoint_manager,
+                    pg_collection,
+                    callback_manager=callback_manager,
+                )
+
+            barrier_and_log("after training is done")
+
+        else:
+            print_rank_0("skipping training ...")
+
+        iteration = state.train_state.step
+
+        # VALIDATION
+        if state.train_state.do_valid:
+            prefix = f"iteration {iteration} on validation set"
+            evaluate_and_print_results(
                 state,
-                ckpt_context,
-                pg_collection,
+                prefix,
+                forward_step_func,
+                valid_data_iterator,
+                model,
+                config.model,
+                verbose=True,
+                write_to_tensorboard=not config.validation.skip_train,
                 callback_manager=callback_manager,
             )
+        if state.train_state.do_test:
+            prefix = f"iteration {iteration} on test set"
+            evaluate_and_print_results(
+                state,
+                prefix,
+                forward_step_func,
+                test_data_iterator,
+                model,
+                config.model,
+                verbose=True,
+                write_to_tensorboard=not config.validation.skip_train,
+                callback_manager=callback_manager,
+                is_test=True,
+            )
 
-        barrier_and_log("after training is done")
+        _finish_train(state, checkpoint_manager)
+    except BaseException as error:
+        if inprocess_call_wrapper is None:
+            logger.exception(
+                "Pretrain failed on rank=%s with %s: %s. Bridge is aborting framework-owned distributed resources "
+                "because peer ranks may be blocked in collectives.",
+                _safe_distributed_rank(),
+                type(error).__name__,
+                error,
+            )
+            try:
+                _cleanup_after_pretrain_failure(state, should_destroy_process_group)
+            except BaseException:
+                logger.exception("Unexpected failure while cleaning up after pretrain failure")
+        raise
 
-    else:
-        print_rank_0("skipping training ...")
-
-    iteration = state.train_state.step
-
-    # VALIDATION
-    if state.train_state.do_valid:
-        prefix = f"iteration {iteration} on validation set"
-        evaluate_and_print_results(
-            state,
-            prefix,
-            forward_step_func,
-            valid_data_iterator,
-            model,
-            config.model,
-            verbose=True,
-            write_to_tensorboard=not config.validation.skip_train,
-            callback_manager=callback_manager,
-        )
-    if state.train_state.do_test:
-        prefix = f"iteration {iteration} on test set"
-        evaluate_and_print_results(
-            state,
-            prefix,
-            forward_step_func,
-            test_data_iterator,
-            model,
-            config.model,
-            verbose=True,
-            write_to_tensorboard=not config.validation.skip_train,
-            callback_manager=callback_manager,
-            is_test=True,
-        )
-
-    _finish_train(state)
     _maybe_destroy_process_group(should_destroy_process_group)
 
 
-def _maybe_destroy_process_group(should_destroy: bool) -> None:
-    """Destroy the process group if it was created by this training session.
+def _abort_async_checkpoint_worker(state: GlobalState) -> None:
+    """Abort async checkpoint state before distributed teardown."""
+    try:
+        async_calls_queue = state._async_calls_queue
+        if async_calls_queue is not None:
+            async_calls_queue.close(abort=True)
+    finally:
+        state._async_calls_queue = None
+
+        from nvidia_resiliency_ext.checkpointing.async_ckpt import filesystem_async as nvrx_filesystem_async
+
+        filesystems = [nvrx_filesystem_async]
+        try:
+            from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+        except ImportError:
+            pass  # New MCore delegates async checkpointing entirely to NVRx.
+        else:
+            filesystems.append(mcore_filesystem_async)
+
+        for filesystem_async in filesystems:
+            if filesystem_async._results_queue is not None:
+                try:
+                    filesystem_async._results_queue._manager.shutdown()
+                finally:
+                    filesystem_async._results_queue = None
+
+
+def _safe_distributed_rank() -> str:
+    """Return a rank identifier without obscuring an active training failure."""
+    try:
+        if dist.is_initialized():
+            return str(dist.get_rank())
+    except Exception:
+        pass
+    return os.environ.get("RANK", "unknown")
+
+
+def _cleanup_after_pretrain_failure(state: GlobalState, should_destroy_process_group: bool) -> None:
+    """Clean up framework-owned state after ordinary pretrain execution fails."""
+    try:
+        fault_tolerance.abort(state)
+    except Exception:
+        logger.exception("Failed to abort fault-tolerance monitoring after pretrain failure")
+
+    try:
+        _abort_async_checkpoint_worker(state)
+    except Exception:
+        logger.exception("Failed to abort async checkpointing after pretrain failure")
+
+    try:
+        if state._signal_handler is not None:
+            state._signal_handler.release()
+            state._signal_handler = None
+    except Exception:
+        logger.exception("Failed to release the signal handler after pretrain failure")
+
+    try:
+        destroy_global_state()
+    except Exception:
+        logger.exception("Failed to destroy Megatron global state after pretrain failure")
+
+    try:
+        _maybe_destroy_process_group(should_destroy_process_group, synchronize=False, abort=True)
+    except Exception:
+        logger.exception("Failed to abort process groups after pretrain failure")
+
+
+def _maybe_destroy_process_group(
+    should_destroy: bool,
+    *,
+    synchronize: bool = True,
+    abort: bool = False,
+) -> None:
+    """Destroy or abort process groups created by this training session.
 
     Args:
         should_destroy: Whether the process group should be destroyed
+        synchronize: Whether to synchronize ranks before destruction
+        abort: Whether to abort all process groups instead of waiting for their
+            outstanding work to finish
     """
     if should_destroy and dist.is_initialized():
-        dist.barrier()
+        if abort:
+            # Orderly shutdown waits for outstanding collectives, but failure
+            # cleanup may run while peer ranks are still blocked in those calls.
+            dist.distributed_c10d._abort_process_group()
+            return
+        if synchronize:
+            dist.barrier()
         dist.destroy_process_group()

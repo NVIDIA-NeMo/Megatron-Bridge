@@ -1,0 +1,294 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: minimax_m3
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Model-level verification covers the complete MiniMax-M3
+  vision-language checkpoint, including the language model, vision tower,
+  projector paths, and lightning-indexer state. The pinned 32-H100 GPU import
+  and GPU export completed their verification gates. A current clean 32-H100
+  release-candidate run also reloaded the persisted full-VLM checkpoint through
+  the public VLM generation entry point, processed the pinned repository image,
+  and generated a coherent 64-token bounded completion without token-0 or NUL
+  degeneration. It reached the configured bound before EOS or the image-only
+  OCR target; that limitation is recorded in the inference result. All 59
+  exported safetensors shards
+  are byte-for-byte identical to the pinned source, and Transformers 5.14.0
+  natively reloads the export without loading errors. A separate CPU export
+  reproduced the complete pinned source tensor graph exactly. CPU import remains
+  unverified because the CPU-only attempt exited during CUDA-dependent model
+  initialization before producing a checkpoint. Full-VLM manual Hugging
+  Face/Megatron forward correlation also remains unverified. Training entries
+  cover only the language-model backbone and do not claim vision or projector
+  training; post-SFT full-VLM export therefore remains unsupported.
+verification_index:
+  model_level:
+    verified: [hf_to_megatron_gpu, megatron_to_hf_cpu, megatron_to_hf_gpu, inference]
+    unverified:
+      - hf_to_megatron_cpu
+      - manual_forward_pass
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
+      unsupported: [sft_export_inference]
+    GB200:
+      unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
+      unsupported: [sft_export_inference]
+model:
+  hf_id: MiniMaxAI/MiniMax-M3
+  hf_revision: 50942730318c7943fe83db7ec8e9f9177ecb1cf8  # pragma: allowlist secret
+  architecture: MiniMaxM3SparseForConditionalGeneration
+  min_transformers_version: "5.14.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: 6ae8e11630b212ef54f23f574f355a38f0b89d12  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No CPU HF-to-Megatron result is claimed. The CPU-only attempt enabled CPU
+      weight initialization, but the current distributed-model initialization
+      path still selected a CUDA device before tensor loading. With no GPU
+      available, it exited without persisting iter_0000000, so no checkpoint
+      reload or exact tensor audit completed. CPU conversion remains unverified
+      rather than unsupported.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8 --hf-model MiniMaxAI/MiniMax-M3
+      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
+      --megatron-path work/model-verification/minimax-m3/imported-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1
+      --distributed-timeout-minutes 180
+      --trust-remote-code
+    last_verified: 2026-07-23
+    expected_result: >
+      The pinned 32-H100 full-VLM import exited successfully, persisted
+      iter_0000000, and reloaded it at TP1/PP1/EP32/ETP1. A strict projection of
+      the reloaded Megatron model covered exactly 23,416 of 23,416 published
+      language, vision, projector, and lightning-indexer tensors and
+      854,172,958,720 actual tensor-payload bytes, with zero duplicate, missing,
+      unexpected, shape, invalid-dtype, or value mismatches. The source index's
+      declared total_size is 869,157,697,024 bytes. No dtype widening was
+      required. The audit covered 1,804 total Megatron state tensors;
+      model-state structure matched across all 32 EP ranks, and all 1,348
+      replicated tensors comprising 13,917,973,376 elements matched exactly.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model MiniMaxAI/MiniMax-M3
+      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
+      --megatron-path
+      work/model-verification/minimax-m3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/minimax-m3/cpu-hf-export
+      --torch-dtype bfloat16 --no-progress --trust-remote-code
+    last_verified: 2026-08-26
+    expected_result: >
+      The single-node CPU export exited successfully and wrote the complete
+      indexed MiniMax-M3 VLM checkpoint. An exhaustive audit matched all 23,416
+      source and export tensors, 427,040,140,160 values, and 854,172,958,720
+      tensor-payload bytes with zero missing, unexpected, shape, dtype, or value
+      mismatches and no dtype conversions (atol=0, rtol=0). A meta-device
+      Transformers 5.14.0 reload instantiated
+      MiniMaxM3SparseForConditionalGeneration with 1,582 state entries and zero
+      missing, unexpected, mismatched, or error keys.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8 --hf-model MiniMaxAI/MiniMax-M3
+      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
+      --megatron-path
+      work/model-verification/minimax-m3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/minimax-m3/hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1
+      --distributed-timeout-minutes 180 --distributed-save
+      --save-every-n-ranks 1 --no-progress --trust-remote-code
+    last_verified: 2026-07-23
+    expected_result: >
+      The 32-H100 distributed export exited successfully and wrote an indexed
+      full-VLM checkpoint at TP1/PP1/EP32/ETP1. Its key-to-shard map and all 59
+      safetensors shards are byte-for-byte identical to the pinned source,
+      covering all 23,416 tensors and 854,172,958,720 actual tensor-payload
+      bytes. The exported configuration preserves 60 text layers, 128 top-4
+      experts, 32 vision layers, both projector stages, and 57
+      lightning-indexer layers. Three tokenizer probes and multimodal processor
+      inputs match the source. Transformers 5.14.0 natively reloads both source
+      and export as MiniMaxM3SparseForConditionalGeneration through its
+      checkpoint conversion mapping with zero missing, unexpected, mismatched,
+      or error keys. The export consolidates the tokenizer in tokenizer.json
+      and does not reproduce four redundant source-side legacy tokenizer files.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No complete full-VLM Hugging Face/Megatron forward comparison is claimed.
+      Future verification must process the same pinned image and prompt through
+      both implementations, match their next-token prediction, and report
+      cosine similarity of at least 0.99 together with maximum and mean
+      absolute logit differences as non-gating diagnostics.
+
+  inference:
+    status: verified
+    precision: bf16
+    bridge_commit: 30fae2e8796a7c78f62c9c2cf3b1e249b58fd56d  # pragma: allowlist secret
+    command: >
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
+      --task vlm-generation
+      --hf_model_path MiniMaxAI/MiniMax-M3
+      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
+      --megatron_model_path
+      work/model-verification/minimax-m3/imported-megatron/iter_0000000
+      --tp 1 --pp 1 --ep 32 --etp 1
+      --image_path docs/images/tp1.png
+      --prompt "Read the green caption near the top of the image. Answer immediately
+      with only the exact quoted term, including capitalization and hyphen; do not
+      explain or reason."
+      --max_new_tokens 64
+      --trust_remote_code
+    last_verified: 2026-08-08
+    expected_result: >
+      The 32-H100 TP1/PP1/EP32 run generated exactly 64 tokens under the
+      64-token maximum, with finite sampled logits and no token-0/NUL
+      degeneration. The literal completion was "\u003cmm:think\u003eThe user
+      wants me to read the green caption near the top of the image and respond
+      with only the exact quoted term, including capitalization and hyphen."
+      A matched HybridEP run
+      kept all observed logits finite, reached EOS, and reproduced the expected
+      completion. Bridge-created providers and H100 recipes use
+      flex/hybridep with 16 dispatcher SMs, unfused HybridEP permutation, and
+      8 ranks per H100 NVLink domain. Older checkpoints may require the same
+      overrides after deserialization. Training remains unverified.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Complete a 100-step HybridEP language-backbone run with finite loss,
+        reported metrics, and a reloadable checkpoint.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        moe_dispatcher: hybridep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Complete a 100-step packed HybridEP language-backbone SFT run with
+        finite loss, reported metrics, and a reloadable checkpoint.
+
+  sft_export_inference:
+    all:
+      status: unsupported
+      precision: null
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        The public MiniMax-M3 training recipes instantiate the language-model
+        backbone rather than the complete VLM. Their checkpoints therefore
+        cannot be exported as a complete Hugging Face MiniMax-M3 checkpoint
+        containing the vision tower, projector paths, processor configuration,
+        and lightning-indexer state. Post-SFT full-VLM export and multimodal
+        inference remain unsupported on every hardware target.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A dedicated packed long-context recipe must complete 100 steps with
+        context parallelism, finite loss, no skipped or NaN iterations, and all
+        five metrics. Beyond 2,048 tokens, Bridge uses full causal attention
+        instead of MiniMax-M3's lightning-indexer sparse attention.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A MiniMax-M3 PEFT recipe with an audited adapter target set must complete
+        100 steps with finite loss, no skipped or NaN iterations, all four
+        metrics, and a reloadable adapter checkpoint.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        A direct continuation from the bounded pretrain run must restore model,
+        optimizer, scheduler, data-order, and RNG state, execute through the
+        reference final step, match declared sentinel losses within tolerance,
+        and save a reloadable checkpoint to a distinct output root.

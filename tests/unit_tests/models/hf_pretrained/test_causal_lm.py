@@ -620,8 +620,7 @@ class TestPreTrainedCausalLMStateDict:
         assert state is not None
         assert hasattr(state, "__getitem__")
         assert hasattr(state, "keys")
-        assert hasattr(state, "glob")
-        assert hasattr(state, "regex")
+        assert hasattr(state, "items")
 
     def test_state_property_cached(self):
         """Test state property is cached."""

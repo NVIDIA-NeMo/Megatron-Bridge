@@ -36,11 +36,13 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
-from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.utils import get_pg_rank
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
+from megatron.bridge.utils.cuda_graph import validate_cuda_graph_configuration
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -49,10 +51,13 @@ logger = logging.getLogger(__name__)
 
 def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Create a Transformer Engine layer specification based on the provided config."""
-    if "use_te_op_fuser" in inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters:
+    spec_params = inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters
+    if "use_te_op_fuser" in spec_params:
         kwargs = {"use_te_op_fuser": config.use_transformer_engine_op_fuser}
     else:
         kwargs = {}
+    if "use_grouped_gemm_for_dense_mlp" in spec_params:
+        kwargs["use_grouped_gemm_for_dense_mlp"] = config.dense_grouped_gemm
     return get_gpt_layer_with_transformer_engine_spec(
         num_experts=config.num_moe_experts,
         moe_grouped_gemm=config.moe_grouped_gemm,
@@ -131,6 +136,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     # Model configuration
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = True
     make_vocab_size_divisible_by: int = 128
@@ -141,6 +147,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     rope_scaling_factor: float = 1.0
     rotary_scaling_factor: Optional[float] = None
     seq_len_interpolation_factor: Optional[float] = None
+
+    # YaRN parameters (yarn_*) are declared on the base TransformerConfig.
+
     seq_length: int = 1024
     attention_softmax_in_fp32: bool = False
     deallocate_pipeline_outputs: bool = True
@@ -151,10 +160,23 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     use_transformer_engine_full_layer_spec: bool = False
     use_transformer_engine_op_fuser: bool = False
+    dense_grouped_gemm: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
+
+    mtp_layer_spec_transform: Optional[Callable[["GPTModelProvider", ModuleSpec], ModuleSpec]] = None
+    """Optional fix-up applied to an MTP layer spec re-derived straight from MCore.
+
+    A standalone MTP pipeline stage owns no decoder layers, so ``mtp_block_spec`` cannot
+    reuse ``transformer_layer_spec``'s output and calls ``get_gpt_decoder_layer_specs``
+    instead. Any model whose layer spec is not plain MCore therefore loses its
+    customisation on exactly that stage. Set this to re-apply it.
+    """
 
     hf_model_id: str | None = None
     """Optional HuggingFace model identifier associated with this provider."""
+
+    hf_model_revision: str | None = None
+    """Optional immutable HuggingFace revision used to construct this provider."""
 
     # This represents the unpadded vocab size
     # The padded vocab size is automatically calculated in the provide() method.
@@ -210,6 +232,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if not fusions.validate_rope_fusion_compatibility(self):
             self.apply_rope_fusion = False
 
+        validate_cuda_graph_configuration(self)
         if self.cuda_graph_impl != "none":
             assert getattr(self, "use_te_rng_tracker", False), (
                 "Transformer engine's RNG tracker is required for cudagraphs, it can be "
@@ -235,11 +258,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
         transformer_layer_spec = self.transformer_layer_spec
         if not isinstance(transformer_layer_spec, ModuleSpec):
-            # Check if the transformer_layer_spec function accepts vp_stage parameter
-            if "vp_stage" in inspect.signature(transformer_layer_spec).parameters:
-                transformer_layer_spec = transformer_layer_spec(self, vp_stage=vp_stage)
-            else:
-                transformer_layer_spec = transformer_layer_spec(self)
+            transformer_layer_spec = transformer_layer_spec(
+                self, **_callable_spec_kwargs(transformer_layer_spec, self, vp_stage)
+            )
 
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
         if self.should_pad_vocab:
@@ -254,10 +275,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.init_model_with_meta_device:
             model_init_device_context = partial(torch.device, device="meta")
 
-        # Check if mtp_block_spec parameter is supported
-        kwargs = {}
-        if "mtp_block_spec" in inspect.signature(MCoreGPTModel.__init__).parameters:
-            kwargs["mtp_block_spec"] = mtp_block_spec(self, vp_stage=vp_stage)
         if self.attention_backend == AttnBackend.local:
             if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
@@ -280,6 +297,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 vocab_size=padded_vocab_size,
                 max_sequence_length=self.seq_length,
                 fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+                **logit_dtype_kwarg(MCoreGPTModel, self.logit_dtype),
                 parallel_output=self.parallel_output,
                 share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
                 position_embedding_type=self.position_embedding_type,
@@ -293,7 +311,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
                 pg_collection=self._pg_collection,
                 vp_stage=vp_stage,
-                **kwargs,
+                mtp_block_spec=mtp_block_spec(self, vp_stage=vp_stage),
             )
 
         # If using full TE layer, need to set TP, CP group since the module call
@@ -324,6 +342,21 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         return model
 
 
+def _callable_spec_kwargs(spec_fn: Callable, config: "GPTModelProvider", vp_stage: Optional[int]) -> dict[str, Any]:
+    """Build the keyword arguments a callable transformer layer spec declares."""
+    params = inspect.signature(spec_fn).parameters
+    kwargs: dict[str, Any] = {}
+    if "vp_stage" in params:
+        kwargs["vp_stage"] = vp_stage
+    if "pp_rank" in params:
+        # Resolve the pipeline rank from the provider's own groups so that block spec
+        # builders do not fall back to the MPU globals, which decentralized runs never set.
+        pg_collection = getattr(config, "_pg_collection", None)
+        if pg_collection is not None:
+            kwargs["pp_rank"] = get_pg_rank(pg_collection.pp)
+    return kwargs
+
+
 def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:
     """Pass in the MTP block spec if model has MTP layers.
 
@@ -337,127 +370,30 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
 
         if isinstance(config.transformer_layer_spec, Callable):
-            if "vp_stage" in inspect.signature(config.transformer_layer_spec).parameters:
-                spec = config.transformer_layer_spec(config, vp_stage=vp_stage)
-            else:
-                spec = config.transformer_layer_spec(config)
+            spec = config.transformer_layer_spec(
+                config, **_callable_spec_kwargs(config.transformer_layer_spec, config, vp_stage)
+            )
         else:
             spec = config.transformer_layer_spec
         if hasattr(spec, "layer_specs") and len(spec.layer_specs) == 0:
             # Get the decoder layer spec explicitly if no decoder layer in the last stage,
             # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
-            spec = default_layer_spec(config)
+            # Re-derive all decoder layer specs and use the last one to get the correct
+            # layer type (dense vs MoE) for the MTP transformer layer.
+            from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_layer_specs
+
+            decoder_layer_specs = get_gpt_decoder_layer_specs(
+                config,
+                use_transformer_engine=True,
+                normalization=config.normalization,
+                qk_l2_norm=config.qk_l2_norm,
+            )
+            spec = decoder_layer_specs[-1]
+            # This spec came from MCore directly, so anything transformer_layer_spec would
+            # have changed is absent from it. Give the model a chance to re-apply it.
+            transform = getattr(config, "mtp_layer_spec_transform", None)
+            if transform is not None:
+                spec = transform(config, spec)
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None
-
-
-@dataclass
-class GPTProvider126M(GPTModelProvider):
-    """Configuration for a 126M parameter GPT model.
-
-    Predefined configuration for a small GPT model with 12 layers,
-    768 hidden size, and 12 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 12
-    hidden_size: int = 768
-    ffn_hidden_size: int = 3072
-    num_attention_heads: int = 12
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider5B(GPTModelProvider):
-    """Configuration for a 5B parameter GPT model.
-
-    Predefined configuration for a medium-sized GPT model with 24 layers,
-    4096 hidden size, and 32 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 24
-    hidden_size: int = 4096
-    ffn_hidden_size: int = 16384
-    num_attention_heads: int = 32
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider7B(GPTModelProvider):
-    """Configuration for a 7B parameter GPT model.
-
-    Predefined configuration for a medium-sized GPT model with 32 layers,
-    4096 hidden size, and 32 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 32
-    hidden_size: int = 4096
-    ffn_hidden_size: int = 10880
-    num_attention_heads: int = 32
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider20B(GPTModelProvider):
-    """Configuration for a 20B parameter GPT model.
-
-    Predefined configuration for a large GPT model with 44 layers,
-    6144 hidden size, and 48 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 44
-    hidden_size: int = 6144
-    ffn_hidden_size: int = 24576
-    num_attention_heads: int = 48
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider40B(GPTModelProvider):
-    """Configuration for a 40B parameter GPT model.
-
-    Predefined configuration for a large GPT model with 48 layers,
-    8192 hidden size, and 64 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 48
-    hidden_size: int = 8192
-    ffn_hidden_size: int = 32768
-    num_attention_heads: int = 64
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider175B(GPTModelProvider):
-    """Configuration for a 175B parameter GPT model.
-
-    Predefined configuration for a massive GPT model with 96 layers,
-    12288 hidden size, and 96 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 96
-    hidden_size: int = 12288
-    ffn_hidden_size: int = 49152
-    num_attention_heads: int = 96
-    hidden_dropout: float = 0.0
-    attention_dropout: float = 0.0
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-    layernorm_zero_centered_gamma: bool = True

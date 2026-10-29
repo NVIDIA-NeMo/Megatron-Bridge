@@ -1,0 +1,15 @@
+# DeepSeek
+
+DeepSeek model documentation is organized by model variant.
+
+```{toctree}
+:hidden:
+
+deepseek-v3.md
+deepseek-v4.md
+```
+
+| Variant | Guide |
+|---------|-------|
+| DeepSeek V3 | [deepseek-v3.md](deepseek-v3.md) |
+| DeepSeek V4 | [deepseek-v4.md](deepseek-v4.md) |

@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import Qwen3MoeForCausalLM
+from transformers import PretrainedConfig, Qwen3MoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -23,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel, model_type="qwen3_moe")
@@ -37,30 +40,48 @@ class Qwen3MoEBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace Qwen3 MoE config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False  # Qwen3 MoE does NOT have QKV bias
-        provider.hidden_dropout = 0.0
-        provider.qk_layernorm = True  # Qwen3 MoE uses QK layernorm
-        provider.autocast_dtype = torch.bfloat16
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Convert Megatron provider config to HuggingFace Qwen3MoeConfig dict."""
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config["decoder_sparse_step"] = 1  # All layers are MoE in Qwen3 MoE
+        hf_config["norm_topk_prob"] = not provider.moe_router_pre_softmax
+        return hf_config
 
-        provider.moe_grouped_gemm = True
-        provider.moe_router_load_balancing_type = "aux_loss"
-        provider.moe_aux_loss_coeff = 1e-3
-        provider.moe_router_pre_softmax = False
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3 MoE config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,  # Qwen3 MoE does NOT have QKV bias
+            hidden_dropout=0.0,
+            qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
+            autocast_dtype=torch.bfloat16,
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=not hf_config.norm_topk_prob,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+        )
+        # The shared mapping already selects "yarn" for YaRN-scaled checkpoints.
+        config_kwargs.setdefault("position_embedding_type", "rope")
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

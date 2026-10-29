@@ -1,0 +1,30 @@
+[
+  {
+    "id": "cuda-graphs-te-scoped-moe-smoke",
+    "question": "Use the nemo-mbridge-perf-cuda-graphs skill. I am training a Megatron Bridge Qwen3 MoE model and want to reduce CPU launch overhead with CUDA graphs. Which cuda_graph_impl and cuda_graph_scope should I start with, and what prerequisites should I set?",
+    "expected_skill": "nemo-mbridge-perf-cuda-graphs",
+    "expected_script": null,
+    "ground_truth": "First profile the eager run and only test CUDA graphs when host/launch gaps are material. For a dropless MoE model, start with cuda_graph_impl=\"transformer_engine\" and the narrow moe_router plus moe_preprocess scope, then add attn only if a matched A/B improves the same final stack. Set cuda_graph_warmup_steps, enable model.use_te_rng_tracker and rng.te_rng_tracker, keep sequence length and micro-batch size static, prove replay is active, and compare post-capture steady iterations against eager. Do not combine moe and moe_router scopes. A successful capture is not a speedup guarantee, and the comparison must be repeated after dispatcher, overlap, precision, or recompute changes.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-cuda-graphs skill before answering.",
+      "Require eager profiling before recommending graph capture.",
+      "Recommend the narrow transformer_engine moe_router plus moe_preprocess candidate first, with attn as a later A/B.",
+      "Mention the TE RNG tracker requirement and static-shape constraint.",
+      "Tell the user to prove replay and compare timing after warmup and capture rather than measuring the capture step.",
+      "Require a new eager/graph A/B after other performance-stack changes."
+    ]
+  },
+  {
+    "id": "cuda-graphs-qwen35-gdn-scope",
+    "question": "Use the nemo-mbridge-perf-cuda-graphs skill. Qwen3.5 mixes standard attention with Gated DeltaNet layers. Should I use the mamba CUDA graph scope for GDN, and what evidence is required before keeping the graph configuration?",
+    "expected_skill": "nemo-mbridge-perf-cuda-graphs",
+    "expected_script": null,
+    "ground_truth": "Do not use mamba merely because GDN is a linear-attention variant. CUDA graph scopes follow the actual MCore module type: mamba is for real Mamba layers, while Qwen3.5 GDN is implemented under self_attention and therefore uses the attn scope when supported. Profile eager first, confirm host/launch overhead, prove graph replay is active, and keep the scopes only if a matched post-capture steady-state A/B beats eager on the final dispatcher, overlap, precision, and recompute stack.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-cuda-graphs skill before answering.",
+      "Reject mamba scope for Qwen3.5 GDN.",
+      "Explain that GDN follows the attn scope because it is under self_attention.",
+      "Require profile justification, replay evidence, and a matched final-stack eager A/B."
+    ]
+  }
+]

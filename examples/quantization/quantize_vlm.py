@@ -34,12 +34,11 @@ Usage:
 """
 
 import argparse
-import os
-import sys
 import warnings
 from typing import Generator, Optional
 
 import modelopt.torch.quantization as mtq
+import modelopt.torch.utils.distributed as dist
 import torch
 from datasets import load_dataset
 from megatron.core.utils import unwrap_model
@@ -47,17 +46,18 @@ from modelopt.torch.utils.plugins.megatron_generate import megatron_generate
 from quantize_utils import (
     QUANT_CFG_CHOICES,
     add_common_quantization_args,
+    build_bridge_and_provider,
     console,
     create_quantization_stats_table,
     get_modelopt_torch_quantization_config,
+    print_parallelism_summary,
+    require_torchrun,
 )
 from qwen_vl_utils import process_vision_info
 from tqdm import tqdm
 from transformers import AutoProcessor
 
-from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 warnings.filterwarnings("ignore")
@@ -173,7 +173,7 @@ def _hf_dataset_forward_loop_func(
     else:
         dataloader = get_coco_dataloader(calib_dataset, calib_size)
 
-    for messages in tqdm(dataloader, total=calib_size, disable=torch.distributed.get_rank(), desc="Calibration"):
+    for messages in tqdm(dataloader, total=calib_size, disable=not dist.is_master(), desc="Calibration"):
         image_inputs, video_inputs = process_vision_info(messages)
         text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = processor(text=[text], images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
@@ -278,40 +278,27 @@ def main(
     use_random_calib: bool = False,
 ) -> None:
     """Perform quantization from HuggingFace VLM model to quantized Megatron-LM model on multiple GPUs."""
-    if os.environ.get("WORLD_SIZE") is None:
-        console.print("This script must be launched with torchrun. Please run:")
-        console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
-        sys.exit(1)
+    require_torchrun()
 
-    bridge = AutoBridge.from_hf_pretrained(
+    bridge, model_provider = build_bridge_and_provider(
         hf_model_id,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=trust_remote_code,
-            hf_path=hf_model_id,
-        ),
+        tp=tp,
+        pp=pp,
+        ep=ep,
+        etp=etp,
+        load_weights=True,
+        pipeline_dtype=torch.bfloat16,
+        trust_remote_code=trust_remote_code,
     )
 
     processor = AutoProcessor.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
 
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = torch.bfloat16
-
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
     megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     # Now we can check for rank
-    is_rank_0 = torch.distributed.get_rank() == 0
+    is_rank_0 = dist.is_master()
 
-    if is_rank_0:
-        console.print(f"[green]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/green]")
-        console.print(f"[green]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/green]")
-        console.print(f"[green]Expert parallel size: {model_provider.expert_model_parallel_size}[/green]")
-        console.print(f"[green]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/green]")
+    print_parallelism_summary(model_provider)
 
     # Formatting
     if is_rank_0:
@@ -328,7 +315,7 @@ def main(
         mtq_config = get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant, weight_only)
 
         # Disable quantization for entire vision_model (all HuggingFace vision components)
-        mtq_config["quant_cfg"]["*vision_model*"] = {"enable": False}
+        mtq_config["quant_cfg"].append({"quantizer_name": "*vision_model*", "enable": False})
 
         # Define forward loop function for calibration
         def ptq_forward_loop_func(model):
@@ -382,33 +369,30 @@ def main(
                 f"[yellow]No --megatron-save-path specified. Using default path: {megatron_save_path}[/yellow]"
             )
 
-    if is_rank_0:
-        console.print("[green]Testing model AFTER quantization...[/green]")
-
-    # Use provided test image path or fall back to default
-    if test_image_path:
-        _custom_prompt_forward_loop_func(
-            unwrapped_model, processor, is_rank_0, prompts, test_image_path=test_image_path
-        )
-    else:
-        _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts)
-
-    # Save quantized model in Megatron format
+    # Save quantized model in Megatron format BEFORE the test-generation sanity
+    # check below, so the checkpoint is on disk even if that step fails.
     if is_rank_0:
         console.print(f"Saving quantized Megatron checkpoint in {megatron_save_path}...")
     bridge.save_megatron_model(megatron_model, megatron_save_path)
 
+    if is_rank_0:
+        console.print("[green]Testing model AFTER quantization...[/green]")
+
+    # No torch.no_grad() here previously -- every decode step in the test
+    # generation retained a full backward-pass graph it never uses, which was
+    # enough to OOM a 27B TP=8 model at ~79GB/79.18GB.
+    with torch.no_grad():
+        # Use provided test image path or fall back to default
+        if test_image_path:
+            _custom_prompt_forward_loop_func(
+                unwrapped_model, processor, is_rank_0, prompts, test_image_path=test_image_path
+            )
+        else:
+            _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Post-Training Quantization for Vision-Language Models (VLMs)")
-    parser.add_argument(
-        "--hf-model-id",
-        type=str,
-        default="Qwen/Qwen3-VL-8B-Instruct",
-        help="HuggingFace model ID for the VLM model (e.g., Qwen/Qwen3-VL-8B-Instruct)",
-    )
-
-    # Add common quantization arguments
     add_common_quantization_args(parser)
 
     # VLM-specific arguments
@@ -458,5 +442,4 @@ if __name__ == "__main__":
             args.use_random_calib,
         )
     finally:
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
+        dist.cleanup()

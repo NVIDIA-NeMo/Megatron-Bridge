@@ -2,56 +2,105 @@
 
 ## NOTE: This directory will change a lot over the coming weeks
 
-- Scripts defined in `scripts/performance` are recipes optimized for performance. These scripts can launch pre-training experiments on Slurm based clusters.
+New runs of exact exported flat recipes should use `scripts/training/train.sh --recipe <function_name>`. The launcher
+discovers text pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining recipes automatically and selects
+their forward step. This directory remains the compatibility path for selector-based invocation, dataset replacement,
+topology resizing, and specialized benchmark controls. The training launcher preserves total GPU-count validation,
+the recipe process environment, and mock-data defaults for text SFT/PEFT; it does not inject offline defaults. The
+performance compatibility launcher continues to own its benchmark offline environment.
+Cluster-specific CPU/NUMA binding, Slurm segment sizing, NCCL fabric settings, and `srun` arguments remain user
+supplied.
 
-## Configuration files
+- Scripts defined in `scripts/performance` launch performance-optimized experiments on Slurm-based clusters.
 
-There are configuration files- `workload_base_configs.py` for supported models in `scripts/performance/configs`.
+## Performance recipe configs
 
-- You can override the default configs using these files using command line arguments (recommended) or directly updating these files  
+Performance-optimized recipes live in `src/megatron/bridge/perf_recipes`. The performance
+launcher resolves recipes from that package by model, task, GPU count, GPU type, precision,
+and config variant.
+
+`setup_experiment.py` launches `bootstrap.py` on each rank. The bootstrap resolves and
+applies recipe-owned process settings before importing the training loop, then replaces itself with
+either `run_script.py` for flat performance recipes or `run_recipe.py` for model recipes.
+Each training entrypoint therefore executes only once.
+
+- Prefer command-line overrides for one-off changes.
+- Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
+
+### DeepSeek V3 GB300 MXFP8 proxy
+
+Use `deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config` with the training launcher,
+or select `--model_family_name deepseek --model_recipe_name deepseek_v3 --task pretrain
+--gpu gb300 --compute_dtype fp8_mx --num_gpus 64 --config_variant proxy` in the
+performance launcher, together with your normal Slurm/container arguments.
+
+This mock-data debugging benchmark has 3 dense + 10 MoE decoder layers and one
+additional MTP layer. It uses PP=1 with no virtual pipeline or explicit stage
+layout, TP=CP=ETP=1, EP=32, GBS=4096 and MBS=1. Thus dense DP=64, expert DP=2,
+and there are 64 microbatches per iteration. Its configuration matches the
+64-GPU VRNVL72 MXFP8 proxy, including per-layer shapes, full-iteration CUDA graphs,
+cuTeDSL fusion, MoE overlap, precision, optimizer and process environment. Both
+use the shared HybridEP base, without the production GB300 recipe's NCCL EP or
+`moe_use_grouped_tensor=True` overrides. HybridEP uses 32 ranks per NVLink domain,
+128-token combine chunks, `NVLINK_DOMAIN_SIZE=72`, and `USE_MNNVL=1`.
+
+Both 64-GPU MXFP8 proxies explicitly set `NVTE_ALLOW_NONDETERMINISTIC_ALGO=1`:
+the fused SwiGLU scale-gradient reduction uses atomics, and TE versions that
+enforce determinism reject this path with the setting at zero. This changes the
+VRNVL72 proxy's previous kernel policy; rerun its baseline for a matched comparison.
+The 256-GPU recipes and NVFP4 proxies are unchanged.
+
+All 13 decoder layers and MTP reside on each PP=1 rank; there is no pipeline
+communication. Memory fit, graph capture/replay and performance require a new GPU
+run. The reduced depth, different dense/MoE proportions, DP group sizes and
+microbatch schedule mean this proxy is not convergence-equivalent to the full
+model or a direct predictor of its end-to-end throughput. Use matched software,
+launch settings and measurement windows for GB300/VRNVL72 comparisons, and
+revalidate improvements at scale. The production GB300 parent uses NCCL EP, so
+the proxy does not validate that dispatcher's behavior or performance.
 
 ## Setup Instructions
 
-### Step 1. Virtual Environment
+Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.
 
-- Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
+### Step 1. Clone Megatron-Bridge Repo
 
-  ```
-  pip install git+https://github.com/NVIDIA-NeMo/Run.git
-  ```
+We need to clone the repo to access and run performance benchmarking experiments using `Megatron-Bridge/scripts/performance/setup_experiment.py` (more details in Step 2.).
 
-- The YAML config files are resolved on compute node inside the container.
+`setup_experiment.py` uses [NeMo/Run](https://github.com/NVIDIA-NeMo/Run) to launch experiments. This script generates and runs a sbatch script. The experiment is ultimately run on compute node(s) inside a container specified by the user. The experiment uses Megatron-Bridge code that comes pre-packaged with the container.
 
-### Step 2. Clone the Repo and Pick the corresponding release branch to the container
+```
+git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+```
 
-  ```
-  git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
-  git switch <branch> 
-  Example: If using 25.11 Container ```git switch r0.2.0
-  ```
-  
-  To find out which branch is used to build the container, refer <https://docs.nvidia.com/nemo-framework/user-guide/latest/softwarecomponentversions.html>
+Next, we need to switch to a branch that was used to build the container you want to use for your experiments.
 
-  Why? This is required because when running a job the version of Megatron-Bridge in the setup and the one built into the container should match.
+```
+cd Megatron-Bridge
+git switch <branch> 
+```
+Example: If using 26.04 container, then execute- `git switch r0.4.0`
 
-### Step 3. Run instructions
+> **DeepSeek V4:** The 26.08 DeepSeek V4 recipes are an exception to this release-branch guidance: they require the Megatron-Core `dev` branch, and the default MCore submodule revision in `r0.6.0` is insufficient. Follow the [DeepSeek V4 setup instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.6.0/examples/models/deepseek_v4).
+
+### Step 2. Run instructions
 
 #### <ins>Examples</ins>
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
-`python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
+`uv run python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
 
 You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
 
 ```
-CONTAINER="nvcr.io/nvidia/nemo:25.11.01"
+CONTAINER="nvcr.io/nvidia/nemo:26.04"
 MBRIDGE_PATH="</path/to/mbridge>"
 
 JOB_NAME="dsv3_gb300"
 RESULTS_DIR="${MBRIDGE_PATH}/results/${JOB_NAME}"
 
-python scripts/performance/setup_experiment.py 
+uv run python scripts/performance/setup_experiment.py \
   --account <slurm_account> \
   -i ${CONTAINER} \
   --partition <slurm_partition> \
@@ -82,14 +131,14 @@ python scripts/performance/setup_experiment.py
 ##### Container Image
 
 - `-i/--container_image`: NeMo container image to launch. For release container XX.YY use nvcr.io/nvidia/nemo:XX.YY.
-  For 25.09, use nvcr.io/nvidia/nemo:25.09. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
+  For 26.04, use nvcr.io/nvidia/nemo:26.04. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
   Defaults to `nvcr.io/nvidia/nemo:dev`.
 
 ##### General arguments
 
 - `-m/--model_family_name`: Model family name to use for experiment. E.g. `llama` (not llama3).
 - `-mr/--model_recipe_name`: Model recipe name to use for experiment. E.g. `llama31_405b`.
-- `--use_recipes`: Use library recipes. Disabled by default.
+- `--use_recipes`: Use model recipes instead of flat performance recipes. Disabled by default.
 - `-nh/--nemo_home`: Directory to expose as `NEMO_HOME` on the compute node. Defaults to `~/.cache/nemo`.
 - `--detach`: Detach the experiment from the terminal. Pass `true` or `false`. Default `true`.
 - `--max_retries`: Maximum number of retries. Default `2`.
@@ -98,11 +147,11 @@ python scripts/performance/setup_experiment.py
 
 ##### Training arguments
 
-- `--task`: Workflow to run (`pretrain`, `sft`, `lora`). Default `pretrain`.
+- `--task`: Workflow to run (`pretrain`, `sft`, `peft`). Default `pretrain`.
 - `-ms/--max_steps`: Maximum number of training steps.
 - `-gb/--global_batch_size`: Override global batch size.
 - `-mb/--micro_batch_size`: Override micro-batch size.
-- `-sl/--seq_length`: Sequence length.
+- `-sl/--seq_length`: Override model sequence length and the LLM dataset sequence length.
 
 ##### Optimizer arguments
 
@@ -136,6 +185,41 @@ python scripts/performance/setup_experiment.py
 - `-hf/--hf_token`: HuggingFace token for accessing tokenizers and checkpoints.
   - User can generate a token from- huggingface.co/settings/tokens (click on "Create new token" button)
   - For a "Fine-grained" token, only "User permissions" are needed. Under "User permissions", make selections for "Repositories", "Webhooks" and "Collections".
+- `--offline`: Set `HF_HUB_OFFLINE=1` (Slurm launcher path).
+  - Cannot be used together with `--hf_token`.
+
+##### HuggingFace connectivity and cache behavior (Slurm launcher)
+
+This launcher uses split defaults:
+
+- `TRANSFORMERS_OFFLINE=1`
+- `HF_HUB_OFFLINE=0`
+
+What each variable controls in this workflow:
+
+- `TRANSFORMERS_OFFLINE`: Transformers calls (for example `AutoTokenizer`) stay offline unless `--hf_token` is provided.
+- `HF_HUB_OFFLINE`: HuggingFace Hub calls (for example Hub-backed config/model resolution such as `AutoConfig`) stay online unless `--offline` is provided.
+
+Why this split exists:
+
+- Most benchmark recipes use `NullTokenizer`, so `TRANSFORMERS_OFFLINE=1` avoids unnecessary network traffic.
+- Most performance model families (`llama`, `qwen`, `qwen_vl`, `deepseek`, `gpt_oss`) use HF-backed config/model lookup paths.
+
+Flag mapping:
+
+- `--hf_token` sets `HF_TOKEN` and `TRANSFORMERS_OFFLINE=0`.
+- `--offline` sets `HF_HUB_OFFLINE=1`.
+- `--hf_token` and `--offline` are mutually exclusive.
+
+Practical guidance:
+
+1. Prefetch required model/tokenizer/config files into a local HF cache.
+2. Mount that cache into the container with `-cm/--custom_mounts`.
+3. Set `HF_HOME` to that mounted cache path before launch (Slurm exports env vars by default), for example `export HF_HOME=/path/to/hf_cache`.
+4. If needed, explicitly override `HF_HOME` with `-ce/--custom_env_vars`.
+5. Pass `--offline` to block Hub network checks.
+
+Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, Hub-backed code paths may still perform network checks and hit HuggingFace rate limits.
 
 ##### Parallelism arguments
 
@@ -146,34 +230,52 @@ python scripts/performance/setup_experiment.py
 - `-ep/--expert_model_parallel_size`: MoE expert parallel degree. Distributes MoE experts across sub data parallel dimension.
 - `-et/--expert_tensor_parallel_size`: Expert tensor parallel degree. Intra-layer tensor model parallelism for expert layer. Use `-et` (no value) for `None` or `-et <int>`.
 
+##### Slurm launcher behavior
+
+- The launcher always adds `--container-writable` to `srun`.
+- This avoids benchmark failures on clusters using Enroot defaults, where `ENROOT_ROOTFS_WRITABLE=no`.
+
 ##### Slurm arguments
 
 - `-a/--account`: Slurm account to use for experiment.
 - `-p/--partition`: Slurm partition to use for experiment.
 - `-t/--time_limit`: Maximum time limit before the Slurm job is cancelled. Format `HH:MM:SS`. Default `00:30:00`.
-- `-gn/--gpus_per_node`: GPUs per node. Default `None`. If not provided, will be inferred from the GPU type.
+- `-gn/--gpus_per_node`: GPUs per node. Default `None`. If not provided, it is inferred from the GPU type.
 - `-cm/--custom_mounts`: Comma-separated list of host mounts to expose inside the container.
 - `-ce/--custom_env_vars`: Comma-separated string of environment variables (format: `key1=value1,key2=value2`).
+- `-E/--env`: Set environment variable (repeatable arg). This is an alternative to `--custom_env_vars`. (`--custom_env_vars` is preferred for most cases). Example: `-E var1=value1,value2 -E var2=value3"`.
 - `-cs/--custom_srun_args`: Comma-separated string of srun arguments.
 - `--gres`: Slurm generic resources to request (e.g., `gpu:4`).
 - `--additional_slurm_params`: Additional SLURM parameters as key=value pairs. Use semicolons (`;`) to separate parameters when values contain commas. Examples: `nodelist=node001,node002;constraint=gpu` or `reservation=my_res;exclusive`.
+- `--packager`: How code is packaged for the job. `git` snapshots the repo at submission time (default). `none` skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.
 
-##### DGXCloud arguments
+##### Kubeflow arguments
 
-- `--dgxc_cluster`: DGXCloud cluster to use for experiment.
-- `--dgxc_base_url`: DGXCloud base URL.
-- `--dgxc_kube_apiserver_url`: DGXCloud Kube API server URL.
-- `--dgxc_app_id`: DGXCloud app ID.
-- `--dgxc_app_secret`: DGXCloud app secret.
-- `--dgxc_project_name`: DGXCloud project name.
-- `--dgxc_pvc_claim_name`: DGXCloud PVC claim name.
-- `--dgxc_pvc_mount_path`: DGXCloud PVC mount path.
+- `--kubeflow_namespace`: Kubernetes namespace for the Kubeflow TrainJob. Setting this routes the experiment through the Kubeflow executor instead of Slurm.
+- `--csp`: cloud provider whose fabric plugin to apply to the Kubeflow executor — `aws` applies `EKSEnvPlugin` (EFA: `FI_PROVIDER=efa`, `FI_EFA_USE_HUGE_PAGE=0`, EFA device requests + privileged container) and `gcp` applies `GKEEnvPlugin` (gIB RDMA-NIC pod annotations). No-op for the Slurm executor.
+- `--kubeflow_workdir_pvc`: PVC name for syncing the job workdir (launch scripts, packaged code) into the cluster before launch.
+- `--kubeflow_workdir_pvc_path`: Mount path for the workdir PVC inside the training pod. Default `/nemo_run`.
+- `--kubeflow_workdir_local_path`: Local directory whose contents nemo-run's `KubeflowExecutor.package()` rsyncs into the workdir PVC via a temporary alpine pod before launch. Used to overlay a `--mbridge-ref` checkout onto `/opt/Megatron-Bridge` in the trainer container without rebuilding the image.
+- `--kubeflow_image_pull_secrets`: Comma-separated list of Kubernetes image pull secret names.
+- `--kubeflow_volumes_json`: JSON-encoded list of Kubernetes `Volume` dicts attached to the training pod (PVC, emptyDir, hostPath).
+- `--kubeflow_volume_mounts_json`: JSON-encoded list of Kubernetes `VolumeMount` dicts applied to the training container (must match a name in `--kubeflow_volumes_json`).
+- `--kubeflow_tolerations_json`: JSON-encoded list of Kubernetes `Toleration` dicts applied to the training pods (e.g. to land on lease-tainted nodes such as `gpu-wrangler.nvidia.com/lease`).
+- `--kubeflow_affinity_json`: JSON-encoded Kubernetes `Affinity` dict applied to the training pods (e.g. node affinity onto GPULease-allocated nodes).
+- `--kubeflow_env_list_json`: JSON-encoded list of Kubernetes `EnvVar` dicts (supports `valueFrom.secretKeyRef` for secret-backed env vars such as `WANDB_API_KEY` / `HF_TOKEN`).
+- `--kubeflow_extra_resource_requests_json`: JSON-encoded dict of extra container resource requests (e.g. `{"vpc.amazonaws.com/efa": "32"}` for EFA on AWS).
+- `--kubeflow_extra_resource_limits_json`: JSON-encoded dict of extra container resource limits (paired with the requests above).
+- `--kubeflow_pod_spec_overrides_json`: JSON-encoded dict merged into the pod spec — escape hatch for `nodeSelector`, `hostNetwork`, etc.
+- `--kubeflow_container_kwargs_json`: JSON-encoded dict of extra fields set on the training container (e.g. `{"securityContext": {"privileged": true}}` for EFA / RDMA).
+- `--kubeflow_pod_annotations_json`: JSON-encoded dict of annotations applied to the trainer pod template metadata (e.g. GKE `networking.gke.io/interfaces` to attach the RDMA NICs for gIB). Usually set for you by `--csp gcp`.
+- `--kubeflow_labels_json`: JSON-encoded dict of labels applied to the TrainJob's pods.
 
 ##### Performance arguments
 
-- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
+- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`, `vrnvl72`). `vr200` is a deprecated alias for `vrnvl72`.
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
+- `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `1200`). Used for silicon simulation correlation studies. Disabled by default.
+- `-lmc/--peak_mem_clk`: Lock GPU memory clock to a fixed peak frequency in MHz (e.g. `2600`). Used for silicon simulation correlation studies. Defaults to `4752` MHz for VRNVL72 and is disabled by default for other GPUs. Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VRNVL72 default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
 - `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.
@@ -205,7 +307,7 @@ python scripts/performance/setup_experiment.py
 
 ##### Config variant arguments
 
-- `-cv/--config_variant`: Config variant to use (e.g., `"v1"`, `"v2"`). Defaults to `"v2"` (`"v1"` if `"v2"` doens't exist). Use `--list_config_variants` to see available options.
+- `-cv/--config_variant`: Config variant to use. Omit to use the suffix-less canonical flat perf recipe. Named variants such as `"large_scale"` are supported when a matching flat recipe exists. Use `--list_config_variants` to see available options.
 - `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
 ##### Testing arguments
@@ -222,3 +324,63 @@ python scripts/performance/setup_experiment.py
 - `--max_outlier_ratio`: Maximum ratio of outliers allowed. Default `0.1`.
 - `--outlier_threshold`: Outlier detection threshold (sigma). Default `3.0`.
 - `--skip_first_percent_loss`: Percentage of loss points to skip from beginning for convergence analysis. Default `0.20` (20%).
+
+## Determinism
+
+Deterministic training guarantees that two runs with identical inputs produce identical outputs at every step.  It is useful for debugging (isolating regressions) and for reproducibility studies.
+
+### What `--deterministic` does
+
+**Environment variables** (stored in `cfg.env_vars` and applied before the training process imports Torch):
+
+| Variable | Value | Reason |
+|---|---|---|
+| `NCCL_ALGO` | `Ring` | Disables tree/NVLink collectives that are non-deterministic |
+| `NVTE_ALLOW_NONDETERMINISTIC_ALGO` | `0` | Forces TE to use deterministic algorithms |
+| `CUBLAS_WORKSPACE_CONFIG` | `:4096:8` | Disables cuBLAS heuristic workspace selection |
+
+**Model config overrides** (applied by `apply_determinism_overrides` in the recipe layer):
+
+| Field | Value |
+|---|---|
+| `model.deterministic_mode` | `True` |
+| `model.cross_entropy_loss_fusion` | `False` |
+| `comm_overlap.tp_comm_overlap` | `False` |
+
+### Example commands
+
+```bash
+# Llama 3 70B — deterministic, H100 64-GPU
+python scripts/performance/setup_experiment.py \
+  --account <account> --partition <partition> \
+  --gpu h100 -m llama3 -s 70b -ng 64 -gn 8 \
+  --container_image <image> --task pretrain \
+  --deterministic
+
+# Llama 3.1 405B — deterministic, H100 512-GPU
+python scripts/performance/setup_experiment.py \
+  --account <account> --partition <partition> \
+  --gpu h100 -m llama31 -s 405b -ng 512 -gn 8 \
+  --container_image <image> --task pretrain \
+  --deterministic
+```
+
+### Using model recipes directly
+
+`apply_determinism_overrides` is also importable for use outside the performance script layer:
+
+```python
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config
+
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config()
+
+# Or, apply overrides to any existing recipe:
+from megatron.bridge.recipes.utils import apply_determinism_overrides
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_config
+
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
+apply_determinism_overrides(cfg)
+```
+
+`apply_determinism_overrides(cfg)` adds both the model overrides and these runtime environment defaults to the recipe.
+Explicit shell or launcher environment values retain precedence when the recipe is launched.

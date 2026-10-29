@@ -1,0 +1,649 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+"""Unit tests for MegatronMIMO forward step functions."""
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+import torch
+
+from megatron.bridge.training.megatron_mimo_step import resolve_step_packing
+
+
+class TestLossFunc:
+    """Test cases for loss_func()."""
+
+    def test_loss_rejects_nan_by_default(self):
+        """The stock MIMO loss should honor the default non-finite loss guard."""
+        from megatron.core.rerun_state_machine import destroy_rerun_state_machine, initialize_rerun_state_machine
+
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        destroy_rerun_state_machine()
+        initialize_rerun_state_machine()
+        try:
+            with (
+                patch("torch.cuda.current_device", return_value=0),
+                pytest.raises(RuntimeError, match="Unexpected result"),
+            ):
+                loss_func(torch.ones(2), torch.tensor([1.0, float("nan")]))
+        finally:
+            destroy_rerun_state_machine()
+
+    def test_loss_computation(self):
+        """Test loss is computed correctly with mask."""
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        # Create test data
+        output_tensor = torch.tensor([1.0, 2.0, 3.0, 4.0])
+        loss_mask = torch.tensor([1.0, 1.0, 0.0, 1.0])  # Mask out 3rd element
+
+        total_loss, num_tokens, metrics = loss_func(loss_mask, output_tensor)
+
+        # Expected: (1.0*1 + 2.0*1 + 3.0*0 + 4.0*1) = 7.0
+        assert total_loss.item() == 7.0
+        # Expected tokens: 3 (sum of mask)
+        assert num_tokens.item() == 3
+        # Check metrics dict structure
+        assert "lm loss" in metrics
+
+    def test_loss_with_all_ones_mask(self):
+        """Test loss with all-ones mask."""
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        output_tensor = torch.tensor([1.0, 2.0, 3.0])
+        loss_mask = torch.ones(3)
+
+        total_loss, num_tokens, metrics = loss_func(loss_mask, output_tensor)
+
+        assert total_loss.item() == 6.0
+        assert num_tokens.item() == 3
+
+    def test_loss_with_all_zeros_mask(self):
+        """Test loss with all-zeros mask."""
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        output_tensor = torch.tensor([1.0, 2.0, 3.0])
+        loss_mask = torch.zeros(3)
+
+        total_loss, num_tokens, metrics = loss_func(loss_mask, output_tensor)
+
+        assert total_loss.item() == 0.0
+        assert num_tokens.item() == 0
+
+    def test_loss_with_noncontiguous_mask(self):
+        """The shared loss helper should preserve the MIMO loss mask contract."""
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        output_tensor = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        loss_mask = torch.tensor([[1.0, 0.0], [1.0, 0.0]]).T
+
+        assert not loss_mask.is_contiguous()
+        total_loss, num_tokens, _ = loss_func(loss_mask, output_tensor)
+
+        assert total_loss.item() == 3.0
+        assert num_tokens.item() == 2
+
+
+class TestGetBatch:
+    """Test cases for get_batch()."""
+
+    def test_returns_none_for_none_iterator(self):
+        """Test returns None when iterator is None."""
+        from megatron.bridge.training.megatron_mimo_step import get_batch
+
+        result = get_batch(None)
+        assert result is None
+
+    def test_returns_none_on_stop_iteration(self):
+        """Test returns None when iterator is exhausted."""
+        from megatron.bridge.training.megatron_mimo_step import get_batch
+
+        empty_iter = iter([])
+        result = get_batch(empty_iter)
+        assert result is None
+
+    def test_returns_batch_from_iterator(self):
+        """Test returns batch from iterator."""
+        from megatron.bridge.training.megatron_mimo_step import get_batch
+
+        batch = {"input_ids": torch.tensor([1, 2, 3])}
+        data_iter = iter([batch])
+
+        result = get_batch(data_iter)
+
+        assert result is not None
+        assert "input_ids" in result
+
+
+class TestForwardStep:
+    """Test cases for forward_step()."""
+
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_last_stage(self, mock_unwrap):
+        """Test forward step at last pipeline stage returns loss func."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        # Create mock state
+        mock_state = MagicMock()
+        mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
+
+        # Create mock model with role=None (indicates last stage)
+        mock_model = MagicMock()
+        mock_model.role = None  # role=None means is_last_stage=True
+        mock_output = torch.tensor([1.0, 2.0])
+        mock_loss_mask = torch.ones(2)
+        mock_model.return_value = (mock_output, mock_loss_mask)
+
+        # unwrap_megatron_mimo_model returns the mock model itself
+        mock_unwrap.return_value = mock_model
+
+        # Create mock iterator
+        batch = {"input_ids": torch.tensor([1, 2])}
+        data_iter = iter([batch])
+
+        output, loss_fn = forward_step(mock_state, data_iter, mock_model)
+
+        # At last stage, should return loss function
+        assert loss_fn is not None
+        assert callable(loss_fn)
+
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_intermediate_stage(self, mock_unwrap):
+        """Test forward step at intermediate stage returns None for loss func."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
+        mock_model = MagicMock()
+        # Configure role to indicate intermediate stage (not last stage)
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_last_stage.return_value = False
+        mock_role.is_first_stage.return_value = True
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+
+        mock_unwrap.return_value = mock_model
+
+        batch = {"input_ids": torch.tensor([1, 2])}
+        data_iter = iter([batch])
+
+        output, loss_fn = forward_step(mock_state, data_iter, mock_model)
+
+        # Intermediate stage should return None for loss_fn
+        assert loss_fn is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_language_intermediate_stage_keeps_position_ids(self, mock_unwrap, mock_get_batch):
+        """Test intermediate language PP stages keep position_ids for MRoPE."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = False
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+
+        position_ids = torch.arange(4).unsqueeze(0)
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 4]]),
+            "position_ids": position_ids,
+            "attention_mask": None,
+            "labels": torch.tensor([[2, 3, 4, 5]]),
+            "loss_mask": torch.ones(1, 4),
+            "modality_inputs": {"images": {"pixel_values": torch.randn(1, 3)}},
+        }
+
+        output, loss_fn = forward_step(mock_state, iter([]), mock_model)
+
+        assert torch.equal(output, torch.tensor([1.0]))
+        assert loss_fn is None
+        call_kwargs = mock_model.call_args.kwargs
+        assert call_kwargs["input_ids"] is None
+        assert call_kwargs["position_ids"] is position_ids
+        assert call_kwargs["labels"] is None
+        assert call_kwargs["loss_mask"] is None
+        assert call_kwargs["modality_inputs"] is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_rejects_dict_at_last_stage(self, mock_unwrap):
+        """Test forward step raises error if dict returned at last stage."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
+        mock_model = MagicMock()
+        mock_model.role = None  # role=None means is_last_stage=True
+        # Return dict (incorrect for last stage)
+        mock_model.return_value = ({"encoder": torch.tensor([1.0])}, None)
+
+        mock_unwrap.return_value = mock_model
+
+        batch = {"input_ids": torch.tensor([1, 2])}
+        data_iter = iter([batch])
+
+        with pytest.raises(ValueError, match="Last pipeline stage must return scalar loss"):
+            forward_step(mock_state, data_iter, mock_model)
+
+    def test_forward_step_uses_global_state_signature(self):
+        """Test forward step uses 3-arg signature with GlobalState."""
+        import inspect
+
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        sig = inspect.signature(forward_step)
+        params = list(sig.parameters.keys())
+
+        # Should have state as first parameter
+        assert params[0] == "state"
+        assert len(params) == 3
+
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_packs_language_shard_with_mask_lengths(self, mock_unwrap, mock_get_batch):
+        """Packing wiring: lengths come from the batch's attention_mask, the shard is
+        packed to one [1, T] row, and packing_kwargs reach the model call."""
+        from types import SimpleNamespace
+
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = False
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+
+        # Two samples, mask lengths 3 and 2 -> packed [1, 5], cu_seqlens [0, 3, 5].
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]]),
+            "position_ids": torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]),
+            "attention_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]]),
+            "labels": torch.tensor([[2, 3, 4, 0], [5, 6, 0, 0]]),
+            "loss_mask": torch.ones(2, 4),
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        call_kwargs = mock_model.call_args.kwargs
+        assert call_kwargs["input_ids"] is None
+        assert call_kwargs["packing_kwargs"]["cu_seqlens_q"].tolist() == [0, 3, 5]
+        assert call_kwargs["position_ids"].tolist() == [[0, 1, 2, 0, 1]]
+        assert call_kwargs["attention_mask"] is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_nulls_attention_mask_before_model(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """The tokenizer padding mask is a data-path length source only; the model must get None."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(
+            enable_in_batch_packing=False,
+            defer_in_batch_packing_to_step=False,
+            megatron_mimo_scalable_dp=True,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 1)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": torch.ones(4, 4, dtype=torch.long),
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        assert mock_model.call_args.kwargs["attention_mask"] is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_scalable_dp_skips_batch_slicing(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """megatron_mimo_scalable_dp: the sampler already delivered this rank's shard, so the
+        batch must reach the model unsliced."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(
+            enable_in_batch_packing=False,
+            defer_in_batch_packing_to_step=False,
+            megatron_mimo_scalable_dp=True,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 2)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": None,
+            "labels": torch.arange(16).reshape(4, 4),
+            "loss_mask": torch.ones(4, 4),
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        # Slicing with dp=2 would have kept only rows 0-1 ([2, 4]); the shard must stay [4, 4].
+        assert mock_model.call_args.kwargs["input_ids"].shape[0] == 4
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_default_still_slices_batch(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """Without megatron_mimo_scalable_dp the full-batch read must still be sliced."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(
+            enable_in_batch_packing=False,
+            defer_in_batch_packing_to_step=False,
+            megatron_mimo_scalable_dp=False,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 2)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": None,
+            "labels": torch.arange(16).reshape(4, 4),
+            "loss_mask": torch.ones(4, 4),
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        # dp rank 0 of 2 keeps rows 0-1 of the full 4-row read.
+        assert mock_model.call_args.kwargs["input_ids"].shape[0] == 2
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_scalable_dp_binds_to_real_dataset_config_field(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """The step's getattr key must match the real DirectHFSFTDatasetConfig field name."""
+        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = DirectHFSFTDatasetConfig(
+            seq_length=16,
+            source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+            megatron_mimo_scalable_dp=True,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 2)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": None,
+            "labels": torch.arange(16).reshape(4, 4),
+            "loss_mask": torch.ones(4, 4),
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        # A one-sided field rename would silently revert to slicing ([2, 4]).
+        assert mock_model.call_args.kwargs["input_ids"].shape[0] == 4
+
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_packing_requires_attention_mask(self, mock_unwrap, mock_get_batch):
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_unwrap.return_value = mock_model
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 0]]),
+            "position_ids": torch.tensor([[0, 1, 2, 3]]),
+            "attention_mask": None,
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        with pytest.raises(ValueError, match="attention_mask"):
+            forward_step(mock_state, iter([]), mock_model)
+
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_packing_rejects_mismatched_mask_width(self, mock_unwrap, mock_get_batch):
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_unwrap.return_value = mock_model
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 0]]),
+            "position_ids": torch.tensor([[0, 1, 2, 3]]),
+            "attention_mask": torch.tensor([[1, 1, 1]]),  # width 3 vs batch width 4
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        with pytest.raises(ValueError, match="width"):
+            forward_step(mock_state, iter([]), mock_model)
+
+
+@pytest.mark.unit
+class TestResolveStepPacking:
+    """Dataset-config gating for MegatronMIMO step-time packing."""
+
+    def test_disabled_by_default(self):
+        assert resolve_step_packing(SimpleNamespace()) is False
+
+    def test_disabled_ignores_other_fields(self):
+        cfg = SimpleNamespace(enable_in_batch_packing=False, defer_in_batch_packing_to_step=False)
+        assert resolve_step_packing(cfg) is False
+
+    def test_enabled_with_defer(self):
+        cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        assert resolve_step_packing(cfg) is True
+
+    def test_collate_time_packing_rejected(self):
+        cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=False)
+        with pytest.raises(ValueError, match="defer_in_batch_packing_to_step"):
+            resolve_step_packing(cfg)
+
+    def test_reads_real_dataset_config(self):
+        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+
+        cfg = DirectHFSFTDatasetConfig(
+            seq_length=16,
+            source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+            enable_in_batch_packing=True,
+            defer_in_batch_packing_to_step=True,
+        )
+        assert resolve_step_packing(cfg) is True
+
+
+@pytest.mark.parametrize(
+    "local, remote, expected",
+    [([0.0, 0.0], [0.0, 0.0], 0.0), ([0.0, 0.0], [12.0, 3.0], 4.0), ([6.0, 2.0], [9.0, 1.0], 5.0)],
+)
+@pytest.mark.parametrize("world_size", [1, 2])
+def test_mimo_train_step_token_weighted_loss(local, remote, expected, world_size):
+    import megatron.bridge.training.train_megatron_mimo as training
+
+    dp_cp = object()
+    real_tensor = torch.tensor
+
+    def cpu_tensor(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_tensor(*args, **kwargs)
+
+    def reduce(value, **kwargs):
+        if kwargs.get("group") is dp_cp:
+            value.add_(real_tensor(remote))
+
+    optimizer = MagicMock()
+    optimizer.step.return_value = (True, 1.0, 0)
+    state = SimpleNamespace(timers=MagicMock(), cfg=SimpleNamespace(data_parallel_size=1))
+    with (
+        patch.object(training, "zero_grad_buffer_for_multimodule"),
+        patch.object(
+            training,
+            "forward_backward_pipelining_without_interleaving",
+            return_value=[{"lm loss": real_tensor(local)}],
+        ),
+        patch.object(training, "unwrap_megatron_mimo_model", return_value=SimpleNamespace(role=None)),
+        patch.object(training.dist, "get_world_size", return_value=world_size),
+        patch.object(training.dist, "get_rank", return_value=0),
+        patch.object(training.dist, "all_reduce", side_effect=reduce) as reduction,
+        patch.object(training.dist, "broadcast_object_list") as broadcast,
+        patch.object(training.torch, "tensor", side_effect=cpu_tensor),
+    ):
+        result = training.train_step_megatron_mimo(
+            MagicMock(),
+            iter([]),
+            MagicMock(),
+            optimizer,
+            {},
+            state,
+            None,
+            None,
+            SimpleNamespace(pg_collections={"language": SimpleNamespace(dp_cp=dp_cp)}),
+            [],
+            1,
+            8,
+            1,
+        )
+    assert result[0]["lm loss"].item() == pytest.approx(expected)
+    assert reduction.call_args_list[0].kwargs["group"] is dp_cp
+
+    assert state._zero_token_iters.item() == int(local[1] + remote[1] == 0)
+    if world_size == 1:
+        broadcast.assert_not_called()
+    else:
+        broadcast.assert_called_once()
+        assert broadcast.call_args.kwargs["src"] == 0
+        payload = broadcast.call_args.args[0]
+        assert payload[0] is result[0]
+        assert payload[1].item() == (local[1] + remote[1] == 0)
+
+
+@pytest.mark.parametrize("zero_token", [True, False, None])
+def test_mimo_logging_rank_receives_source_zero_token_flag(zero_token):
+    import megatron.bridge.training.train_megatron_mimo as training
+
+    real_tensor = torch.tensor
+
+    def cpu_tensor(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_tensor(*args, **kwargs)
+
+    def receive(payload, *, src):
+        assert src == 0
+        payload[:] = [
+            {"lm loss": real_tensor(0.0 if zero_token else 3.0)},
+            real_tensor(zero_token) if zero_token is not None else None,
+        ]
+
+    optimizer = MagicMock()
+    optimizer.step.return_value = (True, 1.0, 0)
+    state = SimpleNamespace(timers=MagicMock(), cfg=SimpleNamespace(data_parallel_size=1))
+    with (
+        patch.object(training, "zero_grad_buffer_for_multimodule"),
+        patch.object(training, "forward_backward_pipelining_without_interleaving", return_value=[]),
+        patch.object(training.dist, "get_world_size", return_value=2),
+        patch.object(training.dist, "get_rank", return_value=1),
+        patch.object(training.dist, "all_reduce", side_effect=lambda value, **kwargs: value.fill_(0)),
+        patch.object(training.dist, "broadcast_object_list", side_effect=receive) as broadcast,
+        patch.object(training.torch, "tensor", side_effect=cpu_tensor),
+        patch.object(torch.Tensor, "cuda", lambda tensor: tensor),
+    ):
+        result = training.train_step_megatron_mimo(
+            MagicMock(),
+            iter([]),
+            MagicMock(),
+            optimizer,
+            {},
+            state,
+            None,
+            None,
+            SimpleNamespace(pg_collections={"language": None}),
+            [],
+            1,
+            8,
+            1,
+        )
+
+    broadcast.assert_called_once()
+    assert result[0]["lm loss"].item() == (0.0 if zero_token else 3.0)
+    if zero_token is None:
+        assert not hasattr(state, "_zero_token_iters")
+    else:
+        assert state._zero_token_iters.item() == int(zero_token)

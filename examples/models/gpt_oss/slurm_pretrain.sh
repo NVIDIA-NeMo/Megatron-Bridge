@@ -28,8 +28,8 @@
 
 #SBATCH --job-name=gpt-oss-pretrain
 #SBATCH --nodes=4
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
+#SBATCH --ntasks-per-node=8  # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
+#SBATCH --gpus-per-node=8    # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
 #SBATCH --time=24:00:00
 #SBATCH --partition=batch
 #SBATCH --account=my_account
@@ -49,6 +49,9 @@ export WKDIR="${WKDIR:-}"
 
 # Model and training configurations
 MODEL_NAME=gpt_oss_20b
+RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_pretrain_config}"               # bf16 (default)
+# RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"           # Hopper FP8 current scaling
+# RECIPE_NAME="${MODEL_NAME}_pretrain_mxfp8_config"                        # Blackwell MXFP8
 DATASET_NAME=dclm  # set to "mock" for mock data; "dclm" uses DCLM when DCLM_DATA_DIR/DCLM_CACHE are set below
 SEQ_LENGTH=4096
 
@@ -154,6 +157,7 @@ fi
 # Run each parallelism config in sequence
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 CONFIG_INDEX=0
+JOB_EXIT=0
 for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     OLD_IFS=$IFS
     IFS=',' read -r TP PP EP CP SP <<< "$CONFIG"
@@ -178,7 +182,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
-        dataset.sequence_length=$SEQ_LENGTH \
+        dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
         model.expert_model_parallel_size=$EP \
@@ -188,9 +192,8 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     if [ -n "$DCLM_DATASET_OVERRIDES" ]; then
         CLI_OVERRIDES="$CLI_OVERRIDES $DCLM_DATASET_OVERRIDES"
     fi
-
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --recipe ${MODEL_NAME}_pretrain_config"
+    CMD="$CMD --recipe ${RECIPE_NAME}"
     CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."
@@ -201,9 +204,14 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     RUN_EXIT=$?
     if [ $RUN_EXIT -ne 0 ]; then
         echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP failed with exit code $RUN_EXIT"
+        JOB_EXIT=$RUN_EXIT
         continue
     fi
 done
+
+if [ $JOB_EXIT -ne 0 ]; then
+    exit $JOB_EXIT
+fi
 
 echo "======================================"
 echo "Job completed (all ${#PARALLELISM_CONFIGS[@]} configs)"

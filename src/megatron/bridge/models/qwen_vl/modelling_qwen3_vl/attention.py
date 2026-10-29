@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from einops import rearrange
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.transformer.attention import (
     HAVE_FA3,
     BaseInferenceContext,
@@ -24,9 +26,34 @@ from megatron.core.transformer.attention import (
     nvtx_range_pop,
     nvtx_range_push,
 )
+from megatron.core.transformer.dot_product_attention import DotProductAttention
 from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import apply_rotary_pos_emb_absolute
+
+
+def _qwen_attention_mask_for_core_attention(
+    core_attention: object,
+    attention_mask: Tensor | None,
+    packed_seq_params: PackedSeqParams | None,
+) -> Tensor | None:
+    """Translate Qwen's 2D valid-token mask to TE's masked-token convention."""
+    if (
+        not isinstance(core_attention, TEDotProductAttention)
+        or packed_seq_params is not None
+        or not isinstance(attention_mask, Tensor)
+        or attention_mask.ndim != 2
+    ):
+        return attention_mask
+
+    if attention_mask.dtype == torch.bool:
+        valid_mask = attention_mask
+    elif attention_mask.dtype in (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64):
+        valid_mask = attention_mask != 0
+    else:
+        return attention_mask
+
+    return (~valid_mask).unsqueeze(1).unsqueeze(1)
 
 
 class Qwen3VLSelfAttention(SelfAttention):
@@ -34,6 +61,26 @@ class Qwen3VLSelfAttention(SelfAttention):
     Overrides the SelfAttention class, the difference is that qwen3vl uses apply_rotary_pos_emb_absolute
     instead of apply_rotary_pos_emb
     """
+
+    @staticmethod
+    def _local_causal_attention(query: Tensor, key: Tensor, value: Tensor, scale: float) -> Tensor:
+        """Causal attention fallback for local padded fixed-score paths."""
+        if query.shape[2] != key.shape[2]:
+            if query.shape[2] % key.shape[2] != 0:
+                raise ValueError(f"Query heads ({query.shape[2]}) must be divisible by key heads ({key.shape[2]}).")
+            repeat = query.shape[2] // key.shape[2]
+            key = key.repeat_interleave(repeat, dim=2)
+            value = value.repeat_interleave(repeat, dim=2)
+
+        scores = torch.einsum("sbhd,tbhd->bhst", query.to(torch.float32), key.to(torch.float32)) * scale
+        sq, sk = scores.shape[-2], scores.shape[-1]
+        if sq > 1:
+            causal_mask = torch.ones((sq, sk), dtype=torch.bool, device=scores.device).triu(1 + max(sk - sq, 0))
+            scores = scores.masked_fill(causal_mask, torch.finfo(scores.dtype).min)
+
+        probs = torch.softmax(scores, dim=-1).to(value.dtype)
+        context = torch.einsum("bhst,tbhd->sbhd", probs, value)
+        return context.reshape(context.shape[0], context.shape[1], -1).contiguous()
 
     def forward(
         self,
@@ -217,12 +264,25 @@ class Qwen3VLSelfAttention(SelfAttention):
         # ==================================
 
         nvtx_range_push(suffix="core_attention")
-        if self.checkpoint_core_attention and self.training:
+        core_attention_mask = _qwen_attention_mask_for_core_attention(
+            self.core_attention,
+            attention_mask,
+            packed_seq_params,
+        )
+        if (
+            isinstance(self.core_attention, DotProductAttention)
+            and packed_seq_params is None
+            and attention_bias is None
+            and (inference_context is None or inference_context.is_static_batching())
+        ):
+            scale = float(getattr(self.core_attention, "softmax_scale", query.shape[-1] ** -0.5))
+            core_attn_out = self._local_causal_attention(query, key, value, scale)
+        elif self.checkpoint_core_attention and self.training:
             core_attn_out = self._checkpointed_attention_forward(
                 query,
                 key,
                 value,
-                attention_mask,
+                core_attention_mask,
                 attn_mask_type=attn_mask_type,
                 attention_bias=attention_bias,
                 packed_seq_params=packed_seq_params,
@@ -234,7 +294,7 @@ class Qwen3VLSelfAttention(SelfAttention):
                     query,
                     key,
                     value,
-                    attention_mask,
+                    core_attention_mask,
                     attn_mask_type=attn_mask_type,
                     attention_bias=attention_bias,
                     packed_seq_params=packed_seq_params,
@@ -268,7 +328,7 @@ class Qwen3VLSelfAttention(SelfAttention):
             core_attn_out = core_attn_out.reshape(core_attn_out.size(0), 1, -1)
         nvtx_range_pop(suffix="core_attention")
 
-        # Output gate (for Gated Attention in hybrid architectures like Qwen3.5)
+        # Output gate (for Gated Attention in hybrid architectures like Qwen3.5/3.6).
         if gate is not None:
             core_attn_out = self._apply_output_gate(core_attn_out, gate)
 

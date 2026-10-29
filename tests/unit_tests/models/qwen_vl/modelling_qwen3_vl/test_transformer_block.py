@@ -16,6 +16,8 @@
 
 import datetime
 import os
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -27,6 +29,48 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+
+
+def test_forward_propagates_padding_mask_to_transformer_layer():
+    """Pass the fixed-width THD padding mask through the Qwen block to MoE layers."""
+
+    class _Layer:
+        layer_number = 1
+
+        def __init__(self):
+            self.called_with = None
+
+        def __call__(self, **kwargs):
+            self.called_with = kwargs
+            return kwargs["hidden_states"], kwargs["context"]
+
+    layer = _Layer()
+    block = SimpleNamespace(
+        pre_process=True,
+        layers=[layer],
+        config=SimpleNamespace(
+            sequence_parallel=False,
+            fp8=False,
+            recompute_granularity=None,
+            cpu_offloading=False,
+        ),
+        training=True,
+        offload_context=nullcontext(),
+        group_prefetch_offload_commit_async=None,
+        final_layernorm=None,
+    )
+    hidden_states = torch.randn(4, 1, 8, requires_grad=True)
+    padding_mask = torch.tensor([[False, False, True, True]])
+
+    output = Qwen3VLTransformerBlock.forward(
+        block,
+        hidden_states=hidden_states,
+        attention_mask=None,
+        padding_mask=padding_mask,
+    )
+
+    assert output is layer.called_with["hidden_states"]
+    assert layer.called_with["padding_mask"] is padding_mask
 
 
 @pytest.fixture(scope="module")
@@ -104,13 +148,18 @@ class TestQwen3VLTransformerBlock:
         parallel_state.destroy_model_parallel()
 
     @pytest.mark.timeout(30)
-    @pytest.mark.parametrize("recompute_method", ["uniform", "block"])
-    def test_checkpointed_forward(self, transformer_config, recompute_method):
+    @pytest.mark.parametrize(
+        ("recompute_method", "recompute_num_layers"),
+        [("uniform", 1), ("uniform", 3), ("block", 1)],
+    )
+    def test_checkpointed_forward(self, transformer_config, recompute_method, recompute_num_layers):
         """Test checkpointed forward pass."""
         self._setup_parallel_state()
 
         # Update config for specific recompute method
         transformer_config.recompute_method = recompute_method
+        transformer_config.num_layers = 3 if recompute_method == "uniform" else 2
+        transformer_config.recompute_num_layers = recompute_num_layers
         layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=None,
             moe_grouped_gemm=False,

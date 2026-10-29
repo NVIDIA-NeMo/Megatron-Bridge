@@ -12,23 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Union
+import logging
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from fnmatch import fnmatch
+from types import MethodType
+from typing import Optional, Union, cast
 
+import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
     get_megatron_optimizer,
+    get_mup_config_overrides,
 )
-from megatron.core.optimizer.muon import get_megatron_muon_optimizer
-from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, combine_param_group_overrides
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.config import (
     OptimizerConfigOverrideProvider,
     OptimizerConfigOverrideProviderContext,
     SchedulerConfig,
 )
+from megatron.bridge.training.utils.optimizer_utils import normalize_optimizer_config
+
+
+G_LOGGER = logging.getLogger(__name__)
 
 
 def setup_optimizer(
@@ -51,6 +62,11 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
+    if not hasattr(optimizer_config, "provide"):
+        # setup_optimizer is also used by callers that construct Core's config
+        # directly, without ConfigContainer validation.
+        normalize_optimizer_config(optimizer_config)
+
     if optimizer_config_override_provider is None:
         optimizer_config_override_provider = OptimizerConfigOverrideProvider()
 
@@ -59,6 +75,45 @@ def setup_optimizer(
         OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model)
     )
 
+    # Apply μP optimizer scaling if enabled on the model config.
+    model_chunks = model if isinstance(model, list) else [model]
+    model_config = get_model_config(model_chunks[0])
+    if getattr(model_config, "use_mup", False):
+        mup_overrides = get_mup_config_overrides(
+            config=optimizer_config,
+            mup_width_mult=model_config.mup_width_mult,
+            optimizer_type=optimizer_config.optimizer,
+        )
+        if mup_overrides:
+            config_overrides = {**(config_overrides or {}), **mup_overrides}
+            G_LOGGER.info(
+                f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
+                f"applied {len(mup_overrides)} optimizer param-group override(s)."
+            )
+
+    # Check name-based LoRA+ overrides without depending on rank-local parameters.
+    # MCore scales peak/minimum rates but uses one shared initial rate during warmup.
+    if config_overrides and scheduler_config.lr_warmup_init != 0:
+
+        def effective_lr_bounds(param_name: str) -> tuple[float | None, float | None]:
+            override = combine_param_group_overrides(
+                [
+                    value
+                    for key, value in config_overrides.items()
+                    if any(
+                        fnmatch(param_name, name) for name in ((key.name,) if isinstance(key.name, str) else key.name)
+                    )
+                ]
+            )
+            return override.get("max_lr", optimizer_config.lr), override.get("min_lr", optimizer_config.min_lr)
+
+        if effective_lr_bounds("adapter.linear_in.weight") != effective_lr_bounds("adapter.linear_out.weight"):
+            raise ValueError(
+                "LoRA+ with different A/B learning rates requires SchedulerConfig.lr_warmup_init=0. "
+                "A nonzero warmup initial learning rate breaks the LoRA+ ratio. "
+                "Set lr_warmup_init=0 or lora_plus_ratio=1."
+            )
+
     if hasattr(optimizer_config, "provide"):
         optimizer = optimizer_config.provide(
             model_chunks=model,
@@ -66,7 +121,7 @@ def setup_optimizer(
             use_gloo_process_groups=use_gloo_process_groups,
             pg_collection=pg_collection,
         )
-    elif "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
+    else:
         optimizer = get_megatron_optimizer(
             config=optimizer_config,
             model_chunks=model,
@@ -74,19 +129,421 @@ def setup_optimizer(
             use_gloo_process_groups=use_gloo_process_groups,
             pg_collection=pg_collection,
         )
-    else:
-        optimizer = get_megatron_muon_optimizer(
-            config=optimizer_config,
-            model_chunks=model,
-            config_overrides=config_overrides,
-            use_gloo_process_groups=use_gloo_process_groups,
-            layer_wise_distributed_optimizer="dist" in optimizer_config.optimizer,
-            pg_collection=pg_collection,
-        )
 
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
     return optimizer, scheduler
+
+
+def _optimizer_state_is_fp32_adam(state_dict: Mapping[str, object]) -> bool:
+    """Return whether a state dict contains only FP32 Adam moment tensors."""
+    states = state_dict.get("state")
+    if not isinstance(states, Mapping) or not states:
+        return False
+
+    expected_state_names = {"exp_avg", "exp_avg_sq"}
+    for state in states.values():
+        if not isinstance(state, Mapping) or set(state) != expected_state_names:
+            return False
+        if any(not isinstance(value, torch.Tensor) or value.dtype != torch.float32 for value in state.values()):
+            return False
+    return True
+
+
+def _get_te_fused_adam_class() -> type[torch.optim.Optimizer] | None:
+    """Return Transformer Engine's FusedAdam class when it is available."""
+    try:
+        from transformer_engine.pytorch.optimizers import FusedAdam
+    except ImportError:
+        return None
+    return cast(type[torch.optim.Optimizer], FusedAdam)
+
+
+def _cpu_staging_get_unscaled_state(
+    fallback: Callable[..., object],
+) -> Callable[..., torch.Tensor]:
+    """Wrap a TE state accessor without depending on its call signature."""
+
+    def _get_unscaled_state_on_cpu(*args: object, **kwargs: object) -> torch.Tensor:
+        state = fallback(*args, **kwargs)
+        if not isinstance(state, torch.Tensor):
+            raise TypeError(
+                "Transformer Engine FusedAdam.get_unscaled_state() must return a torch.Tensor "
+                f"for CPU checkpoint staging, but returned {type(state).__name__}."
+            )
+        return state.cpu()
+
+    return _get_unscaled_state_on_cpu
+
+
+@contextmanager
+def memory_efficient_precision_aware_optimizer_state_checkpointing(
+    optimizer: MegatronOptimizer | None,
+    *,
+    enabled: bool,
+) -> Iterator[int]:
+    """Stage expanded precision-aware Adam checkpoint tensors on CPU.
+
+    Transformer Engine's precision-aware FusedAdam exposes portable checkpoint
+    state by expanding compressed moments to FP32. Its default ``state_dict``
+    path retains those expansions on GPU until the complete state dictionary is
+    built for saving or load scaffolding, which can exceed device memory even
+    when training fits. This context preserves the same unscaled checkpoint
+    values and dtypes, but moves each tensor to CPU immediately so only one
+    expansion is live on GPU at a time.
+
+    Args:
+        optimizer: Optimizer participating in checkpointing.
+        enabled: Whether to stage compatible optimizer state on CPU.
+
+    Yields:
+        Number of compatible FusedAdam instances using CPU staging.
+    """
+    if not enabled or optimizer is None:
+        yield 0
+        return
+
+    fused_adam_class = _get_te_fused_adam_class()
+    if fused_adam_class is None:
+        yield 0
+        return
+
+    chained_optimizers = getattr(optimizer, "chained_optimizers", None)
+    sub_optimizers = chained_optimizers if isinstance(chained_optimizers, (list, tuple)) else [optimizer]
+    missing_method = object()
+    patched: list[tuple[torch.optim.Optimizer, object]] = []
+
+    try:
+        for distributed_optimizer in sub_optimizers:
+            if getattr(distributed_optimizer, "is_stub_optimizer", False):
+                continue
+            if not getattr(getattr(distributed_optimizer, "config", None), "use_precision_aware_optimizer", False):
+                continue
+            if getattr(getattr(distributed_optimizer, "config", None), "optimizer_cpu_offload", False):
+                continue
+            if getattr(getattr(distributed_optimizer, "ddp_config", None), "use_megatron_fsdp", False):
+                continue
+
+            inner = getattr(distributed_optimizer, "optimizer", None)
+            if not isinstance(inner, fused_adam_class):
+                continue
+            state_dtype_map = getattr(inner, "name_to_dtype_map", None)
+            if not isinstance(state_dtype_map, Mapping) or all(
+                dtype == torch.float32 for dtype in state_dtype_map.values()
+            ):
+                continue
+
+            original_get_unscaled_state = getattr(inner, "get_unscaled_state", None)
+            if not callable(original_get_unscaled_state):
+                raise RuntimeError(
+                    "CPU checkpoint staging requires Transformer Engine FusedAdam.get_unscaled_state() "
+                    "to be callable. The installed Transformer Engine checkpoint API is incompatible."
+                )
+
+            previous_instance_method = inner.__dict__.get("get_unscaled_state", missing_method)
+            setattr(inner, "get_unscaled_state", _cpu_staging_get_unscaled_state(original_get_unscaled_state))
+            patched.append((inner, previous_instance_method))
+
+        if patched:
+            G_LOGGER.info(
+                "Enabled CPU staging for %d precision-aware Transformer Engine FusedAdam checkpoint state(s).",
+                len(patched),
+            )
+
+        yield len(patched)
+    finally:
+        for inner, previous_instance_method in patched:
+            if previous_instance_method is missing_method:
+                delattr(inner, "get_unscaled_state")
+            else:
+                setattr(inner, "get_unscaled_state", previous_instance_method)
+
+
+@contextmanager
+def memory_efficient_fp32_optimizer_state_loading(
+    optimizer: MegatronOptimizer | None,
+) -> Iterator[int]:
+    """Avoid redundant TE FusedAdam state copies during checkpoint loading.
+
+    Megatron-Core's distributed optimizer creates FP32 Adam moment tensors as
+    its loading scaffold. Transformer Engine's loader replaces those tensors
+    with another FP32 copy even though no conversion is needed. This context
+    temporarily uses PyTorch's base loader only for compatible standard
+    distributed FusedAdam instances, allowing them to adopt the scaffold
+    tensors directly.
+
+    Args:
+        optimizer: Optimizer participating in checkpoint loading.
+
+    Yields:
+        Number of compatible FusedAdam instances using the base loader.
+    """
+    if optimizer is None:
+        yield 0
+        return
+
+    fused_adam_class = _get_te_fused_adam_class()
+    if fused_adam_class is None:
+        yield 0
+        return
+
+    sub_optimizers = optimizer.chained_optimizers if hasattr(optimizer, "chained_optimizers") else [optimizer]
+    missing_method = object()
+    patched: list[tuple[torch.optim.Optimizer, object]] = []
+
+    try:
+        for distributed_optimizer in sub_optimizers:
+            if getattr(distributed_optimizer, "is_stub_optimizer", False):
+                continue
+            if not hasattr(distributed_optimizer, "shard_fp32_from_float16_groups"):
+                continue
+            if getattr(getattr(distributed_optimizer, "ddp_config", None), "use_megatron_fsdp", False):
+                continue
+
+            config = getattr(distributed_optimizer, "config", None)
+            if getattr(config, "use_precision_aware_optimizer", False):
+                continue
+            if getattr(config, "optimizer_cpu_offload", False):
+                continue
+
+            inner = getattr(distributed_optimizer, "optimizer", None)
+            if not isinstance(inner, fused_adam_class):
+                continue
+            if getattr(inner, "master_weights", None) is not False:
+                continue
+            if getattr(inner, "store_param_remainders", False):
+                continue
+
+            state_dtype_map = getattr(inner, "name_to_dtype_map", None)
+            if not isinstance(state_dtype_map, Mapping) or any(
+                state_dtype_map.get(name) != torch.float32 for name in ("exp_avg", "exp_avg_sq")
+            ):
+                continue
+
+            params = [param for group in inner.param_groups for param in group["params"]]
+            if not params or any(param.dtype != torch.float32 for param in params):
+                continue
+
+            original_load_state_dict: Callable[[dict[str, object]], None] = inner.load_state_dict
+
+            def _load_state_dict_without_fp32_reallocation(
+                fused_adam: torch.optim.Optimizer,
+                state_dict: dict[str, object],
+                *,
+                _fallback: Callable[[dict[str, object]], None] = original_load_state_dict,
+            ) -> None:
+                if not _optimizer_state_is_fp32_adam(state_dict):
+                    _fallback(state_dict)
+                    return
+                torch.optim.Optimizer.load_state_dict(fused_adam, state_dict)
+
+            previous_instance_method = inner.__dict__.get("load_state_dict", missing_method)
+            setattr(inner, "load_state_dict", MethodType(_load_state_dict_without_fp32_reallocation, inner))
+            patched.append((inner, previous_instance_method))
+
+        if patched:
+            G_LOGGER.info(
+                "Enabled memory-efficient FP32 checkpoint-state loading for %d distributed "
+                "Transformer Engine FusedAdam optimizer(s).",
+                len(patched),
+            )
+
+        yield len(patched)
+    finally:
+        for inner, previous_instance_method in patched:
+            if previous_instance_method is missing_method:
+                delattr(inner, "load_state_dict")
+            else:
+                setattr(inner, "load_state_dict", previous_instance_method)
+        if patched:
+            # The replaced scaffold tensors cannot enter the allocator cache
+            # until the checkpoint-loading frame releases its state dict.
+            torch.cuda.empty_cache()
+
+
+@contextmanager
+def hybrid_optimizer_state_loading(optimizer: MegatronOptimizer | None) -> Iterator[None]:
+    """Restore native FP32 HybridDeviceOptimizer metadata omitted from parameter payloads.
+
+    Core restores Adam counters in common group metadata, while its parameter
+    loader expects every existing state tensor in the payload. For a hybrid
+    optimizer this includes a GPU ``step`` tensor introduced during loading and,
+    in fully reshardable checkpoints, the CPU working-copy ``master_param`` alias.
+    Supply the saved group counter and checkpoint FP32 parameter for those fields
+    before calling Core's ordinary tensor-copy implementation.
+
+    Args:
+        optimizer: Optimizer whose native checkpoint state is being loaded.
+    """
+    from megatron.core.optimizer import DistributedOptimizer
+    from megatron.core.optimizer.cpu_offloading.hybrid_optimizer import HybridDeviceOptimizer
+
+    sub_optimizers = getattr(optimizer, "chained_optimizers", None)
+    sub_optimizers = sub_optimizers if isinstance(sub_optimizers, (list, tuple)) else [optimizer]
+    missing_method = object()
+    patched: list[tuple[DistributedOptimizer, object]] = []
+    try:
+        for distributed in sub_optimizers:
+            if not isinstance(distributed, DistributedOptimizer):
+                continue
+            if not isinstance(distributed.optimizer, HybridDeviceOptimizer):
+                continue
+            if distributed.config.use_precision_aware_optimizer_no_fp8_or_ds_fp8:
+                continue
+            original = distributed._set_main_param_and_optimizer_states
+
+            def restore_parameter_state(
+                model_param: torch.Tensor,
+                tensors: dict[str, torch.Tensor],
+                *,
+                _outer: DistributedOptimizer = distributed,
+                _restore: Callable[[torch.Tensor, dict[str, torch.Tensor]], None] = original,
+            ) -> None:
+                group_index, group_order = _outer.model_param_group_index_map[model_param]
+                group = _outer.optimizer.param_groups[group_index]
+                main_param = group["params"][group_order]
+                current_state = _outer.optimizer.state[main_param]
+                loaded = dict(tensors)
+                step = current_state.get("step")
+                if isinstance(step, torch.Tensor) and "step" in group:
+                    # The dp_reshardable scaffold can also carry a stale CPU
+                    # counter. Saved group metadata is authoritative for both.
+                    loaded["step"] = step.new_tensor(group["step"])
+                if "master_param" in current_state:
+                    # HDO recreates its CPU working copies in its load hook.
+                    # Bind the state alias to that new copy so Core also fills
+                    # the parameter that CPU Adam will actually update.
+                    current_state["master_param"] = _outer.optimizer.param_to_inner_param[main_param]
+                    if "master_param" not in loaded:
+                        loaded["master_param"] = loaded["param"]
+                _restore(model_param, loaded)
+
+            previous = distributed.__dict__.get("_set_main_param_and_optimizer_states", missing_method)
+            setattr(distributed, "_set_main_param_and_optimizer_states", restore_parameter_state)
+            patched.append((distributed, previous))
+        yield
+    finally:
+        for distributed, previous in reversed(patched):
+            if previous is missing_method:
+                delattr(distributed, "_set_main_param_and_optimizer_states")
+            else:
+                setattr(distributed, "_set_main_param_and_optimizer_states", previous)
+
+
+def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer | None) -> bool:
+    """Synchronize ``HybridDeviceOptimizer`` working copies after checkpoint loading.
+
+    A freshly constructed optimizer has no state when only model weights were
+    loaded. Refresh its FP32 working copies from those model weights. When
+    optimizer state was restored, preserve its full-precision masters and
+    synchronize the CPU/GPU sub-optimizers with that state instead. Rebuilding
+    restored masters from BF16 weights discards their low bits and changes the
+    next update. The pinned Core ``dp_reshardable`` loader also replaces state
+    tensors without refreshing HybridDeviceOptimizer's working copies.
+
+    Workaround for an upstream Megatron-Core gap: when a checkpoint is loaded
+    into the BF16 model parameters, ``reload_model_params()`` only refreshes
+    the level-1 FP32 GPU shards inside ``HybridDeviceOptimizer``.  The level-2
+    CPU clones (``gpu_params_map_cpu_copy``) and the level-3 FP32 working copy
+    (``param_to_fp32_param``) keep their default initialisation values.
+
+    Without this helper, the first optimizer step on a fine-tuning run that
+    combines ``optimizer_cpu_offload=True`` + distributed optimizer + BF16
+    runs Adam on stale FP32 masters and writes the result back into the BF16
+    model, effectively reverting the loaded weights to fresh ``nn.Module``
+    random init.  Training loss looks plausible at step 1 and collapses at
+    step 2 because the model is no longer the one loaded from the checkpoint.
+
+    The model-only branch mirrors NVIDIA-NeMo/RL PR #2372. This helper can
+    be removed once Core handles model-only master refresh, full-state
+    rebinding, and the restored sub-optimizer step counters.
+
+    Args:
+        optimizer: The Megatron optimizer returned by :func:`setup_optimizer`.
+            No-op when ``None`` or when no sub-optimizer wraps a
+            ``HybridDeviceOptimizer`` (i.e. CPU offload is not enabled).
+
+    Returns:
+        ``True`` when at least one ``HybridDeviceOptimizer`` sub-optimizer was
+        synced; ``False`` otherwise.
+    """
+    if optimizer is None:
+        return False
+
+    try:
+        from megatron.core.optimizer.cpu_offloading.hybrid_optimizer import HybridDeviceOptimizer
+    except ImportError:
+        return False
+
+    def _sync_one(distrib_opt: MegatronOptimizer) -> bool:
+        """Sync HDO leaves without accessing a chained optimizer's single-leaf property."""
+        sub_optimizers = getattr(distrib_opt, "chained_optimizers", None)
+        if isinstance(sub_optimizers, (list, tuple)):
+            synced = False
+            for sub_opt in sub_optimizers:
+                synced |= _sync_one(sub_opt)
+            return synced
+
+        inner = getattr(distrib_opt, "optimizer", None)
+        if not isinstance(inner, HybridDeviceOptimizer):
+            return False
+
+        if getattr(inner, "state", None):
+            # The dp_reshardable loader restores each per-parameter "step"
+            # from a LocalNonpersistentObject in its loading scaffold. For
+            # CPU Adam this overwrites the checkpoint counter with the dummy
+            # initialization step. The saved group counter is authoritative.
+            for group in inner.param_groups:
+                if "step" not in group:
+                    continue
+                for param in group["params"]:
+                    step = inner.state.get(param, {}).get("step")
+                    if isinstance(step, torch.Tensor):
+                        step.fill_(group["step"])
+            # Full-state resume, including iteration-zero checkpoints. This
+            # binds loaded moments to the sub-optimizers and copies the saved
+            # FP32 masters into the parameters their next step will update.
+            inner._sync_hdo_state_to_sub_optimizers()
+            # Core stores Adam's step on the outer groups for checkpointing.
+            # Seed the GPU groups once, then let each sub-optimizer advance:
+            # HDO otherwise reapplies the saved step before every update.
+            inner._sync_hdo_param_groups_to_sub_optimizers()
+            for group in inner.param_groups:
+                group.pop("step", None)
+            return True
+
+        # Level 1: per-DP-rank FP32 GPU shards (Adam master parameters).
+        for model_group, shard_main_group in zip(
+            distrib_opt.model_float16_groups,
+            distrib_opt.shard_fp32_from_float16_groups,
+        ):
+            for model_param, shard_main_param in zip(model_group, shard_main_group):
+                if shard_main_param is None:
+                    continue
+                param_range_map = distrib_opt._get_model_param_range_map(model_param)
+                param_range = param_range_map["param"]
+                shard_model_param = model_param.view(-1)[param_range.start : param_range.end]
+                shard_main_param.data.copy_(shard_model_param)
+
+        # Level 2: CPU clones the CPU sub-optimizer steps against.
+        if hasattr(inner, "gpu_params_map_cpu_copy"):
+            for gpu_param, cpu_clone in inner.gpu_params_map_cpu_copy.items():
+                cpu_clone.data.copy_(gpu_param.data)
+
+        # Level 3: FP32 working copy kept for the async D2H/H2D dance.
+        if hasattr(inner, "update_fp32_param_by_new_param"):
+            inner.update_fp32_param_by_new_param()
+
+        return True
+
+    synced = _sync_one(optimizer)
+
+    if synced:
+        G_LOGGER.info(
+            "Synced HybridDeviceOptimizer working copies after checkpoint load, "
+            "preserving restored optimizer state when present."
+        )
+    return synced
 
 
 def _get_scheduler(

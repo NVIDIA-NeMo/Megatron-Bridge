@@ -37,6 +37,9 @@ from megatron.core.transformer.utils import sharded_state_dict_default
 from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
 from torch import Tensor, nn
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
+
 
 try:
     import transformer_engine.pytorch as te  # noqa: F401 # pylint: disable=unused-import
@@ -48,9 +51,6 @@ except ImportError:
 te_checkpoint = None
 if HAVE_TE:
     from megatron.core.extensions.transformer_engine import te_checkpoint
-
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
 
 
 class Qwen3VLVisionTransformerBlock(TransformerBlock):
@@ -93,6 +93,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     config,
                     patch_merger_spec,
                     use_postshuffle_norm=True,
+                    tp_group=self.tp_group,
                 )
                 for _ in range(len(config.deepstack_visual_indexes))
             ]
@@ -121,6 +122,18 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         if use_inner_fp8_context
                         else nullcontext()
                     )
+                    # Check if layer will use TE CUDA graph replay - if so, don't pass
+                    # packed_seq_params since CUDA graph only accepts tensor inputs.
+                    # Use layer.config (not self.config) because the layer's config is what
+                    # determines if _should_call_te_cudagraph returns True.
+                    layer_uses_te_cudagraph = (
+                        hasattr(layer, "cuda_graphs")
+                        and layer.cuda_graphs
+                        and layer.training
+                        and hasattr(layer, "config")
+                        and getattr(layer.config, "cuda_graph_impl", "none") == "transformer_engine"
+                    )
+                    layer_packed_seq_params = None if layer_uses_te_cudagraph else packed_seq_params
                     with inner_fp8_context:
                         hidden_states, context = layer(
                             hidden_states=hidden_states,
@@ -130,7 +143,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                             rotary_pos_emb=rotary_pos_emb,
                             attention_bias=attention_bias,
                             inference_context=None,
-                            packed_seq_params=packed_seq_params,
+                            packed_seq_params=layer_packed_seq_params,
                         )
 
                         l_no = layer.layer_number - 1
@@ -175,8 +188,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             layer_idx = 0
 
             while layer_idx < self.num_layers_per_pipeline_rank:
+                chunk_end = min(layer_idx + self.config.recompute_num_layers, self.num_layers_per_pipeline_rank)
                 hidden_states, layer_deepstack_feature_lists, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
+                    custom(layer_idx, chunk_end)
                 )
 
                 layer_idx += self.config.recompute_num_layers
@@ -323,6 +337,18 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     )
                     assert l_no == layer.layer_number - 1
                     with self.offload_context, inner_fp8_context:
+                        # Check if layer will use TE CUDA graph replay - if so, don't pass
+                        # packed_seq_params since CUDA graph only accepts tensor inputs.
+                        # Use layer.config (not self.config) because the layer's config is what
+                        # determines if _should_call_te_cudagraph returns True.
+                        layer_uses_te_cudagraph = (
+                            hasattr(layer, "cuda_graphs")
+                            and layer.cuda_graphs
+                            and layer.training
+                            and hasattr(layer, "config")
+                            and getattr(layer.config, "cuda_graph_impl", "none") == "transformer_engine"
+                        )
+                        layer_packed_seq_params = None if layer_uses_te_cudagraph else packed_seq_params
                         hidden_states, context = layer(
                             hidden_states=hidden_states,
                             attention_mask=attention_mask,
@@ -333,7 +359,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                             rotary_pos_sin=rotary_pos_sin,
                             attention_bias=attention_bias,
                             inference_context=inference_context,
-                            packed_seq_params=packed_seq_params,
+                            packed_seq_params=layer_packed_seq_params,
                             sequence_len_offset=sequence_len_offset,
                         )
 
@@ -479,6 +505,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         rotary_pos_emb: Tensor,
         attention_bias: Tensor,
         packed_seq_params: PackedSeqParams,
+        padding_mask: Optional[Tensor],
         use_inner_fp8_context: bool,
         # args for deepstack
         visual_pos_masks: Optional[torch.Tensor] = None,
@@ -493,6 +520,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                 context,
                 context_mask,
                 rotary_pos_emb,
+                padding_mask,
                 visual_pos_masks,
                 *deepstack_visual_embeds_args,
             ):
@@ -514,6 +542,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                             attention_bias=attention_bias,
                             inference_context=None,
                             packed_seq_params=packed_seq_params,
+                            padding_mask=padding_mask,
                         )
 
                         if self.pre_process and deepstack_visual_embeds is not None:
@@ -543,6 +572,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     context,
                     context_mask,
                     rotary_pos_emb,
+                    padding_mask,
                     visual_pos_masks,
                     *deepstack_visual_embeds_tuple,
                 )
@@ -555,6 +585,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     context,
                     context_mask,
                     rotary_pos_emb,
+                    padding_mask,
                     visual_pos_masks,
                     *deepstack_visual_embeds_tuple,
                 )
@@ -565,9 +596,8 @@ class Qwen3VLTransformerBlock(TransformerBlock):
             # A method to further reduce memory usage reducing checkpoints.
             layer_idx = 0
             while layer_idx < self.num_layers_per_pipeline_rank:
-                hidden_states, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
-                )
+                chunk_end = min(layer_idx + self.config.recompute_num_layers, self.num_layers_per_pipeline_rank)
+                hidden_states, context = checkpoint_handler(custom(layer_idx, chunk_end))
 
                 layer_idx += self.config.recompute_num_layers
 
@@ -594,6 +624,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                         context,
                         context_mask,
                         rotary_pos_emb,
+                        padding_mask,
                         visual_pos_masks,
                         *deepstack_visual_embeds_tuple,
                     )
@@ -615,6 +646,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         inference_context: Optional[BaseInferenceContext] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[Tensor] = None,
+        padding_mask: Optional[Tensor] = None,
         *,
         inference_params: Optional[BaseInferenceContext] = None,
         # args for deepstack
@@ -644,6 +676,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                 optimizations.
             packed_seq_params (PackedSeqParams, optional): Parameters for packed sequence
                 processing.
+            padding_mask (Tensor, optional): Boolean padding metadata for MoE layers.
 
         Returns:
             Union[Tensor, Tuple[Tensor, Tensor]]: The output hidden states tensor of shape
@@ -706,6 +739,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     rotary_pos_emb=rotary_pos_emb,
                     attention_bias=attention_bias,
                     packed_seq_params=packed_seq_params,
+                    padding_mask=padding_mask,
                     use_inner_fp8_context=use_inner_fp8_context,
                     visual_pos_masks=visual_pos_masks,
                     deepstack_visual_embeds=deepstack_visual_embeds,
@@ -730,6 +764,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                             inference_context=inference_context,
                             packed_seq_params=packed_seq_params,
                             sequence_len_offset=sequence_len_offset,
+                            padding_mask=padding_mask,
                         )
 
                         if self.pre_process and deepstack_visual_embeds is not None:

@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
+from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
 from megatron.bridge.peft.walk_utils import walk
 
@@ -95,6 +96,22 @@ class PEFT(ABC):
         Returns:
             The same type as the input model, transformed with PEFT applied.
         """
+        if isinstance(self, ModuleMatcher):
+            # Rebuild alias/match bookkeeping from the *current* target_modules so that
+            # any post-construction mutation (common in recipes) is respected. Then walk
+            # the model once to record which aliases matched and warn on typos.
+            self._init_target_match_state()
+
+            def _validate_only(
+                module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None
+            ) -> nn.Module:
+                self.match(module, name, prefix)
+                return module
+
+            self._walk_model(model, _validate_only)
+            self._validate_target_matches()
+            self._reset_target_match_state()
+
         self.freeze_model(model, training=training)
 
         self._walk_model(model, self.transform)
@@ -150,11 +167,22 @@ class PEFT(ABC):
         """
         Disables the adapter module.
         """
+        adapter_states: list[tuple[nn.Module, bool]] = []
+
+        def disable(module: nn.Module) -> nn.Module:
+            method = getattr(module, "disable_adapter_layers", None)
+            if callable(method):
+                adapter_states.append((module, getattr(module, "_adapter_enabled", True)))
+                method()
+            return module
+
         try:
-            self.disable_adapter_layers(model)
+            self._walk_model(model, disable)
             yield
         finally:
-            self.enable_adapter_layers(model)
+            for module, was_enabled in adapter_states:
+                method_name = "enable_adapter_layers" if was_enabled else "disable_adapter_layers"
+                getattr(module, method_name)()
 
     def freeze_model(self, model: ModelType, training: bool = True) -> None:
         """Apply a default freeze method to the model.

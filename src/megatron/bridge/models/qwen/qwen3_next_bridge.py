@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import Qwen3NextForCausalLM
+from transformers import PretrainedConfig, Qwen3NextForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import (
+from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     AutoMapping,
     GatedMLPMapping,
     GDNConv1dMapping,
@@ -27,69 +32,81 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
-from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
+from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
 class Qwen3NextBridge(MegatronModelBridge):
     """
-    Megatron Hub Bridge for Qwen3 MoE Causal LM.
+    Megatron Bridge for Qwen3-Next Causal LM.
 
-    This bridge handles the conversion between HuggingFace Qwen3MoeForCausalLM
-    and Megatron-Core GPTModel formats. Qwen3 MoE models use mixture of experts
-    architecture with QK layernorm.
+    This bridge handles the conversion between HuggingFace Qwen3NextForCausalLM
+    and Megatron-Core GPTModel formats. Qwen3-Next uses a hybrid architecture
+    combining gated delta net linear attention with standard softmax attention,
+    mixture of experts with shared experts, and zero-centered RMSNorm.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct")
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3NextModelProvider:
-        hf_config = hf_pretrained.config
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        provider = Qwen3NextModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            moe_ffn_hidden_size=hf_config.moe_intermediate_size,  # Maps to moe_intermediate_size in HF
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            num_moe_experts=hf_config.num_experts,
-            moe_router_topk=hf_config.num_experts_per_tok,  # Maps to num_experts_per_tok in HF
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3-Next config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            # Standard GPT settings (shared with Qwen3 MoE)
+            normalization="RMSNorm",
             gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=rope_theta_from_hf(hf_config),
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            qk_layernorm=True,
+            autocast_dtype=torch.bfloat16,
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            # MoE settings
             moe_grouped_gemm=True,
-            kv_channels=hf_config.head_dim,
-            # New for Qwen3-Next
+            moe_router_load_balancing_type="global_aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_shared_expert_gate=True,
+            moe_router_dtype="fp32",
+            moe_shared_expert_intermediate_size=hf_config.shared_expert_intermediate_size,
+            # Qwen3-Next: zero-centered RMSNorm and gated attention
             layernorm_zero_centered_gamma=True,
             attention_output_gate=True,
+            # Qwen3-Next: hybrid gated delta net + standard attention. The builder's default
+            # layer spec builds the hybrid block from experimental_attention_variant.
             experimental_attention_variant="gated_delta_net",
-            linear_attention_freq=hf_config.full_attention_interval,
-            rotary_percent=hf_config.partial_rotary_factor,
-            moe_shared_expert_intermediate_size=hf_config.shared_expert_intermediate_size,
-            moe_shared_expert_gate=True,
+            linear_attention_freq=full_attention_interval_from_hf(hf_config),
             linear_conv_kernel_dim=hf_config.linear_conv_kernel_dim,
             linear_key_head_dim=hf_config.linear_key_head_dim,
             linear_value_head_dim=hf_config.linear_value_head_dim,
             linear_num_key_heads=hf_config.linear_num_key_heads,
             linear_num_value_heads=hf_config.linear_num_value_heads,
-            mtp_num_layers=None,  # Set to 1 if need MTP
+            # Heterogeneous checkpointing for mixed attention layers
+            hetereogenous_dist_checkpoint=True,
         )
+        # The shared mapping already selects "yarn" for YaRN-scaled checkpoints.
+        config_kwargs.setdefault("position_embedding_type", "rope")
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        # The provider's default layer spec builds homogeneous attention layers; the hybrid
+        # gated delta net block needs the experimental attention variant block spec.
+        provider_kwargs["transformer_layer_spec"] = get_transformer_block_with_experimental_attention_variant_spec
+        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
@@ -120,14 +137,6 @@ class Qwen3NextBridge(MegatronModelBridge):
             "mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
             "mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
             "mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
-            # MTP MoE
-            "mtp.layers.0.transformer_layer.mlp.router.weight": "mtp.layers.0.mlp.gate.weight",
-            "mtp.layers.0.transformer_layer.pre_mlp_layernorm.weight": "mtp.layers.0.post_attention_layernorm.weight",
-            # MTP standard attention
-            "mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
         }
 
         mapping_list = []
@@ -147,12 +156,6 @@ class Qwen3NextBridge(MegatronModelBridge):
                     q="model.layers.*.self_attn.q_proj.weight",
                     k="model.layers.*.self_attn.k_proj.weight",
                     v="model.layers.*.self_attn.v_proj.weight",
-                ),
-                QKVMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.self_attention.linear_qkv.weight",
-                    q="mtp.layers.*.self_attn.q_proj.weight",
-                    k="mtp.layers.*.self_attn.k_proj.weight",
-                    v="mtp.layers.*.self_attn.v_proj.weight",
                 ),
                 # GDNLinear: Combine separate QKVZ_proj and BA_proj into single in_proj for GDN
                 # Note: Qwen3-Next does NOT have bias in the input linear projections
@@ -175,14 +178,15 @@ class Qwen3NextBridge(MegatronModelBridge):
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
                     hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
                 ),
+                # Sequential (non-grouped) experts (e.g. ModelOpt pruning).
                 GatedMLPMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.experts.linear_fc1.weight*",
-                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                    gate="model.layers.*.mlp.experts.*.gate_proj.weight",
+                    up="model.layers.*.mlp.experts.*.up_proj.weight",
                 ),
                 AutoMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.experts.linear_fc2.weight*",
-                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                    hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
                 ),
                 # Gated MLP of shared expert
                 GatedMLPMapping(
@@ -194,23 +198,10 @@ class Qwen3NextBridge(MegatronModelBridge):
                     megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
                     hf_param="model.layers.*.mlp.shared_expert.down_proj.weight",
                 ),
-                GatedMLPMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc1.weight",
-                    gate="mtp.layers.*.mlp.shared_expert.gate_proj.weight",
-                    up="mtp.layers.*.mlp.shared_expert.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc2.weight",
-                    hf_param="mtp.layers.*.mlp.shared_expert.down_proj.weight",
-                ),
                 # Shared expert gate
                 ReplicatedMapping(
                     megatron_param="decoder.layers.*.mlp.shared_experts.gate_weight",
                     hf_param="model.layers.*.mlp.shared_expert_gate.weight",
-                ),
-                ReplicatedMapping(
-                    megatron_param="mtp.layers.0.transformer_layer.mlp.shared_experts.gate_weight",
-                    hf_param="mtp.layers.0.mlp.shared_expert_gate.weight",
                 ),
                 # Qwen3-Next implements the output norm as a standard RMSNorm while initializing weight to ones,
                 # while other norms are regular zero-centered RMSNorms.
@@ -221,5 +212,81 @@ class Qwen3NextBridge(MegatronModelBridge):
                 ),
             ]
         )
+
+        # Megatron-Core has exposed the MTP transformer sub-layer as both
+        # ``mtp_model_layer`` and ``transformer_layer`` depending on version, so
+        # register every MTP mapping under both spellings (as glm45_bridge does)
+        # and checkpoints from either version convert.
+        for mtp_layer_attr in ("mtp_model_layer", "transformer_layer"):
+            mapping_list.extend(
+                [
+                    # MTP MoE
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.0.{mtp_layer_attr}.mlp.router.weight",
+                        hf_param="mtp.layers.0.mlp.gate.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.0.{mtp_layer_attr}.pre_mlp_layernorm.weight",
+                        hf_param="mtp.layers.0.post_attention_layernorm.weight",
+                    ),
+                    # MTP standard attention
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.0.{mtp_layer_attr}.self_attention.linear_qkv.layer_norm_weight",
+                        hf_param="mtp.layers.0.input_layernorm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.0.{mtp_layer_attr}.self_attention.q_layernorm.weight",
+                        hf_param="mtp.layers.0.self_attn.q_norm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.0.{mtp_layer_attr}.self_attention.k_layernorm.weight",
+                        hf_param="mtp.layers.0.self_attn.k_norm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.0.{mtp_layer_attr}.self_attention.linear_proj.weight",
+                        hf_param="mtp.layers.0.self_attn.o_proj.weight",
+                    ),
+                    QKVMapping(
+                        megatron_param=f"mtp.layers.*.{mtp_layer_attr}.self_attention.linear_qkv.weight",
+                        q="mtp.layers.*.self_attn.q_proj.weight",
+                        k="mtp.layers.*.self_attn.k_proj.weight",
+                        v="mtp.layers.*.self_attn.v_proj.weight",
+                    ),
+                    # Grouped MTP experts
+                    GatedMLPMapping(
+                        megatron_param=f"mtp.layers.*.{mtp_layer_attr}.mlp.experts.linear_fc1.weight*",
+                        gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
+                        up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.*.{mtp_layer_attr}.mlp.experts.linear_fc2.weight*",
+                        hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                    ),
+                    # Sequential (non-grouped) MTP experts (e.g. ModelOpt pruning).
+                    GatedMLPMapping(
+                        megatron_param=f"mtp.layers.*.{mtp_layer_attr}.mlp.experts.local_experts.*.linear_fc1.weight",
+                        gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
+                        up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.*.{mtp_layer_attr}.mlp.experts.local_experts.*.linear_fc2.weight",
+                        hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                    ),
+                    # MTP shared expert + gate
+                    GatedMLPMapping(
+                        megatron_param=f"mtp.layers.*.{mtp_layer_attr}.mlp.shared_experts.linear_fc1.weight",
+                        gate="mtp.layers.*.mlp.shared_expert.gate_proj.weight",
+                        up="mtp.layers.*.mlp.shared_expert.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.*.{mtp_layer_attr}.mlp.shared_experts.linear_fc2.weight",
+                        hf_param="mtp.layers.*.mlp.shared_expert.down_proj.weight",
+                    ),
+                    ReplicatedMapping(
+                        megatron_param=f"mtp.layers.0.{mtp_layer_attr}.mlp.shared_experts.gate_weight",
+                        hf_param="mtp.layers.0.mlp.shared_expert_gate.weight",
+                    ),
+                ]
+            )
 
         return MegatronMappingRegistry(*mapping_list)

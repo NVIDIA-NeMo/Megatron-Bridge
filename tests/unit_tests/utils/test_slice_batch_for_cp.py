@@ -122,7 +122,7 @@ class TestSliceBatchForContextParallelBSHD:
         pg_collection = MockPGCollection(cp_size=2, cp_rank=0)
 
         # Mock get_batch_on_this_cp_rank to return sliced tensors
-        def mock_get_batch(batch_dict, cp_group=None):
+        def mock_get_batch(batch_dict, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None):
             # Simulate slicing by returning half of each tensor
             result = {}
             for k, v in batch_dict.items():
@@ -138,7 +138,7 @@ class TestSliceBatchForContextParallelBSHD:
             return result
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             result = slice_batch_for_context_parallel(
@@ -166,7 +166,7 @@ class TestSliceBatchForContextParallelBSHD:
 
         pg_collection = MockPGCollection(cp_size=2, cp_rank=0)
 
-        def mock_get_batch(batch_dict, cp_group=None):
+        def mock_get_batch(batch_dict, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None):
             result = {}
             for k, v in batch_dict.items():
                 if v is not None and isinstance(v, torch.Tensor):
@@ -179,7 +179,7 @@ class TestSliceBatchForContextParallelBSHD:
             return result
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             result = slice_batch_for_context_parallel(
@@ -204,8 +204,42 @@ class TestSliceBatchForContextParallelBSHD:
 class TestSliceBatchForContextParallelTHD:
     """Tests for slice_batch_for_context_parallel with THD (packed) format."""
 
-    def test_thd_format_uses_tex_partitioned_indices(self):
-        """Test that THD format triggers TransformerEngine's thd_get_partitioned_indices."""
+    def test_thd_format_slices_metadata_without_pipeline_input_embeddings(self):
+        """Test non-first pipeline stages use labels to construct THD CP indices."""
+        labels = torch.arange(16).unsqueeze(0)
+        loss_mask = torch.ones(1, 16)
+        position_ids = torch.arange(16).unsqueeze(0)
+        packed_seq_params = MockPackedSeqParams(
+            cu_seqlens_q=torch.tensor([0, 8, 16], dtype=torch.int32),
+            cu_seqlens_kv=torch.tensor([0, 8, 16], dtype=torch.int32),
+            qkv_format="thd",
+        )
+        pg_collection = MockPGCollection(cp_size=2, cp_rank=0)
+        mock_indices = torch.tensor([0, 1, 2, 3, 8, 9, 10, 11])
+
+        with patch(
+            "megatron.bridge.training.utils.packed_seq_utils.get_thd_cp_partition_indices",
+            return_value=mock_indices,
+        ):
+            result = slice_batch_for_context_parallel(
+                inputs_embeds=None,
+                labels=labels,
+                loss_mask=loss_mask,
+                position_ids=position_ids,
+                attention_mask=None,
+                packed_seq_params=packed_seq_params,
+                pg_collection=pg_collection,
+            )
+
+        out_embeds, out_labels, out_loss_mask, out_position_ids, out_attention_mask = result
+        assert out_embeds is None
+        torch.testing.assert_close(out_labels, labels.index_select(1, mock_indices))
+        torch.testing.assert_close(out_loss_mask, loss_mask.index_select(1, mock_indices))
+        torch.testing.assert_close(out_position_ids, position_ids.index_select(1, mock_indices))
+        assert out_attention_mask is None
+
+    def test_thd_format_uses_mcore_partitioned_indices(self):
+        """Test that THD format uses the centralized MCore partition helper."""
         batch_size, seq_len, hidden = 1, 16, 64
         cp_size = 2
         cp_rank = 0
@@ -225,15 +259,12 @@ class TestSliceBatchForContextParallelTHD:
 
         pg_collection = MockPGCollection(cp_size=cp_size, cp_rank=cp_rank)
 
-        # Mock tex.thd_get_partitioned_indices
         mock_indices = torch.tensor([0, 1, 2, 3, 8, 9, 10, 11])  # First half of each sequence
 
-        with patch.dict("sys.modules", {"transformer_engine_torch": MagicMock()}):
-            import sys
-
-            mock_tex = sys.modules["transformer_engine_torch"]
-            mock_tex.thd_get_partitioned_indices.return_value = mock_indices
-
+        with patch(
+            "megatron.bridge.training.utils.packed_seq_utils.get_thd_cp_partition_indices",
+            return_value=mock_indices,
+        ) as mock_get_indices:
             result = slice_batch_for_context_parallel(
                 inputs_embeds=inputs_embeds,
                 labels=labels,
@@ -246,8 +277,7 @@ class TestSliceBatchForContextParallelTHD:
 
         out_embeds, out_labels, out_loss_mask, out_pos_ids, out_attn_mask = result
 
-        # Verify tex.thd_get_partitioned_indices was called
-        mock_tex.thd_get_partitioned_indices.assert_called_once()
+        mock_get_indices.assert_called_once()
 
         # Check output shapes match the indices
         assert out_embeds.shape[0] == len(mock_indices)  # T dimension
@@ -279,12 +309,10 @@ class TestSliceBatchForContextParallelTHD:
 
         mock_indices = torch.tensor([5, 6, 7, 8, 9, 15, 16, 17, 18, 19])  # Second half
 
-        with patch.dict("sys.modules", {"transformer_engine_torch": MagicMock()}):
-            import sys
-
-            mock_tex = sys.modules["transformer_engine_torch"]
-            mock_tex.thd_get_partitioned_indices.return_value = mock_indices
-
+        with patch(
+            "megatron.bridge.training.utils.packed_seq_utils.get_thd_cp_partition_indices",
+            return_value=mock_indices,
+        ) as mock_get_indices:
             result = slice_batch_for_context_parallel(
                 inputs_embeds=inputs_embeds,
                 labels=labels,
@@ -298,8 +326,8 @@ class TestSliceBatchForContextParallelTHD:
         out_embeds, out_labels, out_loss_mask, out_pos_ids, out_attn_mask = result
 
         # Verify padded cu_seqlens was used
-        call_args = mock_tex.thd_get_partitioned_indices.call_args
-        assert torch.equal(call_args[0][0], cu_seqlens_padded)
+        call_args = mock_get_indices.call_args
+        assert torch.equal(call_args.args[0], cu_seqlens_padded)
 
     def test_thd_format_without_padded_cu_seqlens_fallback(self):
         """Test THD format falls back to cu_seqlens_q when padded version is None."""
@@ -325,12 +353,10 @@ class TestSliceBatchForContextParallelTHD:
 
         mock_indices = torch.tensor([0, 1, 2, 6, 7, 8])
 
-        with patch.dict("sys.modules", {"transformer_engine_torch": MagicMock()}):
-            import sys
-
-            mock_tex = sys.modules["transformer_engine_torch"]
-            mock_tex.thd_get_partitioned_indices.return_value = mock_indices
-
+        with patch(
+            "megatron.bridge.training.utils.packed_seq_utils.get_thd_cp_partition_indices",
+            return_value=mock_indices,
+        ) as mock_get_indices:
             slice_batch_for_context_parallel(
                 inputs_embeds=inputs_embeds,
                 labels=labels,
@@ -342,8 +368,8 @@ class TestSliceBatchForContextParallelTHD:
             )
 
         # Verify cu_seqlens_q was used as fallback
-        call_args = mock_tex.thd_get_partitioned_indices.call_args
-        assert torch.equal(call_args[0][0], cu_seqlens)
+        call_args = mock_get_indices.call_args
+        assert torch.equal(call_args.args[0], cu_seqlens)
 
 
 class TestSliceBatchForContextParallelTranspose:
@@ -360,7 +386,7 @@ class TestSliceBatchForContextParallelTranspose:
 
         captured_batch = {}
 
-        def mock_get_batch(batch_dict, cp_group=None):
+        def mock_get_batch(batch_dict, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None):
             captured_batch.update(batch_dict)
             # Check that decoder_input is in (B, T, D) format
             di = batch_dict.get("decoder_input")
@@ -369,7 +395,7 @@ class TestSliceBatchForContextParallelTranspose:
             return batch_dict
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             slice_batch_for_context_parallel(
@@ -395,7 +421,7 @@ class TestSliceBatchForContextParallelTranspose:
 
         pg_collection = MockPGCollection(cp_size=2, cp_rank=0)
 
-        def mock_get_batch(batch_dict, cp_group=None):
+        def mock_get_batch(batch_dict, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None):
             result = {}
             for k, v in batch_dict.items():
                 if v is not None and isinstance(v, torch.Tensor):
@@ -409,7 +435,7 @@ class TestSliceBatchForContextParallelTranspose:
             return result
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             result = slice_batch_for_context_parallel(
@@ -435,11 +461,11 @@ class TestSliceBatchForContextParallelEdgeCases:
         """Test handling when inputs_embeds is None but CP is enabled."""
         pg_collection = MockPGCollection(cp_size=2, cp_rank=0)
 
-        def mock_get_batch(batch_dict, cp_group=None):
+        def mock_get_batch(batch_dict, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None):
             return batch_dict
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             result = slice_batch_for_context_parallel(
@@ -473,12 +499,12 @@ class TestSliceBatchForContextParallelEdgeCases:
 
         mock_called = {"get_batch": False}
 
-        def mock_get_batch(batch_dict, cp_group=None):
+        def mock_get_batch(batch_dict, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None):
             mock_called["get_batch"] = True
             return batch_dict
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             slice_batch_for_context_parallel(

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import signal
 from unittest.mock import Mock, patch
 
 from megatron.bridge.training.config import ConfigContainer
@@ -27,7 +28,7 @@ class TestEnergyMonitorIntegration:
         mock_train = Mock()
         mock_train.micro_batch_size = 1
         mock_train.train_iters = 100
-        mock_train.exit_signal = None
+        mock_train.exit_signal = signal.SIGTERM
 
         mock_model = Mock()
         mock_optimizer = Mock()

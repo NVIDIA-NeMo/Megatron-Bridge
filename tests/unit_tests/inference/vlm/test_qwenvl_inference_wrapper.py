@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.inference import config as mcore_inference_config
 
 from megatron.bridge.inference.vlm.qwenvl_inference_wrapper import QwenVLInferenceWrapper
 
@@ -34,8 +35,21 @@ class TestQwenVLInferenceWrapper:
         with patch.object(QwenVLInferenceWrapper, "__init__", lambda self, *args, **kwargs: None):
             wrapper = QwenVLInferenceWrapper.__new__(QwenVLInferenceWrapper)
             wrapper.model = mock_model
+            wrapper.inference_context = MagicMock()
             wrapper.inference_params = None
             return wrapper
+
+    def test_multimodal_prompt_config_uses_qwen_visual_tokens(self):
+        if not hasattr(mcore_inference_config, "MultimodalPromptConfig"):
+            assert not hasattr(QwenVLInferenceWrapper, "multimodal_prompt_config")
+            return
+
+        prompt_config = QwenVLInferenceWrapper.multimodal_prompt_config
+
+        assert prompt_config.image_spec.model_token == "<|image_pad|>"
+        assert prompt_config.image_spec.prefix == "<|vision_start|>"
+        assert prompt_config.image_spec.suffix == "<|vision_end|>"
+        assert prompt_config.video_spec.model_token == "<|video_pad|>"
 
     def test_prep_inference_input(self, wrapper):
         prompts_tokens = torch.tensor([[1, 2, 3]])
@@ -52,10 +66,59 @@ class TestQwenVLInferenceWrapper:
         assert "input_ids" in result
         assert "pixel_values" in result
         assert "image_grid_thw" in result
+        assert "position_ids" in result
+        assert "attention_mask" in result
         assert result["input_ids"].equal(prompts_tokens)
+        assert result["position_ids"].equal(torch.arange(3, dtype=torch.long).unsqueeze(0).expand_as(prompts_tokens))
+        assert result["attention_mask"].equal(torch.ones_like(prompts_tokens, dtype=torch.bool))
         # inference_params is now inference_context in newer megatron-core
         # Just verify it was set (not None)
         assert wrapper.inference_params is not None
+
+    def test_prep_inference_input_preserves_batched_visual_inputs(self, wrapper):
+        prompts_tokens = torch.tensor([[1, 2, 3], [4, 5, 6]])
+        first_pixel_values = torch.tensor([[1.0, 2.0]])
+        second_pixel_values = torch.tensor([[3.0, 4.0], [5.0, 6.0]])
+        first_grid = torch.tensor([[1, 1, 1]])
+        second_grid = torch.tensor([[1, 1, 2]])
+        image_dict = [
+            {
+                "pixel_values": first_pixel_values,
+                "image_grid_thw": first_grid,
+                "mm_token_type_ids": torch.tensor([[0, 1, 0]], dtype=torch.int32),
+            },
+            {
+                "pixel_values": second_pixel_values,
+                "image_grid_thw": second_grid,
+                "mm_token_type_ids": torch.tensor([[1, 1, 0]], dtype=torch.int32),
+            },
+        ]
+
+        with patch(
+            "megatron.bridge.inference.vlm.qwenvl_inference_wrapper._to_cuda_optional", side_effect=lambda x: x
+        ):
+            result = wrapper.prep_inference_input(prompts_tokens, image_dict)
+
+        assert result["pixel_values"].equal(torch.cat([first_pixel_values, second_pixel_values]))
+        assert result["image_grid_thw"].equal(torch.cat([first_grid, second_grid]))
+        assert result["mm_token_type_ids"].equal(torch.tensor([[0, 1, 0], [1, 1, 0]], dtype=torch.int32))
+
+    def test_prep_inference_input_pads_mm_token_type_ids(self, wrapper):
+        prompts_tokens = torch.tensor([[1, 2, 3, 4, 5]])
+        pixel_values = torch.randn(1, 3, 224, 224)
+        image_grid_thw = torch.tensor([1, 1, 1])
+        mm_short = torch.tensor([[0, 1, 0]], dtype=torch.int32)
+        image_dict = [{"pixel_values": pixel_values, "image_grid_thw": image_grid_thw, "mm_token_type_ids": mm_short}]
+
+        with (
+            patch.object(pixel_values, "cuda", return_value=pixel_values),
+            patch.object(image_grid_thw, "cuda", return_value=image_grid_thw),
+            patch.object(mm_short, "cuda", return_value=mm_short),
+        ):
+            result = wrapper.prep_inference_input(prompts_tokens, image_dict)
+
+        assert result["mm_token_type_ids"].shape == (1, 5)
+        assert result["mm_token_type_ids"].equal(torch.tensor([[0, 1, 0, 0, 0]], dtype=torch.int32))
 
     def test_prep_inference_input_no_image(self, wrapper):
         prompts_tokens = torch.tensor([[1, 2, 3]])
@@ -66,12 +129,18 @@ class TestQwenVLInferenceWrapper:
         assert "input_ids" in result
         assert result["pixel_values"] is None
         assert result["image_grid_thw"] is None
+        assert result["position_ids"].equal(torch.arange(3, dtype=torch.long).unsqueeze(0).expand(1, 3))
+        assert result["attention_mask"].equal(torch.ones(1, 3, dtype=torch.bool))
 
     def test_get_batch_for_context_window(self, wrapper):
+        input_ids = torch.tensor([[1, 2, 3, 4]])
         inference_input = {
-            "input_ids": torch.tensor([[1, 2, 3, 4]]),
+            "input_ids": input_ids,
+            "position_ids": torch.arange(4, dtype=torch.long).unsqueeze(0).expand_as(input_ids),
+            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
             "pixel_values": MagicMock(),
             "image_grid_thw": MagicMock(),
+            "mm_token_type_ids": torch.zeros(1, 4, dtype=torch.int32),
         }
 
         result = wrapper.get_batch_for_context_window(inference_input, 0, 2)
@@ -79,12 +148,71 @@ class TestQwenVLInferenceWrapper:
         assert result["input_ids"].equal(torch.tensor([[1, 2]]))
         assert result["pixel_values"] == inference_input["pixel_values"]
         assert result["image_grid_thw"] == inference_input["image_grid_thw"]
+        assert result["mm_token_type_ids"].equal(torch.zeros(1, 2, dtype=torch.int32))
+        assert result["position_ids"].equal(torch.arange(2, dtype=torch.long).unsqueeze(0).expand(1, 2))
+        assert result["attention_mask"].equal(torch.ones(1, 2, dtype=torch.bool))
+
+    def test_nonzero_context_window_returns_only_current_logits(self, wrapper):
+        input_ids = torch.tensor([[1, 2, 3, 4]])
+        inference_input = {
+            "input_ids": input_ids,
+            "position_ids": torch.arange(4, dtype=torch.long).unsqueeze(0).expand_as(input_ids),
+            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
+            "pixel_values": None,
+            "image_grid_thw": None,
+            "mm_token_type_ids": None,
+        }
+
+        def position_logits(**model_input):
+            sequence_length = model_input["input_ids"].size(1)
+            return torch.arange(sequence_length, dtype=torch.float32).view(1, sequence_length, 1)
+
+        wrapper.model.side_effect = position_logits
+
+        context_window = wrapper.get_batch_for_context_window(inference_input, 2, 3)
+        logits = wrapper.forward_pass_without_pipeline_parallel(context_window)
+
+        assert logits.equal(torch.tensor([[[2.0]]]))
 
     def test_forward_pass_without_pipeline_parallel(self, wrapper):
-        inference_input = {"input_ids": torch.tensor([[1, 2, 3]])}
+        input_ids = torch.tensor([[1, 2, 3]])
+        inference_input = {
+            "input_ids": input_ids,
+            "position_ids": torch.arange(3, dtype=torch.long).unsqueeze(0).expand_as(input_ids),
+            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
+        }
         wrapper.model.return_value = torch.tensor([[[0.1, 0.9]]])
 
         result = wrapper.forward_pass_without_pipeline_parallel(inference_input)
 
-        wrapper.model.assert_called_once()
+        wrapper.model.assert_called_once_with(
+            **inference_input,
+            inference_context=wrapper.inference_context,
+            runtime_gather_output=True,
+        )
         assert result.equal(torch.tensor([[[0.1, 0.9]]]))
+
+    def test_run_one_forward_step_rejects_pipeline_parallel(self, wrapper):
+        # The base pipeline path reads inference_input["tokens"] (absent here, only
+        # "input_ids" is provided) and drops the multimodal inputs, so PP must be rejected
+        # with a clear error rather than a cryptic KeyError.
+        wrapper.config = MagicMock()
+        wrapper.config.pipeline_model_parallel_size = 2
+
+        with pytest.raises(NotImplementedError, match="pipeline parallelism"):
+            wrapper.run_one_forward_step({"input_ids": torch.tensor([[1, 2, 3]])})
+
+    def test_run_one_forward_step_delegates_without_pipeline_parallel(self, wrapper):
+        wrapper.config = MagicMock()
+        wrapper.config.pipeline_model_parallel_size = 1
+        inference_input = {"input_ids": torch.tensor([[1, 2, 3]])}
+
+        with patch(
+            "megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper."
+            "AbstractModelInferenceWrapper.run_one_forward_step",
+            return_value="logits",
+        ) as mock_super:
+            result = wrapper.run_one_forward_step(inference_input)
+
+        mock_super.assert_called_once_with(inference_input, None)
+        assert result == "logits"

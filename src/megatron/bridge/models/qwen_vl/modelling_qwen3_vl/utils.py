@@ -14,7 +14,7 @@
 
 
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 import torch
 from megatron.core import mpu
@@ -148,7 +148,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
             skip_bias_add=False,
             is_expert=False,
             tp_comm_buffer_name="patch_fc1",
-            tp_group=tp_group,
+            tp_group=self.tp_group,
         )
 
         self.activation_func = self.config.activation_func
@@ -164,7 +164,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
             skip_bias_add=False,
             is_expert=False,
             tp_comm_buffer_name="patch_fc2",
-            tp_group=tp_group,
+            tp_group=self.tp_group,
         )
 
     def forward(self, hidden_states):
@@ -615,6 +615,33 @@ def get_vision_cp_data(
     return new_vision_data, new_vision_grid_thw, new_seqlens_list
 
 
+def get_dist_train_vision_dp_data(
+    vision_data: torch.Tensor,
+    vision_grid_thw: torch.Tensor,
+    *,
+    num_chunks: int,
+    dp_rank: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Shard vision batch on dim 0 by ``num_chunks``; return this DP rank's slice."""
+    chunk_idx = dp_rank % num_chunks
+    vision_data_chunks = torch.chunk(vision_data, chunks=num_chunks, dim=0)
+    vision_data_out = vision_data_chunks[chunk_idx]
+    vision_grid_thw_chunks = torch.chunk(vision_grid_thw, chunks=num_chunks, dim=0)
+    vision_grid_thw_out = vision_grid_thw_chunks[chunk_idx]
+    return vision_data_out, vision_grid_thw_out
+
+
+def pack_dist_train_vision_module_output(
+    vision_embeds: torch.Tensor,
+    deepstack_feature_lists: Sequence[torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Concat deepstack features and final vision embeddings; shape as 3D for bridge communicator."""
+    vision_module_output_tensor = torch.cat([vision_embeds, *deepstack_feature_lists], dim=0)
+    # 2D [batch*seq, hidden] -> 3D [1, batch*seq, hidden]
+    vision_module_output_tensor = vision_module_output_tensor.unsqueeze(0)
+    return {"vision_module": vision_module_output_tensor}
+
+
 class AllGatherVisionEmbeddings(torch.autograd.Function):
     """
     AllGatherVisionEmbeddings for Qwen3VL vision model.
@@ -636,6 +663,7 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
             outputs.append(o)
         torch.distributed.all_gather(outputs, input, group=cp_group)
         ctx.cp_rank = torch.distributed.get_rank(group=cp_group)
+        ctx.cp_group = cp_group
         ctx.save_for_backward(*seqlens_on_cp_ranks)
 
         output = torch.cat(outputs, dim=0)
@@ -650,8 +678,26 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
         seqlens_on_cp_ranks = ctx.saved_tensors
         start_idx = torch.cat(seqlens_on_cp_ranks[:cp_rank]).sum() if cp_rank != 0 else 0
         end_idx = start_idx + seqlens_on_cp_ranks[cp_rank].sum()
+        grad_output = grad_output.contiguous()
+        torch.distributed.all_reduce(grad_output, group=ctx.cp_group)
         grad_output = grad_output[start_idx:end_idx]
         return grad_output, None, None
+
+
+def ensure_requires_grad_for_cp_collective(tensors: Sequence[torch.Tensor]) -> None:
+    """Make every tensor entering a CP collective participate in autograd.
+
+    ``AllGatherVisionEmbeddings.backward`` issues a cp_group all_reduce, and autograd
+    only invokes it for tensors that require grad. Tensors that arrive without grad
+    (0-image placeholders, or the outputs of a fully frozen vision tower) would skip
+    the collective on their rank and deadlock the remaining ranks, so force
+    ``requires_grad`` here. No-op under ``torch.no_grad`` (no rank records backward).
+    """
+    if not torch.is_grad_enabled():
+        return
+    for tensor in tensors:
+        if not tensor.requires_grad:
+            tensor.requires_grad_(True)
 
 
 def preprocess_packed_seqs(
@@ -667,6 +713,11 @@ def preprocess_packed_seqs(
     See https://github.com/NVIDIA/TransformerEngine/issues/1368
     """
     batch_size = input_ids.shape[0]
+
+    # Ensure boolean dtype for correct advanced indexing (bool → mask select,
+    # int → fancy index which silently corrupts data when values are 0/1).
+    if attention_mask.dtype != torch.bool:
+        attention_mask = attention_mask.bool()
 
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     if pg_collection is not None:
@@ -716,14 +767,24 @@ def preprocess_packed_seqs(
             start_idx = cu_seqlens_padded_cpu[i] // cp_size
             # split to 2 chunks
             d = input_ids[i, attention_mask[i]]
-            input_ids_rmpad[start_idx : start_idx + half_seqlen] = d[
-                half_seqlen * cp_rank : half_seqlen * (cp_rank + 1)
-            ]
+            # Chunk indices are computed in the *padded* coordinate space
+            # (seqlen_padded_i), while d holds only the *valid* tokens. When a row's
+            # valid length is shorter than the alignment padding, the first-chunk
+            # slice can start past the end of d and yield an empty tensor, which
+            # raises on assignment:
+            #   RuntimeError: The expanded size of the tensor (2) must match the
+            #   existing size (0) at non-singleton dimension 0
+            # Clamp it the same way the remaining chunk below already is.
+            first_start = half_seqlen * cp_rank
+            first_end = min(half_seqlen * (cp_rank + 1), d.shape[0])
+            first_len = max(first_end - first_start, 0)
+            if first_len > 0:
+                input_ids_rmpad[start_idx : start_idx + first_len] = d[first_start:first_end]
 
             remain_start = seqlen_padded_i - half_seqlen * (cp_rank + 1)
             remain_end = seqlen_padded_i - half_seqlen * cp_rank
             remain_end = min(remain_end, d.shape[0])
-            remain_len = remain_end - remain_start
+            remain_len = max(remain_end - remain_start, 0)
             if remain_len > 0:
                 input_ids_rmpad[start_idx + half_seqlen : start_idx + half_seqlen + remain_len] = d[
                     remain_start:remain_end

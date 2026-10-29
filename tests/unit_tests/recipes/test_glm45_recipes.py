@@ -26,12 +26,14 @@ from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _glm_module = importlib.import_module("megatron.bridge.recipes.glm")
 _GLM45_RECIPE_FUNCS = [
     getattr(_glm_module, name)
     for name in getattr(_glm_module, "__all__", [])
-    if callable(getattr(_glm_module, name, None))
+    if name.startswith("glm45_") and callable(getattr(_glm_module, name, None))
 ]
 
 
@@ -52,11 +54,14 @@ class _FakeModelCfg:
         # Set default attributes that recipes might set
         self.tensor_model_parallel_size = 1
         self.pipeline_model_parallel_size = 1
+        self.pipeline_model_parallel_layout = None
         self.pipeline_dtype = None
         self.virtual_pipeline_model_parallel_size = None
+        self.num_layers_in_first_pipeline_stage = None
+        self.num_layers_in_last_pipeline_stage = None
         self.context_parallel_size = 1
         self.expert_model_parallel_size = 1
-        self.expert_tensor_parallel_size = 1
+        self.expert_tensor_parallel_size = None
         self.sequence_parallel = False
         self.seq_length = 64
         self.num_layers = 4
@@ -81,6 +86,9 @@ class _FakeModelCfg:
         self.vocab_size = 151552  # GLM vocab size
 
     def finalize(self):
+        from megatron.bridge.models.transformer_config import _set_moe_expert_tensor_parallel_default
+
+        _set_moe_expert_tensor_parallel_default(self)
         return None
 
 
@@ -90,12 +98,32 @@ class _FakeBridge:
     def __init__(self):
         pass
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GLM-4.5 recipes must use get_model_config(), not the legacy provider API")
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
+
+
+class _RealDepthFakeBridge(_FakeBridge):
+    """Fake AutoBridge that preserves the selected GLM-4.5 model depth."""
+
+    def __init__(self, num_layers: int):
+        self.num_layers = num_layers
+
+    def get_model_config(self):
+        model = _FakeModelCfg()
+        model.num_layers = self.num_layers
+        return model
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs):
+        num_layers = 46 if hf_path.endswith("Air") else 92
+        return _RealDepthFakeBridge(num_layers)
 
 
 class _FakeTokenizer:
@@ -122,11 +150,9 @@ def _assert_basic_config(cfg):
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
 
-    # Check sequence length (different attribute names for different dataset types)
-    if hasattr(cfg.dataset, "sequence_length"):
-        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
-    elif hasattr(cfg.dataset, "seq_length"):
-        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+    # Check sequence length for canonical dataset configs.
+    if hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1
     else:
         # Some other dataset type
         assert cfg.dataset is not None
@@ -135,26 +161,14 @@ def _assert_basic_config(cfg):
 @pytest.mark.parametrize("recipe_func", _GLM45_RECIPE_FUNCS)
 def test_each_glm45_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each GLM 4.5 recipe function builds a valid configuration."""
-    # Monkeypatch the provider classes to return fake model configs
-    from megatron.bridge.models.glm import glm45_provider
+    # Monkeypatch AutoBridge to return fake model configs (avoids HF I/O)
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
-    # Create a fake provider class that returns a fake model config
-    class FakeProvider(_FakeModelCfg):
-        def __init__(self, *args, **kwargs):
-            super().__init__()
-
-    # Monkeypatch all provider classes
-    monkeypatch.setattr(glm45_provider, "GLMMoEModelProvider", FakeProvider)
-    monkeypatch.setattr(glm45_provider, "GLM45ModelProvider355B", FakeProvider)
-    monkeypatch.setattr(glm45_provider, "GLM45AirModelProvider106B", FakeProvider)
-
-    # For SFT/PEFT recipes, also monkeypatch AutoBridge and AutoTokenizer
+    # For SFT/PEFT recipes, also monkeypatch AutoTokenizer
     is_sft_or_peft = "sft" in recipe_func.__name__.lower() or "peft" in recipe_func.__name__.lower()
     if is_sft_or_peft:
-        module_name = recipe_func.__module__
-        mod = importlib.import_module(module_name)
-        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
-
         # Mock AutoTokenizer to avoid HF I/O
         import transformers
 
@@ -213,7 +227,7 @@ def test_glm45_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.Monk
     """Test that each GLM 4.5 SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     import transformers
@@ -242,7 +256,7 @@ def test_glm45_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mon
     """Test that each GLM 4.5 PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     import transformers
@@ -272,7 +286,7 @@ def test_glm45_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch
     """Test that PEFT configurations are correctly applied for different schemes."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     import transformers
@@ -296,7 +310,7 @@ def test_glm45_355b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.glm import glm45_355b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     import transformers
@@ -327,7 +341,7 @@ def test_glm45_355b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.glm import glm45_355b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     import transformers
@@ -346,6 +360,9 @@ def test_glm45_355b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size is None
+    cfg.model.finalize()
+    assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.peft is None
 
 
@@ -354,7 +371,7 @@ def test_glm45_air_106b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.glm import glm45_air_106b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     import transformers
@@ -385,7 +402,7 @@ def test_glm45_air_106b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.glm import glm45_air_106b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     import transformers
@@ -412,7 +429,7 @@ def test_glm45_355b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.glm import glm45_355b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = glm45_355b_pretrain_config()
@@ -431,7 +448,7 @@ def test_glm45_air_106b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.glm import glm45_air_106b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = glm45_air_106b_pretrain_config()
@@ -445,13 +462,41 @@ def test_glm45_air_106b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert hasattr(cfg.model, "mtp_loss_scaling_factor")
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_glm45_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+@pytest.mark.parametrize(
+    "recipe_name,num_layers",
+    [
+        ("glm45_355b_pretrain_config", 92),
+        ("glm45_355b_sft_config", 92),
+        ("glm45_air_106b_pretrain_config", 46),
+        ("glm45_air_106b_sft_config", 46),
+    ],
+)
+def test_glm45_pipeline_partition_covers_real_model_depth(
+    recipe_name: str,
+    num_layers: int,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """GLM-4.5 recipe defaults should partition every real decoder layer."""
+    from megatron.core.transformer.transformer_block import get_num_layers_to_build
+
+    recipe_func = getattr(_glm_module, recipe_name)
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _RealDepthFakeBridge)
+
+    cfg = recipe_func()
+    layers_per_stage = [
+        get_num_layers_to_build(cfg.model, pp_rank=pp_rank)
+        for pp_rank in range(cfg.model.pipeline_model_parallel_size)
+    ]
+
+    assert sum(layers_per_stage) == num_layers
+
+
+def test_glm45_sft_offline_packing_is_disabled(monkeypatch: pytest.MonkeyPatch):
+    """Test that unsupported offline packing remains disabled for GLM-4.5."""
     from megatron.bridge.recipes.glm import glm45_355b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     import transformers
@@ -464,10 +509,9 @@ def test_glm45_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch
 
     cfg = glm45_355b_sft_config()
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is False
+    assert cfg.dataset.offline_packing_specs is None
 
 
 def test_glm45_mtp_configuration(monkeypatch: pytest.MonkeyPatch):
@@ -475,7 +519,7 @@ def test_glm45_mtp_configuration(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.glm import glm45_355b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = glm45_355b_pretrain_config()
@@ -494,7 +538,7 @@ def test_glm45_recompute_configuration(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.glm import glm45_355b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = glm45_355b_pretrain_config()
@@ -505,3 +549,66 @@ def test_glm45_recompute_configuration(monkeypatch: pytest.MonkeyPatch):
     assert hasattr(cfg.model, "recompute_granularity")
     assert hasattr(cfg.model, "recompute_method")
     assert hasattr(cfg.model, "recompute_num_layers")
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig at the recipe's GLM-4.5 depth while rejecting the provider API."""
+
+    def __init__(self, num_layers: int):
+        self.num_layers = num_layers
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge(46 if hf_path.endswith("Air") else 92)
+
+    def get_model_config(self):
+        from transformers import Glm4MoeConfig
+
+        from megatron.bridge import AutoBridge
+
+        config = Glm4MoeConfig(
+            hidden_size=64,
+            intermediate_size=128,
+            moe_intermediate_size=32,
+            num_hidden_layers=self.num_layers,
+            num_attention_heads=8,
+            num_key_value_heads=4,
+            n_routed_experts=16,
+            n_shared_experts=1,
+            num_experts_per_tok=2,
+            first_k_dense_replace=1,
+            max_position_embeddings=131072,
+            vocab_size=151552,
+        )
+        config.architectures = ["Glm4MoeForCausalLM"]
+        config.num_nextn_predict_layers = 1
+        return AutoBridge.from_hf_config(config).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GLM-4.5 recipes must not call the legacy provider API")
+
+
+@pytest.mark.parametrize("recipe_func", _GLM45_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_each_glm45_recipe_uses_strict_builder_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Every GLM-4.5 recipe should configure a ModelConfig without provider fallback."""
+    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _BuilderOnlyBridge)
+    # Avoid HF I/O for SFT/PEFT tokenizers.
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
+
+    if "peft" in recipe_func.__name__:
+        cfg = recipe_func(peft_scheme="lora")
+    else:
+        cfg = recipe_func()
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.normalization == "RMSNorm"
+    assert cfg.model.moe_router_score_function == "sigmoid"
+    assert cfg.model.mtp_num_layers == 1

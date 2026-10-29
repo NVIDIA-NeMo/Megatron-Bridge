@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import re
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, MegatronParamMapping
+from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map, derive_kv_bmm_amax_map
 
 
 class MegatronMappingRegistry:
@@ -113,6 +114,14 @@ class MegatronMappingRegistry:
         if extra_mappings:
             self.mappings.extend(extra_mappings)
 
+    def _build_quantization_mappings(self) -> List[MegatronParamMapping]:
+        """Derive ModelOpt quantizer-state (amax) mappings from the weight mappings."""
+        return [
+            *convert_to_amax_map(self.mappings, ".weight_quantizer._amax"),
+            *convert_to_amax_map(self.mappings, ".input_quantizer._amax"),
+            *derive_kv_bmm_amax_map(self.mappings),
+        ]
+
     def _convert_pattern_to_regex(self, pattern: str) -> str:
         """Convert a pattern with wildcards to regex pattern.
 
@@ -147,13 +156,17 @@ class MegatronMappingRegistry:
             *mappings: MegatronParamMapping objects
         """
         self.mappings = list(mappings)
+        self._pg_collection = None
         self._add_separate_layernorm_mappings()
+        # Derived mappings for ModelOpt quantizer state: lookups resolve them, but they are not
+        # listed with the weight mappings, so registries rebuilt from those do not duplicate them.
+        self._quantization_mappings = self._build_quantization_mappings()
 
         # Pre-compile patterns for efficiency
         self._compiled_patterns = []
         self._reverse_patterns = []  # For hf_param -> megatron lookups
 
-        for mapping in self.mappings:
+        for mapping in [*self.mappings, *self._quantization_mappings]:
             # Compile source patterns
             if "*" in mapping.megatron_param:
                 # Convert glob pattern to regex with support for * and **
@@ -179,6 +192,24 @@ class MegatronMappingRegistry:
                     else:
                         reverse_dict_patterns[key] = None
                 self._reverse_patterns.append((reverse_dict_patterns, mapping))
+
+    def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
+        """Install a process-group collection on all mappings returned by this registry."""
+        self._pg_collection = pg_collection
+        for mapping in [*self.mappings, *self._quantization_mappings]:
+            mapping.set_process_groups_from_pg_collection(pg_collection)
+
+    def _prepare_mapping(self, mapping: MegatronParamMapping) -> MegatronParamMapping:
+        mapping.set_process_groups_from_pg_collection(self._pg_collection)
+        return mapping
+
+    def resolve_mapping(
+        self,
+        mapping: MegatronParamMapping,
+        captures: tuple[str, ...],
+    ) -> MegatronParamMapping:
+        """Resolve a mapping while preserving this registry's process groups."""
+        return self._prepare_mapping(mapping.resolve(captures))
 
     def megatron_to_hf_lookup(self, megatron_param_name: str) -> Optional[MegatronParamMapping]:
         """
@@ -207,13 +238,13 @@ class MegatronMappingRegistry:
             if pattern is None:
                 # Direct match
                 if mapping.megatron_param == megatron_param_name:
-                    return mapping
+                    return self._prepare_mapping(mapping)
             else:
                 # Pattern match
                 match = pattern.match(megatron_param_name)
                 if match:
                     # Return resolved mapping with wildcards replaced
-                    return mapping.resolve(match.groups())
+                    return self.resolve_mapping(mapping, match.groups())
         return None
 
     def hf_to_megatron_lookup(self, hf_param_name: str) -> Optional[MegatronParamMapping]:
@@ -236,12 +267,12 @@ class MegatronMappingRegistry:
                 if pattern is None:
                     # Direct match
                     if mapping.hf_param == hf_param_name:
-                        return mapping
+                        return self._prepare_mapping(mapping)
                 else:
                     # Pattern match
                     match = pattern.match(hf_param_name)
                     if match:
-                        return mapping.resolve(match.groups())
+                        return self.resolve_mapping(mapping, match.groups())
             else:
                 # Dict destination - check each pattern
                 patterns_dict = pattern_info
@@ -250,12 +281,12 @@ class MegatronMappingRegistry:
                         # Direct match
                         if mapping.hf_param[key] == hf_param_name:
                             # Create a simplified mapping for this specific key
-                            return mapping.resolve(())
+                            return self.resolve_mapping(mapping, ())
                     else:
                         # Pattern match
                         match = pattern.match(hf_param_name)
                         if match:
-                            return mapping.resolve(match.groups())
+                            return self.resolve_mapping(mapping, match.groups())
         return None
 
     def get_all_mappings(self) -> List[MegatronParamMapping]:

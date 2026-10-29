@@ -1,0 +1,153 @@
+title: moe_dispatcher_selection
+validated_on: "2026-07-31"
+guidance_updated_on: "2026-08-25"
+summary: >
+  Evidence-gated guide for selecting MoE token dispatchers (AlltoAll, DeepEP,
+  HybridEP). Hardware and EP degree form a candidate set; matched target-stack
+  A/Bs, routing semantics, and runtime activation evidence select the winner.
+
+validation_status:
+  dsv3_h100_benchmarks:
+    - measured
+  dsv3_gb200_benchmarks:
+    - measured
+  dsv3_gb300_benchmarks:
+    - measured
+  dsv3_b200_benchmarks:
+    - measured
+  qwen3_h100_benchmarks:
+    - measured
+  qwen3_gb200_benchmarks:
+    - measured
+  qwen3_next_gb200_benchmarks:
+    - measured
+
+training_dimensions:
+  speed:
+    effect: "workload-dependent"
+    confidence: medium
+    rationale: >
+      HybridEP is strong in measured GB200/GB300 snapshots and in the canonical
+      16×H100 Qwen3 30B recipe, but dispatcher ordering changes by workload.
+  memory:
+    effect: "workload-dependent"
+    confidence: medium
+    rationale: >
+      Some measured Qwen3 GB200 runs show better HybridEP headroom; reproduce
+      the comparison with identical routing, layout, graphs, and runtime.
+  scale:
+    effect: "topology and EP degree can change the ordering"
+    confidence: medium
+    rationale: >
+      Higher EP means more communication; HybridEP's NVLink optimization
+      benefits more at EP=32+ vs EP=8.
+dispatcher_recommendations:
+  nvl8_bf16:
+    bring_up: alltoall
+    tuned_candidates: [HybridEP]
+    rationale: >
+      Treat both as matched candidates on the exact stack. Their throughput
+      can be close, so a small or negative delta is a valid reason to keep the
+      simpler alltoall path.
+  h100:
+    bring_up: alltoall
+    tuned_candidates: [DeepEP, HybridEP]
+    rationale: "The current 16×H100 Qwen3 30B winner uses HybridEP; measure rather than infer from the GPU SKU"
+  b200:
+    bring_up: alltoall
+    tuned_candidates: [DeepEP, HybridEP]
+    rationale: "Use only backends supported by the target runtime and select by matched A/B"
+  gb200_nvl72:
+    bring_up: alltoall
+    first_tuned_candidate: HybridEP
+    rationale: "NVLink-domain-aware dispatch makes HybridEP high priority, but still validate the exact stack"
+  gb300_nvl72:
+    bring_up: alltoall
+    first_tuned_candidate: HybridEP
+    rationale: "NVLink-domain-aware candidate; remeasure the exact software and topology"
+
+key_tuning_parameters:
+  - name: moe-deepep-num-sms
+    default: 20
+    recommended: "tune per workload"
+    rationale: "Controls SM count for DeepEP communication kernels; default 20 is a starting point"
+  - name: moe-hybridep-num-sms
+    default: 16
+    recommended: "16-32 range, tune per workload"
+    rationale: "Controls SM count for HybridEP communication; recipes default to 16, perf harness uses 32"
+  - name: NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN
+    default: varies
+    recommended: "match NVLink domain size (e.g., 16 for GB200)"
+  - name: moe-router-force-load-balancing
+    recommended: benchmark_only
+    rationale: "Controls routing variance but changes semantics; validate natural routing separately"
+  - name: CUDA_DEVICE_MAX_CONNECTIONS
+    default: 1
+    note: "Set to 32 when using EP overlap + CUDA graphs"
+
+best_measured_configs:
+  - model: "Qwen3 30B-A3B"
+    hardware: "16×H100"
+    dispatcher: HybridEP
+    precision: BF16
+    tflops: 299.352
+    step_time_ms: 20147.290
+    parallelism: "TP1 CP1 EP16 PP1"
+    note: "50 steps; steps 41-50; 32 HybridEP SMs; 64-token combine chunks"
+  - model: "DSV3 685B w/ MTP"
+    hardware: "1024×H100"
+    dispatcher: DeepEP
+    precision: FP8-Block
+    mfu: "~19%"
+    tflops: ~370
+    parallelism: "TP2 EP64 PP8 VPP4"
+  - model: "DSV3 671B no MTP"
+    hardware: "256×GB200"
+    dispatcher: HybridEP
+    precision: FP8-MX
+    mfu: "~19%"
+    tflops: ~1000
+    parallelism: "TP1 EP32 PP8 VPP4"
+  - model: "DSV3 685B w/ MTP"
+    hardware: "256×GB200"
+    dispatcher: HybridEP
+    precision: FP8-MX
+    mfu: "~22%"
+    tflops: ~1100
+    parallelism: "TP1 EP64 PP4 VPP4"
+  - model: "DSV3 685B w/ MTP"
+    hardware: "256×GB300"
+    dispatcher: HybridEP
+    precision: FP8-MX
+    mfu: "~25%"
+    tflops: ~1200
+    parallelism: "TP1 EP64 PP4 VPP4"
+  - model: "Qwen3 235B-A22B"
+    hardware: "128×GB200"
+    dispatcher: HybridEP
+    precision: BF16
+    mfu: "~28%"
+    tflops: ~700
+    parallelism: "TP1 EP32 PP4 VPP12"
+  - model: "Qwen3 235B-A22B current recipe seed"
+    hardware: "256×H100"
+    dispatcher: alltoall
+    precision: BF16
+    parallelism: "TP2 EP32 PP8 VPP4"
+    measurement_status: "remeasure on the target stack"
+    note: "Current canonical recipe uses alltoall plus expert-parallel overlap; do not attach historical DeepEP metrics"
+
+evidence:
+  - "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+  - "src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py"
+  - "[MoE Perf] MCore Release Performance Tracker - DeepSeek-V3"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
+
+known_limitations:
+  - HybridEP is topology-sensitive but is supported and measured on the canonical 16×H100 Qwen3 30B workload
+  - DeepEP SM count tuning is hardware-specific
+  - Container version can cause performance regression
+  - 1F1B overlap + DeepEP may regress on some configurations
+  - Forced load balancing is benchmark-only and cannot establish training-equivalent correctness
+  - Backend selection in a config is not proof that the requested runtime initialized or ran

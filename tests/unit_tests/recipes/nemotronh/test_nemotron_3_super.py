@@ -1,0 +1,481 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Unit tests for Nemotron 3 Super recipe configuration builders.
+
+Tests cover:
+- Pretrain configuration defaults (parameterless API)
+- SFT configuration (full supervised finetuning)
+- PEFT configuration (LoRA/DoRA)
+- MoE-specific settings (expert parallelism, MTP)
+- Parallelism and tokenizer configurations
+"""
+
+import os
+import tempfile
+from types import SimpleNamespace
+
+import pytest
+import torch
+
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
+from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_super import (
+    nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+)
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
+    nemotron_3_super_peft_16gpu_h100_bf16_config,
+    nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_config,
+)
+from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
+    nemotron_3_super_peft_config,
+    nemotron_3_super_pretrain_config,
+    nemotron_3_super_sft_config,
+)
+from megatron.bridge.training.config import ConfigContainer
+from tests.unit_tests.recipes.recipe_test_utils import nemotron_h_model_config
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        nemotron_3_super_pretrain_config,
+        nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+        nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+        nemotron_3_super_sft_config,
+        nemotron_3_super_sft_16gpu_h100_bf16_config,
+        nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
+        nemotron_3_super_peft_config,
+        nemotron_3_super_peft_16gpu_h100_bf16_config,
+    ],
+)
+def test_text_only_source_preserves_super_recipe_policy(monkeypatch, recipe):
+    calls = []
+
+    def from_hf(path, **kwargs):
+        calls.append((path, kwargs))
+        model_config = nemotron_h_model_config(
+            path, hybrid_override_pattern="ME*E", num_nextn_predict_layers=1, mtp_hybrid_override_pattern="*E"
+        )
+        if kwargs.get("revision"):
+            model_config.extra_checkpoint_metadata["hf_model_revision"] = kwargs["revision"]
+        return SimpleNamespace(
+            get_model_config=lambda: model_config,
+            hf_model_revision=kwargs.get("revision"),
+        )
+
+    monkeypatch.setattr("megatron.bridge.AutoBridge.from_hf_pretrained", from_hf)
+    original = recipe()
+    selected = recipe(hf_path="org/vl", text_only=True, revision="pinned", trust_remote_code=True)
+    # HF stores one shared block; recipes explicitly choose two prediction depths.
+    assert original.model.mtp_num_layers == selected.model.mtp_num_layers == 2
+    assert original.model.mtp_use_repeated_layer is selected.model.mtp_use_repeated_layer is True
+    assert calls[-1] == ("org/vl", {"text_only": True, "revision": "pinned", "trust_remote_code": True})
+    assert selected.tokenizer.tokenizer_model == "org/vl"
+    assert selected.tokenizer.hf_tokenizer_kwargs["revision"] == "pinned"
+    assert selected.checkpoint.hf_trust_remote_code
+    expected = original.to_dict()
+    actual = selected.to_dict()
+    expected.pop("tokenizer")
+    actual.pop("tokenizer")
+    expected["checkpoint"].pop("hf_trust_remote_code")
+    actual["checkpoint"].pop("hf_trust_remote_code")
+    # Only the recorded Hugging Face source differs.
+    assert actual["model"].pop("extra_checkpoint_metadata") == {"hf_model_id": "org/vl", "hf_model_revision": "pinned"}
+    expected["model"].pop("extra_checkpoint_metadata")
+    assert actual == expected
+
+
+@pytest.mark.unit
+class TestNemotron3SuperPretrain:
+    """Test cases for Nemotron 3 Super pretrain recipe.
+
+    Note: Pretrain config uses the parameterless API and returns fixed defaults.
+    Customization is done by modifying the returned ConfigContainer after creation.
+    """
+
+    def test_pretrain_config_default_parameters(self):
+        """Test pretrain_config returns correct default configuration."""
+        config = nemotron_3_super_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, BridgeHybridModelConfig)
+
+        # Check model configuration defaults
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 2
+        assert config.model.sequence_parallel is False
+
+        # Check expert parallelism defaults
+        assert config.model.expert_tensor_parallel_size == 1
+        assert config.model.expert_model_parallel_size == 32
+
+        # Check training configuration
+        assert config.train.train_iters == 100
+        assert config.train.global_batch_size == 1280
+        assert config.train.micro_batch_size == 1
+
+        # Check dataset configuration
+        assert config.dataset.seq_length == 4096
+
+        # Check tokenizer (HuggingFace for this recipe)
+        assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
+        # Check precision
+        assert config.mixed_precision.bf16 is True
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
+        assert config.optimizer.main_grads_dtype == torch.bfloat16
+        assert config.optimizer.optimizer_cpu_offload is False
+        assert config.optimizer.optimizer_offload_fraction == 0.0
+        assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is False
+        assert config.model.apply_rope_fusion is True
+        assert config.tokenizer.use_tokenizer_vocab_size is False
+
+    def test_pretrain_config_moe_settings(self):
+        """Test MoE settings for pretrain config."""
+        config = nemotron_3_super_pretrain_config()
+
+        # Verify MoE settings
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "hybridep"
+        assert config.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+        assert config.model.moe_expert_capacity_factor == 1.10
+        assert config.model.moe_pad_expert_input_to_capacity is True
+        assert config.model.moe_router_force_load_balancing is False
+        assert config.model.moe_shared_expert_overlap is False
+        assert config.model.moe_grouped_gemm is True
+        assert config.model.moe_permute_fusion is True
+
+    def test_pretrain_config_mtp_settings(self):
+        """Test MTP settings for pretrain config."""
+        config = nemotron_3_super_pretrain_config()
+
+        # Verify MTP settings from provider
+        assert config.model.mtp_num_layers == 2
+        assert config.model.mtp_hybrid_override_pattern == "*E"
+
+        # Verify MTP recipe-level settings
+        # Note: the recipe overrides mtp_use_repeated_layer=True (provider default is False)
+        assert config.model.mtp_use_repeated_layer is True
+        assert config.model.calculate_per_token_loss is True
+        assert config.model.mtp_loss_scaling_factor == 0.3
+
+    def test_pretrain_config_optimizer_settings(self):
+        """Test optimizer settings for pretrain config."""
+        config = nemotron_3_super_pretrain_config()
+
+        # Verify optimizer configuration
+        assert config.optimizer.lr == 4.5e-4
+        assert config.optimizer.weight_decay == 0.1
+        assert config.optimizer.min_lr == 4.5e-6
+        assert config.scheduler.lr_warmup_iters == 40
+
+    def test_pretrain_config_checkpoint_settings(self):
+        """Test checkpoint settings for pretrain config."""
+        config = nemotron_3_super_pretrain_config()
+
+        # Verify checkpoint configuration
+        assert config.checkpoint.save_interval == 200
+        assert config.checkpoint.ckpt_assume_constant_structure is True
+        assert config.checkpoint.dist_ckpt_strictness == "log_all"
+
+
+@pytest.mark.unit
+class TestNemotron3SuperSft:
+    """Test cases for Nemotron 3 Super SFT recipe."""
+
+    def test_sft_config_defaults(self):
+        """Test SFT config returns correct default configuration."""
+        config = nemotron_3_super_sft_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, BridgeHybridModelConfig)
+
+        # Check parallelism for full SFT
+        assert config.model.tensor_model_parallel_size == 8
+        assert config.model.pipeline_model_parallel_size == 1
+        assert config.model.sequence_parallel is True
+
+        # Check expert parallelism (EP=16 for full SFT)
+        assert config.model.expert_model_parallel_size == 16
+
+        # No PEFT config for full SFT
+        assert config.peft is None
+
+        # Full SFT should use lower LR
+        assert config.optimizer.lr == 5e-6
+
+        # Check tokenizer
+        assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
+        # Check precision
+        assert config.mixed_precision.bf16 is True
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
+
+    def test_sft_config_custom_parallelism(self):
+        """Test SFT config with custom parallelism applied after creation."""
+        config = nemotron_3_super_sft_config()
+
+        # Modify parallelism settings after creation
+        config.model.tensor_model_parallel_size = 2
+        config.model.pipeline_model_parallel_size = 2
+        config.model.context_parallel_size = 2
+        config.model.sequence_parallel = True
+        config.model.expert_tensor_parallel_size = 2
+        config.model.expert_model_parallel_size = 4
+
+        assert config.model.tensor_model_parallel_size == 2
+        assert config.model.pipeline_model_parallel_size == 2
+        assert config.model.context_parallel_size == 2
+        assert config.model.sequence_parallel is True
+        assert config.model.expert_tensor_parallel_size == 2
+        assert config.model.expert_model_parallel_size == 4
+
+    def test_sft_config_custom_training_params(self):
+        """Test SFT config with custom training parameters applied after creation."""
+        config = nemotron_3_super_sft_config()
+
+        # Modify training settings after creation
+        config.train.train_iters = 500
+        config.train.global_batch_size = 64
+        config.train.micro_batch_size = 2
+        config.optimizer.lr = 5e-5
+
+        assert config.train.train_iters == 500
+        assert config.train.global_batch_size == 64
+        assert config.train.micro_batch_size == 2
+        assert config.optimizer.lr == 5e-5
+
+    def test_sft_config_with_pretrained_checkpoint(self):
+        """Test SFT config with pretrained checkpoint applied after creation."""
+        config = nemotron_3_super_sft_config()
+
+        # Set checkpoint path after creation
+        config.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+        assert config.checkpoint.pretrained_checkpoint == "/path/to/checkpoint"
+
+    def test_sft_config_with_custom_directory(self):
+        """Test custom directory configuration for SFT."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = nemotron_3_super_sft_config()
+
+            # Set directory configuration after creation
+            run_dir = os.path.join(temp_dir, "finetune_run")
+            expected_checkpoint_dir = os.path.join(run_dir, "checkpoints")
+            expected_tensorboard_dir = os.path.join(run_dir, "tb_logs")
+
+            config.checkpoint.save = expected_checkpoint_dir
+            config.logger.tensorboard_dir = expected_tensorboard_dir
+
+            assert config.checkpoint.save == expected_checkpoint_dir
+            assert config.logger.tensorboard_dir == expected_tensorboard_dir
+
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed"])
+    def test_sft_precision_config(self, precision):
+        """Test precision configuration for SFT."""
+        config = nemotron_3_super_sft_config()
+
+        # Modify precision after creation
+        config.mixed_precision = precision
+
+        assert config.mixed_precision == precision
+
+
+@pytest.mark.unit
+class TestNemotron3SuperPeft:
+    """Test cases for Nemotron 3 Super PEFT recipe."""
+
+    def test_peft_config_default_lora(self):
+        """Test PEFT config with default LoRA configuration."""
+        config = nemotron_3_super_peft_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, BridgeHybridModelConfig)
+
+        # Check default parallelism for LoRA
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 1
+        assert config.model.sequence_parallel is True
+
+        # Check expert parallelism (EP=1 for LoRA)
+        assert config.model.expert_tensor_parallel_size == 1
+        assert config.model.expert_model_parallel_size == 1
+
+        # Check PEFT config exists for LoRA
+        assert config.peft is not None
+
+        # Check LoRA LR
+        assert config.optimizer.lr == 1e-4
+
+        # Check tokenizer
+        assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
+        # Check precision
+        assert config.mixed_precision == "bf16_mixed"
+
+    def test_peft_config_dora(self):
+        """Test PEFT config with DoRA configuration."""
+        config = nemotron_3_super_peft_config(peft_scheme="dora")
+
+        assert config.peft is not None
+        # DoRA should also use higher LR
+        assert config.optimizer.lr == 1e-4
+
+
+@pytest.mark.unit
+class TestNemotron3SuperCommon:
+    """Test cases common to all Nemotron 3 Super recipes."""
+
+    @pytest.mark.parametrize(
+        "recipe_fn",
+        [
+            nemotron_3_super_pretrain_config,
+            nemotron_3_super_sft_config,
+            nemotron_3_super_peft_config,
+        ],
+    )
+    def test_config_container_structure(self, recipe_fn):
+        """Test that all configs return proper ConfigContainer with correct model provider."""
+        config = recipe_fn()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, BridgeHybridModelConfig)
+
+        # Check required sections exist
+        assert config.train is not None
+        assert config.optimizer is not None
+        assert config.scheduler is not None
+        assert config.dataset is not None
+        assert config.logger is not None
+        assert config.tokenizer is not None
+        assert config.checkpoint is not None
+        assert config.rng is not None
+        assert config.ddp is not None
+        assert config.mixed_precision is not None
+
+    @pytest.mark.parametrize(
+        ("recipe_fn", "overlap_grad_reduce", "overlap_param_gather"),
+        [
+            (nemotron_3_super_pretrain_config, False, False),
+            (nemotron_3_super_sft_config, False, False),
+            (nemotron_3_super_peft_config, True, True),
+        ],
+    )
+    def test_ddp_configuration(self, recipe_fn, overlap_grad_reduce, overlap_param_gather):
+        """Test distributed data parallel configuration."""
+        config = recipe_fn()
+
+        assert config.ddp.check_for_nan_in_grad is True
+        assert config.ddp.overlap_grad_reduce is overlap_grad_reduce
+        assert config.ddp.overlap_param_gather is overlap_param_gather
+        assert config.ddp.use_distributed_optimizer is True
+
+    @pytest.mark.parametrize(
+        "recipe_fn",
+        [
+            nemotron_3_super_pretrain_config,
+            nemotron_3_super_sft_config,
+            nemotron_3_super_peft_config,
+        ],
+    )
+    def test_moe_model_configuration(self, recipe_fn):
+        """Test MoE-specific model configuration from provider."""
+        config = recipe_fn()
+
+        # Check MoE settings from AutoBridge provider
+        assert config.model.num_moe_experts == 512
+        assert config.model.moe_ffn_hidden_size == 2688
+        assert config.model.moe_shared_expert_intermediate_size == 5376
+        assert config.model.moe_router_topk == 22
+        assert config.model.moe_router_topk_scaling_factor == 5.0
+        assert config.model.moe_latent_size == 1024
+
+
+@pytest.mark.unit
+class TestNemotron3Super16GpuH100:
+    """Test the 16-H100 support-verification recipes."""
+
+    @pytest.mark.parametrize(
+        ("recipe_fn", "expected_global_batch_size"),
+        [
+            # Bounded cohort batch sizes shared with the other H100 verification
+            # recipes: pretrain GBS 1024, full SFT GBS 32.
+            (nemotron_3_super_pretrain_16gpu_h100_bf16_config, 1024),
+            (nemotron_3_super_sft_16gpu_h100_bf16_config, 32),
+            (nemotron_3_super_peft_16gpu_h100_bf16_config, 16),
+        ],
+    )
+    def test_parallelism_batch_size_and_checkpoint_safe_ddp(self, recipe_fn, expected_global_batch_size):
+        """The verification recipes own their 16-GPU layout and checkpoint-safe DDP settings."""
+        config = recipe_fn()
+
+        assert config.model.tensor_model_parallel_size == 8
+        assert config.model.pipeline_model_parallel_size == 1
+        assert config.model.expert_model_parallel_size == 16
+        assert config.train.global_batch_size == expected_global_batch_size
+        assert config.train.micro_batch_size == 1
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False
+
+    @pytest.mark.parametrize(
+        "recipe_fn",
+        [
+            nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
+        ],
+    )
+    def test_low_memory_optimizer_precision(self, recipe_fn):
+        """Full-model recipes use the explicit reduced-memory optimizer state."""
+        config = recipe_fn()
+
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
+        assert config.ddp.grad_reduce_in_fp32 is False
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False
+        assert config.optimizer.use_precision_aware_optimizer is True
+        assert config.optimizer.main_params_dtype == torch.float16
+        assert config.optimizer.exp_avg_dtype == torch.bfloat16
+        assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
+
+    def test_long_context_parallelism_batch_size_and_sequence_length(self):
+        """The 32K recipe owns its memory-bounded layout and batch size."""
+        config = nemotron_3_super_sft_16gpu_h100_bf16_32k_config()
+
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 8
+        assert config.model.num_layers_in_last_pipeline_stage == 4
+        assert config.model.context_parallel_size == 2
+        assert config.model.expert_model_parallel_size == 2
+        assert config.model.sequence_parallel is True
+        assert config.model.cp_comm_type == "a2a"
+        assert config.model.seq_length == 32768
+        assert config.model.cross_entropy_loss_fusion is False
+        assert config.model.calculate_per_token_loss is True
+        assert config.dataset.seq_length == 32768
+        assert config.train.global_batch_size == 2
+        assert config.train.micro_batch_size == 1
+        assert config.comm_overlap.tp_comm_overlap is False
+        assert config.comm_overlap.batch_p2p_comm is False
+        assert config.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
+        assert config.ddp.average_in_collective is False
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False

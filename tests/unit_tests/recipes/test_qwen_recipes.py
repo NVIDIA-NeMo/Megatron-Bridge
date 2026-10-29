@@ -25,6 +25,9 @@ import importlib
 from typing import Callable
 
 import pytest
+import torch
+
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _qwen_module = importlib.import_module("megatron.bridge.recipes.qwen")
@@ -64,10 +67,60 @@ class _FakeBridge:
     def to_megatron_provider(self, load_weights: bool = False):
         return _FakeModelCfg()
 
+    def get_model_config(self):
+        # Builder-backed recipes (e.g. dense Qwen3) request a ModelConfig instead.
+        return _FakeModelCfg()
+
     @staticmethod
-    def from_hf_pretrained(hf_path: str):
-        # Ignore hf_path; return a bridge that yields a fake provider
+    def from_hf_pretrained(hf_path: str, **kwargs):
+        expected_revisions = {
+            "Qwen/Qwen3-8B": "b968826d9c46dd6066d109eabc6255188de91218",  # pragma: allowlist secret
+            "Qwen/Qwen3-30B-A3B": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39",  # pragma: allowlist secret
+        }
+        if hf_path in expected_revisions:
+            assert kwargs == {"revision": expected_revisions[hf_path]}
         return _FakeBridge()
+
+    @staticmethod
+    def from_hf_config(hf_config):
+        # Ignore hf_config; return a bridge that yields a fake provider
+        return _FakeBridge()
+
+
+class _FakeMoeBridge(_FakeBridge):
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs):
+        _FakeBridge.from_hf_pretrained(hf_path, **kwargs)
+        return _FakeMoeBridge()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        cfg = super().to_megatron_provider(load_weights=load_weights)
+        cfg.num_moe_experts = 128
+        return cfg
+
+    def get_model_config(self):
+        # Builder-backed Qwen3 MoE recipes request a ModelConfig instead.
+        cfg = super().get_model_config()
+        cfg.num_moe_experts = 128
+        return cfg
+
+
+class _FakeTextConfig:
+    architectures = None
+    model_type = "qwen3_5_moe_text"
+    max_position_embeddings = 262144
+
+
+class _FakeRootConfig:
+    text_config = _FakeTextConfig()
+    tie_word_embeddings = False
+
+
+class _FakeAutoConfig:
+    @staticmethod
+    def from_pretrained(hf_path: str, *, revision: str | None = None):
+        # Match the pinned-config API without downloading a model configuration.
+        return _FakeRootConfig()
 
 
 def _assert_basic_config(cfg):
@@ -98,15 +151,24 @@ def _assert_basic_config(cfg):
 
 @pytest.mark.parametrize("recipe_func", _QWEN_RECIPE_FUNCS)
 def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    # Monkeypatch AutoBridge in the specific module where the recipe function is defined
+    # Always patch AutoBridge in qwen3_moe (where base configs actually call it)
+    qwen3_moe_mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, qwen3_moe_mod, "AutoBridge", _FakeBridge)
+    # Also patch in the recipe function's own module if it directly references AutoBridge
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    if hasattr(mod, "AutoBridge"):
+        patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+    if hasattr(mod, "AutoConfig"):
+        patch_recipe_module_global(monkeypatch, mod, "AutoConfig", _FakeAutoConfig)
 
     overrides = _safe_overrides_for(recipe_func.__name__)
 
-    # qwen3_next PEFT is intentionally not implemented
-    if recipe_func.__name__ == "qwen3_next_80b_a3b_peft_config":
+    # qwen3_next PEFT is intentionally not implemented.
+    if recipe_func.__name__ in {
+        "qwen3_next_80b_a3b_peft_config",
+        "qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config",
+    }:
         with pytest.raises(NotImplementedError):
             recipe_func(**overrides)
         return
@@ -135,7 +197,12 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
-    if "qwen3" in recipe_name and "pretrain" in recipe_name and "next" not in recipe_name:
+    if (
+        "qwen3" in recipe_name
+        and "pretrain" in recipe_name
+        and "next" not in recipe_name
+        and "qwen35" not in recipe_name
+    ):
         assert cfg.model.cross_entropy_fusion_impl == "te"
 
     # SFT and PEFT-specific assertions
@@ -149,6 +216,181 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
         assert cfg.dataset is not None
 
 
+def _patch_qwen3_dense_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    qwen3_mod = importlib.import_module("megatron.bridge.recipes.qwen.h100.qwen3")
+    patch_recipe_module_global(monkeypatch, qwen3_mod, "AutoBridge", _FakeBridge)
+
+
+def _assert_qwen_finetune_optimizer_contract(cfg, *, expected_lr: float) -> None:
+    assert cfg.optimizer.optimizer == "adam"
+    assert cfg.optimizer.lr == expected_lr
+    assert cfg.optimizer.min_lr == 0.0
+    assert cfg.optimizer.adam_beta1 == 0.9
+    assert cfg.optimizer.adam_beta2 == 0.95
+    assert cfg.optimizer.adam_eps == 1.0e-8
+    assert cfg.optimizer.clip_grad == 1.0
+    assert cfg.scheduler.start_weight_decay == 0.033
+    assert cfg.scheduler.end_weight_decay == 0.033
+    assert cfg.scheduler.weight_decay_incr_style == "constant"
+    assert cfg.scheduler.lr_decay_style == "cosine"
+    assert cfg.scheduler.lr_warmup_init == 0.0
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.use_distributed_optimizer is True
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.params_dtype == torch.bfloat16
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.use_distributed_optimizer is True
+
+
+def test_qwen3_8b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyPatch):
+    """The generic 8B pretrain recipe should select the 16-GPU convergence cohort."""
+    from megatron.bridge.recipes.qwen import qwen3_8b_pretrain_config
+    from megatron.bridge.recipes.qwen.h100.qwen3 import qwen3_8b_pretrain_16gpu_h100_bf16_config
+
+    _patch_qwen3_dense_bridge(monkeypatch)
+
+    assert qwen3_8b_pretrain_config is qwen3_8b_pretrain_16gpu_h100_bf16_config
+    cfg = qwen3_8b_pretrain_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 1024
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.random_seed == 1234
+    assert cfg.rng.seed == 1234
+    assert cfg.optimizer.optimizer == "adam"
+    assert cfg.optimizer.lr == 3.0e-4
+    assert cfg.optimizer.min_lr == 3.0e-5
+    assert cfg.optimizer.adam_beta1 == 0.9
+    assert cfg.optimizer.adam_beta2 == 0.95
+    assert cfg.optimizer.adam_eps == 1.0e-8
+    assert cfg.optimizer.clip_grad == 1.0
+    assert cfg.scheduler.start_weight_decay == 0.033
+    assert cfg.scheduler.end_weight_decay == 0.033
+    assert cfg.scheduler.weight_decay_incr_style == "constant"
+    assert cfg.scheduler.lr_decay_style == "cosine"
+    assert cfg.scheduler.lr_warmup_init == 0.0
+    assert cfg.scheduler.lr_warmup_iters == 40
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.use_distributed_optimizer is True
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.params_dtype == torch.bfloat16
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.use_distributed_optimizer is True
+    assert cfg.checkpoint.save_interval == 50
+    assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+    }
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    process_config_with_overrides(
+        cfg.tokenizer,
+        cli_overrides=[
+            '++hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'  # pragma: allowlist secret
+        ],
+    )
+
+
+def test_qwen3_8b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
+    """The bounded 8B SFT recipe should own the shared finetuning contract."""
+    from megatron.bridge.recipes.qwen import qwen3_8b_sft_config
+
+    _patch_qwen3_dense_bridge(monkeypatch)
+    cfg = qwen3_8b_sft_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.seq_length == 2048
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.seed == 1234
+    assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 1
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+    }
+    _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=5.0e-6)
+
+
+def test_qwen3_8b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
+    """The bounded 8B PEFT recipe should own the optimizer and LoRA contracts."""
+    from megatron.bridge.recipes.qwen import qwen3_8b_peft_config
+
+    _patch_qwen3_dense_bridge(monkeypatch)
+    cfg = qwen3_8b_peft_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.seq_length == 2048
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.seed == 1234
+    assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+    }
+    _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=1.0e-4)
+    assert cfg.peft is not None
+    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj"]
+    assert cfg.peft.dim == 8
+    assert cfg.peft.alpha == 16
+    assert cfg.peft.dropout == 0.0
+
+
+def test_qwen3_8b_32k_sft_preserves_separate_batch_contract(monkeypatch: pytest.MonkeyPatch):
+    """The 32K SFT cohort should not inherit the bounded 2K recipe's GBS=32."""
+    from megatron.bridge.recipes.qwen import qwen3_8b_sft_32k_config
+    from megatron.bridge.recipes.qwen.h100.qwen3 import qwen3_8b_sft_8gpu_h100_bf16_32k_config
+
+    _patch_qwen3_dense_bridge(monkeypatch)
+
+    assert qwen3_8b_sft_32k_config is qwen3_8b_sft_8gpu_h100_bf16_32k_config
+    cfg = qwen3_8b_sft_32k_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.cp_comm_type == "a2a"
+    assert cfg.model.seq_length == 32768
+    assert cfg.dataset.seq_length == 32768
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 32768
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 8
+    assert cfg.train.global_batch_size == 8
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.ddp.average_in_collective is False
+
+
 # Qwen3 MoE SFT and PEFT-specific tests
 _QWEN3_MOE_SFT_FUNCS = [
     getattr(_qwen_module, name)
@@ -158,6 +400,27 @@ _QWEN3_MOE_SFT_FUNCS = [
     ]
     if callable(getattr(_qwen_module, name, None))
 ]
+
+
+def test_qwen3_moe_peft_recipe_builds_without_cuda(monkeypatch: pytest.MonkeyPatch):
+    """Offline packing must be able to construct a public recipe without CUDA."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.h100.qwen3_moe")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeMoeBridge)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    def fail_hardware_probe(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("recipe construction probed CUDA device properties")
+
+    monkeypatch.setattr(torch.cuda, "get_device_properties", fail_hardware_probe)
+
+    cfg = qwen3_30b_a3b_peft_config()
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "deepep"
+
 
 _QWEN3_MOE_PEFT_FUNCS = [
     getattr(_qwen_module, name)
@@ -174,7 +437,7 @@ def test_qwen3_moe_sft_config(recipe_func: Callable, monkeypatch: pytest.MonkeyP
     """Test that full SFT configurations are correctly applied for Qwen3 MoE models."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func()
 
@@ -190,7 +453,7 @@ def test_qwen3_moe_peft_config(recipe_func: Callable, peft_scheme: str, monkeypa
     """Test that PEFT configurations are correctly applied for Qwen3 MoE models."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
 
@@ -205,7 +468,7 @@ def test_qwen3_30b_a3b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_30b_a3b_peft_config(peft_scheme="lora")
 
@@ -221,7 +484,23 @@ def test_qwen3_30b_a3b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.peft is not None
     assert cfg.peft.dim == 8
     assert cfg.peft.alpha == 16
+    assert cfg.peft.dropout == 0.0
     assert cfg.peft.target_modules == ["linear_qkv", "linear_proj"]
+    assert cfg.model.seq_length == 2048
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.seed == 1234
+    assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
+    }
+    _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=1.0e-4)
 
 
 def test_qwen3_30b_a3b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -229,7 +508,7 @@ def test_qwen3_30b_a3b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_30b_a3b_peft_config(peft_scheme="dora")
 
@@ -249,22 +528,328 @@ def test_qwen3_30b_a3b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 30B-A3B full SFT has correct default parallelism."""
+    """Test that generic 30B-A3B full SFT uses the verified 16-GPU config."""
     from megatron.bridge.recipes.qwen import qwen3_30b_a3b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_30b_a3b_sft_config()
 
     _assert_basic_config(cfg)
 
-    # For full SFT, 30B-A3B should use TP=4, PP=2, EP=4
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.get_data_parallel_size(16) == 16
+    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * cfg.get_data_parallel_size(16)) == 2
+    assert cfg.model.seq_length == 2048
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.bias_activation_fusion is True
+    assert cfg.model.apply_rope_fusion is True
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.comm_overlap is None
+    assert cfg.train.train_iters == 100
+    assert cfg.dataset.seed == 1234
+    assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 1
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
+    }
+    assert cfg.peft is None
+    _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=5.0e-6)
+
+
+def test_qwen3_30b_a3b_legacy_8gpu_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Keep the explicit 8-GPU SFT topology available for existing callers."""
+    from megatron.bridge.recipes.qwen.h100.qwen3_moe import qwen3_30b_a3b_sft_8gpu_h100_bf16_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.h100.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    cfg = qwen3_30b_a3b_sft_8gpu_h100_bf16_config()
+
     assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.expert_model_parallel_size == 4
     assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_flex_dispatcher_backend == "deepep"
     assert cfg.peft is None
+    assert cfg.model.seq_length == 2048
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.seed == 1234
+    assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.load is None
+    _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=5.0e-6)
+
+
+def test_qwen3_30b_a3b_sft_generic_alias_uses_16gpu_factory():
+    """Keep the generic SFT alias attached to the verified 16-GPU factory."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_sft_config
+    from megatron.bridge.recipes.qwen.h100.qwen3_moe import qwen3_30b_a3b_sft_16gpu_h100_bf16_config
+
+    assert qwen3_30b_a3b_sft_config is qwen3_30b_a3b_sft_16gpu_h100_bf16_config
+
+
+def test_qwen3_30b_a3b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that the generic 30B-A3B pretrain recipe uses the verified 16-GPU topology."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    cfg = qwen3_30b_a3b_pretrain_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 1024
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.random_seed == 1234
+    assert cfg.rng.seed == 1234
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["moe_router", "moe_preprocess"]
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.optimizer == "adam"
+    assert cfg.optimizer.lr == 3.0e-4
+    assert cfg.optimizer.min_lr == 3.0e-5
+    assert cfg.optimizer.adam_beta1 == 0.9
+    assert cfg.optimizer.adam_beta2 == 0.95
+    assert cfg.optimizer.adam_eps == 1.0e-8
+    assert cfg.optimizer.weight_decay == 0.1
+    assert cfg.optimizer.clip_grad == 1.0
+    assert cfg.scheduler.start_weight_decay == 0.033
+    assert cfg.scheduler.end_weight_decay == 0.033
+    assert cfg.scheduler.weight_decay_incr_style == "constant"
+    assert cfg.scheduler.lr_decay_style == "cosine"
+    assert cfg.scheduler.lr_warmup_init == 0.0
+    assert cfg.scheduler.lr_warmup_iters == 40
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.use_distributed_optimizer is True
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
+    }
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    process_config_with_overrides(
+        cfg.tokenizer,
+        cli_overrides=[
+            '++hf_tokenizer_kwargs.revision="ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"'  # pragma: allowlist secret
+        ],
+    )
+    assert cfg.mixed_precision.params_dtype == torch.bfloat16
+    assert cfg.checkpoint.save_interval == 50
+    assert cfg.checkpoint.load is None
+    assert cfg.comm_overlap.tp_comm_overlap is True
+
+
+def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_main_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that the H100 BF16 perf recipe only adds benchmark-specific overrides."""
+    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config,
+    )
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    default_cfg = qwen3_30b_a3b_pretrain_config()
+    perf_cfg = qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config()
+
+    assert perf_cfg.model.tensor_model_parallel_size == default_cfg.model.tensor_model_parallel_size
+    assert perf_cfg.model.pipeline_model_parallel_size == default_cfg.model.pipeline_model_parallel_size
+    assert perf_cfg.model.expert_model_parallel_size == default_cfg.model.expert_model_parallel_size
+    assert perf_cfg.model.sequence_parallel == default_cfg.model.sequence_parallel
+    assert perf_cfg.train.global_batch_size == default_cfg.train.global_batch_size
+    assert perf_cfg.train.micro_batch_size == default_cfg.train.micro_batch_size
+    assert perf_cfg.model.moe_flex_dispatcher_backend == default_cfg.model.moe_flex_dispatcher_backend
+    assert perf_cfg.model.moe_token_dispatcher_type == default_cfg.model.moe_token_dispatcher_type
+    assert perf_cfg.model.cuda_graph_impl == default_cfg.model.cuda_graph_impl
+    assert perf_cfg.model.cuda_graph_scope == default_cfg.model.cuda_graph_scope
+    assert perf_cfg.comm_overlap.tp_comm_overlap == default_cfg.comm_overlap.tp_comm_overlap
+    assert perf_cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert default_cfg.comm_overlap.overlap_moe_expert_parallel_comm is None
+    assert perf_cfg.comm_overlap.delay_wgrad_compute is False
+    assert perf_cfg.optimizer.use_precision_aware_optimizer == default_cfg.optimizer.use_precision_aware_optimizer
+    assert perf_cfg.model.moe_router_force_load_balancing is True
+    assert default_cfg.model.moe_router_force_load_balancing is False
+    assert perf_cfg.model.moe_permute_fusion_into_hybridep is True
+    assert perf_cfg.model.moe_hybridep_num_sms == 32
+    assert perf_cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
+    assert perf_cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 10
+    assert perf_cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 10
+
+
+def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
+    """Keep non-H100-BF16 perf recipes isolated from the new generic default."""
+    from megatron.bridge.perf_recipes.qwen.common import qwen3_30b_a3b_pretrain_config as perf_base
+    from megatron.bridge.recipes.qwen.h100.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config as legacy_base,
+    )
+
+    assert perf_base is legacy_base
+
+
+def test_qwen3_30b_a3b_h100_fp8cs_perf_recipe_uses_te_partial_cuda_graph(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """fp8cs H100 recipe uses TE partial CUDA graph (attn + moe_router + moe_preprocess)."""
+    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
+    )
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    cfg = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config()
+
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
+
+
+def test_qwen3_30b_a3b_h100_fp8ds_inherits_fp8cs_layout_with_delayed_scaling(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """fp8ds is fp8cs + delayed scaling; topology, env_vars, and CUDA graph settings must match."""
+    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
+        qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config,
+    )
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    fp8cs = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config()
+    fp8ds = qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config()
+
+    # Precision must differ (delayed vs current scaling).
+    assert fp8ds.mixed_precision != fp8cs.mixed_precision
+
+    # Topology, CUDA graph settings, and env_vars are inherited unchanged.
+    assert fp8ds.model.tensor_model_parallel_size == fp8cs.model.tensor_model_parallel_size
+    assert fp8ds.model.expert_model_parallel_size == fp8cs.model.expert_model_parallel_size
+    assert fp8ds.model.cuda_graph_impl == fp8cs.model.cuda_graph_impl
+    assert fp8ds.model.cuda_graph_scope == fp8cs.model.cuda_graph_scope
+    assert fp8ds.env_vars == fp8cs.env_vars
+
+
+def test_qwen3_30b_a3b_gb200_fp8mx_perf_recipe_uses_main_recipe(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The GB200 MXFP8 perf recipe only layers benchmark behavior on its verified recipe."""
+    from megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+    )
+    from megatron.bridge.recipes.qwen.gb200.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config as main_recipe,
+    )
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeMoeBridge)
+
+    main_cfg = main_recipe()
+    perf_cfg = qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config()
+
+    # Training-equivalent settings come from the main recipe.
+    assert perf_cfg.mixed_precision == main_cfg.mixed_precision
+    assert perf_cfg.model.tensor_model_parallel_size == main_cfg.model.tensor_model_parallel_size
+    assert perf_cfg.model.pipeline_model_parallel_size == main_cfg.model.pipeline_model_parallel_size
+    assert perf_cfg.model.context_parallel_size == main_cfg.model.context_parallel_size
+    assert perf_cfg.model.expert_model_parallel_size == main_cfg.model.expert_model_parallel_size
+    assert perf_cfg.model.expert_tensor_parallel_size == main_cfg.model.expert_tensor_parallel_size
+    assert perf_cfg.model.sequence_parallel == main_cfg.model.sequence_parallel
+    assert perf_cfg.train.global_batch_size == main_cfg.train.global_batch_size
+    assert perf_cfg.train.micro_batch_size == main_cfg.train.micro_batch_size
+    assert perf_cfg.model.moe_flex_dispatcher_backend == main_cfg.model.moe_flex_dispatcher_backend
+    assert perf_cfg.model.moe_token_dispatcher_type == main_cfg.model.moe_token_dispatcher_type
+    assert perf_cfg.comm_overlap == main_cfg.comm_overlap
+    assert perf_cfg.env_vars == main_cfg.env_vars
+    assert perf_cfg.model.offload_modules == main_cfg.model.offload_modules == []
+
+    # Benchmark-only policy remains outside the main recipe.
+    assert main_cfg.model.moe_router_force_load_balancing is False
+    assert perf_cfg.model.moe_router_force_load_balancing is True
+    assert main_cfg.train.train_iters == 100
+    assert perf_cfg.train.train_iters == 50
+    assert main_cfg.train.global_batch_size == 512
+    assert main_cfg.train.micro_batch_size == 4
+    assert main_cfg.scheduler.lr_warmup_iters == 40
+    assert main_cfg.scheduler.lr_decay_iters == 100
+    assert main_cfg.checkpoint.save_interval == 50
+    assert perf_cfg.checkpoint.save_interval == main_cfg.checkpoint.save_interval
+    assert perf_cfg.validation.eval_iters == main_cfg.validation.eval_iters == 0
+    assert perf_cfg.validation.eval_interval == main_cfg.validation.eval_interval == 0
+    assert main_cfg.ddp.check_for_nan_in_grad is True
+    assert perf_cfg.ddp.check_for_nan_in_grad is False
+    assert main_cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert perf_cfg.rerun_state_machine.check_for_nan_in_loss is False
+    assert main_cfg.model.use_transformer_engine_op_fuser is False
+    assert perf_cfg.model.use_transformer_engine_op_fuser is True
+    assert main_cfg.model.moe_pad_experts_for_cuda_graph_inference is True
+    assert perf_cfg.model.moe_pad_experts_for_cuda_graph_inference is True
+    assert getattr(main_cfg.model, "moe_paged_stash", False) is False
+    assert perf_cfg.model.moe_paged_stash is True
+    assert getattr(main_cfg.model, "moe_expert_rank_capacity_factor", None) is None
+    assert perf_cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert main_cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert perf_cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert main_cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+    assert perf_cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+    assert main_cfg.model.recompute_granularity == "selective"
+    assert main_cfg.model.recompute_modules == ["moe_act"]
+    assert perf_cfg.model.recompute_granularity is None
+    assert perf_cfg.model.recompute_modules == []
+
+    # Full-iteration graphs conflict with the main recipe's loss-NaN check and
+    # therefore remain benchmark-only.
+    assert main_cfg.model.cuda_graph_impl == "transformer_engine"
+    assert main_cfg.model.cuda_graph_scope == ["moe_router", "moe_preprocess"]
+    assert perf_cfg.model.cuda_graph_impl == "full_iteration"
+    assert perf_cfg.model.cuda_graph_scope == []
 
 
 def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -272,7 +857,7 @@ def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_235b_a22b_peft_config(peft_scheme="lora")
 
@@ -300,7 +885,7 @@ def test_qwen3_235b_a22b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_235b_a22b_peft_config(peft_scheme="dora")
 
@@ -328,7 +913,7 @@ def test_qwen3_235b_a22b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_235b_a22b_sft_config()
 

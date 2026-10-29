@@ -12,28 +12,28 @@ This guide helps you migrate from NeMo 2.0 training and recipes to Megatron Brid
 
 ## Model Configuration Mapping
 
-Megatron Bridge offers model providers that directly map to NeMo 2.0 model configs.
+Megatron Bridge derives model provider settings from Hugging Face configs through
+`AutoBridge`, or from recipe functions that configure a base provider directly.
 
 ### Examples
 
 | NeMo 2.0 | Megatron Bridge |
 |----------|-----------------|
-| `llm.Llama3Config8B` | {py:class}`bridge.models.Llama3ModelProvider8B` |
-| `llm.Llama31Config70B` | {py:class}`bridge.models.Llama31ModelProvider70B` |
-| `llm.Qwen2Config7B` | {py:class}`bridge.models.Qwen2ModelProvider7B` |
-| `llm.DeepseekV2Config` | {py:class}`bridge.models.DeepseekV2ModelProvider` |
+| `llm.Llama3Config8B` | `AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider()` |
+| `llm.Llama31Config70B` | `AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-70B").to_megatron_provider()` |
+| `llm.Qwen2Config7B` | `AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider()` |
 
 ### Supported Model Families
 
-Megatron Bridge supports the following model families with preset providers:
-- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaModelProvider`
-- **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
+Megatron Bridge supports the following model families through bridge mappings and provider classes:
+- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `HybridModelProvider`
+- **Llama**: Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
-- **DeepSeek**: DeepSeek, DeepSeekV2, DeepSeekV2Lite, DeepSeekV3, Moonlight
-- **Nemotron**: Nemotron3, Nemotron4, NemotronH, NemotronNano
+- **DeepSeek**: DeepSeek V3, DeepSeek V4
+- **Nemotron**: Nemotron 3, Nemotron 3.5
 - **NVIDIA Mamba**: Mamba variants and hybrid models
 
-For a complete list of all model providers and their parameters, see {py:mod}`bridge.models`.
+For a complete list of bridge mappings, providers, and their parameters, see {py:mod}`bridge.models`.
 
 <!-- TODO: Create a dedicated model support table with tested HF checkpoint mappings -->
 
@@ -114,7 +114,7 @@ from megatron.bridge.training.config import (
     LoggerConfig,
     TrainingConfig,
 )
-from megatron.bridge.models import Llama3ModelProvider8B  # Direct equivalent to Llama3Config8B
+from megatron.bridge.models import GPTModelProvider  # Configure directly or derive with AutoBridge
 from megatron.core.optimizer import OptimizerConfig
 from megatron.bridge.training.config import SchedulerConfig
 from megatron.bridge.training.pretrain import pretrain
@@ -123,8 +123,8 @@ from megatron.bridge.training.gpt_step import forward_step
 
 def create_config():
     return ConfigContainer(
-        # Model with parallelism built-in - using preset 8B config
-        model=Llama3ModelProvider8B(
+        # Model with parallelism built in
+        model=GPTModelProvider(
             # Parallelism settings (moved from MegatronStrategy)
             tensor_model_parallel_size=2,
             pipeline_model_parallel_size=2,
@@ -177,7 +177,7 @@ pretrain(cfg, forward_step_func=forward_step)
 
 ### Fine-Tuning Migration Example (SFT/PEFT)
 
-For fine-tuning, use {py:class}`bridge.training.config.FinetuningDatasetConfig` for data and set `checkpoint.pretrained_checkpoint` to the base model. Optionally add a `peft` configuration for parameter-efficient training.
+For fine-tuning, use {py:class}`bridge.data.builders.GPTSFTDatasetConfig` for local JSONL or Hugging Face source data and set `checkpoint.pretrained_checkpoint` to the base model. Optionally add a `peft` configuration for parameter-efficient training.
 
 #### Before: NeMo 2.0
 ```python
@@ -224,27 +224,32 @@ llm.finetune(
 #### Now: Megatron Bridge
 ```python  
 # Megatron Bridge fine-tuning configuration (with optional PEFT)
-from megatron.bridge.models import Llama3ModelProvider8B
+from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 from megatron.bridge.peft import LoRA
 
 def create_finetune_config():
     return ConfigContainer(
-        model=Llama3ModelProvider8B(
-            # Preset config matching Llama3Config8B
+        model=GPTModelProvider(
+            # Configure architecture fields directly or derive with AutoBridge
         ),
         train=TrainingConfig(
             micro_batch_size=1,
             global_batch_size=128,
             train_iters=500,
         ),
-        # Finetuning dataset instead of pretraining dataset
-        dataset=FinetuningDatasetConfig(
+        # GPT SFT dataset instead of a pretraining dataset
+        dataset=GPTSFTDatasetConfig(
             dataset_root="/path/to/sft/data",
             seq_length=2048,
+            preprocessing=PromptCompletionSFTPreprocessingConfig(
+                prompt_column="input", completion_column="output", separator=" "
+            ),
             do_validation=True,
             do_test=True,
             # Optional: packed sequence support
-            packed_sequence_specs=PackedSequenceSpecs(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=2048,
             ),
         ),
@@ -285,12 +290,12 @@ recipe = llm.llama3_8b.pretrain_recipe(name="my_run", num_nodes=2)
 
 **Megatron Bridge**: Recipes in `megatron.bridge.recipes/`  
 ```python
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
-from megatron.bridge.training import pretrain
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 
 # Use pre-built recipe
-cfg = pretrain_config()
+cfg = llama3_8b_pretrain_config()
 
 # Customize as needed
 cfg.train.train_iters = 10000
@@ -382,8 +387,8 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
 )
 from megatron.core.optimizer import OptimizerConfig
-from megatron.bridge.models import Llama3ModelProvider8B
-from megatron.bridge.training import pretrain
+from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.training.pretrain import pretrain
 
 def llama3_8b_config(
     # Model/parallelism params
@@ -404,9 +409,9 @@ def llama3_8b_config(
 ) -> ConfigContainer:
     """Create a Llama3 8B pretraining configuration."""
     return ConfigContainer(
-        model=Llama3ModelProvider8B(
-            # Preset architecture from Llama3Config8B (num_layers=32, hidden_size=4096, etc.)
-            # Only need to specify parallelism and overrides
+        model=GPTModelProvider(
+            # Configure architecture fields directly or derive this provider with AutoBridge
+            # Then specify parallelism and overrides
             tensor_model_parallel_size=tensor_parallelism,
             pipeline_model_parallel_size=pipeline_parallelism,
         ),
@@ -517,7 +522,7 @@ logger_config = LoggerConfig(log_interval=10)  # was log_every_n_steps
 
 ### Data Configuration Migration
 
-NeMo 2.0 uses `PreTrainingDataModule` and `FineTuningDataModule` classes. Megatron Bridge uses configuration objects: {py:class}`bridge.training.config.GPTDatasetConfig` for pretraining and {py:class}`bridge.training.config.FinetuningDatasetConfig` for fine-tuning.
+NeMo 2.0 uses `PreTrainingDataModule` and `FineTuningDataModule` classes. Megatron Bridge uses {py:class}`bridge.training.config.GPTDatasetConfig` for pretraining and {py:class}`bridge.data.builders.GPTSFTDatasetConfig` for text fine-tuning.
 
 #### Pretraining Data
 
@@ -609,14 +614,18 @@ data = FineTuningDataModule(
 )
 ```
 
-##### Now: Megatron Bridge FinetuningDatasetConfig
+##### Now: Megatron Bridge GPTSFTDatasetConfig
 
 ```python
-from megatron.bridge.training.config import FinetuningDatasetConfig, TrainingConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
+from megatron.bridge.training.config import TrainingConfig
 
-dataset_config = FinetuningDatasetConfig(
+dataset_config = GPTSFTDatasetConfig(
     dataset_root="/path/to/instruction_data",
     seq_length=2048,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input", completion_column="output", separator=" "
+    ),
     do_validation=True,
     do_test=False,
     # Dataloader options (inherited from DataloaderConfig)
@@ -633,7 +642,7 @@ train_config = TrainingConfig(
 **Key differences:**
 - Batch sizes move to `TrainingConfig`
 - Explicit control over finetuning validation/test splits via `do_validation` and `do_test`
-- Dataloader options (`num_workers`, `pin_memory`, etc.) available via `FinetuningDatasetConfig`
+- Dataloader options (`num_workers`, `pin_memory`, etc.) available via `GPTSFTDatasetConfig`
 
 
 ### Tokenizer Migration
@@ -683,21 +692,27 @@ tokenizer_config = TokenizerConfig(
 
 #### Vocab Size Priority
 
-In Megatron Bridge, vocabulary size can be specified in either the model provider or derived from the tokenizer. The priority order is:
+In Megatron Bridge, vocabulary size can be specified in the model provider or derived from the runtime tokenizer. The priority order is:
 
-1. **Model provider `vocab_size` is set**: Uses the model's vocab size
-   - Must be `>= tokenizer.vocab_size` (raises error if smaller)
-   - Sets `should_pad_vocab=False` (no automatic padding)
-   - Useful when you need a specific vocab size (e.g., for checkpoint compatibility)
+1. **`TokenizerConfig.use_tokenizer_vocab_size=True`**: Uses the tokenizer's vocab size
+   - Overrides a preset model-provider `vocab_size`.
+   - Sets `should_pad_vocab=True` (enables padding for efficient parallelism).
+   - Intended for from-scratch pretraining, where the dataset tokenizer defines the vocabulary.
+   - This policy remains active during checkpoint loading; disable it when checkpoint compatibility requires the explicit model vocabulary.
 
-2. **Model provider `vocab_size` is None**: Uses tokenizer's vocab size
+2. **Model provider `vocab_size` is set**: Uses the model's vocab size
+   - Must be `>= tokenizer.vocab_size` (raises an error if smaller).
+   - Sets `should_pad_vocab=False` (no automatic padding).
+   - Useful when a specific vocabulary is required for model or checkpoint compatibility.
+
+3. **Model provider `vocab_size` is `None`**: Uses the tokenizer's vocab size
    - Automatically derived from `tokenizer.vocab_size` after building the tokenizer.
-   - Sets `should_pad_vocab=True` (enables padding for efficient parallelism)
+   - Sets `should_pad_vocab=True`.
 
 ```python
-# Option 1: Let tokenizer determine vocab size
+# Option 1: Let tokenizer determine vocab size when the model has no preset
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(
+    model=GPTModelProvider(
         # vocab_size not set - will use tokenizer's vocab size
         vocab_size=None,
     ),
@@ -707,14 +722,37 @@ config = ConfigContainer(
     ),
 )
 
-# Option 2: Explicitly set vocab size in model
+# Option 2: Override a preset model vocab for from-scratch pretraining
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(
+    model=GPTModelProvider(
+        vocab_size=128256,  # Ignored whenever the flag is enabled
+    ),
+    tokenizer=TokenizerConfig(
+        tokenizer_type="HuggingFaceTokenizer",
+        tokenizer_model="my-org/my-pretraining-tokenizer",
+        use_tokenizer_vocab_size=True,
+    ),
+)
+
+# Option 3: Explicitly set vocab size in model
+config = ConfigContainer(
+    model=GPTModelProvider(
         vocab_size=128256,  # Explicitly set (must be >= tokenizer vocab size)
     ),
     tokenizer=TokenizerConfig(...),
 )
 ```
+
+Pretraining recipes enable `use_tokenizer_vocab_size` by default. For a new run, use an empty checkpoint directory so the runtime tokenizer defines the model vocabulary. A checkpoint created by that policy can be resumed with the same tokenizer and recipe configuration.
+
+Checkpoints created before a recipe enabled `use_tokenizer_vocab_size` may have used the model provider's larger explicit vocabulary. To preserve their embedding and output tensor shapes, disable the new policy and retain the vocabulary used to create the checkpoint:
+
+```python
+config.tokenizer.use_tokenizer_vocab_size = False
+config.model.vocab_size = 128256  # The vocabulary used to create the checkpoint
+```
+
+Do not change this setting partway through a run. Switching vocabulary policies changes model tensor shapes and is not a checkpoint migration mechanism.
 
 
 ### Parallelism Configuration Migration
@@ -1154,7 +1192,7 @@ from megatron.bridge.training.config import ConfigContainer, CheckpointConfig
 
 # Include PEFT in ConfigContainer
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(),
+    model=GPTModelProvider(),
     # ... other configs
     checkpoint=CheckpointConfig(
         pretrained_checkpoint="/path/to/megatron/checkpoint",  # Required for PEFT
@@ -1220,8 +1258,9 @@ result = llm.finetune(
 In Megatron Bridge, training entry points take a single `ConfigContainer` and a `forward_step_func`:
 
 ```python
-from megatron.bridge.training import pretrain, finetune
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.pretrain import pretrain
 
 # Create unified configuration
 cfg = ConfigContainer(
@@ -1284,11 +1323,11 @@ For GPT models, use the provided {py:func}`bridge.training.gpt_step.forward_step
 Use `pretrain()` with `GPTDatasetConfig` for training models from scratch:
 
 ```python
-from megatron.bridge.training import pretrain
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(
+    model=GPTModelProvider(
         tensor_model_parallel_size=2,
         pipeline_model_parallel_size=2,
     ),
@@ -1313,27 +1352,31 @@ pretrain(config, forward_step_func=forward_step)
 
 ### `finetune`
 
-Use `finetune()` with `FinetuningDatasetConfig` for both full fine-tuning (SFT) and parameter-efficient fine-tuning (PEFT):
+Use `finetune()` with `GPTSFTDatasetConfig` for both full fine-tuning (SFT) and parameter-efficient fine-tuning (PEFT):
 
 #### Supervised Fine-Tuning (SFT)
 
 Full fine-tuning without PEFT - all model parameters are updated:
 
 ```python
-from megatron.bridge.training import finetune
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(),
+    model=GPTModelProvider(),
     train=TrainingConfig(
         train_iters=1000,
         eval_interval=100,
         micro_batch_size=1,
         global_batch_size=128,
     ),
-    dataset=FinetuningDatasetConfig(
+    dataset=GPTSFTDatasetConfig(
         dataset_root="/path/to/instruction_data",
         seq_length=4096,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input", completion_column="output", separator=" "
+        ),
         do_validation=True,
     ),
     checkpoint=CheckpointConfig(
@@ -1355,16 +1398,19 @@ Add a `peft` configuration to enable parameter-efficient training:
 from megatron.bridge.peft import LoRA
 
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(),
+    model=GPTModelProvider(),
     train=TrainingConfig(
         train_iters=1000,
         eval_interval=100,
         micro_batch_size=1,
         global_batch_size=128,
     ),
-    dataset=FinetuningDatasetConfig(
+    dataset=GPTSFTDatasetConfig(
         dataset_root="/path/to/instruction_data",
         seq_length=4096,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input", completion_column="output", separator=" "
+        ),
         do_validation=True,
     ),
     checkpoint=CheckpointConfig(
@@ -1609,7 +1655,7 @@ trainer = run.Config(
     callbacks=[
         MegatronCommOverlapCallback(
             tp_comm_overlap=True,
-            ...
+            # Additional callback options can be set here.
         )
     ]
 )
@@ -1751,10 +1797,10 @@ Megatron Bridge supports standard PyTorch distributed execution patterns:
 
 ```bash
 # Direct script execution with torchrun
-python -m torch.distributed.run --nproc_per_node=8 my_training_script.py
+uv run python -m torch.distributed.run --nproc_per_node=8 my_training_script.py
 
 # Multi-node execution
-torchrun --nnodes=4 --nproc_per_node=8 \
+uv run python -m torch.distributed.run --nnodes=4 --nproc_per_node=8 \
     --master_addr="node0" --master_port=12345 \
     my_training_script.py
 ```

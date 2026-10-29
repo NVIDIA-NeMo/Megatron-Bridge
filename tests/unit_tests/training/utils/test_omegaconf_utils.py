@@ -25,6 +25,9 @@ import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.utils.omegaconf_utils import (
     OverridesError,
     _apply_overrides,
@@ -47,6 +50,20 @@ class SimpleConfig:
 
     name: str = "test"
     value: int = 42
+
+
+class ExampleMode(Enum):
+    """Example enum for testing typed override restoration."""
+
+    FIRST = 1
+    SECOND = 2
+
+
+@dataclasses.dataclass
+class ConfigWithEnum:
+    """Config with an enum field."""
+
+    mode: ExampleMode = ExampleMode.FIRST
 
 
 @dataclasses.dataclass
@@ -73,7 +90,7 @@ class ConfigWithOptionalFields:
     name: str = "test"
     optional_str: Optional[str] = None  # Should be preserved
     optional_int: Optional[int] = None  # Should be preserved
-    activation_func: Any = torch.nn.functional.relu  # Should be excluded
+    activation_func: Any = torch.nn.functional.relu  # Should be serialized as "relu"
     value: int = 42
 
 
@@ -92,6 +109,20 @@ class ConfigWithOptionalProfilingConfig:
 
     name: str = "test"
     profiling: Optional[ProfilingConfig] = None
+
+
+@dataclasses.dataclass
+class ConfigWithBuilderModel:
+    """Training-style container whose model keeps transformer settings nested."""
+
+    model: BridgeGPTModelConfig = dataclasses.field(
+        default_factory=lambda: BridgeGPTModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=64, num_attention_heads=4),
+            vocab_size=128,
+            seq_length=64,
+        )
+    )
+    simple: SimpleConfig = dataclasses.field(default_factory=SimpleConfig)
 
 
 def dummy_function():
@@ -224,15 +255,15 @@ class TestDataclassToOmegaconfDict:
 
         assert result["dtype"] == "torch.float16"
         assert result["name"] == "test"
-        # activation_func should be excluded (None not included)
-        assert "activation_func" not in result
+        # activation_func should be serialized as its short string name
+        assert result["activation_func"] == "relu"
 
-    def test_callable_exclusion(self):
-        """Test that callable fields are excluded."""
+    def test_callable_serialization(self):
+        """Test that known callable fields are serialized as strings."""
         config = ConfigWithCallable(activation_func=torch.nn.functional.gelu)
         result = _dataclass_to_omegaconf_dict(config)
 
-        assert "activation_func" not in result
+        assert result["activation_func"] == "gelu"
         assert "name" in result
         assert "dtype" in result
 
@@ -245,7 +276,7 @@ class TestDataclassToOmegaconfDict:
         assert "with_callable" in result
         assert result["simple"]["name"] == "test"
         assert result["simple"]["value"] == 42
-        assert "activation_func" not in result["with_callable"]
+        assert result["with_callable"]["activation_func"] == "relu"
 
     def test_list_handling(self):
         """Test handling of lists."""
@@ -343,15 +374,18 @@ class TestTrackExcludedFields:
         config = ConfigWithCallable()
         excluded = _track_excluded_fields(config)
 
-        assert "activation_func" in excluded
-        assert excluded["activation_func"] == torch.nn.functional.relu
+        # activation_func is now serialized as a string, so it is NOT excluded
+        assert "activation_func" not in excluded
+        assert len(excluded) == 0
 
     def test_nested_tracking(self):
         """Test tracking callable fields in nested config."""
         config = NestedConfig()
         excluded = _track_excluded_fields(config, "root")
 
-        assert "root.with_callable.activation_func" in excluded
+        # activation_func is now serialized as a string, so it is NOT excluded
+        assert "root.with_callable.activation_func" not in excluded
+        assert len(excluded) == 0
 
     def test_no_callables(self):
         """Test tracking when no callables exist."""
@@ -448,9 +482,10 @@ class TestSafeCreateOmegaconfWithPreservation:
         omega_conf, excluded = create_omegaconf_dict_config(config)
 
         assert isinstance(omega_conf, DictConfig)
-        assert len(excluded) > 0
-        assert "root.activation_func" in excluded
-        assert excluded["root.activation_func"] == torch.nn.functional.relu
+        # activation_func is now serialized as a string in the OmegaConf dict
+        assert omega_conf.activation_func == "relu"
+        # No fields should be excluded since activation_func is serializable
+        assert len(excluded) == 0
 
     def test_nested_preservation(self):
         """Test preservation with nested configs."""
@@ -458,7 +493,9 @@ class TestSafeCreateOmegaconfWithPreservation:
         omega_conf, excluded = create_omegaconf_dict_config(config)
 
         assert isinstance(omega_conf, DictConfig)
-        assert "root.with_callable.activation_func" in excluded
+        # activation_func is serialized as a string, not excluded
+        assert omega_conf.with_callable.activation_func == "relu"
+        assert "root.with_callable.activation_func" not in excluded
 
 
 class TestApplyOverrides:
@@ -493,6 +530,14 @@ class TestApplyOverrides:
         _apply_overrides(config, overrides)
 
         assert config.dtype == torch.float16
+
+    def test_enum_conversion(self):
+        """Test enum member-name conversion."""
+        config = ConfigWithEnum()
+
+        _apply_overrides(config, {"mode": "SECOND"})
+
+        assert config.mode is ExampleMode.SECOND
 
     def test_invalid_key_handling(self):
         """Test handling of invalid override keys."""
@@ -617,6 +662,14 @@ class TestProcessConfigWithOverrides:
         assert result.simple.name == "cli_updated"
         assert result.simple.value == 999
         assert result.with_callable.activation_func == original_func
+
+    def test_cli_override_preserves_enum_type(self):
+        """Test CLI overrides restore enum members instead of leaving strings."""
+        config = ConfigWithEnum()
+
+        result = process_config_with_overrides(config, cli_overrides=["mode=SECOND"])
+
+        assert result.mode is ExampleMode.SECOND
 
     def test_with_config_filepath(self, tmp_path):
         """Test processing config with YAML config file."""
@@ -795,6 +848,110 @@ class TestParseHydraOverrides:
             parse_hydra_overrides(cfg, invalid_overrides)
 
 
+class TestBuilderTransformerOverrides:
+    """Flat spellings of a builder-backed model's transformer settings."""
+
+    def test_flat_cli_override_routes_to_transformer(self):
+        config = process_config_with_overrides(
+            ConfigWithBuilderModel(),
+            cli_overrides=["model.tensor_model_parallel_size=2", "model.seq_length=128", "simple.value=7"],
+        )
+
+        assert config.model.transformer.tensor_model_parallel_size == 2
+        assert config.model.seq_length == 128
+        assert config.simple.value == 7
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            (["model.transformer.tensor_model_parallel_size=4", "model.tensor_model_parallel_size=2"], 2),
+            (["model.tensor_model_parallel_size=2", "model.transformer.tensor_model_parallel_size=4"], 4),
+            (["++model.tensor_model_parallel_size=8"], 8),
+        ],
+    )
+    def test_cli_spellings_apply_in_order(self, overrides, expected):
+        config = process_config_with_overrides(ConfigWithBuilderModel(), cli_overrides=overrides)
+
+        assert config.model.transformer.tensor_model_parallel_size == expected
+
+    def test_flat_yaml_key_wins_within_the_file_and_cli_wins_over_yaml(self, tmp_path):
+        config_file = tmp_path / "overrides.yaml"
+        config_file.write_text(
+            "model:\n"
+            "  tensor_model_parallel_size: 2\n"
+            "  sequence_parallel: true\n"
+            "  transformer:\n"
+            "    tensor_model_parallel_size: 4\n"
+        )
+
+        config = process_config_with_overrides(ConfigWithBuilderModel(), config_filepath=str(config_file))
+        assert config.model.transformer.tensor_model_parallel_size == 2
+        assert config.model.transformer.sequence_parallel is True
+
+        config = process_config_with_overrides(
+            ConfigWithBuilderModel(),
+            config_filepath=str(config_file),
+            cli_overrides=["model.transformer.tensor_model_parallel_size=8"],
+        )
+        assert config.model.transformer.tensor_model_parallel_size == 8
+
+    def test_parse_hydra_overrides_nests_keys_from_a_separate_yaml_merge(self):
+        """Example scripts merge YAML themselves before applying CLI overrides."""
+        config = ConfigWithBuilderModel()
+        merged, excluded = create_omegaconf_dict_config(config)
+        merged = OmegaConf.merge(
+            merged,
+            OmegaConf.create({"model": {"tensor_model_parallel_size": 2, "context_parallel_size": 2}}),
+        )
+
+        merged = parse_hydra_overrides(merged, ["model.transformer.tensor_model_parallel_size=8"])
+
+        assert "tensor_model_parallel_size" not in merged.model
+        apply_overrides(config, OmegaConf.to_container(merged, resolve=True), excluded)
+        assert config.model.transformer.tensor_model_parallel_size == 8
+        assert config.model.transformer.context_parallel_size == 2
+
+    def test_flat_hf_source_overrides_route_to_checkpoint_metadata(self, tmp_path):
+        """Builder-backed configs record the provider's hf_model_id/hf_model_revision fields in metadata."""
+        config = process_config_with_overrides(ConfigWithBuilderModel(), cli_overrides=["model.hf_model_id=org/a"])
+        assert config.model.extra_checkpoint_metadata == {"hf_model_id": "org/a"}
+
+        config = ConfigWithBuilderModel()
+        config.model.extra_checkpoint_metadata = {"hf_model_id": "org/recipe", "hf_model_revision": "pinned"}
+        process_config_with_overrides(config, cli_overrides=["model.hf_model_id=org/a"])
+        assert config.model.extra_checkpoint_metadata == {"hf_model_id": "org/a", "hf_model_revision": "pinned"}
+
+        config_file = tmp_path / "overrides.yaml"
+        config_file.write_text("model:\n  hf_model_id: org/yaml\n  hf_model_revision: main\n")
+        config = process_config_with_overrides(ConfigWithBuilderModel(), config_filepath=str(config_file))
+        assert config.model.extra_checkpoint_metadata == {"hf_model_id": "org/yaml", "hf_model_revision": "main"}
+        assert not hasattr(config.model, "hf_model_id")
+
+    def test_unknown_flat_field_still_fails(self):
+        config = ConfigWithBuilderModel()
+
+        with pytest.raises(OverridesError):
+            process_config_with_overrides(config, cli_overrides=["model.not_a_real_field=true"])
+
+        assert not hasattr(config.model, "not_a_real_field")
+
+    def test_section_without_transformer_is_unchanged(self):
+        cfg = OmegaConf.create({"model": {"tensor_model_parallel_size": 1}})
+
+        result = parse_hydra_overrides(cfg, ["model.tensor_model_parallel_size=2"])
+
+        assert result.model.tensor_model_parallel_size == 2
+
+    @pytest.mark.parametrize("config_cls", [BridgeGPTModelConfig, BridgeHybridModelConfig])
+    def test_builder_configs_declare_each_field_once(self, config_cls):
+        """Routing treats a key on both levels, or an HF source field, as a flat override."""
+        outer = {field.name for field in dataclasses.fields(config_cls)}
+        nested = {field.name for field in dataclasses.fields(config_cls.transformer_config_class)}
+
+        assert outer.isdisjoint(nested)
+        assert outer.isdisjoint({"hf_model_id", "hf_model_revision"})
+
+
 class TestOverridesError:
     """Test OverridesError exception."""
 
@@ -826,9 +983,9 @@ class TestIntegration:
         assert omega_conf.simple.name == "test"
         assert omega_conf.simple.value == 42
         assert omega_conf.with_callable.name == "test"
-        assert "activation_func" not in omega_conf.with_callable  # Excluded
+        assert omega_conf.with_callable.activation_func == "relu"  # Serialized as string
         assert omega_conf.with_callable.dtype == "torch.float32"  # Converted to string
-        assert len(excluded) > 0  # Should have excluded callables
+        assert len(excluded) == 0  # activation_func is serialized, not excluded
 
         # 3. Apply YAML-style overrides
         yaml_overrides = OmegaConf.create(
@@ -860,9 +1017,8 @@ class TestIntegration:
         assert config.with_callable.activation_func == original_func  # Preserved
         assert config.with_callable.dtype == torch.float16  # Type converted back correctly
 
-        # 7. Verify that excluded fields were properly tracked and restored
-        assert "root.with_callable.activation_func" in excluded
-        assert excluded["root.with_callable.activation_func"] == original_func
+        # 7. Verify that activation_func was serialized (not excluded) and roundtripped
+        assert len(excluded) == 0  # activation_func is serialized, not excluded
 
         # Note: New fields are not added to dataclasses (this is expected behavior)
         # The dataclass structure remains strongly typed
@@ -954,12 +1110,12 @@ class TestNoneHandling:
         assert omega_conf.name == "test"
         assert omega_conf.value == 42
 
-        # Verify callable was excluded from OmegaConf
-        assert "activation_func" not in omega_conf
+        # Verify callable was serialized as a string in OmegaConf
+        assert omega_conf.activation_func == "relu"
 
-        # Verify callable was tracked for restoration
-        assert "root.activation_func" in excluded
-        assert excluded["root.activation_func"] == torch.nn.functional.relu
+        # activation_func is serialized (not excluded), so excluded should be empty
+        assert "root.activation_func" not in excluded
+        assert len(excluded) == 0
 
     def test_none_values_roundtrip_correctly(self):
         """Test that None values survive the full conversion roundtrip."""

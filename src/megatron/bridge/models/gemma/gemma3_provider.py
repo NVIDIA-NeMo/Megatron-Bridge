@@ -39,6 +39,7 @@ from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from torch import Tensor
 
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.import_utils import safe_import_from
 
@@ -47,7 +48,6 @@ TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEN
 TELayerNormColumnParallelLinear, _ = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TELayerNormColumnParallelLinear"
 )
-TERowParallelLinear, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TERowParallelLinear")
 TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEDotProductAttention")
 
 
@@ -68,6 +68,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
 
     # attention
+    qk_layernorm: bool = True
     window_size: tuple = 512  # local
     interleaved_attn_pattern: tuple = (5, 1)  # (local, global)
     attention_dropout: float = 0.0
@@ -85,7 +86,6 @@ class Gemma3ModelProvider(GPTModelProvider):
     # Do not change
     is_vision_language: bool = False
     flash_decode: bool = False
-    gradient_accumulation_fusion: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["Gemma3ModelProvider"], ModuleSpec]] = field(
         default_factory=lambda: gemma3_layer_spec
     )
@@ -119,7 +119,7 @@ class Gemma3ModelProvider(GPTModelProvider):
         if hasattr(model, "embedding"):
             model.embedding = Gemma3LanguageModelEmbedding(
                 config=self,
-                vocab_size=self.vocab_size,
+                vocab_size=model.vocab_size,
                 max_sequence_length=self.seq_length,
                 position_embedding_type=self.position_embedding_type,
                 scatter_to_sequence_parallel=self.scatter_embedding_sequence_parallel,
@@ -140,86 +140,20 @@ class Gemma3ModelProvider(GPTModelProvider):
         return model
 
 
-@dataclass
-class Gemma3ModelProvider1B(Gemma3ModelProvider):
-    """Gemma3 1B config"""
-
-    is_vision_language: bool = False
-    num_layers: int = 26
-    hidden_size: int = 1152
-    num_attention_heads: int = 4
-    num_query_groups: int = 1
-    kv_channels: int = 256
-    ffn_hidden_size: int = 6912
-    window_size: int = 512
-    rope_scaling_factor: float = 1.0  # no rope scaling
-    seq_length: int = 32768
-    bf16: bool = True
-    vocab_size: int = 262_144
-
-
-@dataclass
-class Gemma3ModelProvider4B(Gemma3ModelProvider):
-    """Gemma3 4B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 34
-    hidden_size: int = 2560
-    num_attention_heads: int = 8
-    num_query_groups: int = 4
-    kv_channels: int = 256
-    ffn_hidden_size: int = 10240
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
-@dataclass
-class Gemma3ModelProvider12B(Gemma3ModelProvider):
-    """Gemma3 12B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 48
-    hidden_size: int = 3840
-    num_attention_heads: int = 16
-    num_query_groups: int = 8
-    kv_channels: int = 256
-    ffn_hidden_size: int = 15360
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
-@dataclass
-class Gemma3ModelProvider27B(Gemma3ModelProvider):
-    """Gemma3 27B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 62
-    hidden_size: int = 5376
-    num_attention_heads: int = 32
-    num_query_groups: int = 16
-    kv_channels: int = 128
-    softmax_scale: int = 1.0 / math.sqrt(168)  # only for 27B, (5376 // 32)^(-0.5)
-    ffn_hidden_size: int = 21504
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
 def gemma3_layer_spec(config) -> ModuleSpec:
     """Gemma3 custom layer spec."""
+    attn_mask_type = AttnMaskType.no_mask if config.is_vision_language else AttnMaskType.causal
     return ModuleSpec(
         module=TransformerLayer,
         submodules=TransformerLayerSubmodules(
             self_attention=ModuleSpec(
                 module=Gemma3SelfAttention,
-                params={"attn_mask_type": AttnMaskType.causal},
+                params={"attn_mask_type": attn_mask_type},
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TELayerNormColumnParallelLinear,
                     core_attention=Gemma3TEDotProductAttention,  # mixed gloabl/local attn
-                    q_layernorm=TENorm,
-                    k_layernorm=TENorm,
+                    q_layernorm=TENorm if config.qk_layernorm else None,
+                    k_layernorm=TENorm if config.qk_layernorm else None,
                     linear_proj=TERowParallelLinearLayerNorm,  # post attn RMSNorm
                 ),
             ),
@@ -253,7 +187,7 @@ class Gemma3SelfAttention(SelfAttention):
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
         rotary_pos_cos_sin: Optional[Tuple[Tensor, Tensor]] = None,
-        attention_bias: Optional[Tensor] = None,
+        attention_bias: Optional[Tensor | tuple[Tensor, Tensor]] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[int] = None,
         *,
@@ -265,8 +199,14 @@ class Gemma3SelfAttention(SelfAttention):
 
         if _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern):
             final_rotary_pos_emb = rotary_pos_emb[0]
+            # Gemma3VLModel supplies (local, global) biases because TE cannot
+            # combine a finite sliding window with post-scale bias.
+            if isinstance(attention_bias, tuple):
+                attention_bias = attention_bias[0]
         else:
             final_rotary_pos_emb = rotary_pos_emb[1]
+            if isinstance(attention_bias, tuple):
+                attention_bias = attention_bias[1]
         return super().forward(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -301,15 +241,23 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
         # Overwrite config.window_size based on layer_number
         config = copy.deepcopy(config)
         if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
-            # local attention, (q, k)
-            config.window_size = (config.window_size, 0)
+            if config.is_vision_language:
+                # Transformer Engine cannot combine a finite sliding window
+                # with post-scale bias. The VL model encodes both constraints
+                # in its local-layer attention bias instead.
+                config.window_size = None
+            else:
+                # local attention, (q, k)
+                window_size = config.window_size - 1
+                config.window_size = (window_size, 0)
         else:
             # global attention
             config.window_size = None
 
-        # The VL model calculates mask manually
+        # The VL model supplies the full causal/image visibility pattern as an
+        # attention bias so Transformer Engine can use FusedAttention.
         if config.is_vision_language:
-            attn_mask_type = AttnMaskType.arbitrary
+            attn_mask_type = AttnMaskType.no_mask
 
         super().__init__(
             config=config,
@@ -400,32 +348,10 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
 
 def _is_local_attn_layer(
     layer_number: int,
-    layer_pattern: Tuple[int, int],
+    layer_pattern: tuple[int, int] | list[str],
 ) -> bool:
-    pattern_size = sum(layer_pattern)
-    return layer_number % pattern_size != 0
-
-
-class TERowParallelLinearLayerNorm(TERowParallelLinear):
-    """Modified From TERowParallelLinear with an additional Post-LN."""
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        *,
-        config: TransformerConfig,
-        **kwargs,
-    ):
-        super().__init__(
-            input_size,
-            output_size,
-            config=config,
-            **kwargs,
-        )
-        self.post_layernorm = TENorm(config, output_size)
-
-    def forward(self, x):
-        """Forward with additional Post LN on output"""
-        output, bias = super().forward(x)
-        return self.post_layernorm(output), bias
+    if layer_pattern and isinstance(layer_pattern[0], str):
+        return layer_pattern[layer_number - 1] == "sliding_attention"
+    local_layer_count = int(layer_pattern[0])
+    pattern_size = local_layer_count + int(layer_pattern[1])
+    return (layer_number - 1) % pattern_size < local_layer_count

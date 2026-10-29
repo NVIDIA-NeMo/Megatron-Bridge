@@ -1,0 +1,199 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+navigation:
+- page: NeMo Megatron Bridge
+  path: ./0.4.2/pages/index.mdx
+  slug: ""
+- section: Guides
+  contents:
+  - page: Parallelisms Guide
+    path: ./0.4.2/pages/parallelisms.mdx
+  - page: Performance
+    path: ./0.4.2/pages/performance-summary.mdx
+  - page: Performance
+    path: ./0.4.2/pages/performance-summary-archive.mdx
+  - page: Performance Tuning Guide
+    path: ./0.4.2/pages/performance-guide.mdx
+  - page: Using Recipes
+    path: ./0.4.2/pages/recipe-usage.mdx
+  - page: NeMo 2.0 to Megatron Bridge Migration Guide
+    path: ./0.4.2/pages/nemo2-migration-guide.mdx
+  - page: Megatron-LM to Megatron Bridge Guide
+    path: ./0.4.2/pages/megatron-lm-to-megatron-bridge.mdx
+- section: Bridge with 🤗 Hugging Face
+  contents:
+  - page: Get Started with 🤗 Hugging Face Conversion
+    path: ./0.4.2/pages/bridge-guide.mdx
+  - page: Megatron Bridge Conversion Technical Details
+    path: ./0.4.2/pages/bridge-tech-details.mdx
+- section: Supported Models
+  contents:
+  - contents:
+    - page: DeepSeek V2
+      path: ./0.4.2/pages/models/llm/deepseek-v2.mdx
+    - page: DeepSeek V3
+      path: ./0.4.2/pages/models/llm/deepseek-v3.mdx
+    - page: Gemma 2
+      path: ./0.4.2/pages/models/llm/gemma2.mdx
+    - page: Gemma 3
+      path: ./0.4.2/pages/models/llm/gemma3.mdx
+    - page: GLM 4.5
+      path: ./0.4.2/pages/models/llm/glm45.mdx
+    - page: GPT OSS
+      path: ./0.4.2/pages/models/llm/gpt-oss.mdx
+    - page: Llama 3
+      path: ./0.4.2/pages/models/llm/llama3.mdx
+    - page: Llama Nemotron
+      path: ./0.4.2/pages/models/llm/llama-nemotron.mdx
+    - page: Mistral
+      path: ./0.4.2/pages/models/llm/mistral.mdx
+    - page: Moonlight
+      path: ./0.4.2/pages/models/llm/moonlight.mdx
+    - page: Nemotron 3 Nano
+      path: ./0.4.2/pages/models/llm/nemotron3.mdx
+    - page: Nemotron 3 Super
+      path: ./0.4.2/pages/models/llm/nemotron3-super.mdx
+    - page: Nemotron H and Nemotron Nano v2
+      path: ./0.4.2/pages/models/llm/nemotronh.mdx
+    - page: OLMoE
+      path: ./0.4.2/pages/models/llm/olmoe.mdx
+    - page: Qwen
+      path: ./0.4.2/pages/models/llm/qwen.mdx
+    section: Large Language Models
+  - contents:
+    - page: Gemma 3 VL (Vision-Language)
+      path: ./0.4.2/pages/models/vlm/gemma3-vl.mdx
+    - page: GLM-4.5V
+      path: ./0.4.2/pages/models/vlm/glm-45v.mdx
+    - page: Ministral 3
+      path: ./0.4.2/pages/models/vlm/ministral3.mdx
+    - page: Nemotron Nano V2 VL
+      path: ./0.4.2/pages/models/vlm/nemotron-nano-v2-vl.mdx
+    - page: Qwen2.5-VL
+      path: ./0.4.2/pages/models/vlm/qwen2.5-vl.mdx
+    - page: Qwen3-VL
+      path: ./0.4.2/pages/models/vlm/qwen3-vl.mdx
+    - page: Qwen 3.5
+      path: ./0.4.2/pages/models/vlm/qwen35-vl.mdx
+    section: Vision Language Models
+- section: Training and Customization
+  contents:
+  - page: Configuration Overview
+    path: ./0.4.2/pages/training/config-container-overview.mdx
+  - page: Training Entry Points
+    path: ./0.4.2/pages/training/entry-points.mdx
+  - page: Training Loop Configuration
+    path: ./0.4.2/pages/training/training-loop-settings.mdx
+  - page: Optimizer and Scheduler Configuration
+    path: ./0.4.2/pages/training/optimizer-scheduler.mdx
+  - page: Logging and Monitoring
+    path: ./0.4.2/pages/training/logging.mdx
+  - page: Profiling
+    path: ./0.4.2/pages/training/profiling.mdx
+  - page: Checkpointing
+    path: ./0.4.2/pages/training/checkpointing.mdx
+  - page: Megatron FSDP
+    path: ./0.4.2/pages/training/megatron-fsdp.mdx
+  - page: Resiliency
+    path: ./0.4.2/pages/training/resiliency.mdx
+  - page: Mixed Precision Training
+    path: ./0.4.2/pages/training/mixed-precision.mdx
+  - page: CUDA Graphs
+    path: ./0.4.2/pages/training/cuda-graphs.mdx
+  - page: Hybrid / Hierarchical Context Parallel
+    path: ./0.4.2/pages/training/hybrid-context-parallel.mdx
+  - page: Communication Overlap
+    path: ./0.4.2/pages/training/communication-overlap.mdx
+  - page: Attention Optimizations
+    path: ./0.4.2/pages/training/attention-optimizations.mdx
+  - page: Activation Recomputation
+    path: ./0.4.2/pages/training/activation-recomputation.mdx
+  - page: CPU Offloading
+    path: ./0.4.2/pages/training/cpu-offloading.mdx
+  - page: Parameter-Efficient Fine-Tuning (PEFT)
+    path: ./0.4.2/pages/training/peft.mdx
+  - page: Packed Sequences
+    path: ./0.4.2/pages/training/packed-sequences.mdx
+  - page: Multi-Token Prediction (MTP)
+    path: ./0.4.2/pages/training/multi-token-prediction.mdx
+  - page: Callbacks
+    path: ./0.4.2/pages/training/callbacks.mdx
+- section: Model Optimization with ModelOpt
+  contents:
+  - page: Quantization
+    path: ./0.4.2/pages/modelopt/quantization.mdx
+  - page: Knowledge Distillation
+    path: ./0.4.2/pages/modelopt/distillation.mdx
+  - page: Pruning
+    path: ./0.4.2/pages/modelopt/pruning.mdx
+- section: Development
+  contents:
+  - page: Contribute a New Model to Megatron Bridge
+    path: ./0.4.2/pages/adding-new-models.mdx
+  - page: Adapting Megatron Bridge in Reinforcement Learning Frameworks
+    path: ./0.4.2/pages/bridge-rl-integration.mdx
+  - page: Documentation Development
+    path: ./0.4.2/pages/documentation.mdx
+- section: Releases
+  contents:
+  - page: Software Component Versions
+    path: ./0.4.2/pages/releases/software-versions.mdx
+  - page: Changelog
+    path: ./0.4.2/pages/releases/changelog.mdx
+  - page: Known Issues
+    path: ./0.4.2/pages/releases/known-issues.mdx
+- section: Agent Skills
+  contents:
+  - contents:
+    - page: Developer Guide
+      path: ./0.4.2/pages/skills/developer-guide/SKILL.mdx
+    - page: MLM vs Bridge Training
+      path: ./0.4.2/pages/skills/mlm-bridge-training/SKILL.mdx
+    - page: Adding New Model Support in Megatron-Bridge
+      path: ./0.4.2/pages/skills/adding-model-support/SKILL.mdx
+    - page: Llm Patterns
+      path: ./0.4.2/pages/skills/adding-model-support/llm-patterns.mdx
+    - page: Vlm Patterns
+      path: ./0.4.2/pages/skills/adding-model-support/vlm-patterns.mdx
+    - page: Recipe Patterns
+      path: ./0.4.2/pages/skills/adding-model-support/recipe-patterns.mdx
+    - page: Tests And Examples
+      path: ./0.4.2/pages/skills/adding-model-support/tests-and-examples.mdx
+    - page: Parallelism Strategy Selection Skill
+      path: ./0.4.2/pages/skills/perf-techniques/parallelism-strategies/SKILL.mdx
+    - page: CUDA Graphs
+      path: ./0.4.2/pages/skills/perf-techniques/cuda-graphs/SKILL.mdx
+    - page: TP / DP / PP Communication Overlap Skill
+      path: ./0.4.2/pages/skills/perf-techniques/tp-dp-comm-overlap/SKILL.mdx
+    - page: Megatron FSDP Skill
+      path: ./0.4.2/pages/skills/perf-techniques/megatron-fsdp/SKILL.mdx
+    - page: Packed Sequences & Long-Context Training
+      path: ./0.4.2/pages/skills/perf-techniques/packed-sequences-long-context/SKILL.mdx
+    - page: Sequence Packing Skill
+      path: ./0.4.2/pages/skills/perf-techniques/sequence-packing/SKILL.mdx
+    - page: Hybrid / Hierarchical Context Parallel Skill
+      path: ./0.4.2/pages/skills/perf-techniques/hybrid-context-parallel/SKILL.mdx
+    - page: MoE Expert-Parallel Overlap Skill
+      path: ./0.4.2/pages/skills/perf-techniques/expert-parallel-overlap/SKILL.mdx
+    - page: MoE Communication Overlap
+      path: ./0.4.2/pages/skills/perf-techniques/moe-comm-overlap/SKILL.mdx
+    - page: Resiliency
+      path: ./0.4.2/pages/skills/resiliency/SKILL.mdx
+    section: Agent Skills Reference
+- section: Directory Readme Files
+  contents:
+  - page: Megatron Bridge Documentation
+    path: ./0.4.2/pages/README.mdx
+  - page: Supported Models
+    path: ./0.4.2/pages/models/README.mdx
+  - page: Large Language Models
+    path: ./0.4.2/pages/models/llm/README.mdx
+  - page: Vision Language Models
+    path: ./0.4.2/pages/models/vlm/README.mdx
+  - page: Releases
+    path: ./0.4.2/pages/releases/README.mdx
+  - page: Training and Customization
+    path: ./0.4.2/pages/training/README.mdx
+  - page: Model Optimization
+    path: ./0.4.2/pages/modelopt/README.mdx

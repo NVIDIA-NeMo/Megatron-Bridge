@@ -20,23 +20,25 @@ from megatron.core.inference.text_generation_controllers.text_generation_control
     TextGenerationController,
 )
 
+from megatron.bridge.inference._tokenizer import HFTokenizerAdapter
 
-class TokenizerWrapper:
-    """Wrapper around tokenizer to provide a unified interface for inference."""
+
+class TokenizerWrapper(HFTokenizerAdapter):
+    """Wrapper around tokenizer to provide a unified interface for inference.
+
+    Thin specialization of :class:`HFTokenizerAdapter` preserving the historical VLM behavior:
+    no pad-token defaulting, ``vocab_size`` left as ``None``, and detokenization that always
+    keeps special tokens.
+    """
 
     # pylint: disable=C0115,C0116
     def __init__(self, tokenizer):
-        self.eod = tokenizer.eos_token_id
-        self.vocab_size = None
-        self._tokenizer = tokenizer
-
-    def detokenize(self, tokens):
-        # pylint: disable=C0115,C0116
-        return self._tokenizer.decode(tokens, skip_special_tokens=False)
-
-    def tokenize(self, prompt):
-        # pylint: disable=C0115,C0116
-        return self._tokenizer.encode(prompt, add_special_tokens=False)
+        super().__init__(
+            tokenizer,
+            set_pad_token=False,
+            expose_vocab_size=False,
+            force_skip_special_tokens=False,
+        )
 
 
 class VLMTextGenerationController(TextGenerationController):
@@ -93,16 +95,18 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
 
     def __init__(self, inference_wrapped_model, tokenizer, image_processor, processor):
         super().__init__(inference_wrapped_model, tokenizer, image_processor)
+        vision_start_token_id = tokenizer.convert_tokens_to_ids("<|vision_start|>")
+        image_token_id = tokenizer.convert_tokens_to_ids("<|image_pad|>")
 
         class QwenVLTokenizer(TokenizerWrapper):
             # pylint: disable=C0115,C0116
             def detokenize(self, tokens):
                 new_tokens = []
                 for token in tokens:
-                    if token == 151652:
+                    if token == vision_start_token_id:
                         new_tokens.append(token)
-                        new_tokens.append(151655)
-                    elif token != 151655:
+                        new_tokens.append(image_token_id)
+                    elif token != image_token_id:
                         new_tokens.append(token)
                 return self._tokenizer.decode(new_tokens, skip_special_tokens=False)
 
@@ -110,21 +114,35 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
         self.processor = processor
 
     def tokenize_prompt(self, prompt: str, image):
-        """Tokenize prompt and process image following the VLM controller API"""
-        inputs = self.processor(
-            text=[prompt],
-            images=image,
-            padding=True,
-            return_tensors="pt",
-        )
+        """Tokenize with the HF processor (image + text; same idea as hf_to_megatron_generate_vlm)."""
+        if self.processor is None:
+            if image is not None:
+                raise ValueError("A processor is required for Qwen VLM image prompts.")
+            return self.tokenizer.tokenize(prompt), None
+
+        if image is None:
+            inputs = self.processor(text=[prompt], return_tensors="pt")
+        else:
+            inputs = self.processor(
+                text=[prompt],
+                images=image,
+                padding=True,
+                return_tensors="pt",
+            )
 
         tokens = inputs["input_ids"][0]
 
-        if "pixel_values" in inputs:
-            image_dict = {
-                "pixel_values": inputs["pixel_values"],
-                "image_grid_thw": inputs["image_grid_thw"],
-            }
-        else:
-            image_dict = None
-        return tokens.tolist(), image_dict
+        def _field(name: str):
+            v = inputs.get(name) if hasattr(inputs, "get") else getattr(inputs, name, None)
+            return v
+
+        image_dict = {}
+        if _field("pixel_values") is not None:
+            image_dict["pixel_values"] = _field("pixel_values")
+            image_dict["image_grid_thw"] = _field("image_grid_thw")
+        for key in ("image_sizes", "mm_token_type_ids"):
+            val = _field(key)
+            if val is not None:
+                image_dict[key] = val
+
+        return tokens.tolist(), image_dict if image_dict else None

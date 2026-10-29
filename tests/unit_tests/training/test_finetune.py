@@ -111,3 +111,27 @@ class TestFinetune:
                 mock_pretrain.assert_called_once_with(container, mock_forward_step_func, callbacks=None)
             finally:
                 restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_finetune_requires_checkpoint_during_setup(self, tmp_path):
+        """Test that finetune marks its configured checkpoint as required."""
+        gpt_model_cfg = create_test_gpt_config()
+        checkpoint_cfg = create_test_checkpoint_config(
+            pretrained_checkpoint=None,
+            load=str(tmp_path / "missing-checkpoint"),
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            checkpoint_config=checkpoint_cfg,
+        )
+        mock_forward_step_func = Mock()
+
+        with patch("megatron.bridge.training.finetune.pretrain") as mock_pretrain:
+            try:
+                assert container._checkpoint_load_required is False
+                finetune(container, mock_forward_step_func)
+                assert container._checkpoint_load_required is True
+                mock_pretrain.assert_called_once_with(container, mock_forward_step_func, callbacks=None)
+            finally:
+                restore_get_world_size_safe(og_ws, cfg_mod)

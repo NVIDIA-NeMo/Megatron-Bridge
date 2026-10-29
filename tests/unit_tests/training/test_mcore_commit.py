@@ -53,11 +53,17 @@ class TestMCoreCommitFiles:
         assert len(sha) == 40 and all(c in "0123456789abcdef" for c in sha)
 
     def test_main_commit_matches_submodule(self):
-        """The .main.commit file must stay in sync with the pinned 3rdparty/Megatron-LM submodule."""
+        """The submodule must be pinned to either .main.commit (normal) or .dev.commit (dev-variant CI)."""
         main_commit = _read_commit_file(".main.commit")
+        dev_commit_path = REPO_ROOT / ".dev.commit"
+        dev_commit = dev_commit_path.read_text().strip() if dev_commit_path.exists() else None
         submodule_commit = _get_submodule_commit()
-        assert main_commit == submodule_commit, (
-            f".main.commit ({main_commit[:12]}) does not match "
-            f"3rdparty/Megatron-LM submodule ({submodule_commit[:12]}). "
-            f"Run: echo {submodule_commit} > .main.commit"
+        valid_commits = {main_commit}
+        if dev_commit:
+            valid_commits.add(dev_commit)
+        assert submodule_commit in valid_commits, (
+            f"3rdparty/Megatron-LM submodule ({submodule_commit[:12]}) does not match "
+            f".main.commit ({main_commit[:12]})"
+            + (f" or .dev.commit ({dev_commit[:12]})" if dev_commit else "")
+            + f". Run: echo {submodule_commit} > .main.commit"
         )

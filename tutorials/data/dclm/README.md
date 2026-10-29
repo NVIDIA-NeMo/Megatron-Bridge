@@ -90,14 +90,14 @@ This step will convert the merged `.jsonl` files into a `bin/idx` format for tra
 pip install megatron-core
 pip install --no-build-isolation transformer-engine[pytorch]
 
-# Clone repository for examples
-git clone https://github.com/NVIDIA/Megatron-LM.git
+# Initialize the bundled Megatron-LM submodule (provides the preprocessing tools)
+git submodule update --init 3rdparty/Megatron-LM
 ```
 
 Run data preprocessing script:
 
 ```bash
-python3 Megatron-LM/tools/preprocess_data.py \
+python3 3rdparty/Megatron-LM/tools/preprocess_data.py \
   --input /data/dclm/decompressed/shuffled.jsonl \
   --output-prefix /data/dclm/preprocessed \
   --tokenizer-type HuggingFaceTokenizer \

@@ -1,0 +1,23 @@
+# Qwen3-ASR
+
+[Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) is an audio speech recognition model from the Qwen3 family. Megatron Bridge supports checkpoint conversion and audio inference through the Qwen3-ASR bridge.
+
+## Supported Variants
+
+- Qwen3-ASR-1.7B: https://huggingface.co/Qwen/Qwen3-ASR-1.7B
+
+## Architecture Notes
+
+- Uses the `Qwen3ASRForConditionalGeneration` architecture on the Hugging Face side.
+- The Megatron implementation includes a Qwen3-ASR thinker model, transformer config, and ASR-specific RoPE support.
+- Example conversion and round-trip validation use `--trust-remote-code`.
+
+## Examples
+
+For checkpoint import/export, round-trip validation, and audio inference commands, see the [Qwen3-ASR examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/qwen/qwen3_asr/README.md).
+
+## Related Implementation
+
+- Bridge implementation: [`src/megatron/bridge/models/qwen3_asr`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen3_asr)
+- Examples: [`examples/models/qwen/qwen3_asr`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/qwen/qwen3_asr)
+

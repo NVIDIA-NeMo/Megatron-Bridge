@@ -60,7 +60,7 @@ config = ConfigContainer(
 
 ## FP8 Training
 
-NVIDIA H100 GPU introduced support for a new datatype, FP8 (8-bit floating point), enabling higher throughput of matrix multiplies and convolutions. Megatron Bridge uses the NVIDIA TransformerEngine (TE) to leverage speedups from FP8. For a more detailed overview, refer to the [TE documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/index.html), specifically the FP8 format and recipe.
+NVIDIA H100 GPU introduced support for a new datatype, FP8 (8-bit floating point), enabling higher throughput of matrix multiplies and convolutions. Megatron Bridge uses the NVIDIA TransformerEngine (TE) to leverage speedups from FP8. For a more detailed overview, refer to the [TE documentation](https://docs.nvidia.com/deeplearning/transformer-engine/index.html), specifically the FP8 format and recipe.
 
 ### FP8 Configuration Parameters
 
@@ -90,6 +90,54 @@ config = ConfigContainer(
     # ... other config parameters
 )
 ```
+
+## NVFP4 Training
+
+NVFP4 is a 4-bit floating-point training mode for Blackwell-generation GPUs, implemented through Transformer Engine. In Megatron Bridge it is configured through the `fp4` fields on {py:class}`bridge.training.mixed_precision.MixedPrecisionConfig`, not through the FP8 fields.
+
+NVFP4 and FP8 are mutually exclusive. If `fp4` and `fp8` are both set, configuration finalization raises an error. NVFP4 also requires a Transformer Engine build with NVFP4 block-scaling support.
+
+### NVFP4 Configuration Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `fp4` | `Optional[str]` | `None` | FP4 format. The predefined NVFP4 recipe uses `"e2m1"` |
+| `fp4_recipe` | `str` | `"nvfp4"` | FP4 recipe type |
+| `fp4_param` | `Optional[bool]` | `None` | Store module-level parameters in FP4; synchronized with `fp4_param_gather` |
+| `fp4_param_gather` | `bool` | `False` | Enable FP4 parameter gathering |
+
+### NVFP4 Recipe Examples
+
+Use the predefined NVFP4 mixed-precision recipe for pretraining, SFT, or PEFT:
+
+```python
+from megatron.bridge.training.config import ConfigContainer
+
+config = ConfigContainer(
+    mixed_precision="bf16_with_nvfp4_mixed",
+    # ... other config parameters
+)
+```
+
+The same field is used for fine-tuning:
+
+```python
+from megatron.bridge.recipes.llama import llama32_1b_peft_config
+
+cfg = llama32_1b_peft_config()
+cfg.mixed_precision = "bf16_with_nvfp4_mixed"
+cfg.checkpoint.pretrained_checkpoint = "/checkpoints/base_model"
+```
+
+Some model families expose tuned NVFP4 recipes. For example, Llama 3 8B has a hardware-specific low-precision pretraining recipe:
+
+```python
+from megatron.bridge.recipes.llama.h100 import llama3_8b_pretrain_2gpu_h100_nvfp4_config
+
+cfg = llama3_8b_pretrain_2gpu_h100_nvfp4_config()
+```
+
+NVFP4 is related to FP8 in that both use Transformer Engine low-precision kernels and BF16 fallback for non-quantized state, but the configuration knobs are separate. Use FP8 recipes on Hopper or Blackwell when FP8 is the target precision; use NVFP4 recipes on Blackwell when the model and hardware have been validated for 4-bit training.
 
 ## Available Mixed Precision Recipes
 
@@ -183,6 +231,6 @@ The mixed precision configuration will set `bf16=True` on both the model and opt
 
 ## Resources
 
-- [Transformer Engine Documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/index.html)
-- [Intro to FP8, floating point formats, and mixed precision training](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html#Introduction-to-FP8)
-- [Performance optimizations](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/advanced_optimizations.html) that are natively supported in Megatron Bridge by enabling FP8 training with TE
+- [Transformer Engine Documentation](https://docs.nvidia.com/deeplearning/transformer-engine/index.html)
+- [Intro to FP8, floating point formats, and mixed precision training](https://docs.nvidia.com/deeplearning/transformer-engine/examples/fp8_primer.html#Introduction-to-FP8)
+- [Performance optimizations](https://docs.nvidia.com/deeplearning/transformer-engine/examples/advanced_optimizations.html) that are natively supported in Megatron Bridge by enabling FP8 training with TE

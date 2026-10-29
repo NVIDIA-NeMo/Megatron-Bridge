@@ -1,0 +1,67 @@
+[
+  {
+    "id": "nsys-analysis-single-trace-critical-path",
+    "question": "Use the nemo-mbridge-perf-nsys-analysis skill to explain how you would analyze one Megatron Bridge .nsys-rep where NCCL occupies 38% of summed kernel time and memcpy occupies 20%. Rank likely fixes and estimate the possible gain without inventing numbers.",
+    "expected_skill": "nemo-mbridge-perf-nsys-analysis",
+    "expected_script": null,
+    "ground_truth": "The response must not call NCCL or memcpy bottlenecks from summed duration. It must establish a steady-state iteration window, use interval unions, split compute-absent time into launch-starved/blocking/dependency-stalled, report exposed and dependency-proven blocking communication together, verify copy direction/bandwidth/dependency, and estimate gain only from recoverable critical-path time. It should map proven launch starvation to CUDA graphs, blocking communication to overlap, and blocking copies to offload scheduling, while stating that no numeric gain is justified from the supplied percentages.",
+    "expected_behavior": [
+      "Read the nsys analysis skill before answering.",
+      "Use interval-union and critical-path accounting.",
+      "Distinguish exposed from blocking communication and copies.",
+      "Avoid a fabricated gain estimate.",
+      "Map verified findings to MBridge tuning skills."
+    ]
+  },
+  {
+    "id": "nsys-analysis-multi-rank-pipeline",
+    "question": "Use the nemo-mbridge-perf-nsys-analysis skill. I have rank 0, 17, and 71 traces from a PP=8 distributed training run. Which rank should be analyzed and how should NCCL time be interpreted?",
+    "expected_skill": "nemo-mbridge-perf-nsys-analysis",
+    "expected_script": null,
+    "ground_truth": "The response must not silently select rank 0. It should request or derive a rank-to-stage map, survey all supplied ranks, identify the slowest trainer-step rank, cover distinct pipeline stages or fingerprints, and compare only like model parts. For matched collective participants it should separate shortest-participant transfer proxy from rank jitter wait, distinguish total/exposed/blocking communication, and state alignment limitations across hosts.",
+    "expected_behavior": [
+      "Read the nsys analysis skill before answering.",
+      "Survey ranks before choosing representatives.",
+      "Respect pipeline-stage differences.",
+      "Separate transfer proxy, jitter wait, exposed communication, and blocking communication."
+    ]
+  },
+  {
+    "id": "nsys-analysis-negative-ncu",
+    "question": "Use Nsight Compute counters to determine why one GEMM reaches only 42% tensor-core SOL and rewrite the kernel.",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The nsys analysis skill should not trigger because this is a kernel-level Nsight Compute and implementation task rather than an Nsight Systems trace analysis.",
+    "expected_behavior": [
+      "Do not use the nsys analysis skill as a substitute for Nsight Compute analysis."
+    ]
+  },
+  {
+    "id": "nsys-analysis-hybridep-cross-host",
+    "question": "Use the nemo-mbridge-perf-nsys-analysis skill on a two-node EP=16 run where only ranks 0 and 8 were captured. Rank 8's profile window is 102 ms longer. The traces contain 3.3-3.6 s of NCCL and 7.5-7.7 s of hybrid_ep dispatch/combine/sync kernels. After matching 5,261 collective ends across hosts, both ranks end together within 0.1 ms and rank 8 started earlier. Is rank 8 a straggler, is NCCL the full communication cost, and what overlap gain should I expect?",
+    "expected_skill": "nemo-mbridge-perf-nsys-analysis",
+    "expected_script": null,
+    "ground_truth": "The response must not call rank 8 a straggler: the duration delta is earlier start skew after collective-based cross-host clock alignment. It must limit the verdict to the two sampled ranks. It must include material HybridEP transport/synchronization/dispatcher kernels in a backend-aware communication/dispatcher taxonomy, report NCCL and dispatcher components separately plus their interval union, and avoid calling the full dispatcher union network time because it can include packing and control work. Exposed communication is an upper bound, not dependency-proven blocking or an expected overlap gain. No likely gain is justified without blocking attribution or a matched A/B.",
+    "expected_behavior": [
+      "Use backend-aware rather than NCCL-only communication taxonomy.",
+      "Distinguish dispatcher occupancy from pure network transfer.",
+      "Align cross-host clocks with matched collectives before a straggler claim.",
+      "Limit the verdict to captured ranks.",
+      "Do not turn exposed time into an overlap-gain forecast."
+    ]
+  },
+  {
+    "id": "nsys-analysis-capture-quality-overhead",
+    "question": "Use the nemo-mbridge-perf-nsys-analysis skill. A profiled trainer step is 34.60 s while same-run unprofiled steady steps have a 29.39 s median. PROFILER_OVERHEAD sums to 0.23 s. Every kernel correlates to a CUDA Runtime API row, but no source call-stack capture or GPU metric tables exist, and DIAGNOSTIC_EVENT warns that some CUDA and NVTX events may be missing. What can be claimed?",
+    "expected_skill": "nemo-mbridge-perf-nsys-analysis",
+    "expected_script": null,
+    "ground_truth": "The response must report 17.7% end-to-end profiler slowdown from trainer steps and must not use the 0.23 s PROFILER_OVERHEAD sum as total slowdown or as a correction. It must label absolute trace budgets and ceilings perturbed and avoid transplanting trace-derived recoverable time onto the unprofiled step. It must distinguish complete kernel-to-runtime correlation from zero source call-stack coverage, report missing metrics and event-completeness warnings, and avoid source-level, bandwidth-saturation, or likely-gain claims.",
+    "expected_behavior": [
+      "Measure profiler perturbation from same-run trainer steps.",
+      "Do not interpret PROFILER_OVERHEAD as end-to-end slowdown.",
+      "Separate runtime correlation from source call-stack coverage.",
+      "Surface diagnostic warnings and missing metrics in capture quality.",
+      "Avoid correcting or forecasting from a materially perturbed trace."
+    ]
+  }
+]

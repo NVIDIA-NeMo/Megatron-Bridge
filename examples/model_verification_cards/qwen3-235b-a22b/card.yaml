@@ -1,0 +1,238 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: qwen3_235b_a22b
+summary: >
+  Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300
+  are verified with their tuned canonical 256-GPU MXFP8 recipes. Model-level
+  and functional training workflows remain unverified in this card.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    GB300: verified
+    GB200: verified
+model:
+  hf_id: Qwen/Qwen3-235B-A22B
+  hf_revision: 8efa61729e24bd65b1d152b5ab5409052aa80e65  # pragma: allowlist secret
+  architecture: Qwen3MoeForCausalLM
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: bc09410353986ac7255ffd31fb2b720fb9007107  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified and requires a public run against the
+      pinned Hugging Face revision with all applicable verification gates.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified and requires a public run against the
+      pinned Hugging Face revision with all applicable verification gates.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified and requires a public run against the
+      pinned Hugging Face revision with all applicable verification gates.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified and requires a public run against the
+      pinned Hugging Face revision with all applicable verification gates.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified and requires a public run against the
+      pinned Hugging Face revision with all applicable verification gates.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified and requires a public run against the
+      pinned Hugging Face revision with all applicable verification gates.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      commands: null
+      last_verified: null
+      depends_on: sft
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      depends_on: pretrain
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  pretrain_performance:
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: fbb7570cf7eec94fd2e6064454d84f7fad07fbfa  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 4096
+        logger.save_config_filepath=work/model-verification/qwen3-235b-a22b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-08-17
+      metrics:
+        initial_loss: 12.75473
+        final_loss: 8.126335
+        last_10_steps_step_time_ms_avg: 14920.840
+        last_10_steps_model_tflops_per_gpu_avg: 1300.440
+        last_10_steps_tokens_per_second_per_gpu_avg: 8784.492
+      expected_result: >
+        On exactly 256 GB300s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP4/CP1/EP32/ETP1, GBS/MBS 8192/2,
+        and sequence length 4096. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.75473 to 8.126335; the
+        final ten steps average 14920.840 ms, 1300.440 TFLOP/s/GPU, and
+        8784.492 tokens/s/GPU. The resolved configuration persists.
+
+    GB200:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 4096
+        logger.save_config_filepath=work/model-verification/qwen3-235b-a22b/gb200-performance/ConfigContainer.yaml
+      last_verified: 2026-08-19
+      metrics:
+        initial_loss: 12.75152
+        final_loss: 8.126326
+        last_10_steps_step_time_ms_avg: 17905.340
+        last_10_steps_model_tflops_per_gpu_avg: 1083.660
+        last_10_steps_tokens_per_second_per_gpu_avg: 7320.274
+      expected_result: >
+        On exactly 256 GB200s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP8/CP1/EP32/ETP1, VPP3, GBS/MBS
+        8192/1, and sequence length 4096. All 50 keyed rows have finite loss
+        with zero skipped or NaN iterations. Loss moves from 12.75152 to
+        8.126326; the final ten steps average 17905.340 ms, 1083.660
+        TFLOP/s/GPU, and 7320.274 tokens/s/GPU. The resolved configuration
+        persists.

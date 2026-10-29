@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import math
 import random
 import time
 import unittest.mock as mock
 from dataclasses import dataclass
 from functools import partial
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -26,15 +27,25 @@ import torch
 
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
+    LinearForLastLayer,
+    _consume_zero_token_iters,
+    _get_num_moe_layers,
+    _track_moe_metrics_supports_num_moe_layers,
+    accumulate_zero_token_step,
     calc_params_l2_norm,
+    create_value_head_hook,
+    freeze_moe_router,
+    make_value_model,
     maybe_inject_state,
     needs_global_state_injection,
     param_is_not_shared,
     prepare_forward_step_func,
+    reduce_max_memory_across_pp_group,
     report_l2_norm_grad,
     report_memory,
     report_runtime,
     report_throughput,
+    start_memory_history_recording,
     training_log,
 )
 
@@ -76,6 +87,8 @@ def make_default_model_config():
         num_layers=24,
         moe_layer_freq=1,
         mtp_num_layers=None,
+        mtp_use_repeated_layer=False,
+        hybrid_layer_pattern=None,
         kv_channels=128,
         num_attention_heads=32,
         hidden_size=4096,
@@ -101,7 +114,74 @@ def make_default_model_config():
         moe_router_load_balancing_threshold=None,
         moe_z_loss_scale=None,
         is_hybrid_model=False,
+        cuda_graph_impl="none",
+        cuda_graph_warmup_steps=3,
+        vision_cuda_graph_impl=None,
     )
+
+
+@pytest.mark.parametrize("parameters, expected", [({"num_moe_layers": None}, True), ({}, False)])
+def test_track_moe_metrics_supports_num_moe_layers(parameters, expected):
+    """Detect the MCore signature difference without calling the helper."""
+    with mock.patch("inspect.signature") as mock_signature:
+        mock_signature.return_value.parameters = parameters
+        assert _track_moe_metrics_supports_num_moe_layers() is expected
+
+
+@pytest.mark.parametrize(
+    ("num_layers", "mtp_num_layers", "hybrid_pattern", "moe_layer_freq", "repeated_mtp", "expected"),
+    [
+        pytest.param(
+            52,
+            2,
+            "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME/*E/*E",
+            None,
+            True,
+            24,
+            id="nemotron_3_5",
+        ),
+        pytest.param(
+            88,
+            2,
+            "MEMEMEM*EMEMEMEM*EMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEM*EMEMEMEME/*E/*E",
+            None,
+            True,
+            41,
+            id="nemotron_3_super",
+        ),
+        pytest.param(
+            108,
+            2,
+            (
+                "MEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*"
+                "EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME/*E/*E"
+            ),
+            None,
+            True,
+            49,
+            id="nemotron_3_ultra",
+        ),
+        pytest.param(61, 1, None, [0] * 3 + [1] * 58, False, 59, id="deepseek_v3"),
+        pytest.param(45, 0, None, [0] * 3 + [1] * 42, False, 42, id="step_3_7"),
+        pytest.param(4, 2, "MEME/*E/*E", None, False, 4, id="hybrid_distinct_mtp"),
+        pytest.param(4, 2, "MEME/**/**", None, False, 2, id="hybrid_dense_mtp"),
+        pytest.param(4, 2, None, [1, 0, 1, 1], True, 4, id="non_hybrid_repeated_mtp"),
+        pytest.param(4, 2, None, [1, 0, 1, 1], False, 5, id="non_hybrid_distinct_mtp"),
+        pytest.param(4, 2, None, [1, 0, 1, 0], False, 2, id="non_hybrid_dense_mtp"),
+    ],
+)
+def test_get_num_moe_layers(num_layers, mtp_num_layers, hybrid_pattern, moe_layer_freq, repeated_mtp, expected):
+    """Test representative architecture and edge-case contributor counts."""
+    model_config = SimpleNamespace(
+        num_layers=num_layers,
+        moe_layer_freq=moe_layer_freq,
+        mtp_num_layers=mtp_num_layers,
+        mtp_use_repeated_layer=repeated_mtp,
+        is_hybrid_model=hybrid_pattern is not None,
+        hybrid_layer_pattern=hybrid_pattern,
+    )
+
+    assert _get_num_moe_layers(model_config) == expected
 
 
 class TestTrainingLog:
@@ -145,6 +225,7 @@ class TestTrainingLog:
 
         # Optimizer config
         config.optimizer.decoupled_lr = None
+        config.optimizer.optimizer_cuda_graph = False
 
         # Data parallel size
         config.data_parallel_size = 4
@@ -413,6 +494,272 @@ class TestTrainingLog:
         mock_global_state.tensorboard_logger.add_scalar.assert_called()
         mock_global_state.timers.write.assert_called()
 
+    def test_comet_only_logs_general_training_scalars(self, monkeypatch, mock_config, mock_global_state):
+        """Comet does not require another backend to receive general training scalars."""
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_num_microbatches",
+            lambda: 8,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
+            lambda value, mp_group: value,
+            raising=True,
+        )
+
+        mock_config.logger.tensorboard_log_interval = 1
+        mock_config.logger.log_interval = 5
+        mock_config.logger.log_timers_to_tensorboard = False
+        mock_config.logger.log_throughput_to_tensorboard = False
+        mock_config.logger.log_memory_to_tensorboard = False
+        mock_config.logger.log_runtime_to_tensorboard = False
+        mock_config.logger.log_l2_norm_grad_to_tensorboard = False
+        mock_config.logger.log_loss_scale_to_tensorboard = False
+        mock_config.logger.log_world_size_to_tensorboard = False
+
+        mock_global_state.train_state.step = 1
+        mock_global_state.tensorboard_logger = None
+        mock_global_state.wandb_logger = None
+        mock_global_state.mlflow_logger = None
+        comet_logger = mock.MagicMock()
+        mock_global_state.comet_logger = comet_logger
+
+        training_log(
+            loss_dict={},
+            total_loss_dict={},
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=None,
+            params_norm=None,
+            num_zeros_in_grad=None,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=[],
+            model=None,
+        )
+
+        comet_logger.log_metrics.assert_any_call({"learning-rate": 1e-4}, step=1)
+        comet_logger.log_metrics.assert_any_call({"batch-size": 64}, step=1)
+
+    def test_detailed_timers_reach_all_enabled_backends(self, monkeypatch, mock_config, mock_global_state):
+        """Detailed timer samples are shared by every enabled logging backend."""
+        from megatron.bridge.training.state import (
+            _timers_write_to_comet,
+            _timers_write_to_mlflow,
+            _timers_write_to_wandb,
+        )
+
+        class StatefulTimers:
+            def __init__(self):
+                self.samples = {"forward-backward": (4.0, 6.0)}
+
+            def _get_global_min_max_time(self, names, reset, barrier, normalizer):
+                samples = {name: self.samples[name] for name in names if name in self.samples}
+                if reset:
+                    self.samples.clear()
+                return samples
+
+            def write(self, names, writer, iteration, normalizer=1.0, reset=True, barrier=False):
+                self._get_global_min_max_time(names, reset, barrier, normalizer)
+
+        timers = StatefulTimers()
+        timers.write_to_wandb = MethodType(_timers_write_to_wandb, timers)
+        timers.write_to_mlflow = MethodType(_timers_write_to_mlflow, timers)
+        timers.write_to_comet = MethodType(_timers_write_to_comet, timers)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_num_microbatches",
+            lambda: 8,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
+            lambda value, mp_group: value,
+            raising=True,
+        )
+
+        mock_config.logger.tensorboard_log_interval = 1
+        mock_config.logger.log_interval = 5
+        mock_config.logger.timing_log_level = 1
+        mock_config.logger.log_throughput_to_tensorboard = False
+        mock_config.logger.log_memory_to_tensorboard = False
+        mock_config.logger.log_runtime_to_tensorboard = False
+        mock_config.logger.log_l2_norm_grad_to_tensorboard = False
+        mock_config.logger.log_loss_scale_to_tensorboard = False
+        mock_config.logger.log_world_size_to_tensorboard = False
+
+        mock_global_state.train_state.step = 1
+        mock_global_state.timers = timers
+        mock_global_state.tensorboard_logger = None
+        mock_global_state.wandb_logger = None
+        mlflow_logger = mock.MagicMock()
+        comet_logger = mock.MagicMock()
+        mock_global_state.mlflow_logger = mlflow_logger
+        mock_global_state.comet_logger = comet_logger
+
+        training_log(
+            loss_dict={},
+            total_loss_dict={},
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=None,
+            params_norm=None,
+            num_zeros_in_grad=None,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=[],
+            model=None,
+        )
+
+        mlflow_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
+        comet_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
+        assert timers.samples == {}
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_max_attention_logit_logged(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """max-attention-logit must reach the writers when a value is provided (qk_clip path)."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+
+        mock_global_state.train_state.step = 100
+        mock_config.logger.tensorboard_log_interval = 10
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+            log_max_attention_logit=12.5,
+        )
+
+        mock_global_state.tensorboard_logger.add_scalar.assert_any_call("max-attention-logit", 12.5, 100)
+        wandb_metric_calls = [
+            call for call in mock_global_state.wandb_logger.log.call_args_list if "max-attention-logit" in call.args[0]
+        ]
+        assert wandb_metric_calls, "max-attention-logit was not logged to wandb"
+
+    def test_optional_params_are_keyword_only(self):
+        """Optional params must stay keyword-only so a positional call cannot bind to the wrong slot.
+
+        Regression guard: log_max_attention_logit used to be passed as the 15th positional
+        argument in train.py, silently binding to pg_collection instead.
+        """
+        sig = inspect.signature(training_log)
+        for name in ("pg_collection", "log_max_attention_logit", "loaded_iteration", "seq_length"):
+            assert sig.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_throughput_uses_interval_flops_delta(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Logged TFLOP/s is the interval FLOPs delta ÷ interval time ÷ world size.
+
+        Regression guard for the THD logging fix: ``training_log`` must derive
+        throughput from the cumulative ``floating_point_operations_so_far`` delta
+        since the last log (over the full interval elapsed time), not from a single
+        step's FLOPs over the per-iteration average. It must also advance the
+        ``_flops_at_last_log`` anchor.
+        """
+        total_loss_dict = self.get_fresh_total_loss_dict()
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 8
+
+        # Log boundary (10 % 5 == 0). interval-time mock returns 0.5s (see fixture).
+        mock_global_state.train_state.step = 10
+        mock_config.logger.log_throughput_to_tensorboard = True
+        # Interval FLOPs = so_far - anchor = 8e12; per_gpu_tf = 8e12 / 0.5 / 8 / 1e12 = 2.0
+        prev_flops = 100.0e12
+        mock_global_state._flops_at_last_log = prev_flops
+        mock_global_state.train_state.floating_point_operations_so_far = prev_flops + 8.0e12
+        expected_per_gpu_tf = 8.0e12 / 0.5 / 8 / 1e12  # == 2.0
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        device_tf_logs = [
+            call.args[0]["throughput/tflops/device"]
+            for call in mock_global_state.wandb_logger.log.call_args_list
+            if call.args and isinstance(call.args[0], dict) and "throughput/tflops/device" in call.args[0]
+        ]
+        assert device_tf_logs, "throughput/tflops/device was not logged"
+        assert device_tf_logs[-1] == pytest.approx(expected_per_gpu_tf)
+        # Anchor advanced to the current cumulative for the next interval.
+        assert mock_global_state._flops_at_last_log == pytest.approx(prev_flops + 8.0e12)
+
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -610,6 +957,164 @@ class TestTrainingLog:
         mock_report_theoretical.assert_called_once()
         mock_report_memory.assert_called_once()
 
+    @pytest.mark.parametrize(
+        (
+            "cuda_graph_impl",
+            "optimizer_cuda_graph",
+            "vision_cuda_graph_impl",
+            "iteration",
+            "expected_report_memory_flag",
+        ),
+        [
+            pytest.param("none", False, None, 1, True, id="eager-first-iteration"),
+            pytest.param("none", False, None, 2, False, id="eager-second-iteration"),
+            pytest.param("transformer_engine", False, None, 3, True, id="te-before-capture"),
+            pytest.param("transformer_engine", False, None, 4, False, id="te-after-capture"),
+            pytest.param("local", False, None, 3, True, id="local-before-capture"),
+            pytest.param("local", False, None, 4, False, id="local-after-capture"),
+            pytest.param("none", True, None, 2, True, id="optimizer-before-capture"),
+            pytest.param("none", True, None, 4, False, id="optimizer-after-capture"),
+            pytest.param("none", False, "transformer_engine", 2, True, id="vision-before-capture"),
+            pytest.param("none", False, "transformer_engine", 4, False, id="vision-after-capture"),
+            # MegatronMIMOProvider has no cuda_graph_* fields; optimizer graphs must still report.
+            pytest.param(None, True, None, 2, False, id="mimo-provider-optimizer-graph"),
+        ],
+    )
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
+    @mock.patch("torch.distributed.get_rank")
+    def test_memory_reporting_cutoff(
+        self,
+        mock_get_rank,
+        mock_report_theoretical,
+        mock_report_memory,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+        cuda_graph_impl,
+        optimizer_cuda_graph,
+        vision_cuda_graph_impl,
+        iteration,
+        expected_report_memory_flag,
+    ):
+        """Test memory reporting includes optimizer initialization and CUDA graph capture."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_get_rank.return_value = 0
+
+        if cuda_graph_impl is None:
+            del mock_config.model.cuda_graph_impl
+            del mock_config.model.cuda_graph_warmup_steps
+        else:
+            mock_config.model.cuda_graph_impl = cuda_graph_impl
+        mock_config.model.vision_cuda_graph_impl = vision_cuda_graph_impl
+        mock_config.optimizer.optimizer_cuda_graph = optimizer_cuda_graph
+        mock_global_state.train_state.step = iteration
+        mock_config.logger.log_interval = 1
+
+        result = training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=True,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+            loaded_iteration=0,
+        )
+
+        assert result is expected_report_memory_flag
+        mock_report_memory.assert_called_once()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
+    @mock.patch("torch.distributed.get_rank")
+    def test_memory_reporting_checkpoint_resume(
+        self,
+        mock_get_rank,
+        mock_report_theoretical,
+        mock_report_memory,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test memory reporting after checkpoint resume reports for 2 iterations."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_get_rank.return_value = 0
+
+        # First iteration after resume from checkpoint at iteration 100
+        mock_global_state.train_state.step = 101
+        mock_config.logger.log_interval = 1
+
+        result = training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=True,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+            loaded_iteration=100,
+        )
+
+        # Flag should remain True (101 <= 100 + 1)
+        assert result is True
+        mock_report_memory.assert_called_once()
+
+    @pytest.mark.parametrize(
+        (
+            "model_num_layers",
+            "mtp_num_layers",
+            "hybrid_pattern",
+            "moe_layer_freq",
+            "expected_num_moe_layers",
+            "supports_num_moe_layers",
+        ),
+        [
+            pytest.param(12, None, None, 2, 6, True, id="non_hybrid-supported"),
+            pytest.param(12, None, None, 2, 6, False, id="non_hybrid-unsupported"),
+            pytest.param(4, 2, "MMME/*E/*E", None, 3, True, id="hybrid-supported"),
+            pytest.param(4, 2, "MMME/*E/*E", None, 3, False, id="hybrid-unsupported"),
+        ],
+    )
+    @mock.patch("megatron.bridge.training.utils.train_utils._track_moe_metrics_supports_num_moe_layers")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -628,15 +1133,23 @@ class TestTrainingLog:
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
+        mock_supports_num_moe_layers,
         mock_config,
         mock_global_state,
         loss_dict,
+        model_num_layers,
+        mtp_num_layers,
+        hybrid_pattern,
+        moe_layer_freq,
+        expected_num_moe_layers,
+        supports_num_moe_layers,
     ):
         """Test MoE (Mixture of Experts) logging when enabled."""
         # Get fresh total_loss_dict for this test
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_supports_num_moe_layers.return_value = supports_num_moe_layers
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -649,9 +1162,11 @@ class TestTrainingLog:
         mock_config.model.moe_router_load_balancing_type = "aux_loss"
         mock_config.model.moe_z_loss_coeff = 0.1
         mock_config.model.moe_per_layer_logging = True
-        mock_config.model.num_layers = 12
-        mock_config.model.moe_layer_freq = 2
-        mock_config.model.mtp_num_layers = None
+        mock_config.model.num_layers = model_num_layers
+        mock_config.model.moe_layer_freq = moe_layer_freq
+        mock_config.model.mtp_num_layers = mtp_num_layers
+        mock_config.model.is_hybrid_model = hybrid_pattern is not None
+        mock_config.model.hybrid_layer_pattern = hybrid_pattern
 
         training_log(
             loss_dict=loss_dict,
@@ -675,6 +1190,12 @@ class TestTrainingLog:
         call_args = mock_track_moe.call_args
         assert "load_balancing_loss" in call_args.kwargs["track_names"]
         assert "z_loss" in call_args.kwargs["track_names"]
+        assert call_args.kwargs["num_layers"] == model_num_layers
+        if supports_num_moe_layers:
+            assert call_args.kwargs["num_moe_layers"] == expected_num_moe_layers
+        else:
+            assert "num_moe_layers" not in call_args.kwargs
+        assert call_args.kwargs["mtp_num_layers"] == mtp_num_layers
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
@@ -1147,6 +1668,103 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    def test_zero_token_iterations_reported_and_reset(
+        self,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """An all-masked step reports 0.0 loss, so the count is what makes it visible."""
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_global_state.train_state.step = 5
+        mock_config.logger.log_interval = 5
+        mock_global_state._zero_token_iters = torch.tensor(2, dtype=torch.int32)
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=self.get_fresh_total_loss_dict(),
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        assert "number of zero-token iterations:   2" in mock_print_rank_last.call_args[0][0]
+        # The substituted 0.0 loss reaches the metric writers, so the count must too.
+        mock_global_state.tensorboard_logger.add_scalar.assert_any_call("zero-token-iterations", 2, 5)
+        mock_global_state.wandb_logger.log.assert_any_call({"zero-token-iterations": 2}, 5)
+        mock_global_state.mlflow_logger.log_metrics.assert_any_call({"zero-token-iterations": 2}, step=5)
+        mock_global_state.comet_logger.log_metrics.assert_any_call({"zero-token-iterations": 2}, step=5)
+        # Reset so the next interval reports its own count, not a running total.
+        assert mock_global_state._zero_token_iters.item() == 0
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    def test_zero_token_field_absent_in_the_normal_case(
+        self,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Healthy runs keep their existing log line, so log consumers are unaffected."""
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_global_state.train_state.step = 5
+        mock_config.logger.log_interval = 5
+        mock_global_state._zero_token_iters = torch.tensor(0, dtype=torch.int32)
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=self.get_fresh_total_loss_dict(),
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        assert "zero-token iterations" not in mock_print_rank_last.call_args[0][0]
+        # Healthy runs also keep the same set of metrics in every writer.
+        writer_calls = (
+            mock_global_state.tensorboard_logger.add_scalar.call_args_list
+            + mock_global_state.wandb_logger.log.call_args_list
+            + mock_global_state.mlflow_logger.log_metrics.call_args_list
+            + mock_global_state.comet_logger.log_metrics.call_args_list
+        )
+        assert "zero-token-iterations" not in str(writer_calls)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
@@ -1156,6 +1774,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @pytest.mark.parametrize("profile_ranks", [[7], []])
     def test_profiling_memory_snapshot(
         self,
         mock_report_runtime,
@@ -1173,6 +1792,7 @@ class TestTrainingLog:
         mock_config,
         mock_global_state,
         loss_dict,
+        profile_ranks,
     ):
         """Test memory snapshot functionality when profiling is enabled."""
         # Get fresh total_loss_dict for this test
@@ -1194,11 +1814,12 @@ class TestTrainingLog:
         mock_profiling_config = mock.MagicMock()
         mock_profiling_config.record_memory_history = True
         mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
-        mock_profiling_config.profile_ranks = [7]
+        mock_profiling_config.profile_ranks = profile_ranks
+        mock_profiling_config.profile_step_end = 10
         mock_config.profiling = mock_profiling_config
         mock_config.logger.tensorboard_dir = "/tmp/tb"
 
-        # Set iteration (snapshot itself is not gated by tensorboard log interval anymore)
+        # Set iteration to the configured snapshot dump step.
         mock_global_state.train_state.step = 10
 
         training_log(
@@ -1223,6 +1844,79 @@ class TestTrainingLog:
         mock_open.assert_called_once_with("/tmp/memory_snapshot_7.pkl", "wb")
         mock_pickle_dump.assert_called_once_with({"mock": "snapshot"}, mock_file_handle)
         mock_print_rank_0.assert_any_call("Saved memory snapshot to /tmp/memory_snapshot_7.pkl")
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("torch.cuda.memory._snapshot")
+    @mock.patch("builtins.open")
+    @mock.patch("pickle.dump")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_profiling_memory_snapshot_skips_non_stop_step(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_pickle_dump,
+        mock_open,
+        mock_memory_snapshot,
+        mock_print_rank_last,
+        mock_print_rank_0,
+        mock_get_rank_safe,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test memory snapshot is not dumped before the profiling stop step."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_get_rank_safe.return_value = 7
+
+        mock_profiling_config = mock.MagicMock()
+        mock_profiling_config.record_memory_history = True
+        mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
+        mock_profiling_config.profile_ranks = [7]
+        mock_profiling_config.profile_step_end = 10
+        mock_config.profiling = mock_profiling_config
+        mock_config.logger.tensorboard_dir = "/tmp/tb"
+        mock_global_state.train_state.step = 9
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        mock_get_rank_safe.assert_not_called()
+        mock_memory_snapshot.assert_not_called()
+        mock_open.assert_not_called()
+        mock_pickle_dump.assert_not_called()
+        mock_print_rank_0.assert_not_called()
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
@@ -1315,6 +2009,8 @@ class TestTrainingLog:
         # Remove loggers
         mock_global_state.tensorboard_logger = None
         mock_global_state.wandb_logger = None
+        mock_global_state.mlflow_logger = None
+        mock_global_state.comet_logger = None
 
         # Set iteration to match logging intervals
         mock_global_state.train_state.step = 10
@@ -1429,6 +2125,19 @@ class TestTrainingLog:
         expected_keys = ["mem-reserved-gigabytes", "mem-max-reserved-gigabytes"]
         memory_report = report_memory(memory_keys=memory_keys)
         assert list(memory_report.keys()) == expected_keys
+
+    def test_report_memory_device_used(self):
+        """Total device memory (NVML) is appended only when requested, in rounded gigabytes."""
+        memory_keys = {"reserved_bytes.all.current": "mem-reserved-bytes"}
+        with mock.patch("torch.cuda.device_memory_used", return_value=123_456_789_012) as mocked:
+            memory_report = report_memory(memory_keys=memory_keys)
+            assert "mem-device-used-gigabytes" not in memory_report
+            mocked.assert_not_called()
+
+            memory_report = report_memory(memory_keys=memory_keys, log_device_memory_used=True)
+            assert list(memory_report.keys()) == ["mem-reserved-gigabytes", "mem-device-used-gigabytes"]
+            assert memory_report["mem-device-used-gigabytes"] == 123.46
+            mocked.assert_called_once()
 
     def test_report_runtime(self):
         """Test runtime metrics."""
@@ -1616,6 +2325,131 @@ class TestTrainingLog:
         assert np.round(l2_norm_report["l2_norm/grad/global"], 2) == 74.92
         assert l2_norm_report["l2_norm/grad/layer_2"] == 2.0
         assert l2_norm_report["l2_norm/grad/layer_9"] == 9.0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for this test")
+class TestReduceMaxMemoryAcrossPpGroup:
+    """Test suite for the reduce_max_memory_across_pp_group helper.
+
+    The helper aggregates per-rank memory metrics across the pipeline-parallel
+    group with MAX so the writer rank emits the per-metric peak across the
+    pipeline (issue #3167). These tests cover the no-op fallbacks and the
+    happy-path reduction behavior.
+    """
+
+    def test_empty_report_returns_unchanged(self):
+        """Empty report short-circuits before touching distributed."""
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 4
+        result = reduce_max_memory_across_pp_group({}, pp_group)
+        assert result == {}
+        pp_group.size.assert_not_called()
+
+    def test_distributed_uninitialized_returns_unchanged(self):
+        """When torch.distributed is not initialized, return input as-is."""
+        report = {"peak_allocated_gigabytes": 12.5, "alloc_retries": 3}
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 4
+
+        with mock.patch("torch.distributed.is_initialized", return_value=False):
+            result = reduce_max_memory_across_pp_group(report, pp_group)
+
+        assert result == report
+        pp_group.size.assert_not_called()
+
+    def test_pp_size_one_returns_unchanged(self):
+        """A single-rank PP group bypasses the all-reduce."""
+        report = {"peak_allocated_gigabytes": 7.0}
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 1
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            result = reduce_max_memory_across_pp_group(report, pp_group)
+
+        assert result == report
+        mock_all_reduce.assert_not_called()
+
+    def test_pp_group_missing_size_returns_unchanged(self):
+        """A defensive check: if the group has no callable .size, no-op."""
+        report = {"peak_allocated_gigabytes": 4.5}
+
+        # An object without .size attribute at all.
+        class _Bare:
+            pass
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            result = reduce_max_memory_across_pp_group(report, _Bare())
+
+        assert result == report
+        mock_all_reduce.assert_not_called()
+
+    def test_max_reduction_across_pp_ranks(self):
+        """All-reduce MAX is invoked once and replaces values with the max."""
+        report = {
+            "peak_allocated_gigabytes": 10.0,
+            "peak_reserved_gigabytes": 12.5,
+        }
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 4
+
+        # Simulate the in-place all-reduce by writing the per-element max
+        # values directly into the input tensor.
+        def _fake_all_reduce(tensor, op, group):
+            assert op == torch.distributed.ReduceOp.MAX
+            assert group is pp_group
+            # Pretend rank-0 had higher peak across the pipeline.
+            tensor.copy_(torch.tensor([14.25, 18.0], dtype=tensor.dtype, device=tensor.device))
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce", side_effect=_fake_all_reduce) as mock_all_reduce,
+        ):
+            result = reduce_max_memory_across_pp_group(report, pp_group)
+
+        assert mock_all_reduce.call_count == 1
+        assert result == {
+            "peak_allocated_gigabytes": pytest.approx(14.25),
+            "peak_reserved_gigabytes": pytest.approx(18.0),
+        }
+        # Original report must not be mutated.
+        assert report == {
+            "peak_allocated_gigabytes": 10.0,
+            "peak_reserved_gigabytes": 12.5,
+        }
+
+    def test_int_counters_remain_int_after_reduction(self):
+        """Counter-style integer metrics (e.g. alloc_retries) stay as int."""
+        report = {
+            "peak_allocated_gigabytes": 8.0,
+            "alloc_retries": 1,
+        }
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 2
+
+        def _fake_all_reduce(tensor, op, group):
+            tensor.copy_(torch.tensor([9.5, 4.0], dtype=tensor.dtype, device=tensor.device))
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce", side_effect=_fake_all_reduce),
+        ):
+            result = reduce_max_memory_across_pp_group(report, pp_group)
+
+        assert isinstance(result["peak_allocated_gigabytes"], float)
+        assert result["peak_allocated_gigabytes"] == pytest.approx(9.5)
+        # `alloc_retries` was an int on input, so it must remain an int.
+        assert isinstance(result["alloc_retries"], int)
+        assert result["alloc_retries"] == 4
 
 
 class TestNeedsGlobalStateInjection:
@@ -2003,7 +2837,12 @@ class TestCalcParamsL2Norm:
             def __init__(self):
                 # Minimal set of groups used by calc_params_l2_norm
                 self.dp_cp = object()
+                self.expt_dp = object()
+                self.expt_gtp_remat = None
+                self.expt_tp = object()
+                self.gtp_remat = object()
                 self.mp = object()
+                self.tp = object()
                 self.tp_ep_pp = object()
                 self.pp = object()
 
@@ -2014,11 +2853,13 @@ class TestCalcParamsL2Norm:
 
                 self.dp = _DP()
 
+        pg_collection = _PG()
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.get_pg_collection",
-            lambda model: _PG(),
+            lambda model: pg_collection,
             raising=True,
         )
+        return pg_collection
 
     @pytest.fixture
     def simple_model(self):
@@ -2042,6 +2883,128 @@ class TestCalcParamsL2Norm:
         config = mock.MagicMock()
         config.bf16 = True
         return config
+
+    def test_gtp_param_norm_filters_replicas_and_keeps_shards(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+        _patch_pg_collection,
+    ):
+        """Non-sharded parameters are counted once while every GTP shard contributes."""
+
+        class _DenseGTPModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.norm = torch.nn.Parameter(torch.tensor([2.0], device="cuda"))
+                self.weight = torch.nn.Parameter(torch.tensor([3.0], device="cuda"))
+                self.weight.is_gtp_weight_remat = True
+
+        model = _DenseGTPModel()
+        duplicate_filter = mock.MagicMock(return_value=True)
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.mp:
+                # Rank zero contributes the replicated norm (2**2) and its GTP shard (4**2).
+                tensor.add_(20.0)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            duplicate_filter,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_rank",
+            lambda group: 1 if group is _patch_pg_collection.gtp_remat else 0,
+        )
+        monkeypatch.setattr("torch.distributed.get_process_group_ranks", lambda group: [0])
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(model, mock_model_config_fp32)
+
+        assert actual_norm == pytest.approx(math.sqrt(29.0))
+        duplicate_filter.assert_called_once_with(
+            model.norm,
+            tp_group=_patch_pg_collection.tp,
+            expert_tp_group=_patch_pg_collection.expt_tp,
+        )
+
+    @pytest.mark.parametrize(
+        ("expert_gtp_rank", "remote_contribution", "expected_local_input"),
+        [
+            pytest.param(0, 9.0, 20.0, id="rank-zero-keeps-replica"),
+            pytest.param(1, 13.0, 16.0, id="nonzero-rank-drops-replica"),
+        ],
+    )
+    def test_expert_gtp_param_norm_reduces_over_expert_gtp(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+        _patch_pg_collection,
+        expert_gtp_rank,
+        remote_contribution,
+        expected_local_input,
+    ):
+        """Expert GTP shards are summed while replicated parameters contribute once."""
+
+        class _ExpertGTPModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.tensor([4.0], device="cuda"))
+                self.weight.allreduce = False
+                self.weight.is_gtp_weight_remat = True
+                self.bias = torch.nn.Parameter(torch.tensor([2.0], device="cuda"))
+                self.bias.allreduce = False
+
+        _patch_pg_collection.expt_gtp_remat = object()
+        model = _ExpertGTPModel()
+        duplicate_filter = mock.MagicMock(return_value=True)
+        expert_gtp_inputs = []
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.expt_gtp_remat:
+                expert_gtp_inputs.append(tensor.item())
+                tensor.add_(remote_contribution)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            duplicate_filter,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_rank",
+            lambda group: expert_gtp_rank if group is _patch_pg_collection.expt_gtp_remat else 0,
+        )
+        monkeypatch.setattr(
+            "torch.distributed.get_process_group_ranks",
+            lambda group: [0] if group is _patch_pg_collection.mp else [1],
+        )
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(model, mock_model_config_fp32)
+
+        assert expert_gtp_inputs == pytest.approx([expected_local_input])
+        assert actual_norm == pytest.approx(math.sqrt(29.0))
+        duplicate_filter.assert_called_once_with(
+            model.bias,
+            tp_group=_patch_pg_collection.tp,
+            expert_tp_group=_patch_pg_collection.expt_tp,
+        )
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -2225,8 +3188,9 @@ class TestCalcParamsL2Norm:
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm with sharded main params (distributed optimizer)."""
+        """Test dense sharded main params reduce over ordinary DP/CP."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -2243,9 +3207,71 @@ class TestCalcParamsL2Norm:
 
         result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-        # Should use sharded params path and call all_reduce
+        dense_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.dp_cp
+        )
+        expert_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.expt_dp
+        )
+        assert dense_sharded_reduce.args[0].item() == pytest.approx(13.0)
+        assert expert_sharded_reduce.args[0].item() == pytest.approx(0.0)
         assert isinstance(result, float)
         assert result > 0
+
+    def test_bf16_sharded_dense_and_expert_norm_uses_matching_dp_groups(
+        self,
+        monkeypatch,
+        mock_model_config_bf16,
+        _patch_pg_collection,
+    ):
+        """Dense and expert optimizer shards contribute through their matching DP groups."""
+
+        class _DenseAndExpertModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16, device="cuda"))
+                self.expert.allreduce = False
+
+                self.dense.main_param = torch.tensor([2.0], device="cuda")
+                self.dense.main_param_sharded = True
+                self.expert.main_param = torch.tensor([3.0], device="cuda")
+                self.expert.main_param_sharded = True
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.dp_cp:
+                tensor.add_(12.0)
+            elif group is _patch_pg_collection.expt_dp:
+                tensor.add_(16.0)
+            elif group is _patch_pg_collection.expt_gtp_remat:
+                pass
+            elif group is not _patch_pg_collection.mp:
+                raise AssertionError("unexpected reduction group")
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            lambda param, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr("torch.distributed.get_process_group_ranks", lambda group: [0])
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(
+            _DenseAndExpertModel(),
+            mock_model_config_bf16,
+            force_create_fp32_copy=False,
+        )
+
+        # Dense: 2**2 local + 12 remote over DP/CP. Expert: 3**2 local + 16 remote over expert DP.
+        assert actual_norm == pytest.approx(math.sqrt(41.0))
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -2369,13 +3395,14 @@ class TestCalcParamsL2Norm:
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    def test_tp_duplicate_params(
+    def test_duplicate_filter_receives_tp_and_expert_tp_groups(
         self,
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_fp32,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm skips TP duplicate parameters."""
+        """Test duplicate filtering receives both tensor-parallel groups."""
         model = torch.nn.Linear(5, 5, bias=False).cuda()
 
         # Setup mocks
@@ -2396,6 +3423,99 @@ class TestCalcParamsL2Norm:
 
             # Should be 0 since all params are TP duplicates
             assert result == pytest.approx(0.0, abs=1e-5)
+            mock_is_not_tp_dup.assert_called_once_with(
+                model.weight,
+                tp_group=_patch_pg_collection.tp,
+                expert_tp_group=_patch_pg_collection.expt_tp,
+            )
+
+    def test_moe_param_norm_counts_logical_parameter_when_tp_ranks_differ(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+    ):
+        """Expert parameters use the expert-TP rank when it differs from regular TP."""
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        class _MixedModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert.allreduce = False
+
+        regular_tp_group = _RankGroup(rank=1)
+        expert_tp_group = _RankGroup(rank=0)
+        reduce_group = _RankGroup(rank=0)
+        pg_collection = SimpleNamespace(
+            tp=regular_tp_group,
+            expt_tp=expert_tp_group,
+            dp_cp=reduce_group,
+            expt_dp=reduce_group,
+            expt_gtp_remat=reduce_group,
+            gtp_remat=reduce_group,
+            mp=reduce_group,
+            tp_ep_pp=reduce_group,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: pg_collection,
+        )
+
+        with (
+            mock.patch(
+                "megatron.core.tensor_parallel.layers.get_tensor_model_parallel_rank",
+                return_value=regular_tp_group.rank(),
+            ),
+            mock.patch("torch.distributed.get_process_group_ranks", return_value=[0]),
+            mock.patch("torch.distributed.all_reduce"),
+        ):
+            actual_norm = calc_params_l2_norm(_MixedModel(), mock_model_config_fp32)
+
+        assert actual_norm == pytest.approx(2.0)
+
+    def test_real_mcore_duplicate_filter_honors_expert_tp_group(self):
+        """Guard the Bridge<->MCore contract for expert-parameter duplicate filtering.
+
+        ``calc_params_l2_norm`` calls MCore's ``param_is_not_tensor_parallel_duplicate`` with an
+        ``expert_tp_group`` so that ``allreduce=False`` expert parameters de-duplicate over expert
+        tensor parallel instead of regular TP. Every other test in this class mocks that function,
+        so they would still pass against an MCore build that dropped the ``expert_tp_group`` kwarg --
+        silently undercounting expert parameter norms. Exercise the real function here so a pinned
+        MCore that regresses below this contract fails loudly (``TypeError`` or wrong result) rather
+        than degrading the training-log norm in production.
+        """
+        from megatron.core.tensor_parallel.layers import param_is_not_tensor_parallel_duplicate
+
+        assert "expert_tp_group" in inspect.signature(param_is_not_tensor_parallel_duplicate).parameters
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        duplicate_regular_tp = _RankGroup(rank=1)  # would be dropped as a regular-TP duplicate
+        primary_expert_tp = _RankGroup(rank=0)  # but is the primary shard on expert TP
+
+        expert_param = SimpleNamespace(allreduce=False)
+        dense_param = SimpleNamespace(allreduce=True)
+
+        # Expert param must route through expert_tp_group (rank 0 -> kept), not regular TP (rank 1).
+        assert param_is_not_tensor_parallel_duplicate(
+            expert_param, tp_group=duplicate_regular_tp, expert_tp_group=primary_expert_tp
+        )
+        # Dense param still de-duplicates against the regular TP group (rank 1 -> dropped).
+        assert not param_is_not_tensor_parallel_duplicate(
+            dense_param, tp_group=duplicate_regular_tp, expert_tp_group=primary_expert_tp
+        )
 
     @mock.patch("megatron.bridge.training.utils.train_utils.calc_dtensor_params_l2_norm")
     def test_megatron_fsdp_path(self, mock_calc_dtensor_norm, mock_model_config_fp32):
@@ -2633,13 +3753,7 @@ class TestCalcParamsL2Norm:
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
     ):
-        """Test calc_params_l2_norm when main_param is None with main_param_sharded=False.
-
-        This is an edge case that currently causes an error because None is added to
-        params_data, and multi_tensor_l2norm doesn't accept None values. This test
-        documents the current behavior - ideally the code should handle this more
-        gracefully (e.g., skip None values or fallback to creating FP32 copy).
-        """
+        """Test calc_params_l2_norm falls back when a non-sharded main_param is None."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -2654,11 +3768,12 @@ class TestCalcParamsL2Norm:
             param.main_param = None
             param.main_param_sharded = False
 
-        # This currently raises a TypeError because None is passed to multi_tensor_l2norm
-        with pytest.raises(TypeError, match="incompatible function arguments"):
-            calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-    # ==================== MoE BF16 main_param tests ====================
+        expected_norm = 5.0  # sqrt(25 * 1.0^2)
+        assert result == pytest.approx(expected_norm, rel=1e-3)
+
+    # ==================== MoE BF16 main_param tests =============
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -2725,12 +3840,9 @@ class TestCalcParamsL2Norm:
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm with MoE params using sharded main_param (distributed optimizer).
-
-        When MoE params have main_param_sharded=True, they should be added to
-        sharded_params_data for proper all-reduce across DP groups.
-        """
+        """Test expert sharded main params reduce over expert DP."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -2748,7 +3860,14 @@ class TestCalcParamsL2Norm:
 
         result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-        # Should use sharded params path and call all_reduce
+        dense_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.dp_cp
+        )
+        expert_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.expt_dp
+        )
+        assert dense_sharded_reduce.args[0].item() == pytest.approx(0.0)
+        assert expert_sharded_reduce.args[0].item() == pytest.approx(13.0)
         assert isinstance(result, float)
         assert result > 0
 
@@ -2905,11 +4024,7 @@ class TestCalcParamsL2Norm:
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
     ):
-        """Test MoE params when main_param is None with main_param_sharded=False.
-
-        This is an edge case that causes an error because None is added to
-        moe_params_data, and multi_tensor_l2norm doesn't accept None values.
-        """
+        """Test MoE norm falls back when a non-sharded main_param is None."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -2925,9 +4040,10 @@ class TestCalcParamsL2Norm:
             param.main_param = None
             param.main_param_sharded = False
 
-        # This currently raises a TypeError because None is passed to multi_tensor_l2norm
-        with pytest.raises(TypeError, match="incompatible function arguments"):
-            calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        expected_norm = 5.0  # sqrt(25 * 1.0^2)
+        assert result == pytest.approx(expected_norm, rel=1e-3)
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -2981,3 +4097,516 @@ class TestCalcParamsL2Norm:
         # Both layers contribute: sqrt(25 + 25) = sqrt(50)
         expected_norm = math.sqrt(50)
         assert result == pytest.approx(expected_norm, rel=1e-5)
+
+
+class TestStartMemoryHistoryRecording:
+    """Tests for start_memory_history_recording.
+
+    Verifies the four guard paths (None config, disabled flag, rank not in
+    profile_ranks, happy path) and that the happy path wires up the CUDA
+    allocator trace + OOM observer as expected.
+    """
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_no_config_is_noop(self, mock_attach, mock_record):
+        start_memory_history_recording(None)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_disabled_flag_is_noop(self, mock_attach, mock_record):
+        profiling = mock.Mock()
+        profiling.record_memory_history = False
+        profiling.profile_ranks = [0]
+
+        start_memory_history_recording(profiling)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=3)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_rank_not_in_profile_ranks_is_noop(self, mock_attach, mock_record, _mock_rank):
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0, 7]
+
+        start_memory_history_recording(profiling)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=0)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_happy_path_enables_recording_and_attaches_observer(self, mock_attach, mock_record, _mock_rank):
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0]
+        profiling.memory_snapshot_path = "/nemo_run/snapshot.pickle"
+
+        start_memory_history_recording(profiling)
+
+        # Recording enabled with MLM-compatible settings
+        mock_record.assert_called_once()
+        _pos, kwargs = mock_record.call_args
+        assert _pos[0] is True
+        assert kwargs["trace_alloc_max_entries"] == 100_000
+        assert kwargs["trace_alloc_record_context"] is True
+
+        # OOM observer was attached
+        mock_attach.assert_called_once()
+        oom_cb = mock_attach.call_args.args[0]
+        assert callable(oom_cb)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=0)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._snapshot", return_value={"x": 1})
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_oom_observer_writes_rank_tagged_path(self, mock_attach, mock_record, mock_snapshot, _mock_rank, tmp_path):
+        """OOM observer must inject the rank tag via splitext, not as a prefix,
+        so absolute memory_snapshot_path values stay absolute."""
+        snapshot_dir = tmp_path / "run"
+        snapshot_dir.mkdir()
+        snapshot_path = str(snapshot_dir / "snapshot.pickle")
+
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0]
+        profiling.memory_snapshot_path = snapshot_path
+
+        start_memory_history_recording(profiling)
+        oom_cb = mock_attach.call_args.args[0]
+
+        # Fire the observer as torch would (device, alloc, device_alloc, device_free).
+        oom_cb(0, 0, 0, 0)
+
+        expected = snapshot_dir / "snapshot_oom_rank-0.pickle"
+        assert expected.exists(), f"OOM observer should have written {expected}"
+        # The snapshot content is the mocked dict, pickled.
+        import pickle
+
+        with expected.open("rb") as f:
+            assert pickle.load(f) == {"x": 1}
+
+
+class TestMoeMetricFanoutWriter:
+    """Tests for the MoE/MTP metric fanout writer (issue #2989).
+
+    MCore's `track_moe_metrics` and `track_mtp_metrics` only forward to
+    TensorBoard and W&B. The fanout writer wraps the TB writer so the same
+    `add_scalar` calls also reach MLFlow and Comet.
+    """
+
+    def test_build_returns_original_writer_when_no_fanout_targets(self):
+        """No MLFlow / Comet → no wrapping; the real TB writer is returned as-is."""
+        from megatron.bridge.training.utils.train_utils import _build_moe_metric_writer
+
+        sentinel = object()
+        result = _build_moe_metric_writer(sentinel, comet_logger=None, mlflow_logger=None)
+        assert result is sentinel
+
+    def test_build_returns_wrapper_when_only_comet_present(self):
+        """Comet alone is enough to trigger wrapping (TB may legitimately be None)."""
+        from megatron.bridge.training.utils.train_utils import (
+            _build_moe_metric_writer,
+            _MoeMetricFanoutWriter,
+        )
+
+        result = _build_moe_metric_writer(None, comet_logger=mock.MagicMock(), mlflow_logger=None)
+        assert isinstance(result, _MoeMetricFanoutWriter)
+
+    def test_build_returns_wrapper_when_only_mlflow_present(self):
+        """MLFlow alone is enough to trigger wrapping."""
+        from megatron.bridge.training.utils.train_utils import (
+            _build_moe_metric_writer,
+            _MoeMetricFanoutWriter,
+        )
+
+        result = _build_moe_metric_writer(None, comet_logger=None, mlflow_logger=mock.MagicMock())
+        assert isinstance(result, _MoeMetricFanoutWriter)
+
+    def test_add_scalar_forwards_to_all_present_sinks(self):
+        """add_scalar fans out to TB writer + Comet + MLFlow when all are present."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        tb = mock.MagicMock()
+        comet = mock.MagicMock()
+        mlflow = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb, comet_logger=comet, mlflow_logger=mlflow)
+
+        writer.add_scalar("load_balancing_loss", 1.234, 42)
+
+        tb.add_scalar.assert_called_once_with("load_balancing_loss", 1.234, 42)
+        comet.log_metrics.assert_called_once_with({"load_balancing_loss": 1.234}, step=42)
+        # MLFlow goes through the existing sanitizer; the metric and step survive.
+        mlflow_call = mlflow.log_metrics.call_args
+        assert mlflow_call.kwargs == {"step": 42}
+        assert mlflow_call.args[0] == {"load_balancing_loss": 1.234}
+
+    def test_add_scalar_works_when_tb_writer_is_none(self):
+        """No TB writer is fine — Comet / MLFlow still receive the metric."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        writer.add_scalar("z_loss", 0.05, 7)
+
+        comet.log_metrics.assert_called_once_with({"z_loss": 0.05}, step=7)
+
+    def test_add_scalar_sanitizes_zero_d_tensor(self):
+        """0-d torch tensors are converted to Python scalars before MLFlow / Comet."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        tb = mock.MagicMock()
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb, comet_logger=comet, mlflow_logger=None)
+
+        tensor_value = torch.tensor(2.5, dtype=torch.float32)
+        writer.add_scalar("seq_load_balancing_loss", tensor_value, 100)
+
+        # TB receives the original value untouched (TB tolerates tensors).
+        tb.add_scalar.assert_called_once_with("seq_load_balancing_loss", tensor_value, 100)
+        # Comet receives a Python float, not a torch tensor.
+        comet_call_metrics = comet.log_metrics.call_args.args[0]
+        assert isinstance(comet_call_metrics["seq_load_balancing_loss"], float)
+        assert comet_call_metrics["seq_load_balancing_loss"] == pytest.approx(2.5)
+
+    def test_add_scalar_passes_through_python_scalar_unchanged(self):
+        """Plain Python floats / ints flow through to MLFlow / Comet unchanged."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        writer.add_scalar("global_load_balancing_loss", 3, 1)
+
+        comet.log_metrics.assert_called_once_with({"global_load_balancing_loss": 3}, step=1)
+
+    def test_per_layer_calls_each_logged_individually(self):
+        """track_moe_metrics emits one add_scalar per layer in per_layer mode; each fans out."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        for i, value in enumerate([0.1, 0.2, 0.3]):
+            writer.add_scalar(f"moe/load_balancing_loss_layer_{i}", value, 200)
+
+        assert comet.log_metrics.call_count == 3
+        recorded = [(call.args[0], call.kwargs.get("step")) for call in comet.log_metrics.call_args_list]
+        assert recorded == [
+            ({"moe/load_balancing_loss_layer_0": 0.1}, 200),
+            ({"moe/load_balancing_loss_layer_1": 0.2}, 200),
+            ({"moe/load_balancing_loss_layer_2": 0.3}, 200),
+        ]
+
+
+def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+    with torch.no_grad():
+        head.weight.fill_(2.0)
+
+    logits, bias = head(torch.ones(3, 2))
+
+    assert torch.equal(logits, torch.full((3, 1), 4.0))
+    assert logits.dtype == torch.float32
+    assert bias is None
+
+
+def test_linear_for_last_layer_reports_gathered_output() -> None:
+    """GPTModel._postprocess reads output_layer.gather_output for the observation hooks."""
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+
+    assert head.gather_output is True
+
+
+def test_value_head_apis_preserve_positional_call_compatibility() -> None:
+    """The relocated value-head APIs must retain their established positional signatures."""
+    head = LinearForLastLayer(2, 1, False)
+    hook = create_value_head_hook(2, False)
+
+    assert isinstance(head, LinearForLastLayer)
+    assert callable(hook)
+
+
+def test_linear_for_last_layer_supports_bias_and_dropout() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        bias=True,
+        dropout=0.25,
+    )
+
+    assert head.bias is not None
+    assert head.dropout.p == 0.25
+
+
+def test_linear_for_last_layer_supports_model_initialization_policy() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        bias=True,
+        init_method=lambda weight: torch.nn.init.constant_(weight, 0.125),
+    )
+
+    assert torch.equal(head.weight, torch.full_like(head.weight, 0.125))
+    assert torch.equal(head.bias, torch.zeros_like(head.bias))
+
+
+def test_linear_for_last_layer_can_skip_initialization(monkeypatch) -> None:
+    reset_parameters = mock.Mock()
+    monkeypatch.setattr(torch.nn.Linear, "reset_parameters", reset_parameters)
+
+    LinearForLastLayer(2, 1, False, perform_initialization=False)
+
+    reset_parameters.assert_not_called()
+
+
+def test_linear_for_last_layer_reuses_initializer_after_meta_materialization() -> None:
+    with torch.device("meta"):
+        head = LinearForLastLayer(
+            2,
+            1,
+            False,
+            bias=True,
+            init_method=lambda weight: torch.nn.init.constant_(weight, 0.125),
+        )
+
+    head.to_empty(device="cpu")
+    head.reset_parameters()
+
+    assert torch.equal(head.weight, torch.full_like(head.weight, 0.125))
+    assert torch.equal(head.bias, torch.zeros_like(head.bias))
+
+
+def test_linear_for_last_layer_marks_bias_for_sequence_parallel_grad_sync() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=True,
+        bias=True,
+    )
+
+    assert head.weight.sequence_parallel is True
+    assert head.bias is not None
+    assert head.bias.sequence_parallel is True
+
+
+def test_linear_for_last_layer_can_preserve_projection_dtype() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        output_in_fp32=False,
+    ).to(dtype=torch.bfloat16)
+
+    logits, _ = head(torch.ones(2, 2, dtype=torch.bfloat16))
+
+    assert logits.dtype == torch.bfloat16
+
+
+def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> None:
+    tp_group = object()
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=True, tp_group=tp_group)
+    with torch.no_grad():
+        head.weight.fill_(1.0)
+
+    calls = {}
+
+    def fake_gather(tensor, tensor_parallel_output_grad, group):
+        calls["tensor"] = tensor
+        calls["tensor_parallel_output_grad"] = tensor_parallel_output_grad
+        calls["group"] = group
+        return tensor + 1
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.common.heads.tensor_parallel.gather_from_sequence_parallel_region",
+        fake_gather,
+    )
+
+    logits, bias = head(torch.ones(2, 2))
+
+    assert torch.equal(logits, torch.full((2, 1), 3.0))
+    assert torch.equal(calls["tensor"], torch.full((2, 1), 2.0))
+    assert calls["tensor_parallel_output_grad"] is False
+    assert calls["group"] is tp_group
+    assert bias is None
+
+
+def _patch_virtual_pipeline_last_stage(monkeypatch, last_vp_stage: int) -> None:
+    from megatron.core import parallel_state
+
+    def fake_is_pipeline_last_stage(ignore_virtual=False, vp_stage=None) -> bool:
+        del ignore_virtual
+        return vp_stage == last_vp_stage
+
+    monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(parallel_state, "get_virtual_pipeline_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", fake_is_pipeline_last_stage)
+
+
+def _patch_single_pipeline_last_stage(monkeypatch) -> None:
+    from megatron.core import parallel_state
+
+    monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(parallel_state, "get_virtual_pipeline_model_parallel_world_size", lambda: None)
+    monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", lambda: True)
+
+
+def test_create_value_head_hook_replaces_last_virtual_pipeline_chunk(monkeypatch) -> None:
+    _patch_virtual_pipeline_last_stage(monkeypatch, 1)
+
+    model_chunks = [torch.nn.Module(), torch.nn.Module()]
+    hook = create_value_head_hook(hidden_size=4, output_size=2, sequence_parallel=True)
+
+    result = hook(model_chunks)
+
+    assert result is model_chunks
+    assert not hasattr(model_chunks[0], "output_layer")
+    output_layer = model_chunks[1].output_layer
+    assert isinstance(output_layer, LinearForLastLayer)
+    assert output_layer.in_features == 4
+    assert output_layer.out_features == 2
+    assert output_layer.sequence_parallel is True
+
+
+def test_create_value_head_hook_requires_chunk_count_to_match_pipeline_flags(monkeypatch) -> None:
+    _patch_single_pipeline_last_stage(monkeypatch)
+
+    hook = create_value_head_hook(hidden_size=4, sequence_parallel=False)
+
+    with pytest.raises(ValueError, match="Model list length"):
+        hook([torch.nn.Module(), torch.nn.Module()])
+
+
+def test_make_value_model_alias_creates_value_head_hook(monkeypatch) -> None:
+    _patch_single_pipeline_last_stage(monkeypatch)
+
+    model_chunks = [torch.nn.Module()]
+    hook = make_value_model(hidden_size=8, sequence_parallel=False)
+
+    result = hook(model_chunks)
+
+    assert result is model_chunks
+    assert isinstance(model_chunks[0].output_layer, LinearForLastLayer)
+    assert model_chunks[0].output_layer.in_features == 8
+
+
+def test_freeze_moe_router_freezes_router_and_shared_expert_gates() -> None:
+    router = torch.nn.Linear(2, 2)
+    shared_experts = SimpleNamespace(
+        gate_weight=torch.nn.Parameter(torch.ones(2, 2)),
+        gate_bias=torch.nn.Parameter(torch.ones(2)),
+    )
+    layer = SimpleNamespace(mlp=SimpleNamespace(router=router, shared_experts=shared_experts))
+    model = SimpleNamespace(decoder=SimpleNamespace(layers=[layer]))
+
+    result = freeze_moe_router([model])
+
+    assert result == [model]
+    assert router.weight.requires_grad is False
+    assert router.bias.requires_grad is False
+    assert shared_experts.gate_weight.requires_grad is False
+    assert shared_experts.gate_bias.requires_grad is False
+
+
+@pytest.mark.parametrize("repeated, expected", [(False, 4), (True, 3)])
+def test_hybrid_provider_moe_count_without_legacy_flag(repeated, expected):
+    from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+    provider = HybridModelProvider(
+        num_layers=4,
+        hidden_size=128,
+        num_attention_heads=2,
+        hybrid_layer_pattern="MEME/*E/*E",
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=repeated,
+    )
+    assert not provider.is_hybrid_model
+    assert _get_num_moe_layers(provider) == expected
+
+
+@pytest.mark.parametrize("rank", [0, 7])
+def test_empty_profile_ranks_records_on_every_rank(rank):
+    profiling = SimpleNamespace(record_memory_history=True, profile_ranks=[], memory_snapshot_path="snapshot.pkl")
+    with (
+        mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=rank),
+        mock.patch("torch.cuda.memory._record_memory_history") as record,
+        mock.patch("torch._C._cuda_attach_out_of_memory_observer") as attach,
+    ):
+        start_memory_history_recording(profiling)
+    record.assert_called_once()
+    attach.assert_called_once()
+
+
+class TestZeroTokenIterationTracking:
+    """Counting steps whose global token count reduced to zero.
+
+    Such a step reports a substituted 0.0 loss, which is otherwise indistinguishable
+    from a genuine one, so the count is the only signal an all-masked batch happened.
+    """
+
+    def test_counter_is_created_lazily_on_the_flag_device(self):
+        state = SimpleNamespace()
+        accumulate_zero_token_step(state, torch.tensor(True))
+
+        assert isinstance(state._zero_token_iters, torch.Tensor)
+        assert state._zero_token_iters.item() == 1
+
+    def test_only_empty_steps_increment_the_counter(self):
+        state = SimpleNamespace()
+        for empty in [True, False, True, True, False]:
+            accumulate_zero_token_step(state, torch.tensor(empty))
+
+        assert _consume_zero_token_iters(state) == 3
+
+    def test_accumulation_reuses_the_same_buffer(self):
+        state = SimpleNamespace()
+        accumulate_zero_token_step(state, torch.tensor(True))
+        buffer = state._zero_token_iters
+        accumulate_zero_token_step(state, torch.tensor(True))
+
+        assert state._zero_token_iters is buffer
+
+    def test_consume_resets_so_counts_are_per_interval(self):
+        state = SimpleNamespace()
+        accumulate_zero_token_step(state, torch.tensor(True))
+
+        assert _consume_zero_token_iters(state) == 1
+        assert _consume_zero_token_iters(state) == 0
+
+    def test_ranks_without_a_counter_report_zero(self):
+        # Non-last pipeline stages never reduce a loss, so they never create one.
+        assert _consume_zero_token_iters(SimpleNamespace()) == 0
+
+    def test_mocked_state_does_not_masquerade_as_a_counter(self):
+        # getattr on a MagicMock returns a child mock rather than None.
+        assert _consume_zero_token_iters(mock.MagicMock()) == 0
+
+
+class TestStepLossScales:
+    """MoE/MTP logging scales under the packing scheduler's per-step microbatch count."""
+
+    def test_step_num_microbatches_prefers_the_scheduled_count(self, monkeypatch):
+        from megatron.bridge.training.utils import train_utils
+
+        monkeypatch.setattr(train_utils, "get_num_microbatches", lambda: 16)
+        assert train_utils._step_num_microbatches(SimpleNamespace(global_batch_packing_num_microbatches=5)) == 5
+        assert train_utils._step_num_microbatches(SimpleNamespace(global_batch_packing_num_microbatches=None)) == 16
+        assert train_utils._step_num_microbatches(SimpleNamespace()) == 16
+
+    @pytest.mark.parametrize(("per_token_tracker", "expected"), [(True, 1.0), (False, 0.25)])
+    def test_mtp_loss_scale_follows_the_tracker_mode(self, monkeypatch, per_token_tracker, expected):
+        from megatron.bridge.training.utils import train_utils
+
+        monkeypatch.setattr(train_utils, "get_num_microbatches", lambda: 16)
+        tracker = {"calculate_per_token_loss": True} if per_token_tracker else {}
+        monkeypatch.setattr(train_utils.MTPLossLoggingHelper, "tracker", tracker)
+        state = SimpleNamespace(global_batch_packing_num_microbatches=4)
+        # A per-token tracker already holds sum(loss) / sum(tokens) for the step.
+        assert train_utils._mtp_loss_scale(state) == expected

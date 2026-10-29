@@ -14,6 +14,15 @@
 
 """Compatibility utilities for HuggingFace transformers 5.0+ configs."""
 
+import transformers.utils.import_utils as _hf_import_utils
+
+
+# Shim for is_torch_fx_available, removed in transformers 5.x but still
+# referenced by some custom model repos (e.g. Kimi-K2's modeling_deepseek.py).
+# torch.fx has been stable since PyTorch 1.10, so always return True.
+if not hasattr(_hf_import_utils, "is_torch_fx_available"):
+    _hf_import_utils.is_torch_fx_available = lambda: True
+
 
 def rope_theta_from_hf(config) -> float:
     """Extract rope_theta from a HuggingFace config.
@@ -75,6 +84,38 @@ def rope_theta_from_hf(config) -> float:
         "(transformers <5.0), 'rope_parameters[\"rope_theta\"]', "
         '\'rope_parameters["global"]["base"]\', \'rope_parameters["full_attention"]["rope_theta"]\', '
         "or 'default_theta[\"global\"]' (transformers >=5.0)."
+    )
+
+
+def partial_rotary_factor_from_hf(config) -> float:
+    """Extract partial_rotary_factor from a HuggingFace config.
+
+    Transformers 5.19 and earlier expose it as a ``partial_rotary_factor``
+    attribute (and also in ``rope_parameters``). Transformers 5.20+ keeps it
+    only in the flat ``rope_parameters`` dictionary.
+
+    Args:
+        config: HuggingFace configuration object.
+
+    Returns:
+        float: The fraction of each attention head dimension that gets rotary embeddings.
+
+    Raises:
+        ValueError: If partial_rotary_factor is not found in either format.
+    """
+    partial_rotary_factor = getattr(config, "partial_rotary_factor", None)
+    if partial_rotary_factor is not None:
+        return partial_rotary_factor
+
+    rope_parameters = getattr(config, "rope_parameters", None)
+    if isinstance(rope_parameters, dict):
+        partial_rotary_factor = rope_parameters.get("partial_rotary_factor")
+        if partial_rotary_factor is not None:
+            return partial_rotary_factor
+
+    raise ValueError(
+        "partial_rotary_factor not found in config. Expected either a 'partial_rotary_factor' attribute "
+        "(transformers <5.20) or 'rope_parameters[\"partial_rotary_factor\"]' (transformers >=5.20)."
     )
 
 
@@ -181,4 +222,40 @@ def rope_scaling_factor_from_hf(config, default: float = 1.0) -> float:
                 return factor
 
     # Return default if no scaling factor found
+    return default
+
+
+def full_attention_interval_from_hf(config, default: int = 4) -> int | list[int]:
+    """Extract the full-attention layout from a Qwen3-Next-style HuggingFace config.
+
+    In transformers <5.5 the interval was stored directly as
+    ``config.full_attention_interval``. In transformers >=5.5 the field was
+    removed; the kwarg is consumed in ``__post_init__`` and converted into
+    ``config.layer_types`` (a list whose ``i``-th entry is ``"linear_attention"``
+    or ``"full_attention"`` according to ``(i + 1) % interval``). This helper
+    handles both layouts.
+
+    Args:
+        config: HuggingFace configuration object (e.g. ``Qwen3NextConfig``).
+        default: Value to return if neither layout is present.
+
+    Returns:
+        int | list[int]: The legacy interval or the exact per-layer pattern,
+        where 1 is linear attention and 0 is full attention.
+
+    Raises:
+        ValueError: If an explicit layer type is unsupported.
+    """
+    layer_types = getattr(config, "layer_types", None)
+    if isinstance(layer_types, list) and layer_types:
+        supported_layer_types = {"linear_attention": 1, "full_attention": 0}
+        try:
+            return [supported_layer_types[layer_type] for layer_type in layer_types]
+        except KeyError as error:
+            raise ValueError(f"Unsupported attention layer type: {error.args[0]}") from error
+
+    interval = getattr(config, "full_attention_interval", None)
+    if interval is not None:
+        return interval
+
     return default

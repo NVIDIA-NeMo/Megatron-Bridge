@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Apply recipe process settings before executing performance training."""
+
+import logging
+import os
+import sys
+from pathlib import Path
+
+from argument_parser import parse_cli_args
+
+
+logger = logging.getLogger(__name__)
+
+
+ENTRYPOINT_PERFORMANCE = "run_script.py"
+ENTRYPOINT_RECIPE = "run_recipe.py"
+
+
+def _prepare_recipe_and_target(args, cli_overrides: list[str]):
+    """Resolve the effective recipe environment and selected training script."""
+    if args.use_recipes:
+        from run_recipe import _prepare_recipe
+
+        recipe = _prepare_recipe(args, cli_overrides, environment_only=True)
+        return recipe, ENTRYPOINT_RECIPE
+
+    from run_script import _prepare_perf_recipe
+
+    recipe = _prepare_perf_recipe(args, cli_overrides)
+    return recipe, ENTRYPOINT_PERFORMANCE
+
+
+def _apply_recipe_environment(recipe) -> None:
+    """Install recipe defaults while preserving explicit process values."""
+    for name, value in recipe.env_vars.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Environment variable names must be non-empty strings.")
+        if not isinstance(value, (str, int, float, bool)):
+            raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
+        os.environ.setdefault(name, str(value))
+
+
+def uses_ncclep(recipe) -> bool:
+    """Return True when the resolved recipe dispatches MoE tokens through NCCL EP."""
+    model = getattr(recipe, "model", None)
+    return getattr(model, "moe_flex_dispatcher_backend", None) == "ncclep"
+
+
+def _apply_one_gpu_per_rank(recipe) -> None:
+    """Restrict CUDA_VISIBLE_DEVICES to this rank's GPU for NCCL EP recipes.
+
+    The NCCL EP buffers are allocated with ncclMemAlloc, which maps them into every GPU visible to
+    the process; on Grace+Blackwell nodes each mapped GPU adds ~11 us to every munmap of the
+    process, i.e. host-side overhead on every training step. Runs before CUDA initialization. If
+    the launcher already exposes exactly one device, nothing changes; if it exposes several
+    (Slurm's default per-node list), the local rank selects one. ``run_script.py`` then selects
+    device 0 (``dist.external_gpu_device_mapping``).
+    """
+    if not uses_ncclep(recipe):
+        return
+    local_rank = os.environ.get("LOCAL_RANK") or os.environ.get("SLURM_LOCALID")
+    if local_rank is None:
+        return
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    devices = visible.split(",") if visible else None
+    if devices is not None and len(devices) == 1:
+        return
+    if devices is None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = local_rank
+    elif int(local_rank) < len(devices):
+        os.environ["CUDA_VISIBLE_DEVICES"] = devices[int(local_rank)]
+    else:
+        logger.warning(
+            "NCCL EP one-GPU-per-rank binding skipped: local rank %s is not in CUDA_VISIBLE_DEVICES=%s; "
+            "all listed devices stay visible to this rank.",
+            local_rank,
+            visible,
+        )
+
+
+def _exec_training(target_name: str) -> None:
+    """Replace the bootstrap process with the selected training entrypoint."""
+    target_path = Path(__file__).resolve().parent / target_name
+    os.execvpe(
+        sys.executable,
+        [sys.executable, str(target_path), *sys.argv[1:]],
+        dict(os.environ),
+    )
+
+
+def main() -> None:
+    """Prepare process settings, then execute one training entrypoint."""
+    parser = parse_cli_args()
+    args, cli_overrides = parser.parse_known_args()
+    recipe, target_name = _prepare_recipe_and_target(args, cli_overrides)
+    _apply_recipe_environment(recipe)
+    _apply_one_gpu_per_rank(recipe)
+    _exec_training(target_name)
+
+
+if __name__ == "__main__":
+    main()

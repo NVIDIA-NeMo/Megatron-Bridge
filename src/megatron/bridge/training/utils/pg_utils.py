@@ -12,11 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
+from dataclasses import fields
+from typing import Optional, Union
 
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import get_attr_wrapped_model
+from megatron.core.utils import get_attr_wrapped_model, get_model_config
+
+from megatron.bridge.training.utils.flop_utils import get_model_chunk_vp_stage
 
 
 def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> ProcessGroupCollection:
@@ -46,3 +55,72 @@ def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> Pro
         if "couldn't find attribute pg_collection" in str(e):
             return ProcessGroupCollection.use_mpu_process_groups()
         raise
+
+
+def pipeline_stage_roles(model: MegatronModule) -> tuple[bool, bool]:
+    """Return ``(is_first, is_last)`` for this rank's model chunk.
+
+    Both are True without pipeline parallelism, so callers can fall through to the
+    ordinary single-stage path. Virtual pipeline chunks count as first or last only
+    when they are the edge chunk of an edge stage.
+
+    Args:
+        model: One model chunk, possibly wrapped by DDP or a precision wrapper.
+
+    Returns:
+        Whether the chunk is the first and whether it is the last stage of the pipeline.
+    """
+    pg_collection = get_pg_collection(model)
+    vp_stage = get_model_chunk_vp_stage(model)
+    vp_size = getattr(get_model_config(model), "virtual_pipeline_model_parallel_size", None)
+    is_first = is_pp_first_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    is_last = is_pp_last_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    return is_first, is_last
+
+
+class DistTrainProcessGroupCollection(ProcessGroupCollection):
+    """Process group collection for dist train."""
+
+    def __init__(self, pg_collection: ProcessGroupCollection, language_model_module_name: Optional[str] = None):
+        """Initialize the dist train process group collection.
+
+        Args:
+            pg_collection: The process group collection.
+            language_model_module_name: The name of the language model module.
+        """
+        for field_info in fields(ProcessGroupCollection):
+            setattr(
+                self,
+                field_info.name,
+                getattr(pg_collection, field_info.name, None),
+            )
+        self.language_model_module_name = language_model_module_name
+        if language_model_module_name is not None:
+            self.language_model_collection = pg_collection
+        else:
+            self.language_model_collection = None
+
+    def get_language_model_cp_size(self) -> int:
+        """Get context parallel size for the language model.
+
+        Returns:
+            Context parallel size for the language model.
+
+        Raises:
+            ValueError: If no language model is specified for this collection.
+        """
+        if self.language_model_collection is None:
+            raise ValueError("No language model specified for this collection")
+        return self.language_model_collection.cp.size()
+
+    def has_language_model(self) -> bool:
+        """Check if this rank has a language model.
+
+        Returns:
+            True if this rank has a language model, False otherwise.
+        """
+        return self.language_model_module_name is not None

@@ -34,6 +34,10 @@ from torch import Tensor
 from transformers.models.glm4v.modeling_glm4v import Glm4vModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.training.utils.packed_seq_utils import (
+    repack_mcore_thd_position_ids,
+    unpack_mcore_thd_tensor_for_position_ids,
+)
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
@@ -141,6 +145,7 @@ class GLM45VModel(MegatronModule):
         self.get_image_features = types.MethodType(Glm4vModel.get_image_features, self)
         self.get_video_features = types.MethodType(Glm4vModel.get_video_features, self)
         self.get_rope_index = types.MethodType(Glm4vModel.get_rope_index, self)
+        self.get_vision_position_ids = types.MethodType(Glm4vModel.get_vision_position_ids, self)
         self.get_placeholder_mask = types.MethodType(Glm4vModel.get_placeholder_mask, self)
 
         # Some config requires from HF vision tower
@@ -160,6 +165,7 @@ class GLM45VModel(MegatronModule):
         pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         packed_seq_params: Optional["PackedSeqParams"] = None,
@@ -216,18 +222,54 @@ class GLM45VModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
             if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         # Compute MRoPE position_ids on ALL pipeline stages
         # Each stage has input_ids and visual grid info from the data iterator
         # This avoids any broadcasting overhead
-        hf_attention_mask = None
+        #
+        # Collate-time batching may pad input_ids while mm_token_type_ids from
+        # visual_inputs stays at the processor-produced length. Align them and
+        # build an attention mask so get_rope_index fills only real-token positions.
+        rope_input_ids = input_ids
+        rope_mm_token_type_ids = mm_token_type_ids
+        packed_row_starts = None
+        packed_row_lengths = None
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+            rope_input_ids, hf_attention_mask, packed_row_starts, packed_row_lengths = (
+                unpack_mcore_thd_tensor_for_position_ids(input_ids, packed_seq_params)
+            )
+            if mm_token_type_ids is None:
+                raise ValueError("Packed GLM-VL batches require mm_token_type_ids.")
+            rope_mm_token_type_ids, mm_attention_mask, mm_row_starts, mm_row_lengths = (
+                unpack_mcore_thd_tensor_for_position_ids(mm_token_type_ids, packed_seq_params)
+            )
+            if mm_row_starts != packed_row_starts or mm_row_lengths != packed_row_lengths:
+                raise ValueError("Packed GLM-VL token types must use the same sequence layout as input_ids.")
+            if not torch.equal(mm_attention_mask, hf_attention_mask):
+                raise ValueError("Packed GLM-VL token types must match the input_ids row mask.")
+        else:
+            seq_len = input_ids.shape[1]
+            if rope_mm_token_type_ids is not None and rope_mm_token_type_ids.shape[1] < seq_len:
+                pad_len = seq_len - rope_mm_token_type_ids.shape[1]
+                rope_mm_token_type_ids = torch.nn.functional.pad(rope_mm_token_type_ids, (0, pad_len), value=0)
+            # Build attention mask: 1 for real tokens, 0 for collate-time padding.
+            hf_attention_mask = (input_ids != 0).long()
         position_ids, rope_deltas = self.get_rope_index(
-            input_ids,
-            image_grid_thw,
-            video_grid_thw,
+            rope_input_ids,
+            mm_token_type_ids=rope_mm_token_type_ids,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
             attention_mask=hf_attention_mask,
         )
+        if packed_row_starts is not None and packed_row_lengths is not None:
+            position_ids = repack_mcore_thd_position_ids(
+                position_ids,
+                padded_starts=packed_row_starts,
+                lengths=packed_row_lengths,
+                total_length=input_ids.size(1),
+            )
 
         # Forward through Megatron language model
         outputs = self.language_model.forward(

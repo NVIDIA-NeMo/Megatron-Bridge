@@ -1,27 +1,85 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """DeepSeek recipe exports.
 
 This module re-exports AutoBridge-based pretrain config helpers for DeepSeek
-models (V2, V2-Lite, V3).
+models (V3, V4).
 """
-
-# DeepSeek V2/V2-Lite
-from .deepseek_v2 import (
-    deepseek_v2_lite_pretrain_config,
-    deepseek_v2_pretrain_config,
-)
 
 # DeepSeek V3
 from .deepseek_v3 import (
     deepseek_v3_pretrain_config,
     deepseek_v3_pretrain_config_32nodes,
+    set_deepseek_v3_pipeline_model_parallel_layout,
+)
+
+# DeepSeek V4
+from .deepseek_v4 import (
+    deepseek_v4_flash_no_mtp_sft_config,
+    deepseek_v4_flash_peft_openmath_thinking_packed_config,
+    deepseek_v4_flash_pretrain_config,
+    deepseek_v4_flash_pretrain_gb200_config,
+    deepseek_v4_flash_pretrain_muon_config,
+    deepseek_v4_flash_pretrain_muon_gb200_config,
+    deepseek_v4_flash_pretrain_mxfp8_config,
+    deepseek_v4_flash_pretrain_mxfp8_gb200_config,
+    deepseek_v4_flash_sft_config,
+    deepseek_v4_flash_sft_openmath_thinking_packed_config,
+    deepseek_v4_pro_pretrain_config,
+    deepseek_v4_pro_pretrain_mxfp8_config,
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
+from .gb200.deepseek_v4 import (
+    deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config,
+    deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config,
+)
+from .gb300.deepseek_v4 import (
+    deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config,
+    deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
 )
 
 
 __all__ = [
-    # DeepSeek V2/V2-Lite
-    "deepseek_v2_pretrain_config",
-    "deepseek_v2_lite_pretrain_config",
     # DeepSeek V3
     "deepseek_v3_pretrain_config",
     "deepseek_v3_pretrain_config_32nodes",
+    "set_deepseek_v3_pipeline_model_parallel_layout",
+    # DeepSeek V4
+    "deepseek_v4_flash_peft_openmath_thinking_packed_config",
+    "deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config",
+    "deepseek_v4_flash_pretrain_config",
+    "deepseek_v4_flash_pretrain_gb200_config",
+    "deepseek_v4_flash_pretrain_muon_config",
+    "deepseek_v4_flash_pretrain_muon_gb200_config",
+    "deepseek_v4_flash_pretrain_mxfp8_config",
+    "deepseek_v4_flash_pretrain_mxfp8_gb200_config",
+    "deepseek_v4_flash_sft_config",
+    "deepseek_v4_flash_sft_openmath_thinking_packed_config",
+    "deepseek_v4_flash_no_mtp_sft_config",
+    "deepseek_v4_pro_pretrain_config",
+    "deepseek_v4_pro_pretrain_mxfp8_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config",
+    "deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config",
+    "deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config",
+    "deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config",
+    "set_deepseek_v4_pipeline_model_parallel_layout",
 ]

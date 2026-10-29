@@ -12,20 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import fields
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
 
+from megatron.bridge.models.common.heads import LinearForLastLayer
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
+from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import (
+    Qwen3VLForTokenClassification,
+    _token_classification_output_processor,
+)
+from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import (
+    Qwen35TokenClassificationBridge,
+    Qwen35VLBridge,
+    Qwen35VLMoEBridge,
+)
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
     _TRANSFORMERS_HAS_QWEN3_5_MOE,
+    _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION,
+    Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
 )
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.instantiate_utils import instantiate
 
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
@@ -107,7 +125,8 @@ def _make_vision_config():
 
 
 def _make_mock_pretrained(text_config, vision_config, tie_word_embeddings=False):
-    pretrained = Mock(spec=PreTrainedVLM)
+    """Create a minimal VLM pretrained wrapper for provider tests."""
+    pretrained = Mock(spec=PreTrainedCausalLM)
     config = Mock()
     config.text_config = text_config
     config.vision_config = vision_config
@@ -124,17 +143,6 @@ def _make_mock_pretrained(text_config, vision_config, tie_word_embeddings=False)
 # =====================================================================
 # Tests for Qwen35VLBridge (Dense)
 # =====================================================================
-
-
-class TestQwen35VLBridgeInitialization:
-    def test_bridge_initialization(self):
-        bridge = Qwen35VLBridge()
-        assert isinstance(bridge, Qwen35VLBridge)
-
-    def test_bridge_has_required_methods(self):
-        bridge = Qwen35VLBridge()
-        assert hasattr(bridge, "provider_bridge") and callable(bridge.provider_bridge)
-        assert hasattr(bridge, "mapping_registry") and callable(bridge.mapping_registry)
 
 
 class TestQwen35VLBridgeProviderBridge:
@@ -163,7 +171,7 @@ class TestQwen35VLBridgeProviderBridge:
         provider = bridge.provider_bridge(mock_pretrained)
         assert provider.layernorm_zero_centered_gamma is True
         assert provider.attention_output_gate is True
-        assert provider.experimental_attention_variant == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gdn"
         assert provider.linear_attention_freq == 4
 
     def test_provider_bridge_gdn_params(self, bridge, mock_pretrained):
@@ -209,7 +217,7 @@ class TestQwen35VLBridgeProviderBridge:
     def test_provider_bridge_tied_embeddings(self, bridge):
         text_config = _make_dense_text_config()
         text_config.tie_word_embeddings = True
-        pretrained = _make_mock_pretrained(text_config, _make_vision_config())
+        pretrained = _make_mock_pretrained(text_config, _make_vision_config(), tie_word_embeddings=True)
         provider = bridge.provider_bridge(pretrained)
         assert provider.share_embeddings_and_output_weights is True
 
@@ -276,15 +284,200 @@ class TestQwen35VLBridgeMappingRegistry:
 
 
 # =====================================================================
-# Tests for Qwen35VLMoEBridge
+# Tests for Qwen35TokenClassificationBridge
 # =====================================================================
 
 
-@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
-class TestQwen35VLMoEBridgeInitialization:
-    def test_bridge_initialization(self):
-        bridge = Qwen35VLMoEBridge()
-        assert isinstance(bridge, Qwen35VLMoEBridge)
+@pytest.mark.skipif(
+    not _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION,
+    reason="transformers does not have Qwen3.5 token-classification support",
+)
+class TestQwen35TokenClassificationBridge:
+    @pytest.fixture
+    def mock_pretrained(self):
+        vl_pretrained = _make_mock_pretrained(_make_dense_text_config(), _make_vision_config())
+        pretrained = Mock(spec=PreTrainedTokenClassification)
+        pretrained.config = vl_pretrained.config
+        pretrained.config.num_labels = 3
+        pretrained.config.classifier_dropout = 0.2
+        return pretrained
+
+    def test_provider_persists_classification_head_config(self, mock_pretrained):
+        bridge = Qwen35TokenClassificationBridge()
+
+        provider = bridge.provider_bridge(mock_pretrained)
+
+        assert isinstance(provider, Qwen35TokenClassificationModelProvider)
+        assert provider.num_labels == 3
+        assert provider.classifier_dropout == 0.2
+        assert provider.mtp_num_layers == 0
+        assert provider.mtp_enabled is False
+        assert provider.share_embeddings_and_output_weights is False
+        serialized_fields = {field.name for field in fields(provider)}
+        assert {"num_labels", "classifier_dropout"} <= serialized_fields
+        serialized = ConfigContainer._convert_value_to_dict(provider)
+        assert serialized["_target_"].endswith("Qwen35TokenClassificationModelProvider")
+        assert serialized["num_labels"] == 3
+        assert serialized["classifier_dropout"] == 0.2
+        restored = instantiate(serialized)
+        assert isinstance(restored, Qwen35TokenClassificationModelProvider)
+        assert restored.num_labels == 3
+        assert restored.classifier_dropout == 0.2
+
+    def test_provider_reconstructs_classification_head(self, mock_pretrained):
+        provider = Qwen35TokenClassificationBridge().provider_bridge(mock_pretrained)
+        restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+        restored.init_method = lambda weight: torch.nn.init.constant_(weight, 0.125)
+        restored.perform_initialization = True
+        tp_group = object()
+        model = SimpleNamespace(
+            pg_collection=SimpleNamespace(tp=tp_group),
+            language_model=SimpleNamespace(
+                post_process=True,
+                output_layer=torch.nn.Linear(provider.hidden_size, provider.vocab_size),
+            ),
+        )
+
+        with patch.object(Qwen35VLModelProvider, "provide", return_value=model):
+            result = restored.provide(pre_process=False, post_process=True)
+
+        assert result is model
+        assert restored.MODEL_CLASS is Qwen3VLForTokenClassification
+        assert isinstance(model.language_model.output_layer, LinearForLastLayer)
+        assert model.language_model.output_layer.out_features == 3
+        assert model.language_model.output_layer.bias is not None
+        assert model.language_model.output_layer.tp_group is tp_group
+        assert torch.equal(
+            model.language_model.output_layer.weight,
+            torch.full_like(model.language_model.output_layer.weight, 0.125),
+        )
+        assert torch.equal(
+            model.language_model.output_layer.bias,
+            torch.zeros_like(model.language_model.output_layer.bias),
+        )
+        assert model.language_model.output_layer.dropout.p == 0.2
+        assert model.language_model.output_layer.output_in_fp32 is False
+
+    def test_provider_rejects_logit_dtype_for_classification_head(self, mock_pretrained):
+        provider = Qwen35TokenClassificationBridge().provider_bridge(mock_pretrained)
+        provider.logit_dtype = torch.float32
+
+        with pytest.raises(ValueError, match="does not support true mixed-precision output GEMMs"):
+            provider.provide(pre_process=False, post_process=True)
+
+    def test_mapping_registry_uses_score_and_omits_lm_and_mtp(self, mock_pretrained):
+        bridge = Qwen35TokenClassificationBridge()
+
+        names = []
+        for mapping in bridge.mapping_registry().mappings:
+            names.append(str(mapping.megatron_param))
+            names.append(str(mapping.hf_param))
+
+        assert "score.weight" in names
+        assert "score.bias" in names
+        assert "language_model.output_layer.weight" in names
+        assert "language_model.output_layer.bias" in names
+        assert not any("lm_head" in name for name in names)
+        assert not any("mtp." in name for name in names)
+
+    def test_mapping_registry_always_includes_hf_score_bias(self, mock_pretrained):
+        mock_pretrained.config.token_classification_bias = False
+        bridge = Qwen35TokenClassificationBridge()
+
+        hf_params = [str(mapping.hf_param) for mapping in bridge.mapping_registry().mappings]
+
+        assert "score.weight" in hf_params
+        assert "score.bias" in hf_params
+
+    def test_classification_head_mappings_roundtrip_exactly(self) -> None:
+        registry = Qwen35TokenClassificationBridge().mapping_registry()
+        head = LinearForLastLayer(
+            input_size=4,
+            output_size=3,
+            sequence_parallel=False,
+            bias=True,
+            output_in_fp32=False,
+        )
+        source_weights = {
+            "score.weight": torch.arange(12, dtype=torch.float32).view(3, 4),
+            "score.bias": torch.tensor([0.5, 1.5, 2.5]),
+        }
+
+        for megatron_name, hf_name, parameter in (
+            ("language_model.output_layer.weight", "score.weight", head.weight),
+            ("language_model.output_layer.bias", "score.bias", head.bias),
+        ):
+            mapping = registry.megatron_to_hf_lookup(megatron_name)
+            assert mapping is not None
+            converted = mapping.hf_to_megatron(source_weights[hf_name], head)
+            parameter.data.copy_(converted)
+            exported = mapping.megatron_to_hf(parameter.data, head)
+            assert torch.equal(exported[hf_name], source_weights[hf_name])
+
+
+def test_token_classification_output_processor_handles_ignore_index() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=2,
+        sequence_parallel=False,
+        bias=True,
+        output_in_fp32=False,
+    )
+    with torch.no_grad():
+        head.weight.copy_(torch.eye(2))
+        head.bias.zero_()
+    hidden_states = torch.tensor([[[2.0, 0.0]], [[1.0, 1.0]], [[0.0, 2.0]]])
+    labels = torch.tensor([[0, -100, 1]])
+
+    losses = _token_classification_output_processor(
+        hidden_states=hidden_states,
+        output_layer=head,
+        output_weight=None,
+        labels=labels,
+        runtime_gather_output=None,
+    )
+
+    assert losses.shape == labels.shape
+    assert losses[0, 1] == 0
+    assert losses[0, 0] > 0
+    assert losses[0, 2] > 0
+
+
+def test_token_classification_loss_uses_fp32_logits() -> None:
+    logits = torch.ones(2, 1, 3, dtype=torch.bfloat16)
+    output_layer = Mock(return_value=(logits, None))
+    labels = torch.tensor([[0, 1]])
+
+    with patch(
+        "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification.F.cross_entropy",
+        return_value=torch.zeros(2),
+    ) as cross_entropy:
+        losses = _token_classification_output_processor(
+            hidden_states=torch.ones(2, 1, 4, dtype=torch.bfloat16),
+            output_layer=output_layer,
+            output_weight=None,
+            labels=labels,
+            runtime_gather_output=None,
+        )
+
+    assert cross_entropy.call_args.args[0].dtype == torch.float32
+    assert losses.shape == labels.shape
+
+
+def test_token_classification_model_injects_output_processor() -> None:
+    model = Qwen3VLForTokenClassification.__new__(Qwen3VLForTokenClassification)
+    expected = torch.ones(1)
+
+    with patch.object(Qwen3VLModel, "forward", return_value=expected) as base_forward:
+        result = model.forward(input_ids=torch.ones(1, 1, dtype=torch.long))
+
+    assert result is expected
+    assert base_forward.call_args.kwargs["output_processor"] is _token_classification_output_processor
+
+
+# =====================================================================
+# Tests for Qwen35VLMoEBridge
+# =====================================================================
 
 
 @pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
@@ -321,7 +514,7 @@ class TestQwen35VLMoEBridgeProviderBridge:
 
     def test_provider_bridge_hybrid_architecture(self, bridge, mock_pretrained):
         provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.experimental_attention_variant == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gdn"
         assert provider.linear_attention_freq == 4
         assert provider.layernorm_zero_centered_gamma is True
 
@@ -366,6 +559,17 @@ class TestQwen35VLMoEBridgeMappingRegistry:
         assert any("experts" in n for n in names), "Should contain expert MLPs"
         assert any("shared_expert" in n for n in names), "Should contain shared experts"
 
+    def test_moe_expert_mappings_wiring(self, bridge):
+        # The VL MoE bridge reuses Qwen35MoEBridge._get_moe_lm_mappings; fused-vs-per-expert layout
+        # selection is covered in test_qwen35_bridge. Here we only verify the VL wiring: sequential
+        # (non-grouped) routed-expert mappings, used when moe_grouped_gemm=False (e.g. ModelOpt pruning),
+        # are emitted with the language_model prefix.
+        mappings = bridge.mapping_registry().mappings
+        seq_fc1 = next(
+            m for m in mappings if getattr(m, "megatron_param", "").endswith("local_experts.*.linear_fc1.weight")
+        )
+        assert seq_fc1.megatron_param.startswith("language_model.decoder.")
+
     def test_mapping_registry_has_gdn_mappings(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("in_proj" in n for n in names)
@@ -375,3 +579,237 @@ class TestQwen35VLMoEBridgeMappingRegistry:
     def test_mapping_registry_has_vision_params(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("visual" in n or "vision_model" in n for n in names)
+
+    def test_mapping_registry_detects_qwen36_packed_mtp_experts(self, bridge):
+        source = Mock()
+        source.get_all_keys.return_value = [
+            "model.language_model.layers.0.mlp.experts.gate_up_proj",
+            "mtp.layers.0.mlp.experts.gate_up_proj",
+        ]
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        mappings = bridge.mapping_registry().mappings
+
+        assert any(
+            getattr(mapping, "hf_param", None) == "mtp.layers.*.mlp.experts.gate_up_proj" for mapping in mappings
+        )
+        assert not any(
+            isinstance(getattr(mapping, "hf_param", None), dict)
+            and "mtp.layers.*.mlp.experts.*.gate_proj.weight" in mapping.hf_param.values()
+            for mapping in mappings
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+class TestQwen35VLMoEBridgeExport:
+    def test_maybe_modify_converted_hf_weight_keeps_explicit_mtp_expert_keys(self, monkeypatch):
+        """Preserve already-expanded MTP expert keys without extra regrouping."""
+        bridge = Qwen35VLMoEBridge()
+        bridge.hf_config = Mock()
+        bridge.hf_config.text_config = Mock()
+        bridge.hf_config.text_config.num_experts = 256
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.conversion.model_bridge.parallel_state.get_expert_model_parallel_world_size",
+            lambda: 8,
+        )
+
+        task = Mock()
+        task.param_name = "language_model.mtp.layers.0.mtp_model_layer.mlp.experts.linear_fc1.weight0"
+        converted = {
+            "mtp.layers.0.mlp.experts.0.gate_proj.weight": torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.32.gate_proj.weight": 2 * torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.0.up_proj.weight": 3 * torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.32.up_proj.weight": 4 * torch.ones(2, 2),
+        }
+
+        result = bridge.maybe_modify_converted_hf_weight(task, dict(converted), {})
+
+        assert result.keys() == converted.keys()
+        for key in converted:
+            torch.testing.assert_close(result[key], converted[key])
+
+    def test_stream_weights_megatron_to_hf_skips_mtp_duplicate_embedding_export(self, monkeypatch):
+        """Skip the last-stage MTP embedding copy when exporting shared vocab weights."""
+        bridge = Qwen35VLMoEBridge()
+        calls = []
+
+        class DummyMapping:
+            def megatron_to_hf(self, weight, module):
+                calls.append((weight, module))
+                return {}
+
+        config = SimpleNamespace(share_embeddings_and_output_weights=False, pipeline_model_parallel_size=2)
+        stage0 = SimpleNamespace(pre_process=True, config=config)
+        wrapped_stage1 = SimpleNamespace(
+            module=SimpleNamespace(
+                pre_process=False,
+                config=config,
+                language_model=SimpleNamespace(mtp_process=True),
+            )
+        )
+        duplicate_module = Mock()
+        task = WeightConversionTask(
+            param_name="language_model.embedding.word_embeddings.weight",
+            global_param_name="language_model.embedding.word_embeddings.weight",
+            mapping=DummyMapping(),
+            pp_rank=1,
+            vp_stage=1,
+            megatron_module=duplicate_module,
+            param_weight=torch.ones(1),
+        )
+
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "_with_progress_tracking",
+            lambda self, tasks, *_args, **_kwargs: tasks,
+        )
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "maybe_modify_converted_hf_weight",
+            lambda self, *_args, **_kwargs: _args[1],
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+            lambda model, *_args, **_kwargs: (
+                [model[0]] if isinstance(model, list) else getattr(model, "module", model)
+            ),
+        )
+
+        weights = list(
+            bridge.stream_weights_megatron_to_hf(
+                [stage0, wrapped_stage1],
+                SimpleNamespace(),
+                cpu=False,
+                show_progress=False,
+                conversion_tasks=[task],
+                merge_adapter_weights=False,
+            )
+        )
+
+        assert weights == []
+        assert len(calls) == 1
+        assert calls[0] == (None, None)
+
+    def test_stream_weights_megatron_to_hf_keeps_pre_process_embedding_owner(self, monkeypatch):
+        """Keep the first-stage embedding owner active during export."""
+        bridge = Qwen35VLMoEBridge()
+        calls = []
+        embedding_weight = torch.ones(1)
+        embedding_module = Mock()
+
+        class DummyMapping:
+            def megatron_to_hf(self, weight, module):
+                calls.append((weight, module))
+                return {"hf.weight": weight}
+
+        stage0 = SimpleNamespace(
+            pre_process=True,
+            config=SimpleNamespace(share_embeddings_and_output_weights=False, pipeline_model_parallel_size=2),
+            language_model=SimpleNamespace(mtp_process=False),
+        )
+        task = WeightConversionTask(
+            param_name="language_model.embedding.word_embeddings.weight",
+            global_param_name="language_model.embedding.word_embeddings.weight",
+            mapping=DummyMapping(),
+            pp_rank=0,
+            vp_stage=0,
+            megatron_module=embedding_module,
+            param_weight=embedding_weight,
+        )
+
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "_with_progress_tracking",
+            lambda self, tasks, *_args, **_kwargs: tasks,
+        )
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "maybe_modify_converted_hf_weight",
+            lambda self, *_args, **_kwargs: _args[1],
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+            lambda model, *_args, **_kwargs: (
+                [model[0]] if isinstance(model, list) else getattr(model, "module", model)
+            ),
+        )
+
+        weights = list(
+            bridge.stream_weights_megatron_to_hf(
+                [stage0],
+                SimpleNamespace(),
+                cpu=False,
+                show_progress=False,
+                conversion_tasks=[task],
+                merge_adapter_weights=False,
+            )
+        )
+
+        assert len(weights) == 1
+        assert weights[0].param_name == "hf.weight"
+        assert len(calls) == 1
+        assert calls[0][0] is embedding_weight
+        assert calls[0][1] is embedding_module
+
+    def test_stream_weights_megatron_to_hf_does_not_skip_mtp_embedding_without_pp(self, monkeypatch):
+        """Do not suppress the only owner when pipeline parallelism is disabled."""
+        bridge = Qwen35VLMoEBridge()
+        calls = []
+        embedding_weight = torch.ones(1)
+        embedding_module = Mock()
+
+        class DummyMapping:
+            def megatron_to_hf(self, weight, module):
+                calls.append((weight, module))
+                return {"hf.weight": weight}
+
+        stage0 = SimpleNamespace(
+            pre_process=False,
+            config=SimpleNamespace(share_embeddings_and_output_weights=False, pipeline_model_parallel_size=1),
+            language_model=SimpleNamespace(mtp_process=True),
+        )
+        task = WeightConversionTask(
+            param_name="language_model.embedding.word_embeddings.weight",
+            global_param_name="language_model.embedding.word_embeddings.weight",
+            mapping=DummyMapping(),
+            pp_rank=0,
+            vp_stage=0,
+            megatron_module=embedding_module,
+            param_weight=embedding_weight,
+        )
+
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "_with_progress_tracking",
+            lambda self, tasks, *_args, **_kwargs: tasks,
+        )
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "maybe_modify_converted_hf_weight",
+            lambda self, *_args, **_kwargs: _args[1],
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+            lambda model, *_args, **_kwargs: (
+                [model[0]] if isinstance(model, list) else getattr(model, "module", model)
+            ),
+        )
+
+        weights = list(
+            bridge.stream_weights_megatron_to_hf(
+                [stage0],
+                SimpleNamespace(),
+                cpu=False,
+                show_progress=False,
+                conversion_tasks=[task],
+                merge_adapter_weights=False,
+            )
+        )
+
+        assert len(weights) == 1
+        assert weights[0].param_name == "hf.weight"
+        assert len(calls) == 1
+        assert calls[0][0] is embedding_weight
+        assert calls[0][1] is embedding_module

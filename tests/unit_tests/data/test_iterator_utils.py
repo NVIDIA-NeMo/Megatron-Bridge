@@ -80,6 +80,31 @@ def test_make_data_iterator_list_two_chunks():
         assert val1 == expected_val
 
 
+def test_make_data_iterator_list_supports_out_of_order_chunks():
+    """Test that later chunks can consume before earlier chunks."""
+    data = iter([{"batch": 1}, {"batch": 2}])
+    model = ["chunk1", "chunk2"]
+
+    result = make_data_iterator_list(model, data)
+
+    assert next(result[1]) == {"batch": 1}
+    assert next(result[0]) == {"batch": 1}
+    assert next(result[1]) == {"batch": 2}
+    assert next(result[0]) == {"batch": 2}
+
+
+def test_make_data_iterator_list_preserves_existing_chunk_iterators():
+    """Test that already-partitioned model-chunk iterators are not wrapped again."""
+    data = [iter([{"chunk": 0}]), iter([{"chunk": 1}])]
+    model = ["chunk1", "chunk2"]
+
+    result = make_data_iterator_list(model, data)
+
+    assert next(result[0]) == {"chunk": 0}
+    assert next(result[1]) == {"chunk": 1}
+    assert result is data
+
+
 def test_make_data_iterator_list_empty_model_list():
     """Test with empty model list."""
     data = iter([1, 2, 3])

@@ -16,6 +16,8 @@ import os
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from megatron.bridge.training.config import InProcessRestartConfig
 from megatron.bridge.training.inprocess_restart import inprocess_restart, maybe_wrap_for_inprocess_restart
 from megatron.bridge.training.state import GlobalState
@@ -24,11 +26,66 @@ from megatron.bridge.training.state import GlobalState
 class TestInProcessRestart:
     """Test cases for the inprocess_restart function."""
 
+    def test_inprocess_restart_honors_max_iterations(self):
+        """Test that a finite retry limit aborts before the next attempt."""
+        from nvidia_resiliency_ext.inprocess.exception import RestartAbort
+        from nvidia_resiliency_ext.inprocess.state import State
+
+        config = InProcessRestartConfig(
+            enabled=True,
+            max_iterations=2,
+            active_world_size=1,
+            granularity="rank",
+            empty_cuda_cache=False,
+        )
+        mock_global_state = MagicMock(spec=GlobalState)
+
+        with (
+            patch.dict(os.environ, {"MASTER_PORT": "29500"}),
+            patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+            patch("nvidia_resiliency_ext.inprocess.Wrapper") as mock_wrapper,
+        ):
+            mock_wrapper.return_value.return_value = MagicMock()
+            inprocess_restart(MagicMock(), config, mock_global_state)
+
+        retry_controller = mock_wrapper.call_args.kwargs["initialize"].instances[0]
+        allowed_state = State(rank=0, world_size=1, active_rank=0, active_world_size=1, iteration=1).freeze()
+        exhausted_state = State(rank=0, world_size=1, active_rank=0, active_world_size=1, iteration=2).freeze()
+
+        assert retry_controller(allowed_state) is allowed_state
+        with pytest.raises(RestartAbort):
+            retry_controller(exhausted_state)
+
+    def test_inprocess_restart_resolves_default_active_world_size(self):
+        """Test the documented WORLD_SIZE fallback for active ranks."""
+        from nvidia_resiliency_ext.inprocess.state import State
+
+        config = InProcessRestartConfig(enabled=True, granularity="rank", empty_cuda_cache=False)
+        mock_global_state = MagicMock(spec=GlobalState)
+
+        with (
+            patch.dict(os.environ, {"MASTER_PORT": "29500", "WORLD_SIZE": "4"}),
+            patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+            patch("nvidia_resiliency_ext.inprocess.Wrapper") as mock_wrapper,
+        ):
+            mock_wrapper.return_value.return_value = MagicMock()
+            inprocess_restart(MagicMock(), config, mock_global_state)
+
+        wrapper_kwargs = mock_wrapper.call_args.kwargs
+        retry_controller = wrapper_kwargs["initialize"].instances[0]
+        state = State(rank=0, world_size=4, active_rank=0, active_world_size=4).freeze()
+
+        assert retry_controller(state) is state
+        root_layer = wrapper_kwargs["rank_assignment"].layers[0]
+        assert root_layer.min_ranks == 4
+        assert root_layer.max_ranks == 4
+
     def test_inprocess_restart_basic_configuration(self):
         """Test inprocess_restart with basic configuration."""
         mock_train_fn = MagicMock()
         mock_config = MagicMock(spec=InProcessRestartConfig)
         mock_config.active_world_size = 2
+        mock_config.max_iterations = None
         mock_config.granularity = "rank"
         mock_config.empty_cuda_cache = True
         mock_config.max_rank_faults = None
@@ -84,7 +141,7 @@ class TestInProcessRestart:
             mock_finalize.assert_called()
 
             # Verify initialize components
-            mock_retry.assert_called_once_with(min_world_size=2)
+            mock_retry.assert_called_once_with(max_iterations=None, min_world_size=2)
             mock_nested_completed.assert_called_once()
 
             # Verify abort components
@@ -379,6 +436,65 @@ class TestInProcessRestart:
 class TestAbortCheckpoint:
     """Test cases for the AbortCheckpoint class functionality."""
 
+    def test_abort_checkpoint_resets_async_results_queues(self):
+        """Test AbortCheckpoint resets async result queue owners for a retry."""
+        try:
+            from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+        except ImportError:
+            mcore_filesystem_async = None
+        from nvidia_resiliency_ext.checkpointing.async_ckpt import filesystem_async as nvrx_filesystem_async
+
+        mock_config = MagicMock(spec=InProcessRestartConfig)
+        mock_config.active_world_size = 1
+        mock_config.granularity = "rank"
+        mock_config.empty_cuda_cache = False
+        mock_config.max_rank_faults = None
+        mock_config.monitor_process_logdir = None
+        mock_config.heartbeat_interval = 30.0
+        mock_config.heartbeat_timeout = 60.0
+        mock_config.barrier_timeout = 120.0
+        mock_config.completion_timeout = 120.0
+        mock_config.monitor_process_interval = 1.0
+        mock_config.monitor_thread_interval = 1.0
+        mock_config.last_call_wait = 1.0
+        mock_config.soft_timeout = 60.0
+        mock_config.hard_timeout = 90.0
+        mock_config.termination_grace_time = 1.0
+        mock_global_state = MagicMock(spec=GlobalState)
+        mock_global_state.async_calls_queue = None
+        mock_mcore_results_queue = MagicMock()
+        mock_nvrx_results_queue = MagicMock()
+        if mcore_filesystem_async is not None:
+            mcore_filesystem_async._results_queue = mock_mcore_results_queue
+        nvrx_filesystem_async._results_queue = mock_nvrx_results_queue
+
+        try:
+            with (
+                patch.dict(os.environ, {"MASTER_PORT": "29500"}),
+                patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+                patch("nvidia_resiliency_ext.inprocess.Wrapper") as mock_wrapper,
+            ):
+                mock_wrapper.return_value.return_value = MagicMock()
+                inprocess_restart(MagicMock(), mock_config, mock_global_state)
+                abort = mock_wrapper.call_args.kwargs["abort"]
+                abort_checkpoint = next(
+                    instance for instance in abort.instances if type(instance).__name__ == "AbortCheckpoint"
+                )
+
+                frozen_state = MagicMock()
+                assert abort_checkpoint(frozen_state) is frozen_state
+
+            if mcore_filesystem_async is not None:
+                mock_mcore_results_queue._manager.shutdown.assert_called_once_with()
+            mock_nvrx_results_queue._manager.shutdown.assert_called_once_with()
+            if mcore_filesystem_async is not None:
+                assert mcore_filesystem_async._results_queue is None
+            assert nvrx_filesystem_async._results_queue is None
+        finally:
+            if mcore_filesystem_async is not None:
+                mcore_filesystem_async._results_queue = None
+            nvrx_filesystem_async._results_queue = None
+
     def test_abort_checkpoint_with_async_calls_queue(self):
         """Test AbortCheckpoint when async_calls_queue exists."""
         mock_global_state = MagicMock(spec=GlobalState)
@@ -401,7 +517,7 @@ class TestAbortCheckpoint:
                             async_calls_queue.close(abort=True)
                             mock_global_state._async_calls_queue = None
 
-                        from megatron.core.dist_checkpointing.strategies.filesystem_async import _results_queue
+                        from nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async import _results_queue
 
                         global _results_queue
 
@@ -482,6 +598,40 @@ class TestAbortCheckpoint:
 
 class TestAdapterFunction:
     """Test cases for the _adapter function behavior."""
+
+    def test_nvrx_injects_call_wrapper_into_adapter(self):
+        """Test that NVRx can inject its active CallWrapper into the adapter."""
+        from nvidia_resiliency_ext.inprocess import CallWrapper
+        from nvidia_resiliency_ext.inprocess.param_utils import substitute_param_value
+
+        mock_train_fn = MagicMock()
+        config = InProcessRestartConfig(enabled=True, granularity="rank", empty_cuda_cache=False)
+        mock_global_state = MagicMock(spec=GlobalState)
+
+        with (
+            patch.dict(os.environ, {"MASTER_PORT": "29500"}),
+            patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+            patch("nvidia_resiliency_ext.inprocess.Wrapper") as mock_wrapper,
+        ):
+            mock_wrapper.return_value.return_value = MagicMock()
+            inprocess_restart(mock_train_fn, config, mock_global_state)
+
+        adapter_fn = mock_wrapper.return_value.call_args.args[0]
+        mock_call_wrapper = MagicMock(spec=CallWrapper)
+        args, kwargs = substitute_param_value(
+            adapter_fn,
+            ("arg1",),
+            {"other_kwarg": "value"},
+            {CallWrapper: mock_call_wrapper},
+        )
+
+        adapter_fn(*args, **kwargs)
+
+        mock_train_fn.assert_called_once_with(
+            "arg1",
+            inprocess_call_wrapper=mock_call_wrapper,
+            other_kwarg="value",
+        )
 
     def test_adapter_function_behavior(self):
         """Test that the adapter function correctly handles CallWrapper extraction."""

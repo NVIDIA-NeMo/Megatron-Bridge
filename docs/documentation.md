@@ -88,18 +88,12 @@ Example:
 
 ```{code-block} json
 :caption: Example: versions1.json 
-:emphasize-lines: 9,10
 
 [
     {
         "preferred": true,
         "version": "latest",
         "url": "https://docs.nvidia.com/nemo/megatron-bridge/latest/"
-    },
-    {
-
-        "version": "#.#.#",
-        "url": "https://docs.nvidia.com/nemo/megatron-bridge/#.#.#/"
     },
     {
 

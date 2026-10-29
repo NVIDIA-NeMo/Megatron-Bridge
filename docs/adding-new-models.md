@@ -21,7 +21,7 @@ Use this checklist-style flow: scaffold → provider mapping → parameter mappi
 
  Most GPT-style models (such as the Qwen and Llama families) can reuse the Megatron-Core GPT model by mapping their configuration. If the model requires custom building blocks (e.g., an attention variant, RoPE variant, or VLM modules), add a lightweight specialization similar to how 🤗 HuggingFace implements `modeling_xxx.py`.
 
-- **Standard GPT-style models**: Implement a `Provider` and a `Bridge`. For example, see the [Llama provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_provider.py) and [Llama bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py).
+- **Standard GPT-style models**: Implement a `Provider` and a `Bridge`. For example, see the [Llama provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py) and [Llama bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py).
 - **Models with custom components**: If your model has custom operations or blocks (e.g., a unique attention mechanism), add a minimal modeling module in the same directory and reference it from the `Provider` (example forthcoming).
 
 
@@ -29,7 +29,7 @@ Use this checklist-style flow: scaffold → provider mapping → parameter mappi
 
 Create a folder under `src/megatron/bridge/models/<your_model>/` and add:
 
-- `<your_model>_provider.py`: builds a `TransformerConfig`-compatible provider (or a subclass of an existing provider) and exposes `.provide_distributed_model()`. For example: [Llama provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_provider.py), [Qwen provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen_provider.py), or [Qwen2 provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen2_provider.py).
+- `<your_model>_provider.py`: builds a `TransformerConfig`-compatible provider (or a subclass of an existing provider) and exposes `.provide_distributed_model()`. For example: [Llama provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py), [Qwen provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen3_bridge.py), or [Qwen2 provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen2_bridge.py).
 - `<your_model>_bridge.py`: architecture-specific bridge that maps HF config → provider and defines parameter mappings. For example: [Llama bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py), [Qwen3 bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen3_bridge.py), or [Qwen2 bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen2_bridge.py).
 - Optional: `README.md` with any model quirks. For example: [Llama README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/README.md).
 
@@ -159,12 +159,12 @@ Goal: Implement a bridge class that connects an HF model class to a Megatron mod
 Tasks:
 - Add `@MegatronModelBridge.register_bridge(source=<HFClass>, target=GPTModel)`.
 - Implement `provider_bridge(self, hf_pretrained)` to read `hf_pretrained.config` and return `YourModelProvider(...)` with mapped fields (layers, hidden size, FFN, heads, groups, RoPE, dtype via `self.dtype_from_hf(cfg)`).
+- If any of your config fields aren't bijective through `CONFIG_MAPPING` (e.g. MoE topology, sliding window, custom RoPE), override `megatron_to_hf_config` to reconstruct them for auto-config export.
 - Implement `mapping_registry(self)` returning `MegatronMappingRegistry(...)` with:
   - `AutoMapping` for embeddings, final norm, output layer, 1:1 mapped weights.
   - `QKVMapping` for fused QKV if applicable.
   - `GatedMLPMapping` for gate/up if applicable.
 - Use `*` wildcards consistently between Megatron and HF patterns.
-- Add model organization to SAFE_REPOS list at `megatron.bridge.models.hf_pretrained.utils`
 
 References:
 - `src/megatron/bridge/models/conversion/model_bridge.py`
@@ -208,12 +208,12 @@ Use the examples in `examples/conversion/` to verify bidirectional conversion an
 - Multi-GPU HF load to Megatron
 
 ```sh
-python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path <org>/<model-id> --prompt "Hello"
-python examples/conversion/convert_checkpoints.py import --hf-model <org>/<model-id> --megatron-path ./checkpoints/<model-dir>
+uv run python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path <org>/<model-id> --prompt "Hello"
+./scripts/conversion/convert.sh import --hf-model <org>/<model-id> --megatron-path ./checkpoints/<model-dir>
 ```
 ## 7) Add tests
 
-Add or extend tests under `tests/functional_tests/models/<your_model>/` and `tests/unit_tests/models/`:
+Add or extend tests under `tests/functional_tests/test_groups/models/<your_model>/` and `tests/unit_tests/models/`:
 
 Tests are organized in model-specific subdirectories that mirror the source structure in `src/megatron/bridge/models/`.
 
@@ -226,18 +226,18 @@ Tests are organized in model-specific subdirectories that mirror the source stru
   - Forward parity on a handful of tokens comparing HF vs Megatron outputs
 
 Examples to reference:
-- `tests/functional_tests/models/qwen/test_qwen3_provider.py`
-- `tests/functional_tests/models/qwen/test_qwen3_conversion.py`
+- `tests/functional_tests/test_groups/models/exaone/test_exaone4_provider.py`
+- `tests/functional_tests/test_groups/models/qwen/test_qwen3_conversion.py`
 
 Run fast tests locally:
 ```sh
-uv run pytest -q tests/functional_tests/models/<your_model>/test_<your_model>_provider.py -k your_model | cat
-uv run pytest -q tests/functional_tests/models/<your_model>/test_<your_model>_conversion.py -k your_model | cat
+uv run python -m pytest -q tests/functional_tests/test_groups/models/<your_model>/test_<your_model>_provider.py -k your_model | cat
+uv run python -m pytest -q tests/functional_tests/test_groups/models/<your_model>/test_<your_model>_conversion.py -k your_model | cat
 ```
 
 Full suite (slower):
 ```sh
-uv run pytest -q tests | cat
+uv run python -m pytest -q tests | cat
 ```
 
 ### 7.1) Model not found in CI Cache
@@ -256,7 +256,7 @@ you are adding support for in your PR.
 ```text
 You are working in the Megatron Bridge repo. Add tests for a new model `<your_model>`.
 
-Create a subdirectory `tests/functional_tests/models/<your_model>/` with an `__init__.py` file and two test modules:
+Create a subdirectory `tests/functional_tests/test_groups/models/<your_model>/` with an `__init__.py` file and two test modules:
 1) `test_<your_model>_provider.py`
    - Build a tiny HF model/config (or use `<org>/<tiny-model-id>` if available).
    - Use the bridge to derive a provider and construct the model with TP=PP=1.
@@ -267,7 +267,8 @@ Create a subdirectory `tests/functional_tests/models/<your_model>/` with an `__i
    - Megatron → HF: export a subset of tensors; assert shape/dtype parity with HF.
    - Optionally run a short generation on CPU and compare logits numerically within tolerance.
 
-Use `tests/functional_tests/models/qwen/test_qwen3_provider.py` and `test_qwen3_conversion.py` as templates.
+Use `tests/functional_tests/test_groups/models/exaone/test_exaone4_provider.py` and
+`tests/functional_tests/test_groups/models/qwen/test_qwen3_conversion.py` as templates.
 
 Provide `-k your_model` selectors and guard long tests with `pytest.skip` if external weights are unavailable.
 ```
@@ -304,4 +305,3 @@ logging.getLogger("megatron.bridge").setLevel(logging.DEBUG)
 - Code examples: [examples/conversion/](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/conversion)
 - Providers and bridges: [src/megatron/bridge/models/](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models)
 - GitHub source tree: [Megatron Bridge src/megatron/bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge)
-

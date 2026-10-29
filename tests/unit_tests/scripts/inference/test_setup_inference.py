@@ -1,0 +1,563 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import importlib.util
+import os
+import subprocess
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+
+pytestmark = pytest.mark.unit
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "inference" / "setup_inference.py"
+
+
+def _load_setup_inference_module():
+    nemo_run = types.ModuleType("nemo_run")
+    nemo_run_config = types.ModuleType("nemo_run.config")
+    nemo_run_config.get_nemorun_home = lambda: str(Path.home() / ".nemo_run")
+    nemo_run.config = nemo_run_config
+    torchx = types.ModuleType("torchx")
+    torchx_specs = types.ModuleType("torchx.specs")
+    torchx_specs_api = types.ModuleType("torchx.specs.api")
+    torchx_specs_api.AppState = types.SimpleNamespace(SUCCEEDED="SUCCEEDED", FAILED="FAILED")
+    torchx.specs = torchx_specs
+    torchx_specs.api = torchx_specs_api
+
+    fake_modules = {
+        "nemo_run": nemo_run,
+        "nemo_run.config": nemo_run_config,
+        "torchx": torchx,
+        "torchx.specs": torchx_specs,
+        "torchx.specs.api": torchx_specs_api,
+    }
+    previous_modules = {name: sys.modules.get(name) for name in fake_modules}
+    sys.modules.update(fake_modules)
+    try:
+        spec = importlib.util.spec_from_file_location("test_inference_setup_inference", SCRIPT_PATH)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        for name, previous in previous_modules.items():
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
+    return module
+
+
+def _launcher_args(*extra_options: str) -> list[str]:
+    return [
+        "--gpus-per-node",
+        "1",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        *extra_options,
+    ]
+
+
+def test_poll_interval_is_not_forwarded_to_inference():
+    module = _load_setup_inference_module()
+    args, inference_args = module.parse_args(["--poll-interval", "120", "--prompt", "hello"])
+    assert args.poll_interval == 120
+    assert inference_args == ["--prompt", "hello"]
+    with pytest.raises(SystemExit):
+        module.parse_args(["--poll-interval", "2"])
+
+
+@pytest.mark.parametrize("option", ["--additional-slurm-params", "--additional_slurm_params"])
+def test_additional_slurm_parameters_are_not_forwarded_to_inference(option):
+    module = _load_setup_inference_module()
+    args, inference_args = module.parse_args([option, "segment=1;reservation=testing", "--prompt", "hello"])
+    assert args.additional_slurm_params == {"segment": "1", "reservation": "testing"}
+    assert inference_args == ["--prompt", "hello"]
+
+
+@pytest.mark.parametrize("value", ["", "segment", "=1", "segment=", "segment=1;"])
+def test_additional_slurm_parameters_reject_malformed_pairs(value):
+    module = _load_setup_inference_module()
+    with pytest.raises(SystemExit):
+        module.parse_args(["--additional-slurm-params", value])
+
+
+@pytest.mark.parametrize("active_environment", [False, True])
+def test_shell_launcher_reuses_active_environment_or_provisions_nemo_run(tmp_path, active_environment):
+    fake_uv = tmp_path / "uv"
+    uv_args = tmp_path / "uv-args.txt"
+    fake_uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$UV_ARGS_FILE"\n', encoding="utf-8")
+    fake_uv.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{tmp_path}:{env['PATH']}",
+            "UV_ARGS_FILE": str(uv_args),
+        }
+    )
+    if active_environment:
+        env["VIRTUAL_ENV"] = str(tmp_path / "active-environment")
+    else:
+        env.pop("VIRTUAL_ENV", None)
+
+    subprocess.run(
+        [str(REPO_ROOT / "scripts" / "inference" / "infer.sh"), "--help"],
+        check=True,
+        env=env,
+    )
+
+    expected_options = (
+        ["--active", "--no-sync"] if active_environment else ["--no-project", "--with", "nemo-run==0.10.0"]
+    )
+    assert uv_args.read_text(encoding="utf-8").splitlines() == [
+        "run",
+        *expected_options,
+        "python",
+        str(REPO_ROOT / "scripts" / "inference" / "setup_inference.py"),
+        "--help",
+    ]
+
+
+def test_setup_import_does_not_load_inference_stack(monkeypatch):
+    monkeypatch.delitem(sys.modules, "torch", raising=False)
+    monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
+
+    _load_setup_inference_module()
+
+    assert "torch" not in sys.modules
+    assert "megatron.bridge" not in sys.modules
+
+
+def test_parser_forwards_model_checkpoint_prompt_and_engine_args():
+    module = _load_setup_inference_module()
+
+    args, inference_args = module.parse_args(
+        [
+            "--gpus-per-node",
+            "2",
+            "--hf-model-path",
+            "hf/model",
+            "--megatron-model-path",
+            "/checkpoints/model",
+            "--prompt",
+            "A prompt with spaces",
+            "--tp",
+            "2",
+            "--max_new_tokens",
+            "8",
+        ]
+    )
+
+    assert args.gpus_per_node == 2
+    assert inference_args == [
+        "--hf-model-path",
+        "hf/model",
+        "--megatron-model-path",
+        "/checkpoints/model",
+        "--prompt",
+        "A prompt with spaces",
+        "--tp",
+        "2",
+        "--max_new_tokens",
+        "8",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("task_name", "expected_path"),
+    [
+        ("text-generation", "/opt/Megatron-Bridge/scripts/inference/text_generation.py"),
+        (
+            "legacy-full-prefix-generation",
+            "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_text.py",
+        ),
+        ("vlm-generation", "/opt/Megatron-Bridge/scripts/inference/vlm_generation.py"),
+        (
+            "model-comparison",
+            "/opt/Megatron-Bridge/examples/conversion/compare_hf_and_megatron/compare.py",
+        ),
+        (
+            "hf-inference",
+            "/opt/Megatron-Bridge/skills/create-model-verification-card/scripts/verify_hf_inference.py",
+        ),
+    ],
+)
+def test_parser_selects_repository_inference_task(task_name, expected_path):
+    module = _load_setup_inference_module()
+    scripts = []
+    module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
+
+    args, inference_args = module.parse_args(["--task", task_name, "--prompt", "hello"])
+    module._build_task(args.task, inference_args)
+
+    assert scripts[0].path == expected_path
+    assert scripts[0].args == ["--prompt", "hello"]
+
+
+def test_parser_consumes_repeatable_srun_args():
+    module = _load_setup_inference_module()
+
+    args, inference_args = module.parse_args(
+        [
+            "--srun-arg=--mpi=pmix",
+            "--srun-arg=--container-writable",
+            "--prompt",
+            "hello",
+        ]
+    )
+
+    assert args.srun_args == ["--mpi=pmix", "--container-writable"]
+    assert inference_args == ["--prompt", "hello"]
+
+
+@pytest.mark.parametrize("submission_option", ["--submission-dry-run", "--dry-run"])
+def test_submission_dry_run_aliases_are_consumed(submission_option):
+    module = _load_setup_inference_module()
+
+    args, inference_args = module.parse_args([submission_option, "--prompt", "hello"])
+
+    assert args.submission_dry_run is True
+    assert inference_args == ["--prompt", "hello"]
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (("--nodes", "0"), "--nodes"),
+        (("--gpus-per-node", "0"), "--gpus-per-node"),
+        (("--gpus-per-node", "4", "--tasks-per-node", "0"), "--tasks-per-node"),
+        (("--gpus-per-node", "4", "--tasks-per-node", "5"), "--tasks-per-node"),
+        (("--cpus-per-task", "0"), "--cpus-per-task"),
+        (("--srun-arg=",), "--srun-arg"),
+    ],
+)
+def test_resource_validation_rejects_invalid_values(options, message):
+    module = _load_setup_inference_module()
+    args, _ = module.parse_args(_launcher_args(*options))
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_args(args)
+
+
+@pytest.mark.parametrize(
+    ("task_name", "inference_args", "message"),
+    [
+        ("legacy-full-prefix-generation", [], "requires --legacy-full-prefix"),
+        ("text-generation", ["--legacy-full-prefix"], "requires --task legacy-full-prefix-generation"),
+    ],
+)
+def test_task_validation_rejects_inconsistent_legacy_full_prefix_usage(task_name, inference_args, message):
+    module = _load_setup_inference_module()
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_task_args(task_name, inference_args)
+
+
+def test_parse_env_deduplicates_names_and_rejects_values(monkeypatch):
+    module = _load_setup_inference_module()
+    monkeypatch.setenv("HF_TOKEN", "secret")
+
+    assert module._parse_env(["HF_TOKEN", "HF_TOKEN"]) == ["HF_TOKEN"]
+    with pytest.raises(ValueError, match="accepts NAME only"):
+        module._parse_env(["HF_TOKEN=secret"])
+
+
+def test_parse_env_rejects_missing_names(monkeypatch):
+    module = _load_setup_inference_module()
+    monkeypatch.delenv("MISSING_VALUE", raising=False)
+
+    with pytest.raises(ValueError, match="is not set"):
+        module._parse_env(["MISSING_VALUE"])
+
+
+def test_parse_mounts_normalizes_and_deduplicates():
+    module = _load_setup_inference_module()
+
+    mounts = module._parse_mounts(["/shared", "/host:/container", "/shared"])
+
+    assert mounts == ["/shared:/shared", "/host:/container"]
+
+
+@pytest.mark.parametrize("value", ["", ":/container", "/host:"])
+def test_parse_mounts_rejects_empty_paths(value):
+    module = _load_setup_inference_module()
+
+    with pytest.raises(ValueError, match="expected HOST or HOST:CONTAINER"):
+        module._parse_mounts([value])
+
+
+@pytest.mark.parametrize("additional", [[], ["--additional-slurm-params", "segment=1;export=ALL"]])
+def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, monkeypatch, additional):
+    module = _load_setup_inference_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.Packager = lambda: "packager"
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(
+        _launcher_args(
+            "--gpus-per-node",
+            "4",
+            "--tasks-per-node",
+            "1",
+            "--srun-arg=--mpi=pmix",
+            "--srun-arg=--container-writable",
+            *additional,
+        )
+    )
+
+    executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
+
+    assert executor.kwargs["ntasks_per_node"] == 1
+    assert executor.kwargs["poll_estimated_start_time"] is False
+    assert executor.kwargs["gpus_per_node"] == 4
+    assert executor.kwargs["exclusive"] is None
+    assert "launcher" not in executor.kwargs
+    assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
+    assert executor.kwargs["container_env"] == ["HF_TOKEN"]
+    expected_parameters = {"export": "PATH,HF_TOKEN"}
+    if additional:
+        expected_parameters["segment"] = "1"
+    assert executor.kwargs["additional_parameters"] == expected_parameters
+    assert executor.kwargs["container_mounts"] == ["/host:/container"]
+    assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]
+    assert executor.env_vars == {}
+
+
+def test_slurm_executor_defaults_to_one_task_per_gpu(tmp_path, monkeypatch):
+    module = _load_setup_inference_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.Packager = lambda: "packager"
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(_launcher_args("--gpus-per-node", "4"))
+
+    executor = module._build_executor(args, [], [])
+
+    assert executor.kwargs["ntasks_per_node"] == 4
+    assert executor.kwargs["gpus_per_node"] == 4
+
+
+def test_slurm_executor_can_request_exclusive_nodes(tmp_path, monkeypatch):
+    module = _load_setup_inference_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.Packager = lambda: "packager"
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(_launcher_args("--exclusive"))
+
+    executor = module._build_executor(args, [], [])
+
+    assert executor.kwargs["exclusive"] is True
+
+
+def test_slurm_executor_can_skip_explicit_gpu_request(tmp_path, monkeypatch):
+    module = _load_setup_inference_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.Packager = lambda: "packager"
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(_launcher_args("--no-gpu-resource-request"))
+
+    executor = module._build_executor(args, [], [])
+
+    assert executor.kwargs["ntasks_per_node"] == 1
+    assert "gpus_per_node" not in executor.kwargs
+    assert executor.kwargs["additional_parameters"] == {"export": "PATH"}
+
+
+def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
+    module = _load_setup_inference_module()
+    scripts = []
+    module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
+    sentinel = "benign; echo should-not-run"
+
+    module._build_task("text-generation", ["--prompt", sentinel])
+
+    assert scripts[0].path == "/opt/Megatron-Bridge/scripts/inference/text_generation.py"
+    assert scripts[0].entrypoint == "python"
+    assert scripts[0].env == {
+        "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
+    }
+    assert scripts[0].args == ["--prompt", "'benign; echo should-not-run'"]
+
+
+def test_build_task_preserves_legacy_full_prefix_argument():
+    module = _load_setup_inference_module()
+    scripts = []
+    module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
+
+    module._build_task(
+        "legacy-full-prefix-generation",
+        ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"],
+    )
+
+    assert scripts[0].path == "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_text.py"
+    assert scripts[0].args == ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"]
+
+
+@pytest.mark.parametrize(
+    ("extra_options", "expected_run", "expected_dryrun"),
+    [
+        ([], [{"detach": True, "tail_logs": False}], 0),
+        (["--detach"], [{"detach": True, "tail_logs": False}], 0),
+        (["--submission-dry-run"], [], 1),
+        (["--dry-run"], [], 1),
+    ],
+)
+def test_main_submission_wait_detach_and_dry_run_modes(
+    monkeypatch,
+    extra_options,
+    expected_run,
+    expected_dryrun,
+):
+    module = _load_setup_inference_module()
+    run_calls = []
+    dryrun_calls = []
+    wait_calls = []
+
+    class _Experiment:
+        def __init__(self, name, *, skip_status_at_exit):
+            assert name == "inference"
+            assert skip_status_at_exit is True
+            self.jobs = [types.SimpleNamespace(id="text-generation", state=module.AppState.SUCCEEDED)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, task, *, executor, name):
+            assert task is sentinel_task
+            assert executor is sentinel_executor
+            assert name == "text-generation"
+
+        def run(self, **kwargs):
+            run_calls.append(kwargs)
+
+        def dryrun(self):
+            dryrun_calls.append(True)
+
+    sentinel_task = object()
+    sentinel_executor = object()
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
+    monkeypatch.setattr(module, "_build_task", lambda *_args: sentinel_task)
+    monkeypatch.setattr(module, "run_from_container_repo_root", lambda task: task)
+    monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **kwargs: wait_calls.append(kwargs))
+
+    module.main(_launcher_args("--prompt", "hello", *extra_options))
+
+    assert run_calls == expected_run
+    assert len(dryrun_calls) == expected_dryrun
+    assert wait_calls == ([{"poll_interval": 60}] if not extra_options else [])
+
+
+def test_main_propagates_synchronous_inference_failure(monkeypatch):
+    module = _load_setup_inference_module()
+
+    class _Experiment:
+        def __init__(self, _name, *, skip_status_at_exit):
+            assert skip_status_at_exit is True
+            self.jobs = [types.SimpleNamespace(id="text-generation", state=module.AppState.FAILED)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, *_args, **_kwargs):
+            pass
+
+        def run(self, **kwargs):
+            assert kwargs == {"detach": True, "tail_logs": False}
+
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    monkeypatch.setattr(module, "_build_task", lambda *_args: object())
+    monkeypatch.setattr(module, "run_from_container_repo_root", lambda task: task)
+    monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="text-generation=FAILED"):
+        module.main(_launcher_args("--prompt", "hello"))
+
+
+def test_main_runs_pyxis_task_from_container_repo_root(monkeypatch):
+    """Slurm Pyxis inference resolves relative model paths from the container checkout."""
+    module = _load_setup_inference_module()
+    submitted = []
+
+    class _Experiment:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, task, **_kwargs):
+            submitted.append(task)
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**{"inline": "", "path": "", "args": [], **kwargs})
+    module.run.Experiment = _Experiment
+    monkeypatch.setitem(sys.modules, "nemo_run", module.run)
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+
+    module.main(
+        _launcher_args(
+            "--task", "hf-inference", "--submission-dry-run", "--hf-model", "work/model-verification/card/hf"
+        )
+    )
+
+    task = submitted[0]
+    assert task.entrypoint == "bash"
+    assert task.inline == (
+        "set -e\ncd /opt/Megatron-Bridge\n"
+        "exec python /opt/Megatron-Bridge/skills/create-model-verification-card/scripts/verify_hf_inference.py"
+        " --hf-model work/model-verification/card/hf\n"
+    )

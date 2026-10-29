@@ -22,22 +22,22 @@ both YAML configuration files and command-line overrides using Hydra-style synta
 
 Examples:
     Basic usage with default configuration:
-        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py
+        $ uv run -m torch.distributed.run --nproc_per_node=2 distill_llama32_3b-1b.py
 
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file my_custom_config.yaml
+        $ uv run -m torch.distributed.run --nproc_per_node=2 distill_llama32_3b-1b.py --config-file my_custom_config.yaml
 
     Using CLI overrides:
-        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py \
-        model.tensor_model_parallel_size=4 \
-        model.teacher.tensor_model_parallel_size=4 \
-        train.train_iters=100000
+        $ uv run -m torch.distributed.run --nproc_per_node=4 distill_llama32_3b-1b.py \
+            model.tensor_model_parallel_size=4 \
+            model.teacher.tensor_model_parallel_size=4 \
+            train.train_iters=100000
 
     Combining YAML and CLI overrides (CLI takes precedence):
-        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file conf/my_config.yaml \
-        model.pipeline_dtype=torch.float16 \
-        model.teacher.pipeline_dtype=torch.float16 \
-        train.global_batch_size=512
+        $ uv run -m torch.distributed.run --nproc_per_node=2 distill_llama32_3b-1b.py --config-file conf/my_config.yaml \
+            model.pipeline_dtype=torch.float16 \
+            model.teacher.pipeline_dtype=torch.float16 \
+            train.global_batch_size=512
 
 Configuration Precedence:
     1. Base configuration from student and teacher pretrain_config() recipes
@@ -55,24 +55,16 @@ Supported Override Syntax:
 
 import argparse
 import logging
-import os
-import sys
 from pathlib import Path
 from typing import Tuple
 
-import torch
-from omegaconf import OmegaConf
-
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.distillation_provider import convert_to_distillation_provider
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config, llama32_3b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.distill import distill
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
-from megatron.bridge.training.utils.omegaconf_utils import (
-    apply_overrides,
-    create_omegaconf_dict_config,
-    parse_hydra_overrides,
-)
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
@@ -108,7 +100,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 def main() -> None:
     """
-    Entry point for the Llama3.2 knowledge distillation script.
+    Entrypoint.
 
     This function orchestrates the complete configuration workflow:
     1. Loads the base student configuration (Llama3.2-1B) and teacher configuration (Llama3.2-3B)
@@ -124,62 +116,31 @@ def main() -> None:
 
     Configuration merging preserves callable fields (like activation functions)
     and handles type conversions automatically.
-
-    Examples of CLI usage:
-        # Use default config with custom learning rate
-        torchrun --nproc_per_node=8 distill_llama32_3b-1b.py optimizer.lr=0.0002
-
-        # Custom config file with additional overrides
-        torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file my_config.yaml train.train_iters=50000
-
-        # Multiple overrides for distributed training
-        torchrun --nproc_per_node=8 distill_llama32_3b-1b.py \
-            model.tensor_model_parallel_size=4 \
-            model.pipeline_model_parallel_size=2 \
-            model.teacher.tensor_model_parallel_size=4 \
-            model.teacher.pipeline_model_parallel_size=2 \
-            train.global_batch_size=512
     """
     args, cli_overrides = parse_cli_args()
 
     logger.info("Megatron-Bridge Llama3.2 3B-1B Distillation Script with YAML & CLI Overrides")
     logger.info("------------------------------------------------------------------")
 
-    # Load base configurations as recipes and wrap provider for distillation mode
-    cfg: ConfigContainer = llama32_1b_pretrain_config(load_weights=True)
-    teacher_cfg = llama32_3b_pretrain_config(load_weights=True)
+    # Load base configurations as recipes and wrap provider for distillation mode.
+    # The recipe functions do not accept a load_weights argument; use AutoBridge
+    # directly to create providers that load HuggingFace weights.
+    cfg: ConfigContainer = llama32_1b_pretrain_config()
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=True)
+    teacher_cfg = llama32_3b_pretrain_config()
+    teacher_cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").to_megatron_provider(
+        load_weights=True
+    )
     kd_config = ModelOptDistillConfig()
     cfg.model = convert_to_distillation_provider(cfg.model, teacher_cfg.model, kd_config)
     logger.info("Loaded base student and teacher configurations")
 
-    # Print configuration on rank 0
-    if get_rank_safe() == 0:
-        cfg.print_yaml()
-
-    # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
-    merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
-
-    # Load and merge YAML overrides if a config file is provided
-    if args.config_file:
-        logger.debug(f"Loading YAML overrides from: {args.config_file}")
-        if not os.path.exists(args.config_file):
-            logger.error(f"Override YAML file not found: {args.config_file}")
-            sys.exit(1)
-        yaml_overrides_omega = OmegaConf.load(args.config_file)
-        merged_omega_conf = OmegaConf.merge(merged_omega_conf, yaml_overrides_omega)
-        logger.debug("YAML overrides merged successfully.")
-
-    # Apply command-line overrides using Hydra-style parsing
-    if cli_overrides:
-        logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
-        merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
-        logger.debug("Hydra-style command-line overrides applied successfully.")
-
-    # Apply the final merged OmegaConf configuration back to the original ConfigContainer
-    logger.debug("Applying final merged configuration back to Python ConfigContainer...")
-    final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
-    # Apply overrides while preserving excluded fields
-    apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
+    # Process configuration with YAML and CLI overrides
+    cfg = process_config_with_overrides(
+        config=cfg,
+        config_filepath=args.config_file,
+        cli_overrides=cli_overrides or None,
+    )
 
     # Display final configuration
     if get_rank_safe() == 0:
@@ -188,13 +149,8 @@ def main() -> None:
         logger.info("----------------------------------")
 
     # Start training
-    logger.debug("Starting distillation...")
+    logger.info("Starting distillation...")
     distill(config=cfg)
-
-    # Cleanup process group
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
-        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

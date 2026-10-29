@@ -16,15 +16,21 @@
 Unit tests for Qwen3 Next bridge functionality.
 """
 
-from unittest.mock import Mock
+from dataclasses import fields
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
+from transformers import Qwen3NextConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_next_bridge import Qwen3NextBridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
 
 class TestQwen3NextBridge:
@@ -80,6 +86,23 @@ class TestQwen3NextBridge:
         config = Mock()
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
+        # Explicitly set to None so hf_config_to_provider_kwargs skips them.
+        # Qwen3-Next is not an MLA model and not a DeepSeek-style MoE / MTP model.
+        for null_attr in (
+            # MLA attrs
+            "q_lora_rank",
+            "kv_lora_rank",
+            "qk_nope_head_dim",
+            "qk_rope_head_dim",
+            "v_head_dim",
+            # Alternative MoE expert count attrs (would overwrite num_experts=512)
+            "n_routed_experts",
+            "num_local_experts",
+            # MTP attrs (not used by Qwen3-Next, but truthy in Mock)
+            "num_nextn_predict_layers",
+            "mtp_num_hidden_layers",
+        ):
+            setattr(config, null_attr, None)
         return config
 
     @pytest.fixture
@@ -104,8 +127,8 @@ class TestQwen3NextBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3_next)
 
-        # Check that it returns a Qwen3NextModelProvider instance
-        assert isinstance(result, Qwen3NextModelProvider)
+        # Check that it returns a GPTModelProvider instance (not a model-specific subclass)
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_qwen3_next_config.num_hidden_layers
@@ -159,6 +182,32 @@ class TestQwen3NextBridge:
         assert result.linear_num_key_heads == mock_qwen3_next_config.linear_num_key_heads
         assert result.linear_num_value_heads == mock_qwen3_next_config.linear_num_value_heads
         assert result.experimental_attention_variant == "gated_delta_net"
+
+    @pytest.mark.parametrize(
+        ("layer_types", "expected_pattern"),
+        [
+            (["linear_attention"] * 4, [1, 1, 1, 1]),
+            (
+                ["linear_attention", "full_attention", "linear_attention", "linear_attention"],
+                [1, 0, 1, 1],
+            ),
+        ],
+    )
+    def test_provider_bridge_preserves_explicit_layer_types(
+        self,
+        mock_pretrained_qwen3_next,
+        mock_qwen3_next_config,
+        layer_types,
+        expected_pattern,
+    ):
+        """Explicit Hugging Face layer schedules must survive config conversion."""
+        mock_qwen3_next_config.num_hidden_layers = len(layer_types)
+        mock_qwen3_next_config.full_attention_interval = None
+        mock_qwen3_next_config.layer_types = layer_types
+
+        result = Qwen3NextBridge().provider_bridge(mock_pretrained_qwen3_next)
+
+        assert result.linear_attention_freq == expected_pattern
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_qwen3_next, mock_qwen3_next_config):
         """Test MLP configuration mapping."""
@@ -220,6 +269,17 @@ class TestQwen3NextBridge:
         config = Mock()
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
+        for null_attr in (
+            "q_lora_rank",
+            "kv_lora_rank",
+            "qk_nope_head_dim",
+            "qk_rope_head_dim",
+            "v_head_dim",
+            "n_routed_experts",
+            "num_local_experts",
+            "num_nextn_predict_layers",
+        ):
+            setattr(config, null_attr, None)
         config.torch_dtype = "bfloat16"
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
@@ -284,6 +344,17 @@ class TestQwen3NextBridge:
         config = Mock()
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
+        for null_attr in (
+            "q_lora_rank",
+            "kv_lora_rank",
+            "qk_nope_head_dim",
+            "qk_rope_head_dim",
+            "v_head_dim",
+            "n_routed_experts",
+            "num_local_experts",
+            "num_nextn_predict_layers",
+        ):
+            setattr(config, null_attr, None)
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
@@ -368,6 +439,35 @@ class TestQwen3NextBridge:
         assert "mtp.norm.weight" in hf_params
         assert "mtp.layers.0.final_layernorm.weight" in megatron_params
 
+    def test_mapping_registry_mtp_layer_spellings(self):
+        """Every MTP sub-layer mapping is registered under both Megatron-Core spellings."""
+        bridge = Qwen3NextBridge()
+
+        registry = bridge.mapping_registry()
+
+        megatron_params = [mapping.megatron_param for mapping in registry.mappings]
+        for layer_attr in ("mtp_model_layer", "transformer_layer"):
+            for suffix in (
+                "mlp.router.weight",
+                "pre_mlp_layernorm.weight",
+                "self_attention.linear_qkv.layer_norm_weight",
+                "self_attention.q_layernorm.weight",
+                "self_attention.k_layernorm.weight",
+                "self_attention.linear_proj.weight",
+                "mlp.shared_experts.gate_weight",
+            ):
+                assert f"mtp.layers.0.{layer_attr}.{suffix}" in megatron_params
+            for suffix in (
+                "self_attention.linear_qkv.weight",
+                "mlp.experts.linear_fc1.weight*",
+                "mlp.experts.linear_fc2.weight*",
+                "mlp.experts.local_experts.*.linear_fc1.weight",
+                "mlp.experts.local_experts.*.linear_fc2.weight",
+                "mlp.shared_experts.linear_fc1.weight",
+                "mlp.shared_experts.linear_fc2.weight",
+            ):
+                assert f"mtp.layers.*.{layer_attr}.{suffix}" in megatron_params
+
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""
         bridge = Qwen3NextBridge()
@@ -435,3 +535,141 @@ class TestQwen3NextBridge:
             if "experts" in mapping.hf_param and "down_proj" in mapping.hf_param
         ]
         assert len(expert_down_params) > 0
+
+        # Sequential (non-grouped) expert mappings must be present for moe_grouped_gemm=False
+        # (e.g. ModelOpt pruning), for both the decoder and the MTP layers.
+        seq_params = [
+            getattr(m, "megatron_param", "")
+            for m in registry.mappings
+            if "experts.local_experts." in getattr(m, "megatron_param", "")
+        ]
+        assert any("decoder.layers" in p and p.endswith("linear_fc1.weight") for p in seq_params)
+        assert any("decoder.layers" in p and p.endswith("linear_fc2.weight") for p in seq_params)
+        assert any("mtp.layers" in p for p in seq_params)
+
+
+def _qwen3_next_config(**overrides) -> Qwen3NextConfig:
+    """Return a small Qwen3-Next config with the released 3 GDN : 1 attention layer layout."""
+    values = dict(
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        shared_expert_intermediate_size=32,
+        num_hidden_layers=8,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        num_experts=4,
+        num_experts_per_tok=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        max_position_embeddings=4096,
+        vocab_size=128,
+        dtype="bfloat16",
+    )
+    values.update(overrides)
+    config = Qwen3NextConfig(**values)
+    config.architectures = ["Qwen3NextForCausalLM"]
+    return config
+
+
+class TestQwen3NextBuilderConfig:
+    """Builder-backed ModelConfig path for Qwen3-Next."""
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in Qwen3NextBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert Qwen3NextBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert Qwen3NextBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        bridge = Qwen3NextBridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(_qwen3_next_config())
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.num_layers == 8
+        assert model_config.normalization == "RMSNorm"
+        assert model_config.qk_layernorm is True
+        assert model_config.layernorm_zero_centered_gamma is True
+        assert model_config.attention_output_gate is True
+        assert model_config.experimental_attention_variant == "gated_delta_net"
+        assert model_config.linear_attention_freq == [1, 1, 1, 0, 1, 1, 1, 0]
+        assert model_config.linear_conv_kernel_dim == 4
+        assert model_config.linear_num_key_heads == 2
+        assert model_config.linear_num_value_heads == 4
+        assert model_config.num_moe_experts == 4
+        assert model_config.moe_router_topk == 2
+        assert model_config.moe_shared_expert_intermediate_size == 32
+        assert model_config.moe_shared_expert_gate is True
+        assert model_config.moe_router_load_balancing_type == "global_aux_loss"
+        assert model_config.moe_aux_loss_coeff == 1e-3
+        assert model_config.moe_router_dtype == "fp32"
+        assert model_config.rotary_percent == 0.25
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.hetereogenous_dist_checkpoint is True
+        # Released Qwen3-Next configs do not declare MTP layers; recipes enable MTP explicitly.
+        assert model_config.mtp_num_layers is None
+        # The builder derives the hybrid block spec from experimental_attention_variant.
+        assert model_config.transformer_layer_spec is None
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {},
+            {"tie_word_embeddings": True, "dtype": "float16"},
+            {"rope_scaling": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 1024}},
+            {"num_hidden_layers": 4, "layer_types": ["linear_attention", "full_attention"] * 2},
+        ],
+        ids=["default", "tied_fp16", "yarn", "explicit_layer_types"],
+    )
+    def test_model_config_matches_provider_runtime_config(self, overrides):
+        config = _qwen3_next_config(**overrides)
+        bridge = Qwen3NextBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = config
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(pretrained)
+
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
+        for field_name in sorted(shared):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+        # The provider's default layer spec builds homogeneous layers, so it keeps the hybrid block spec.
+        assert provider.transformer_layer_spec is get_transformer_block_with_experimental_attention_variant_spec
+        assert model_config.transformer_layer_spec is None
+
+    def test_yarn_checkpoint_maps_to_yarn_embeddings(self):
+        config = _qwen3_next_config(
+            rope_scaling={"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 1024}
+        )
+
+        model_config = Qwen3NextBridge().hf_config_to_model_config(config)
+
+        assert model_config.position_embedding_type == "yarn"
+        assert model_config.transformer.yarn_rotary_scaling_factor == 4.0
+        assert model_config.transformer.yarn_original_max_position_embeddings == 1024
+
+    def test_builder_default_layer_spec_builds_gated_delta_net_block(self, monkeypatch):
+        from megatron.training.models import gpt as mcore_gpt
+
+        calls = []
+
+        def block_spec(config, vp_stage=None):
+            calls.append((config, vp_stage))
+            return "hybrid-block-spec"
+
+        monkeypatch.setattr(mcore_gpt, "get_transformer_block_with_experimental_attention_variant_spec", block_spec)
+        model_config = Qwen3NextBridge().hf_config_to_model_config(_qwen3_next_config())
+
+        assert mcore_gpt.default_layer_spec(model_config, vp_stage=None) == "hybrid-block-spec"
+        assert calls == [(model_config.transformer, None)]

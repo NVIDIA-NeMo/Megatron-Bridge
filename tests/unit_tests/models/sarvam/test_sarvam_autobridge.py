@@ -28,23 +28,6 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 class TestAutoBridgeSarvamConfigValidation:
-    def test_autobridge_supports_sarvam_architectures(self):
-        cfg = Mock()
-        cfg.architectures = ["SarvamMoEForCausalLM"]
-        assert AutoBridge.supports(cfg) is True
-
-        cfg.architectures = ["SarvamMLAForCausalLM"]
-        assert AutoBridge.supports(cfg) is True
-
-    def test_autobridge_from_hf_config_accepts_registered_sarvam_arch(self):
-        # from_hf_config validates only architecture + implementation registration.
-        config = PretrainedConfig(
-            architectures=["SarvamMoEForCausalLM"],
-            auto_map={"AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"},
-        )
-        bridge = AutoBridge.from_hf_config(config)
-        assert isinstance(bridge, AutoBridge)
-
     def _write_minimal_model_dir(self, config_dict, save_dir: str) -> None:
         config_path = Path(save_dir) / "config.json"
         with open(config_path, "w") as f:

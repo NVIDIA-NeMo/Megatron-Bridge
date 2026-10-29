@@ -1,0 +1,204 @@
+# Qwen3.5/3.6-VL Examples
+
+This directory contains conversion and inference examples for Qwen3.5 and
+Qwen3.6 vision-language models. Both use the same Bridge architecture; replace
+the Qwen3.5 model ID with `Qwen/Qwen3.6-35B-A3B` to run those paths for
+Qwen3.6.
+
+For model introduction and architecture details, see the [Qwen3.5/3.6-VL documentation](../../../../docs/models/qwen/qwen35-vl.md).
+
+## Workspace Configuration
+
+All scripts use a `WORKSPACE` environment variable to define the base directory for checkpoints and results. By default, this is set to `/workspace`. You can override it:
+
+```bash
+export WORKSPACE=/your/custom/path
+```
+
+Directory structure:
+- `${WORKSPACE}/models/` - Converted checkpoints
+- `${WORKSPACE}/results/` - Training outputs and experiment results
+
+## Checkpoint Conversion
+
+### Import HF → Megatron
+To import the HF VL model to your desired Megatron path:
+```bash
+./scripts/conversion/convert.sh import \
+  --hf-model Qwen/Qwen3.5-35B-A3B \
+  --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B
+```
+
+### Prepare a text-only checkpoint with pretrained MTP
+
+For the Qwen3.5 MoE text training path, extract a local, unquantized HF VL
+snapshot before importing it into Megatron:
+
+```bash
+uv run python scripts/conversion/extract_qwen35_text_checkpoint.py \
+  --source /models/Qwen3.5-35B-A3B \
+  --output /models/Qwen3.5-35B-A3B-text
+```
+
+The extractor copies decoder, LM-head, and pretrained MTP tensors exactly on
+CPU, one shard at a time, and omits vision weights. It retains tokenizer and
+chat-template assets and creates a standalone `Qwen3_5MoeForCausalLM` config
+with MTP enabled. This path requires exactly one pretrained MTP layer and
+rejects quantized checkpoints, unexpected tensor names, and incomplete shard
+indexes. It does not construct a Transformers model or initialize new weights.
+
+Choose a new output directory outside the source snapshot. The output becomes
+visible only after extraction completes; failed extractions retain a temporary
+directory whose path is logged. Import the resulting text checkpoint with
+`scripts/conversion/convert.sh import --hf-model /models/Qwen3.5-35B-A3B-text
+--megatron-path /checkpoints/Qwen3.5-35B-A3B-text`.
+
+### Export Megatron → HF
+```bash
+./scripts/conversion/convert.sh export \
+  --hf-model Qwen/Qwen3.5-35B-A3B \
+  --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B/iter_0000000 \
+  --hf-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B-hf-export
+```
+
+## Inference
+
+Keep numerical comparison in the inference workload. Use
+`scripts/inference/infer.sh --task model-comparison` for HF/Megatron logit
+correlation; [conversion.sh](conversion.sh) performs checkpoint import and
+export only.
+
+### Run Inference on Converted Checkpoint
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py \
+  --hf_model_path Qwen/Qwen3.5-35B-A3B \
+  --megatron_model_path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B/iter_0000000 \
+  --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
+  --prompt "Describe this image." \
+  --max_new_tokens 100 \
+  --tp 2 --pp 2 --ep 4
+```
+
+Note:
+- `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward.
+- You can also use image URLs: `--image_path="https://example.com/image.jpg"`
+- For MoE models, set `--ep` to the desired expert parallelism degree.
+
+See the [inference.sh](inference.sh) script for commands to:
+- Run inference with Hugging Face checkpoints
+- Run inference with imported Megatron checkpoints
+- Run inference with exported Hugging Face checkpoints
+
+For multi-node distributed inference—required for the largest 397B model—see the [slurm_inference.sh](slurm_inference.sh) script.
+
+## Finetune Recipes
+
+The available presets below are checkpoint-specific Qwen3.5 recipes. They must
+not be relabeled as Qwen3.6 recipes even though both model versions share the
+same Bridge implementation.
+
+- Available Qwen3.5 recipes:
+  - `qwen35_vl_800m_sft_config` / `qwen35_vl_800m_peft_config`: 0.8B dense model
+  - `qwen35_vl_2b_sft_config` / `qwen35_vl_2b_peft_config`: 2B dense model
+  - `qwen35_vl_4b_sft_config` / `qwen35_vl_4b_peft_config`: 4B dense model
+  - `qwen35_vl_9b_sft_config` / `qwen35_vl_9b_peft_config`: 9B dense model
+  - `qwen35_vl_27b_sft_config` / `qwen35_vl_27b_peft_config`: 27B dense model
+  - `qwen35_vl_35b_a3b_sft_config` / `qwen35_vl_35b_a3b_peft_config`: 35B-A3B MoE model
+  - `qwen35_vl_122b_a10b_sft_config` / `qwen35_vl_122b_a10b_peft_config`: 122B-A10B MoE model
+  - `qwen35_vl_397b_a17b_sft_config` / `qwen35_vl_397b_a17b_peft_config`: 397B-A17B MoE model
+
+Before training, ensure the following environment variables are set:
+1. `SAVE_DIR`: checkpoint and log saving directory
+2. `HF_TOKEN`: to download models from HF Hub (if required)
+3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
+4. `WANDB_API_KEY`: (optional) to enable WandB logging
+
+### Vision activation recomputation
+
+Qwen3.5 dense and MoE providers expose vision recomputation independently of
+the decoder. `vision_recompute_granularity` selects the policy:
+
+- `"inherit"` (default): preserve the existing decoder granularity, method, and
+  layer-count inheritance. Selective vision modules retain the vision default
+  (`["core_attn"]`); decoder-only module names are not copied.
+- `None`: disable vision recomputation, even when the decoder uses it.
+- `"full"`: require `vision_recompute_method` (`"uniform"` or `"block"`) and
+  `vision_recompute_num_layers` (an integer from 1 through the vision depth).
+  Uniform checkpoints chunks of that size; block checkpoints that many initial
+  layers individually.
+- `"selective"`: require a non-empty `vision_recompute_modules` list drawn from
+  `"core_attn"` and `"mlp"`. The TE vision spec fuses layernorm into QKV/FC1;
+  separate `"layernorm"`, GDN, and MoE recomputation options are not supported.
+
+For example, a recipe can checkpoint every vision layer while retaining its
+selective decoder policy:
+
+```python
+cfg.model.vision_recompute_granularity = "full"
+cfg.model.vision_recompute_method = "uniform"
+cfg.model.vision_recompute_num_layers = 1
+```
+
+The method, layer count, and module-list fields default to `None`. Only set
+fields applicable to the selected policy; unused fields must remain `None`.
+Explicit vision policies do not inherit missing fields from the decoder.
+
+Per-layer vision CUDA graphs are incompatible with full recomputation. If a
+recipe enables them, also set `cfg.model.vision_cuda_graph_impl = "none"`.
+Decoder graph settings remain independent.
+
+These options apply to the Megatron vision encoder and do not alter checkpoint
+parameter names or shapes. Set the policy in the training configuration when
+resuming.
+
+### Pretrain
+
+Canonical pretraining convergence remains unverified for Qwen3.5 and Qwen3.6.
+The [Qwen3.6 35B-A3B verification card](../../../model_verification_cards/qwen3.6-35b-a3b/card.yaml)
+separately verifies a bounded, frozen-tower DataComp projection-pretraining and
+checkpoint-resume workflow; it does not claim canonical DataComp/CLIP
+convergence.
+
+### Supervised Fine-Tuning (SFT)
+
+See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning with configurable model sizes.
+
+Text-only chat rows may provide official Qwen template controls under `chat_template_kwargs`. For example,
+`{"enable_thinking": true, "truncate_history_thinking": false}` preserves historical reasoning on Qwen3.6 by
+translating the canonical history option to the template-native `preserve_thinking=true`. The Qwen3.5 template does
+not expose that control and continues to omit reasoning before the latest user query.
+
+Tool definitions remain in the top-level `tools` field. OpenAI JSON-string `function.arguments` are normalized to
+objects before rendering. Assistant headers, system/user turns, and tool responses are masked from loss; assistant
+thinking boundaries, retained reasoning, tool calls, answers, and `<|im_end|>` are supervised.
+
+### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
+
+See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning with configurable model sizes.
+
+### Multi-Token Prediction (MTP)
+
+All Qwen3.5 models are trained with Multi-Token Prediction (`mtp_num_hidden_layers=1` in the HuggingFace config). MTP adds an auxiliary loss that predicts the next-next token alongside the standard next-token prediction, improving training quality.
+
+MTP is **enabled by default** in all recipes. The MTP layer uses standard attention (not GDN) and the same MLP architecture as the main decoder (dense MLP for dense models, MoE for MoE models). The MTP loss is scaled by `mtp_loss_scaling_factor=0.1` relative to the main LM loss.
+
+**Finetune with MTP** (default):
+```python
+cfg.model.mtp_num_layers = 1
+cfg.model.mtp_loss_scaling_factor = 0.1
+```
+
+**Finetune without MTP** (discard MTP weights, standard LM loss only):
+```python
+cfg.model.mtp_num_layers = None
+```
+
+When converting checkpoints, MTP weights are included by default. Setting `mtp_num_layers = None` skips MTP weight conversion and removes the MTP auxiliary loss during training.
+
+### Expected Training Dynamics
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/rt6uzrvf) for the expected loss curves and grad norms.
+
+## Evaluation
+
+Coming soon.

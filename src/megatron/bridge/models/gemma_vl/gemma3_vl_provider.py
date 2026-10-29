@@ -15,6 +15,7 @@
 from dataclasses import dataclass, field
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+from megatron.core.transformer.enums import AttnBackend
 from transformers import SiglipVisionConfig
 
 from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
@@ -26,6 +27,11 @@ class Gemma3VLModelProvider(Gemma3ModelProvider):
     """
     Base model provider for Gemma VL Models.
     """
+
+    # These are model invariants, not user-selectable settings. Marking them as
+    # non-init also drops stale causal/flash values from older checkpoint configs.
+    is_vision_language: bool = field(default=True, init=False)
+    attention_backend: AttnBackend = field(default=AttnBackend.fused, init=False)
 
     # VL models shouldn't scatter embeddings across sequence parallel regions because
     # the vision embeddings are going to be inserted into the language embeddings.
@@ -53,6 +59,13 @@ class Gemma3VLModelProvider(Gemma3ModelProvider):
     freeze_vision_projection: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Gemma3VLModel:
+        if not self.is_vision_language:
+            raise ValueError("Gemma 3 VL requires is_vision_language=True.")
+        if self.attention_backend not in (AttnBackend.auto, AttnBackend.fused):
+            raise ValueError("Gemma 3 VL requires automatic or fused attention for attention bias.")
+        if self.context_parallel_size != 1:
+            raise ValueError("Gemma 3 VL does not support context parallelism with attention bias.")
+
         model = Gemma3VLModel(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
         # Apply freeze options if any are enabled

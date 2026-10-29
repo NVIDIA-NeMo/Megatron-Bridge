@@ -19,6 +19,8 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     MegatronParamMapping,
     QKVMapping,
@@ -33,6 +35,8 @@ __all__ = [
     "MegatronMappingRegistry",
     "MegatronModelBridge",
     "ColumnParallelMapping",
+    "FusedExpertMapping",
+    "FusedGatedExpertMapping",
     "GatedMLPMapping",
     "MegatronParamMapping",
     "QKVMapping",

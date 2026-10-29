@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 import posixpath
 import sys
@@ -21,20 +20,28 @@ from pathlib import Path
 from typing import Any, Optional
 
 import torch
-import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.training.utils.checkpoint_utils import (
+    CONFIG_FILE,
+    get_checkpoint_run_config_filename,
+    join_paths,
+    read_run_config,
+)
 
 from megatron.bridge.training.state import TrainState
-from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
+
+
+__all__ = [
+    "CONFIG_FILE",
+    "get_checkpoint_run_config_filename",
+    "join_paths",
+    "read_run_config",
+]
 
 
 TRAIN_STATE_FILE = "train_state.pt"
 TRACKER_PREFIX = "latest"
-CONFIG_FILE = "run_config.yaml"
-
-logger = logging.getLogger(__name__)
-_RUNTIME_ONLY_TARGETS = frozenset({"megatron.core.timers.Timers"})
 
 
 def file_exists(path: str) -> bool:
@@ -87,7 +94,7 @@ def get_checkpoint_name(checkpoints_path: str, iteration: int, release: bool = F
     else:
         directory = "iter_{:07d}".format(iteration)
 
-    common_path = os.path.join(checkpoints_path, directory)
+    common_path = join_paths(checkpoints_path, directory)
     return common_path
 
 
@@ -104,21 +111,9 @@ def get_checkpoint_train_state_filename(checkpoints_path: str, prefix: Optional[
         The full path to the train state tracker file.
     """
     if prefix is None:
-        return os.path.join(checkpoints_path, TRAIN_STATE_FILE)
+        return join_paths(checkpoints_path, TRAIN_STATE_FILE)
     else:
-        return os.path.join(checkpoints_path, f"{prefix}_{TRAIN_STATE_FILE}")
-
-
-def get_checkpoint_run_config_filename(checkpoints_path: str) -> str:
-    """Get the filename for the run configuration file within a checkpoint directory.
-
-    Args:
-        checkpoints_path: Base directory where checkpoints are stored.
-
-    Returns:
-        The full path to the run configuration file (e.g., run_config.yaml).
-    """
-    return os.path.join(checkpoints_path, CONFIG_FILE)
+        return join_paths(checkpoints_path, f"{prefix}_{TRAIN_STATE_FILE}")
 
 
 def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
@@ -132,7 +127,7 @@ def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
     Returns:
         The full path to the checkpoint tracker file (e.g., latest_checkpointed_iteration.txt).
     """
-    return os.path.join(checkpoints_path, "latest_checkpointed_iteration.txt")
+    return join_paths(checkpoints_path, "latest_checkpointed_iteration.txt")
 
 
 _ITERATION_DIR_MARKERS = (
@@ -141,6 +136,77 @@ _ITERATION_DIR_MARKERS = (
     "metadata.json",  # MCore distributed checkpoint (torch_dist)
     ".metadata",  # PyTorch DCP checkpoint (fsdp_dtensor)
 )
+
+# Known well-formed HuggingFace weight filenames.  ``model.safetensors`` is the
+# consolidated single-file layout, and ``model.safetensors.index.json`` is the
+# manifest produced for sharded models (``model-00001-of-00016.safetensors``
+# style).  The shard files themselves are detected via globbing in
+# :func:`is_hf_checkpoint_dir` so detection works even when the index manifest
+# is missing (mid-download, custom export, etc.).
+_HF_KNOWN_WEIGHT_FILES = (
+    "model.safetensors",
+    "model.safetensors.index.json",
+    # Legacy / PyTorch-formatted single & sharded weight layouts
+    "pytorch_model.bin",
+    "pytorch_model.bin.index.json",
+)
+
+_HF_WEIGHT_GLOB_PATTERNS = (
+    "model-*-of-*.safetensors",
+    "pytorch_model-*-of-*.bin",
+)
+
+
+def _has_hf_weight_files(path: str) -> bool:
+    """Check whether ``path`` contains any HuggingFace-style weight file."""
+    for filename in _HF_KNOWN_WEIGHT_FILES:
+        if file_exists(join_paths(path, filename)):
+            return True
+
+    # Fall back to globbing for sharded weight files
+    # (e.g. ``model-00001-of-00016.safetensors``).
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        try:
+            base = msc.Path(path)
+            for pattern in _HF_WEIGHT_GLOB_PATTERNS:
+                for _ in base.glob(pattern):
+                    return True
+        except Exception:
+            # MSC backends may not implement glob; be defensive.
+            pass
+    else:
+        base = Path(path)
+        if base.is_dir():
+            for pattern in _HF_WEIGHT_GLOB_PATTERNS:
+                for _ in base.glob(pattern):
+                    return True
+    return False
+
+
+def is_hf_checkpoint_dir(path: Optional[str]) -> bool:
+    """Lightweight check for a local HuggingFace full-model directory.
+
+    This is a local directory-shape check used before entering the explicit HF
+    pretrained initialization path. It is not a full compatibility validator.
+    A path qualifies as HF when ``config.json`` is present and the directory
+    contains at least one HuggingFace full-model weight file. Both consolidated
+    (``model.safetensors``, ``pytorch_model.bin``) and sharded
+    (``model-XXXXX-of-XXXXX.safetensors``, ``pytorch_model-XXXXX-of-XXXXX.bin``)
+    layouts are recognised, with or without the matching ``*.index.json``
+    manifest.
+
+    Args:
+        path: Filesystem path to check (may be ``None``).
+
+    Returns:
+        True when ``path`` looks like a HuggingFace full-model directory.
+    """
+    if path is None:
+        return False
+    if not file_exists(join_paths(path, "config.json")):
+        return False
+    return _has_hf_weight_files(path)
 
 
 def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
@@ -164,7 +230,7 @@ def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
     """
     if path is None:
         return False
-    return any(file_exists(os.path.join(path, m)) for m in _ITERATION_DIR_MARKERS)
+    return any(file_exists(join_paths(path, m)) for m in _ITERATION_DIR_MARKERS)
 
 
 def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
@@ -187,7 +253,7 @@ def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
     if is_checkpoint_iteration_directory(checkpoints_path):
         return True
 
-    train_state_filename = os.path.join(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}")
+    train_state_filename = join_paths(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}")
 
     if file_exists(train_state_filename):
         return True
@@ -199,6 +265,28 @@ def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
         return msc.os.path.isfile(path)
     else:
         return os.path.isfile(path)
+
+
+def get_hf_source_from_model_config(model_config: Any) -> tuple[str | None, str | None]:
+    """Return the Hugging Face source id and revision recorded on a model config.
+
+    Builder-backed configs record them in ``extra_checkpoint_metadata``; legacy
+    providers in flat ``hf_model_id`` / ``hf_model_revision`` fields. The
+    revision is read from the same record as the id.
+
+    Args:
+        model_config: Builder-backed model config or model provider.
+
+    Returns:
+        ``(hf_model_id, hf_model_revision)``, each ``None`` when not recorded.
+    """
+    metadata = getattr(model_config, "extra_checkpoint_metadata", None)
+    if isinstance(metadata, dict) and metadata.get("hf_model_id"):
+        return metadata["hf_model_id"], metadata.get("hf_model_revision")
+    hf_model_id = getattr(model_config, "hf_model_id", None)
+    if hf_model_id:
+        return hf_model_id, getattr(model_config, "hf_model_revision", None)
+    return None, None
 
 
 def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
@@ -284,70 +372,17 @@ def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
     if not isinstance(model_section, dict):
         return None
 
-    hf_model_id = model_section.get("hf_model_id")
+    # Builder-backed configs record source provenance under extra_checkpoint_metadata.
+    extra_metadata = model_section.get("extra_checkpoint_metadata")
+    hf_model_id = extra_metadata.get("hf_model_id") if isinstance(extra_metadata, dict) else None
+    if not hf_model_id:
+        # Backward compatibility: the legacy provider path and older checkpoints
+        # serialize a flat hf_model_id directly under the model section.
+        hf_model_id = model_section.get("hf_model_id")
     if not hf_model_id:
         return None
 
     return str(hf_model_id)
-
-
-@lru_cache()
-def read_run_config(run_config_filename: str) -> dict[str, Any]:
-    """Read the run configuration from a YAML file (rank 0 only).
-
-    Reads the file on rank 0 and broadcasts the result to other ranks.
-
-    Args:
-        run_config_filename: Path to the run config YAML file.
-
-    Returns:
-        A dictionary containing the run configuration.
-
-    Raises:
-        RuntimeError: If reading the config file fails on rank 0.
-    """
-    if torch.distributed.is_initialized():
-        config_obj = [None]
-
-        if get_rank_safe() == 0:
-            try:
-                if MultiStorageClientFeature.is_enabled():
-                    msc = MultiStorageClientFeature.import_package()
-                    with msc.open(run_config_filename, "r") as f:
-                        config_dict = yaml.safe_load(f)
-                else:
-                    with open(run_config_filename, "r") as f:
-                        config_dict = yaml.safe_load(f)
-                config_dict = _sanitize_run_config_object(config_dict)
-                config_dict = apply_run_config_backward_compat(config_dict)
-                config_obj[0] = config_dict
-            except Exception as e:
-                error_msg = f"ERROR: Unable to load config file {run_config_filename}: {e}"
-                sys.stderr.write(error_msg + "\n")
-                config_obj[0] = {"error": True, "msg": error_msg}
-
-        print_rank_0(f"Broadcasting config from rank 0 to all {get_world_size_safe()} ranks")
-        torch.distributed.broadcast_object_list(config_obj, src=0)
-
-        if isinstance(config_obj[0], dict) and config_obj[0].get("error", False):
-            raise RuntimeError(config_obj[0]["msg"])
-
-        return config_obj[0]
-    else:
-        try:
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                with msc.open(run_config_filename, "r") as f:
-                    config_dict = yaml.safe_load(f)
-            else:
-                with open(run_config_filename, "r") as f:
-                    config_dict = yaml.safe_load(f)
-        except Exception as e:
-            raise RuntimeError(f"Unable to load config file {run_config_filename}: {e}") from e
-
-        config_dict = _sanitize_run_config_object(config_dict)
-        config_dict = apply_run_config_backward_compat(config_dict)
-        return config_dict
 
 
 @lru_cache()
@@ -369,9 +404,9 @@ def read_train_state(train_state_filename: str) -> TrainState:
             try:
                 if MultiStorageClientFeature.is_enabled():
                     msc = MultiStorageClientFeature.import_package()
-                    state_dict = msc.torch.load(train_state_filename, map_location="cpu")
+                    state_dict = msc.torch.load(train_state_filename, map_location="cpu", weights_only=True)
                 else:
-                    state_dict = torch.load(train_state_filename, map_location="cpu")
+                    state_dict = torch.load(train_state_filename, map_location="cpu", weights_only=True)
                 ts = TrainState()
                 ts.load_state_dict(state_dict)
                 state_obj[0] = ts
@@ -391,31 +426,11 @@ def read_train_state(train_state_filename: str) -> TrainState:
     try:
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
-            state_dict = msc.torch.load(train_state_filename, map_location="cpu")
+            state_dict = msc.torch.load(train_state_filename, map_location="cpu", weights_only=True)
         else:
-            state_dict = torch.load(train_state_filename, map_location="cpu")
+            state_dict = torch.load(train_state_filename, map_location="cpu", weights_only=True)
         ts = TrainState()
         ts.load_state_dict(state_dict)
         return ts
     except Exception as e:
         raise RuntimeError(f"Unable to load train state file {train_state_filename}: {e}") from e
-
-
-def _sanitize_run_config_object(obj: Any) -> Any:
-    """Remove runtime-only objects from run config dictionaries.
-
-    Timers and other runtime constructs are serialized with `_target_` entries
-    that cannot be recreated without additional context (e.g., constructor
-    arguments provided at runtime). These objects are not required when loading
-    a checkpoint configuration, so we replace them with ``None`` to avoid
-    instantiation errors when the config is processed later.
-    """
-
-    if isinstance(obj, dict):
-        target = obj.get("_target_")
-        if isinstance(target, str) and target in _RUNTIME_ONLY_TARGETS:
-            return None
-        return {key: _sanitize_run_config_object(value) for key, value in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_run_config_object(item) for item in obj]
-    return obj

@@ -2,10 +2,17 @@
 
 This guide covers model quantization in Megatron Bridge using NVIDIA ModelOpt, including post-training quantization (PTQ) and quantization-aware training (QAT).
 
+> **Note**: The scripts referenced in this guide are minimal, hard-coded reference examples. For more
+> comprehensive, production-quality quantization, export, and Quantization Aware Distillation (QAD)
+> scripts, see the NVIDIA Model Optimizer repository:
+> [examples/megatron_bridge/](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge).
+
 ## Table of Contents
 
 - [Overview](#overview)
 - [Post-Training Quantization (PTQ)](#post-training-quantization-ptq)
+- [Programmatic ModelOpt Export](#programmatic-modelopt-export)
+- [Fake-Quantized Hugging Face Export](#fake-quantized-hugging-face-export)
 - [Quantization-Aware Training (QAT)](#quantization-aware-training-qat)
 
 ## Overview
@@ -52,17 +59,17 @@ PTQ quantizes a pretrained model by running calibration with a small dataset to 
 Use the `examples/quantization/quantize.py` script for LLM PTQ:
 
 ```bash
-torchrun --nproc_per_node 2 examples/quantization/quantize.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/quantize.py \
+    --hf-model-id Qwen/Qwen3-0.6B \
     --export-quant-cfg fp8 \
     --tp 2 \
-    --megatron-save-path ./llama3_2_1b_fp8
+    --megatron-save-path ./qwen3_0_6b_fp8
 ```
 
 Use the `examples/quantization/quantize_vlm.py` script for VLM PTQ:
 
 ```bash
-torchrun --nproc_per_node 8 examples/quantization/quantize_vlm.py \
+uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/quantize_vlm.py \
     --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct \
     --export-quant-cfg fp8 \
     --megatron-save-path ./Qwen3-VL-30B-A3B-Instruct_fp8 \
@@ -87,16 +94,16 @@ torchrun --nproc_per_node 8 examples/quantization/quantize_vlm.py \
 Resume the quantized checkpoint and test with text generation using `examples/quantization/ptq_generate.py` for LLM:
 
 ```bash
-torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/ptq_generate.py \
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
     --tp 2
 ```
 
 Resume the quantized checkpoint and test with text generation using `examples/quantization/ptq_generate_vlm.py` for VLM:
 
 ```bash
-torchrun --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
+uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
     --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct \
     --megatron-load-path ./Qwen3-VL-30B-A3B-Instruct_fp8 \
     --tp 8 \
@@ -113,21 +120,110 @@ torchrun --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
 
 ### Export
 
-Export the quantized checkpoint to unified HuggingFace format using `examples/quantization/export.py`:
+Export the quantized checkpoint to a quantized HuggingFace checkpoint using `examples/quantization/export.py`:
 
 ```bash
-torchrun --nproc_per_node 2 examples/quantization/export.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
-    --export-dir ./llama3_2_1b_fp8_hf \
-    --pp 2 \
-    --dtype bfloat16
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/export.py \
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
+    --export-dir ./qwen3_0_6b_fp8_hf \
+    --tp 2
 ```
 
-**Key Arguments:**
-- `--export-dir` - Output directory for unified HuggingFace checkpoint
-- `--dtype` - Export data type
+The export runs at any tensor, pipeline, expert and expert-tensor parallelism and writes the same checkpoint for all
+of them: packed quantized weights with their scales, and the `quantization_config` in `config.json` that vLLM, SGLang
+and TensorRT-LLM read. Unquantized linear layers are listed in its `ignore` list, derived from the disabled weight
+quantizers. Models it does not cover yet (e.g. KV-cache quantization or Mamba layers) fall back to ModelOpt's
+Megatron exporter, which supports TP=1 only.
 
+**Key Arguments:**
+- `--export-dir` - Output directory for the quantized HuggingFace checkpoint
+- `--export-extra-modules` - Also export EAGLE / Medusa heads, through ModelOpt's Megatron exporter (TP=1 only)
+
+From Python, save a quantized model directly:
+
+```python
+bridge.save_hf_pretrained_modelopt(megatron_model, "./qwen3_0_6b_fp8_hf")
+```
+
+### Programmatic ModelOpt Export
+
+Use `AutoBridge.export_hf_weights_modelopt()` when you need to stream ModelOpt deployment weights from an
+already-loaded Megatron model instead of writing a full checkpoint through the export script. This is useful for
+integrations that consume Hugging Face weight names directly, such as inference-engine refit paths.
+
+Build one export plan after ModelOpt calibration and pass its `quantization_config` unchanged to the consumer. The
+plan retains only stable topology and format metadata, so it can be reused for every weight stream. Mutable quantizer
+state is captured as each weight is streamed. Megatron-Bridge supplies canonical Hugging Face weight names; ModelOpt
+owns packed values, relative sidecar names, and formats. Unquantized parameters retain their regular Hugging Face
+names.
+
+Plan reuse requires unchanged quantizer enablement, formats, and block sizes. Each stream validates these metadata
+before conversion; amax and scale updates remain supported. If the quantization configuration changes, rebuild the
+plan and reinitialize the consumer with its new configuration. Export exclusions must be expressed by disabled
+quantizers in the ModelOpt recipe; this API does not apply a separate ignore list.
+
+```python
+from safetensors.torch import save_file
+
+plan = bridge.build_hf_modelopt_export_plan(model)
+quantization_config = plan.quantization_config
+
+state_dict = {}
+for name, weight in bridge.export_hf_weights_modelopt(
+    model,
+    export_plan=plan,
+    cpu=True,
+    show_progress=False,
+):
+    state_dict[name] = weight.contiguous()
+
+save_file(state_dict, "modelopt-nvfp4.safetensors")
+```
+
+For large models, consume the iterator directly in the downstream writer or refit path instead of materializing the
+full `state_dict`.
+
+```python
+for name, weight in bridge.export_hf_weights_modelopt(
+    model,
+    export_plan=plan,
+    show_progress=False,
+):
+    refit_engine.replace_weight(name, weight)
+```
+
+Plan construction and export-stream iteration perform WORLD and model-parallel collectives. Every distributed rank
+must therefore build the plan and fully consume each export stream in the same task order, without rank-local early
+termination. The streaming API supports canonical per-expert layouts and grouped expert mappings that expose local
+expert specifications. Grouped mappings are resolved to per-expert gate, up, and down tensors before ModelOpt packing
+and EP collection. Unsupported custom grouped mappings fail explicitly.
+
+Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
+or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
+their ordinary conversion path. Custom QKV mappings that change row layout are rejected for quantized weights.
+Post-mapping key renames of quantized weights are not supported, including legacy DeepSeek-V4 indexer scorer names;
+excluded weights retain their normal renaming behavior. This API requires a ModelOpt release that provides the
+functional quantized-weight export interface.
+
+### Fake-Quantized Hugging Face Export
+
+`AutoBridge.save_hf_pretrained()` and `save_hf_weights()` also save a fake-quantized ModelOpt model, for
+example to evaluate a format that inference engines have no kernels for in vLLM's ModelOpt fake-quant serving.
+Weights are saved as they are in the model, so fold the weight quantizers into them first with
+`modelopt.torch.quantization.fold_weight`. The enabled quantizers are written next to the weights under
+Hugging Face names:
+
+- `quantizer_state.pth`: their tensors (e.g. `model.layers.0.self_attn.q_proj.input_quantizer._amax`), in their
+  original precision;
+- `quant_recipe.yaml`: their settings, one ModelOpt `get_modelopt_state(properties_only=True)` per quantizer, under
+  a `format: modelopt_quantizer_recipe`, `version: 1` header.
+
+Neither file is written when no quantizer is enabled, e.g. a weight-only format after folding. The export fails if
+an enabled quantizer has no Hugging Face name or holds tensors other than `_amax`, or if a disabled quantizer
+still rotates or scales its input (e.g. the query rotation of rotated KV-cache quantization). See the
+[ModelOpt Megatron-Bridge example](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge)
+for the export and serving commands.
 
 ### Supported Models For PTQ
 
@@ -136,7 +232,6 @@ torchrun --nproc_per_node 2 examples/quantization/export.py \
 | Llama-3.2-1B | ✅ | ✅ |
 | Qwen3-8B | ✅ | ✅ |
 | Qwen3-30B-A3B | ✅ | ✅ |
-| Nemotron-H-8B-Base-8K | ✅ | ✅ |
 | Qwen3-VL-8B-Instruct | ✅ | ✅ |
 | Qwen3-VL-30B-A3B-Instruct | ✅ | ✅ |
 
@@ -151,7 +246,7 @@ In QAT, a model quantized using `mtq.quantize()` can be directly fine-tuned with
 #### Step 1: Create Initial Quantized Checkpoint (PTQ)
 
 ```bash
-torchrun --nproc_per_node 8 examples/quantization/quantize.py \
+uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/quantize.py \
     --hf-model-id meta-llama/Meta-Llama-3-8B \
     --export-quant-cfg fp8 \
     --tp 8 \
@@ -189,8 +284,7 @@ checkpoint:
 Use `examples/quantization/pretrain_quantized_llama3_8b.py`:
 
 ```bash
-python pretrain_quantized_llama3_8b.py \
-  --nproc-per-node=4 \
+uv run python -m torch.distributed.run --nproc-per-node=4 pretrain_quantized_llama3_8b.py \
   --config-file=conf/my_qat_config.yaml \
   --hf-path=meta-llama/Meta-Llama-3-8B
 ```
@@ -200,8 +294,7 @@ python pretrain_quantized_llama3_8b.py \
 You can also use command-line overrides:
 
 ```bash
-torchrun pretrain_quantized_llama3_8b.py \
-    --nproc_per_node 4 \
+uv run python -m torch.distributed.run --nproc_per_node 4 pretrain_quantized_llama3_8b.py \
     model.tensor_model_parallel_size=4 \
     model.gradient_accumulation_fusion=False \
     checkpoint.pretrained_checkpoint=/models/llama3_8b_fp8_init
@@ -212,4 +305,3 @@ torchrun pretrain_quantized_llama3_8b.py \
 | Model | Support |
 |-------|---------|
 | Meta-Llama-3-8B | ✅ |
-

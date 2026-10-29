@@ -18,42 +18,51 @@ to HuggingFace format using the AutoBridge on multiple GPUs.
 
 Prerequisites:
 First, you must run the quantization process to create a quantized checkpoint:
-    torchrun --nproc_per_node 2 examples/quantization/quantize.py --megatron-save-path ./quantized_megatron_checkpoint --tp 2
+    torchrun --nproc_per_node 2 examples/quantization/quantize.py \
+        --hf-model-id Qwen/Qwen3-0.6B --megatron-save-path ./quantized_megatron_checkpoint --tp 2
 
 The process is as follows:
 1. An AutoBridge is initialized from a pretrained Hugging Face model
     to get the tokenizer and model structure.
 2. The quantized Megatron-LM model is loaded from the checkpoint using the specified path.
-3. The model is exported to HuggingFace format using ModelOpt export utilities.
+3. The model is saved as a quantized HuggingFace checkpoint with ``bridge.save_hf_pretrained_modelopt``:
+    packed weights and scales, with the ``quantization_config`` that vLLM, SGLang and TensorRT-LLM read in
+    ``config.json``. Models the bridge export does not cover yet, and ``--export-extra-modules`` (EAGLE / Medusa
+    heads), use ModelOpt's Megatron exporter instead.
 
 Usage:
-torchrun --nproc_per_node 2 examples/quantization/export.py --megatron-load-path ./quantized_megatron_checkpoint --export-dir ./hf_export --tp 2
+torchrun --nproc_per_node 2 examples/quantization/export.py --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./quantized_megatron_checkpoint --export-dir ./hf_export --tp 2
 """
 
 import argparse
-import os
-import sys
 import warnings
 
 import modelopt.torch.export as mtex
+import modelopt.torch.utils.distributed as dist
 import torch
 from megatron.core.utils import unwrap_model
-from rich.console import Console
+from quantize_utils import (
+    add_common_model_args,
+    build_bridge_and_provider,
+    console,
+    load_quantized_megatron_model,
+    print_parallelism_summary,
+    require_checkpoint,
+    require_torchrun,
+)
 
-from megatron.bridge import AutoBridge
+from megatron.bridge.models.conversion.modelopt_utils import check_exportable_quantizers
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 warnings.filterwarnings("ignore")
 
-HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
-console = Console()
-
 
 @torchrun_main
 def main(
-    hf_model_id: str = HF_MODEL_ID,
+    hf_model_id: str,
     tp: int = 1,
     pp: int = 1,
     ep: int = 1,
@@ -65,35 +74,14 @@ def main(
     trust_remote_code: bool | None = None,
 ) -> None:
     """Export a quantized Megatron-LM checkpoint to HuggingFace format on multiple GPUs."""
-    if os.environ.get("WORLD_SIZE") is None:
-        console.print("This script must be launched with torchrun. Please run:")
-        console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
-        sys.exit(1)
-
-    # Check if the checkpoint path exists
-    if not os.path.exists(megatron_load_path):
-        console.print(f"[red]Error: Quantized checkpoint path {megatron_load_path} does not exist![/red]")
-        console.print("[yellow]Please run the quantization process first:[/yellow]")
-        console.print(
-            f"[yellow]torchrun --nproc_per_node {tp} examples/quantization/quantize.py --megatron-save-path {megatron_load_path} --tp {tp}[/yellow]"
-        )
-        sys.exit(1)
-
-    # Initialize bridge from HF model to get tokenizer and model structure
-    bridge = AutoBridge.from_hf_pretrained(
-        hf_model_id,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=trust_remote_code,
-            hf_path=hf_model_id,
+    require_torchrun()
+    require_checkpoint(
+        megatron_load_path,
+        quantize_command=(
+            f"torchrun --nproc_per_node {tp} examples/quantization/quantize.py "
+            f"--hf-model-id {hf_model_id} --megatron-save-path {megatron_load_path} --tp {tp}"
         ),
     )
-
-    # Get model provider and configure for multi-GPU execution
-    model_provider = bridge.to_megatron_provider(load_weights=False)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
 
     # Convert dtype string to torch dtype
     dtype_map = {
@@ -102,66 +90,64 @@ def main(
         "float32": torch.float32,
     }
     torch_dtype = dtype_map.get(dtype, torch.bfloat16)
-    model_provider.pipeline_dtype = torch_dtype
 
-    # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-
-    # Load the quantized model
-    megatron_model = bridge.load_megatron_model(
-        megatron_load_path,
-        mp_overrides={
-            "tensor_model_parallel_size": tp,
-            "pipeline_model_parallel_size": pp,
-            "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
-        },
-        wrap_with_ddp=False,
+    # Initialize bridge from HF model to get tokenizer and model structure
+    bridge, model_provider = build_bridge_and_provider(
+        hf_model_id,
+        tp=tp,
+        pp=pp,
+        ep=ep,
+        etp=etp,
+        load_weights=False,
+        pipeline_dtype=torch_dtype,
+        trust_remote_code=trust_remote_code,
     )
+    megatron_model = load_quantized_megatron_model(bridge, megatron_load_path, tp=tp, pp=pp, ep=ep, etp=etp)
 
     # Now we can check for rank
-    is_rank_0 = torch.distributed.get_rank() == 0
+    is_rank_0 = dist.is_master()
 
+    print_parallelism_summary(model_provider)
     if is_rank_0:
-        console.print(f"[green]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/green]")
-        console.print(f"[green]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/green]")
-        console.print(f"[green]Expert parallel size: {model_provider.expert_model_parallel_size}[/green]")
-        console.print(f"[green]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/green]")
         console.print(f"[green]Loaded quantized model from: {megatron_load_path}[/green]")
 
     # Get the unwrapped model for export
     unwrapped_model = unwrap_model(megatron_model)[0]
 
-    # Decide whether we are exporting only the extra_modules (e.g. EAGLE, Medusa).
-    # Only the last pp stage may have extra_modules, hence broadcast from the last rank.
+    # Only the last pp stage may have extra_modules (e.g. EAGLE, Medusa), hence broadcast from the last rank.
     has_extra_modules = hasattr(unwrapped_model, "eagle_module") or hasattr(unwrapped_model, "medusa_heads")
-
-    # Broadcast from the last rank in case this is pipeline parallel
-    if torch.distributed.is_initialized():
-        extra_modules_list = [has_extra_modules]
-        torch.distributed.broadcast_object_list(
-            extra_modules_list,
-            src=torch.distributed.get_world_size() - 1,
-        )
-        export_extra_modules_flag = extra_modules_list[0] if export_extra_modules else False
-    else:
-        export_extra_modules_flag = has_extra_modules if export_extra_modules else False
+    has_extra_modules = dist.broadcast(has_extra_modules, src=dist.size() - 1)
+    export_extra_modules_flag = has_extra_modules if export_extra_modules else False
 
     if is_rank_0:
         console.print("[green]Exporting to HuggingFace format...[/green]")
         console.print(f"[green]Export directory: {export_dir}[/green]")
         console.print(f"[green]Export extra modules: {export_extra_modules_flag}[/green]")
 
-    # Export the model to HuggingFace format
-    mtex.export_mcore_gpt_to_hf(
-        unwrapped_model,
-        hf_model_id,
-        export_extra_modules=export_extra_modules_flag,
-        dtype=torch_dtype,
-        export_dir=export_dir,
-        trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model_id),
-    )
+    export_plan = None
+    if not export_extra_modules_flag:
+        try:
+            check_exportable_quantizers(megatron_model)
+            export_plan = bridge.build_hf_modelopt_export_plan(megatron_model)
+        except (NotImplementedError, RuntimeError) as error:
+            if is_rank_0:
+                console.print(f"[yellow]Megatron-Bridge cannot export this model yet: {error}[/yellow]")
+
+    if export_plan is None:
+        # ModelOpt's Megatron exporter also covers EAGLE / Medusa heads, but supports TP=1 only.
+        if is_rank_0:
+            console.print("[yellow]Exporting with ModelOpt's Megatron exporter[/yellow]")
+        mtex.export_mcore_gpt_to_hf(
+            unwrapped_model,
+            hf_model_id,
+            export_extra_modules=export_extra_modules_flag,
+            dtype=torch_dtype,
+            export_dir=export_dir,
+            moe_router_dtype=getattr(unwrapped_model.config, "moe_router_dtype", None),
+            trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model_id),
+        )
+    else:
+        bridge.save_hf_pretrained_modelopt(megatron_model, export_dir, export_plan=export_plan)
 
     if is_rank_0:
         console.print("[green]Export completed successfully![/green]")
@@ -172,14 +158,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Export a quantized Megatron-LM checkpoint to HuggingFace format on multiple GPUs"
     )
-    parser.add_argument(
-        "--hf-model-id", type=str, default=HF_MODEL_ID, help="HuggingFace model ID for tokenizer and model structure"
-    )
+    add_common_model_args(parser)
 
-    parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
-    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
-    parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
-    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument(
         "--megatron-load-path",
         type=str,
@@ -202,12 +182,7 @@ if __name__ == "__main__":
         type=str,
         default="bfloat16",
         choices=["bfloat16", "float16", "float32"],
-        help="Data type for export",
-    )
-    parser.add_argument(
-        "--trust-remote-code",
-        action="store_true",
-        help="if trust_remote_code",
+        help="Data type for ModelOpt's Megatron exporter (models the bridge export does not cover yet)",
     )
 
     args = parser.parse_args()
@@ -224,5 +199,4 @@ if __name__ == "__main__":
         args.trust_remote_code,
     )
 
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
+    dist.cleanup()

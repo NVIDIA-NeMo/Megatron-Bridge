@@ -28,8 +28,8 @@
 
 #SBATCH --job-name=gpt-oss-lora
 #SBATCH --nodes=2
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
+#SBATCH --ntasks-per-node=8  # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
+#SBATCH --gpus-per-node=8    # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
 #SBATCH --time=24:00:00
 #SBATCH --partition=batch
 #SBATCH --account=my_account
@@ -51,6 +51,9 @@ export WKDIR="${WKDIR:-}"
 # After pretrain, use e.g. ${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp2_pp4_ep4_spTrue_cp1
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b}
 MODEL_NAME=gpt_oss_20b
+RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_peft_config}"               # bf16 (default)
+# RECIPE_NAME="${MODEL_NAME}_peft_fp8_current_scaling_config"           # Hopper FP8 current scaling
+# RECIPE_NAME="${MODEL_NAME}_peft_mxfp8_config"                        # Blackwell MXFP8
 DATASET_NAME=squad
 SEQ_LENGTH=2048
 TRAIN_ITERS=1000
@@ -84,8 +87,11 @@ export NCCL_NVLS_ENABLE=0
 # Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
-# HuggingFace cache directory (recommended for shared filesystem)
+# HuggingFace / NeMo cache directories. Multi-node PEFT requires a shared
+# dataset cache so every node can read data prepared by global rank 0.
 # export HF_HOME="/path/to/shared/HF_HOME"
+# export NEMO_HOME="/path/to/shared/NEMO_HOME"
+# export NEMO_DATASETS_CACHE="/path/to/shared/NEMO_DATASETS_CACHE"
 
 # Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
@@ -114,6 +120,12 @@ if [ -z "$CONTAINER_IMAGE" ]; then
     echo "ERROR: CONTAINER_IMAGE must be set. Please specify a valid container image."
     exit 1
 fi
+
+EFFECTIVE_NEMO_DATASETS_CACHE="${NEMO_DATASETS_CACHE:-${NEMO_HOME:+${NEMO_HOME}/datasets}}"
+if [ "${SLURM_JOB_NUM_NODES:-1}" -gt 1 ] && [ -z "$EFFECTIVE_NEMO_DATASETS_CACHE" ]; then
+    echo "WARNING: Multi-node PEFT requires shared dataset paths. Set NEMO_DATASETS_CACHE or NEMO_HOME unless the recipe uses an explicit shared dataset_root or packed path."
+fi
+echo "NeMo datasets cache: ${EFFECTIVE_NEMO_DATASETS_CACHE:-/root/.cache/nemo/datasets}"
 
 # Build srun command (shared across configs)
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
@@ -153,15 +165,14 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.context_parallel_size=$CP \
         model.calculate_per_token_loss=True \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
-        dataset.packed_sequence_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
-        dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
+        dataset.enable_offline_packing=true \
+        dataset.offline_packing_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
+        dataset.offline_packing_specs.packed_sequence_size=$SEQ_LENGTH \
         dataset.seq_length=$SEQ_LENGTH \
         model.seq_length=$SEQ_LENGTH
     "
-
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --mode finetune"
-    CMD="$CMD --recipe ${MODEL_NAME}_peft_config"
+    CMD="$CMD --recipe ${RECIPE_NAME}"
 
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"

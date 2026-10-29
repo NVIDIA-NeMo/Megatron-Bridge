@@ -15,7 +15,11 @@
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Any, Callable, Dict, Generic, Iterator, List, Literal, Optional, Tuple, TypeVar, Union, cast
 
 import torch
 import torch.distributed
@@ -28,16 +32,165 @@ from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
 )
+from torch.distributed._tensor import DTensor
 
-from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
+from megatron.bridge.models.conversion.gtp import _get_mapping_shape, _is_gtp_param
+from megatron.bridge.models.conversion.utils import (
+    get_module_and_param_from_name,
+    is_modelopt_dynamic_module,
+    remove_non_pickleables,
+)
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
+MXFP8ShardGroup = Literal["tp", "etp", "replicated"]
+LocalHFShardGroup = Literal["tp", "etp", "replicated"]
 
 import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+# Export policy is scoped to one conversion operation rather than stored on a
+# mapping instance. Some mappings (notably AutoMapping) create their concrete
+# delegate lazily while ``megatron_to_hf`` is running, so an instance property
+# would not reliably reach the object that performs the PP broadcast.
+_SKIP_PP_BROADCAST: ContextVar[bool] = ContextVar("megatron_bridge_skip_pp_broadcast", default=False)
+
+
+@dataclass(frozen=True)
+class LocalHFParamSpec:
+    """A canonical HF-compatible view of one local logical Megatron parameter.
+
+    A spec describes only how to name and, optionally, split an already-local
+    logical tensor. It does not perform Bridge collectives, layout conversion,
+    or destination-backend/topology validation.
+    """
+
+    name: str
+    split_dim: Optional[int] = None
+    split_index: int = 0
+    split_count: int = 1
+
+    def __post_init__(self) -> None:
+        if self.split_count < 1:
+            raise ValueError("split_count must be positive.")
+        if not 0 <= self.split_index < self.split_count:
+            raise ValueError("split_index must be within split_count.")
+        if self.split_count > 1 and self.split_dim is None:
+            raise ValueError("split_dim is required when split_count is greater than one.")
+
+    def select(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Select this HF component from a logical Megatron tensor."""
+        if self.split_count == 1:
+            return tensor
+        dim = self.split_dim % tensor.ndim
+        if tensor.shape[dim] % self.split_count:
+            raise ValueError(
+                f"Cannot split dimension {dim} of shape {tuple(tensor.shape)} into {self.split_count} equal parts."
+            )
+        return torch.chunk(tensor, self.split_count, dim=dim)[self.split_index]
+
+    def selected_shape(self, shape: torch.Size) -> torch.Size:
+        """Return the shape selected from a logical Megatron tensor."""
+        if self.split_count == 1:
+            return torch.Size(shape)
+        selected = list(shape)
+        dim = self.split_dim % len(selected)
+        if selected[dim] % self.split_count:
+            raise ValueError(
+                f"Cannot split dimension {dim} of shape {tuple(shape)} into {self.split_count} equal parts."
+            )
+        selected[dim] //= self.split_count
+        return torch.Size(selected)
+
+
+@dataclass(frozen=True)
+class LocalMXFP8Param:
+    """A local native MXFP8 weight and its matching E8M0 scale tensor."""
+
+    name: str
+    weight: torch.Tensor
+    weight_scale: torch.Tensor
+    global_weight_shape: torch.Size
+    shard_group: MXFP8ShardGroup
+    shard_dim: int | None
+
+
+def _validate_native_mxfp8_pair(
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    global_param_name: str,
+) -> None:
+    if weight.ndim != 2:
+        raise ValueError(f"{global_param_name}: native MXFP8 weights must be two-dimensional")
+    if weight.shape[-1] % 32:
+        raise ValueError(f"{global_param_name}: K={weight.shape[-1]} is not divisible by 32")
+    expected_scale_shape = torch.Size((*weight.shape[:-1], weight.shape[-1] // 32))
+    if weight_scale.shape != expected_scale_shape:
+        raise ValueError(
+            f"{global_param_name}: expected native MXFP8 scale shape {tuple(expected_scale_shape)}, "
+            f"got {tuple(weight_scale.shape)}"
+        )
+
+
+def _project_gated_native_mxfp8(
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    *,
+    names: tuple[str, str],
+    global_param_name: str,
+    shard_group: MXFP8ShardGroup,
+    shard_size: int,
+) -> tuple[LocalMXFP8Param, ...]:
+    _validate_native_mxfp8_pair(weight, weight_scale, global_param_name)
+    if weight.shape[-2] % 2:
+        raise ValueError(f"{global_param_name}: fused FC1 output rows must be even")
+
+    gate_weight, up_weight = torch.chunk(weight, 2, dim=-2)
+    gate_scale, up_scale = torch.chunk(weight_scale, 2, dim=-2)
+    global_weight_shape = list(gate_weight.shape)
+    global_weight_shape[-2] *= shard_size
+    return tuple(
+        LocalMXFP8Param(
+            name=name,
+            weight=projected_weight,
+            weight_scale=projected_scale,
+            global_weight_shape=torch.Size(global_weight_shape),
+            shard_group=shard_group,
+            shard_dim=0,
+        )
+        for name, projected_weight, projected_scale in zip(
+            names,
+            (gate_weight, up_weight),
+            (gate_scale, up_scale),
+        )
+    )
+
+
+@dataclass(frozen=True)
+class LocalHFParam:
+    """A canonical HF-compatible view of one local unquantized BF16 parameter.
+
+    The tensor remains a live view of the local Megatron parameter. Its global
+    shape and sharding fields describe how an M-to-N transport can reconstruct
+    the corresponding logical HF parameter without Bridge collectives.
+    """
+
+    name: str
+    weight: torch.Tensor
+    global_weight_shape: torch.Size
+    shard_group: LocalHFShardGroup
+    shard_dim: int | None
+
+
+def _module_uses_fsdp(megatron_module: nn.Module) -> bool:
+    """Return True if the module uses Megatron-FSDP"""
+    return hasattr(megatron_module, "_parameters") and any(
+        key.startswith("weight") and isinstance(value, DTensor) for key, value in megatron_module._parameters.items()
+    )
 
 
 class MegatronParamMapping(ABC, Generic[WeightType]):
@@ -99,6 +252,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # Cache for metadata and tensor_spec_output
         self._broadcast_obj_cache = {}
         self._tensor_spec_output_cache = {}
+        self._pg_collection = None
 
         if mpu.is_initialized():
             self.pp_group = mpu.get_pipeline_model_parallel_group()
@@ -111,9 +265,189 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tp_group = None
             self._etp_group = None
 
-        # if a param mapping class takes in modified HF weight name from maybe_modify_loaded_hf_weight,
-        # allow_hf_name_mismatch should be set to True to bypass a check in `build_conversion_tasks`
+        # Set allow_hf_name_mismatch to True when the declared HF name will not be found verbatim
+        # in the checkpoint's key set. That covers two cases: a name that is rewritten or
+        # synthesized (see maybe_modify_loaded_hf_weight), and a weight that is legitimately
+        # absent for some layers or configurations. Both bypass the hf_keys check in
+        # `build_conversion_tasks`, which raises otherwise.
         self.allow_hf_name_mismatch = False
+
+    @classmethod
+    @contextmanager
+    def skip_pp_broadcast(cls) -> Iterator[None]:
+        """Disable PP replication for the duration of one HF export.
+
+        In this mode ``broadcast_from_pp_rank`` and
+        ``broadcast_obj_from_pp_rank`` return the value local to the current
+        rank. TP/EP collectives remain enabled, so mappings still perform all
+        required shard reconstruction and HF layout conversion on the owning
+        pipeline stage.
+
+        The policy is held in a :class:`ContextVar` so it also applies to
+        mappings created lazily by wrappers such as :class:`AutoMapping`.
+        """
+        token = _SKIP_PP_BROADCAST.set(True)
+        try:
+            yield
+        finally:
+            _SKIP_PP_BROADCAST.reset(token)
+
+    def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
+        """Describe canonical local HF views for one mapped parameter.
+
+        A non-empty result means this parameter's local logical Megatron tensor
+        can be transferred as the described HF-compatible views without first
+        running Bridge collectives or layout conversion. It is a per-parameter
+        contract, not a declaration that the model supports general HF
+        conversion or M-to-N refit.
+
+        Mappings that require transpose, permutation, interleaving, or grouped
+        export transforms must return an empty tuple unless they implement an
+        explicit safe override. An empty tuple selects the normal Bridge
+        conversion/packed-broadcast path; it does not mean the model is
+        unsupported. Consumers must separately qualify the destination backend
+        and source/destination topology.
+
+        The contract is independent of the source and destination storage
+        precision. For example, an MXFP8 transport may materialize these
+        canonical logical views from quantized source storage and requantize a
+        persistent MXFP8 destination in place. Direct transfer of physical
+        MXFP8 data and scales requires separate backend/layout qualification.
+
+        Args:
+            global_param_name: Resolved global Megatron parameter name. Custom
+                mappings may use it to derive an HF view name.
+
+        Returns:
+            Per-parameter local HF view specifications, or an empty tuple when
+            the normal Bridge conversion path is required.
+        """
+        if not isinstance(self.hf_param, str):
+            return ()
+        # Grouped exports and dimension permutations need conversion work. Grouped
+        # mappings must explicitly override this method when a canonical local view exists.
+        if (
+            getattr(self, "is_grouped_export", False)
+            or getattr(self, "permute_dims", None) is not None
+            or getattr(self, "transpose_on_export", False)
+        ):
+            return ()
+        return (LocalHFParamSpec(self.hf_param),)
+
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        raise ValueError(
+            f"Mapping {type(self).__name__} for {global_param_name!r} does not support direct native MXFP8 export."
+        )
+
+    def _local_hf_sharding(
+        self, weight: torch.Tensor, megatron_module: nn.Module
+    ) -> tuple[LocalHFShardGroup, int | None, int]:
+        """Describe the local tensor sharding for canonical HF views."""
+        if self.tp_size == 1:
+            return "replicated", None, 1
+        raise ValueError(
+            f"mapping {type(self).__name__} does not describe local HF sharding "
+            f"when tensor parallel size is {self.tp_size}"
+        )
+
+    def local_hf_params(
+        self,
+        weight: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalHFParam, ...]:
+        """Materialize canonical local HF views for an unquantized BF16 parameter.
+
+        This method only selects views from local storage. It does not gather,
+        broadcast, dequantize, cast, or emit quantization sidecars.
+
+        Args:
+            weight: Local logical Megatron parameter storage.
+            global_param_name: Resolved global Megatron parameter name.
+            megatron_module: Local module that owns ``weight``.
+
+        Returns:
+            Canonical local HF parameter views in mapping-defined order.
+
+        Raises:
+            ValueError: If the storage is not plain BF16 or the mapping cannot
+                represent the parameter as local HF views.
+        """
+        if HAVE_TE_FP8_TENSOR_CLASS and isinstance(weight, FP8_TENSOR_CLASS):
+            raise ValueError(f"{global_param_name}: local HF parameter iteration does not support quantized storage")
+        if weight.dtype != torch.bfloat16:
+            raise ValueError(
+                f"{global_param_name}: local HF parameter iteration requires unquantized BF16 storage, "
+                f"got {weight.dtype}"
+            )
+        if isinstance(weight, DTensor) or _module_uses_fsdp(megatron_module):
+            raise ValueError(f"{global_param_name}: local HF parameter iteration does not support DTensor/FSDP")
+        if _is_gtp_param(weight):
+            raise ValueError(
+                f"{global_param_name}: local HF parameter views cannot represent GTP sharding; "
+                "use the gathered HF weight export instead"
+            )
+
+        specs = self.local_hf_param_specs(global_param_name)
+        if not specs:
+            raise ValueError(
+                f"{global_param_name}: mapping {type(self).__name__} cannot be represented as canonical local HF views"
+            )
+        shard_group, shard_dim, shard_size = self._local_hf_sharding(weight, megatron_module)
+
+        params = []
+        for spec in specs:
+            selected = spec.select(weight)
+            global_shape = list(selected.shape)
+            if shard_dim is not None:
+                normalized_shard_dim = shard_dim % selected.ndim
+                global_shape[normalized_shard_dim] *= shard_size
+            else:
+                normalized_shard_dim = None
+            params.append(
+                LocalHFParam(
+                    name=spec.name,
+                    weight=selected,
+                    global_weight_shape=torch.Size(global_shape),
+                    shard_group=shard_group,
+                    shard_dim=normalized_shard_dim,
+                )
+            )
+        return tuple(params)
+
+    def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
+        """Override snapshotted Megatron-Core globals with a ``ProcessGroupCollection``.
+
+        Used by the decentralized PG path where ``mpu`` is never initialized.
+        ``__init__`` runs at registry construction time and snapshots whatever
+        Megatron-Core globals exist then; in the decentralized path those are
+        absent, so ``tp_size`` would default to ``world_size`` and conversions
+        would compute the wrong shard sizes. ``MegatronModelBridge`` calls this
+        right before running tasks to install the user-supplied groups.
+        """
+        if pg_collection is None:
+            return
+        self._pg_collection = pg_collection
+        for attr, field in (
+            ("pp_group", "pp"),
+            ("ep_group", "ep"),
+            ("_tp_group", "tp"),
+            ("_etp_group", "expt_tp"),
+        ):
+            group = getattr(pg_collection, field, None)
+            if group is not None:
+                setattr(self, attr, group)
+        for child in vars(self).values():
+            if isinstance(child, MegatronParamMapping):
+                child.set_process_groups_from_pg_collection(pg_collection)
 
     @property
     def tp_group(self):
@@ -166,10 +500,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     def is_expert(self) -> bool:
         """Check if this mapping is for an expert parameter.
 
-        Matches both TEGroupedMLP (.mlp.experts.linear_fc) and
-        SequentialMLP (.mlp.experts.local_experts.*.linear_fc) patterns.
+        Matches both TEGroupedMLP (.experts.linear_fc) and
+        SequentialMLP (.experts.local_experts.*.linear_fc) patterns.
+        Uses ``.experts.`` rather than ``.mlp.experts.`` so models with an
+        intermediate sub-module (e.g. ``.mlp.<pool>.experts.``) are matched too.
         """
-        return ".mlp.experts.linear_fc" in self.megatron_param or ".mlp.experts.local_experts." in self.megatron_param
+        return ".experts.linear_fc" in self.megatron_param or ".experts.local_experts." in self.megatron_param
 
     @property
     def is_adapter(self) -> bool:
@@ -290,6 +626,17 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         ...
 
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Convert weights FROM Megatron format with quantization."""
+        raise NotImplementedError("megatron_to_hf_quant not implemented for this mapping")
+
     def broadcast_from_pp_rank(
         self, tensor: Optional[torch.Tensor], cache_key: Optional[str] = None
     ) -> Optional[torch.Tensor]:
@@ -309,6 +656,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 ``None`` if *no* PP rank owned the tensor (which indicates a bug
                 in the calling code).
         """
+
+        # PP-local export deliberately leaves non-owning stages with ``None``.
+        # The caller filters those tasks, while the owning stage continues into
+        # the normal TP/EP gathering and layout-conversion code below.
+        if _SKIP_PP_BROADCAST.get():
+            return tensor
 
         # Fast-path when we are not using pipeline parallelism.
         if self.pp_size == 1:
@@ -335,20 +688,27 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tensor_spec_output_cache[cache_key] = tensor_spec_output
 
         # ------------------------------------------------------------------
-        # 2.  Identify the owning rank (the only rank with a non-None spec).
+        # 2.  Identify the first owning rank (pick the lowest-ranked PP stage
+        #     that holds the tensor).  Certain architectures (MLA / DeepSeek-V3,
+        #     MTP, or models with tied embeddings) legitimately place the same
+        #     weight on more than one PP rank, so we must *not* raise on
+        #     duplicates – instead we deterministically pick the first owner
+        #     as the broadcast source.
         # ------------------------------------------------------------------
         target_tensor_spec = None
         src_rank = None  # Rank *inside* the PP group.
         for rank, spec in enumerate(tensor_spec_output):
-            if spec is not None:
-                if target_tensor_spec is not None:
-                    raise ValueError(f"Tensor exists on more than one PP rank. Found on ranks {src_rank} and {rank}.")
+            if spec is not None and target_tensor_spec is None:
                 target_tensor_spec = spec
                 src_rank = rank
 
         if target_tensor_spec is None:
             # No rank had the tensor – this is an error in the caller.
-            raise ValueError("Object must exist on at least one PP rank")
+            raise ValueError(
+                f"Object must exist on at least one PP rank. "
+                f"megatron_param={self.megatron_param}, hf_param={self.hf_param}, "
+                f"cache_key={cache_key}"
+            )
 
         # ------------------------------------------------------------------
         # 3.  Ensure every rank has an allocated tensor with the right shape
@@ -388,9 +748,14 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Any: Broadcasted object on all ranks.
 
         Raises:
-            ValueError: If object exists on multiple ranks or no ranks.
+            ValueError: If object does not exist on any rank.
         """
+        if _SKIP_PP_BROADCAST.get():
+            return obj
+
         if self.pp_size == 1:
+            if obj is None:
+                raise ValueError(f"{self.megatron_param}: Object must exist on at least one PP rank")
             return obj
 
         # Check if we already have a cached result (only if cache_key is provided)
@@ -405,21 +770,22 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather_object(obj_flags, has_obj, group=self.pp_group)
 
         # ------------------------------------------------------------------
-        # 2. Identify the owning rank (the only rank with True flag)
+        # 2. Identify the first owning rank (lowest PP stage with the object).
+        #    Certain architectures (MLA, MTP, tied embeddings) place the same
+        #    parameter on multiple PP ranks — pick the first owner.
         # ------------------------------------------------------------------
         src_rank = None  # Rank *inside* the PP group
         for rank, flag in enumerate(obj_flags):
             if flag:
                 src_rank = rank
+                break
 
         if src_rank is None:
-            raise ValueError("Object must exist on at least one PP rank")
+            raise ValueError(f"{self.megatron_param}: Object must exist on at least one PP rank")
 
         # ------------------------------------------------------------------
         # 3. Broadcast the object from the source rank to all ranks
         # ------------------------------------------------------------------
-        if src_rank is None:
-            raise ValueError("Could not determine source rank")
 
         # Use broadcast_object_list which is more robust than all_gather_object
         obj_list = [obj]
@@ -469,6 +835,51 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.broadcast(tensor, src=global_src, group=self.tp_group)
         return tensor
 
+    def _get_shard_spec(
+        self,
+        *,
+        shard_size: int,
+        megatron_module: nn.Module | None = None,
+        global_size: int | None = None,
+        global_size_attr: str | None = None,
+    ) -> tuple[int, int]:
+        """Get the unique TP shard count and shard rank for the current TP rank.
+
+        This supports layouts where TP ranks may contain replicated copies of a
+        smaller set of unique shards, such as KV-head sharding when
+        ``num_query_groups < tensor_model_parallel_size``.
+
+        Args:
+            shard_size: Number of elements in the local shard along the sharded axis.
+            megatron_module: Optional Megatron module carrying layout metadata.
+            global_size: Explicit global size along the sharded axis.
+            global_size_attr: Optional module attribute that stores the global
+                size along the sharded axis.
+
+        Returns:
+            Tuple of ``(shard_world_size, shard_rank)`` where ``shard_world_size``
+            is the number of unique shards and ``shard_rank`` is the current
+            rank's unique shard index.
+        """
+        resolved_global_size = shard_size * self.tp_size
+        if global_size is not None:
+            resolved_global_size = global_size
+        elif megatron_module is not None and global_size_attr is not None:
+            resolved_global_size = getattr(megatron_module, global_size_attr, resolved_global_size)
+
+        if resolved_global_size % shard_size != 0:
+            raise ValueError(f"Invalid sharded layout: global_size={resolved_global_size}, shard_size={shard_size}")
+
+        shard_world_size = resolved_global_size // shard_size
+        if self.tp_size % shard_world_size != 0:
+            raise ValueError(
+                f"Invalid replicated shard layout: tp_size={self.tp_size}, shard_world_size={shard_world_size}"
+            )
+
+        replicas = self.tp_size // shard_world_size
+        shard_rank = self.tp_rank // replicas
+        return shard_world_size, shard_rank
+
     def scatter_to_tp_ranks(
         self,
         splits: Optional[List[torch.Tensor]],
@@ -499,7 +910,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         scatter_list = None
         if self.tp_rank == src_rank and splits:
-            scatter_list = [s.to(device=device, dtype=dtype) for s in splits]
+            scatter_list = [s.to(device=device, dtype=dtype).contiguous() for s in splits]
 
         torch.distributed.scatter(
             output,
@@ -526,7 +937,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather(gathered, tensor, group=self.tp_group)
         return gathered
 
-    def _count_wildcard_groups(self, pattern: str) -> int:
+    @staticmethod
+    def _count_wildcard_groups(pattern: str) -> int:
         """Count the number of wildcard capture groups in a pattern.
 
         Args:
@@ -553,7 +965,13 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         return count
 
     def _validate_patterns(self):
-        """Validate wildcard consistency between patterns."""
+        """Validate wildcard consistency between patterns.
+
+        Skipped automatically for grouped-export mappings where the megatron
+        side intentionally has more wildcards than the HF side.
+        """
+        if getattr(self, "is_grouped_export", False):
+            return
         megatron_param_wildcards = self._count_wildcard_groups(self.megatron_param)
         if isinstance(self.hf_param, str):
             hf_param_wildcards = self._count_wildcard_groups(self.hf_param)
@@ -661,6 +1079,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Dict[str, torch.Tensor]: Mapping from HF parameter names (one per EP rank)
             to the corresponding expert tensors gathered from each EP rank.
         """
+        # Fast path for EP=1: no gathering needed, just return with the given name.
+        if self.ep_size == 1:
+            return {str(hf_param_name): megatron_weights}
+
         if megatron_module is None:
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
         else:
@@ -669,13 +1091,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             num_experts_per_rank = num_experts // self.ep_size
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
 
-        # Extract local expert number from parameter name
-        # Handle both .weight and .bias suffixes
-        local_expert_number = None
-        for key in (".weight", ".bias"):
-            if key in self.megatron_param:
-                global_expert_number = int(self.megatron_param.split(key)[-1])
-                local_expert_number = global_expert_number % num_experts_per_rank
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        local_expert_number = global_expert_number % num_experts_per_rank
 
         # Compute global expert numbers for all EP ranks
         # use regex to replace the local expert number with the global expert number
@@ -703,7 +1120,75 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             else:
                 weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
         for param_name in weights_dict:
-            weights_dict[param_name] = weights_dict[param_name].squeeze()
+            weights_dict[param_name] = weights_dict[param_name].squeeze(0)
+        return weights_dict
+
+    def gather_from_ep_ranks_scale(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[MegatronModule],
+        hf_param_name: Optional[str],
+    ) -> Dict[str, torch.Tensor]:
+        """Gather expert scale tensors using the same staging path as expert weights.
+
+        Only the leading dimension added while grouping gathered tensors is removed,
+        so singleton dimensions belonging to the scale's block grid are preserved.
+
+        Args:
+            megatron_weights (Optional[torch.Tensor]): The local expert weight tensor
+                (after any TP handling) on this EP rank.
+            megatron_module (Optional[MegatronModule]): The Megatron module containing
+                configuration (used to determine E and E/S). Can be None on non-owning PP
+                ranks; values will be broadcast across PP.
+            hf_param_name (Optional[str]): HF parameter name template for the current
+                (local) expert on this rank. The expert id within this string is replaced
+                with the appropriate global expert ids for each EP rank.
+
+        Returns:
+            Dict[str, torch.Tensor]: Mapping from HF parameter names (one per EP rank)
+            to the corresponding expert tensors gathered from each EP rank.
+        """
+        if self.ep_size == 1:
+            return {str(hf_param_name): megatron_weights}
+
+        if megatron_module is None:
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
+        else:
+            model_config = self._get_config(megatron_module)
+            num_experts = model_config.num_moe_experts
+            num_experts_per_rank = num_experts // self.ep_size
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
+
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        local_expert_number = global_expert_number % num_experts_per_rank
+
+        # Compute global expert numbers for all EP ranks
+        # use regex to replace the local expert number with the global expert number
+        gathered_expert_param_names = [
+            re.sub(
+                r"experts\.(\d+)", f"experts.{int(local_expert_number) + num_experts_per_rank * i}", str(hf_param_name)
+            )
+            for i in range(self.ep_size)
+        ]
+        assert str(hf_param_name) in gathered_expert_param_names, (
+            f"hf_param_name {hf_param_name} not in gathered_expert_param_names {gathered_expert_param_names}"
+        )
+
+        # Gather weights from all EP ranks
+        gathered_weights = [torch.empty_like(megatron_weights) for _ in range(self.ep_size)]
+        torch.distributed.all_gather(gathered_weights, megatron_weights, group=self.ep_group)
+
+        # this should be in the right order because of the all-gather
+        weights_dict = {}
+        for i, param_name in enumerate(gathered_expert_param_names):
+            if param_name in weights_dict:
+                weights_dict[param_name] = torch.cat(
+                    [weights_dict[param_name], gathered_weights[i].unsqueeze(0)], dim=0
+                )
+            else:
+                weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
+        for param_name in weights_dict:
+            weights_dict[param_name] = weights_dict[param_name].squeeze(0)
         return weights_dict
 
     def maybe_dequantize(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -715,6 +1200,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
 class DirectMapping(MegatronParamMapping[torch.Tensor]):
     """Direct 1:1 weight mapping with no transformation or tensor parallelism."""
+
+    def _local_hf_sharding(
+        self, weight: torch.Tensor, megatron_module: nn.Module
+    ) -> tuple[LocalHFShardGroup, int | None, int]:
+        """Describe direct parameters as replicated local views."""
+        return "replicated", None, 1
 
     def hf_to_megatron(
         self,
@@ -785,6 +1276,37 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         along their only dimension following the same pattern.
     """
 
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Project a local column-parallel native MXFP8 weight without gathering."""
+        _validate_native_mxfp8_pair(weight, weight_scale, global_param_name)
+
+        global_weight_shape = list(weight.shape)
+        global_weight_shape[0] *= self.tp_size
+        shard_group: MXFP8ShardGroup = "etp" if self.is_expert else "tp"
+        return (
+            LocalMXFP8Param(
+                name=str(self.hf_param),
+                weight=weight,
+                weight_scale=weight_scale,
+                global_weight_shape=torch.Size(global_weight_shape),
+                shard_group=shard_group,
+                shard_dim=0,
+            ),
+        )
+
+    def _local_hf_sharding(
+        self, weight: torch.Tensor, megatron_module: nn.Module
+    ) -> tuple[LocalHFShardGroup, int | None, int]:
+        """Describe column-parallel local views."""
+        return ("etp" if self.is_expert else "tp"), 0, self.tp_size
+
     def hf_to_megatron(
         self,
         hf_weights: torch.Tensor,
@@ -805,17 +1327,32 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             if hf_weights is None:
                 raise ValueError("hf_weights should not be None on rank 0")
 
-            # For MCore MambaMixer, A_log is initialized in FP32 but cast to BF16 when
-            # saving ckpts, including the ckpt uploaded to HF. Without this cast,
-            # self.scatter_to_tp_ranks will try to scatter the HF A_log weights in BF16 to
-            # the Megatron tensor which is in FP32. This will error. So we cast before the scatter.
+            # Dtype may differ (e.g. MambaMixer A_log is FP32 in MCore but BF16
+            # in HF checkpoints). Cast to match the Megatron parameter so the
+            # scatter doesn't fail on dtype mismatch.
             if hf_weights.dtype != target_param.dtype:
-                logger.warning(
-                    f"WARNING: Dtype mismatch between HuggingFace weights and Megatron module. "
-                    f"HF dtype: {hf_weights.dtype}. Megatron dtype: {target_param.dtype}. "
-                    f"Casting HF weights to Megatron dtype. THIS MAY RESULT IN A LOSS OF PRECISION. "
-                )
+                if not getattr(ColumnParallelMapping, "_dtype_warned", False):
+                    ColumnParallelMapping._dtype_warned = True
+                    logger.warning(
+                        f"Dtype mismatch: HF weights are {hf_weights.dtype} but Megatron "
+                        f"module uses {target_param.dtype}. Casting all mismatched weights "
+                        f"to {target_param.dtype} (further warnings suppressed)."
+                    )
                 hf_weights = hf_weights.to(target_param.dtype)
+
+            actual_dim0_size = hf_weights.shape[0]
+            # DTensor.shape is already the global shape across TP ranks, while
+            # a regular Megatron parameter stores only its local TP shard.
+            expect_dim0_size = _get_mapping_shape(target_param)[0]
+            if not isinstance(target_param, DTensor):
+                expect_dim0_size *= self.tp_size
+            if actual_dim0_size != expect_dim0_size:
+                assert self.megatron_param in {
+                    "embedding.word_embeddings.weight",
+                    "output_layer.weight",
+                    "output_layer.bias",
+                }, f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
+                hf_weights = _pad_right_dim0(hf_weights, pad_size=expect_dim0_size - actual_dim0_size)
 
             # For bias (1D), we still split along dim 0
             # For weight (2D), we split along dim 0 (output dimension)
@@ -827,10 +1364,14 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor):
+            output_shape = target_param.orig_param.shape
+        else:
+            output_shape = _get_mapping_shape(target_param)
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -850,7 +1391,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.tp_size == 1:
+        if self.tp_size == 1 or _module_uses_fsdp(megatron_module):
             full_weights = megatron_weights
         else:
             # Gather from all TP ranks
@@ -861,6 +1402,60 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
+
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Gather from all TP ranks and concatenate with quantization before PP broadcast."""
+        if not quantization_checker(str(self.megatron_param)):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+
+        q_weight, scale = None, None
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+            assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
+            q_weight, scale = quant_fn(megatron_weights, quant_block_size)
+
+        q_weight = self.broadcast_from_pp_rank(q_weight, cache_key=str(self.hf_param) + "_q")
+        if q_weight is None:
+            return {}
+
+        scale = self.broadcast_from_pp_rank(scale, cache_key=str(self.hf_param) + "_scale")
+
+        if self.tp_size == 1:
+            full_q_weight = q_weight
+            full_scale = scale
+        else:
+            gathered_q = self.gather_from_tp_ranks(q_weight)
+            full_q_weight = torch.cat(gathered_q, dim=0)
+
+            gathered_s = self.gather_from_tp_ranks(scale)
+            full_scale = torch.cat(gathered_s, dim=0)
+
+        if self.is_expert and not self.is_adapter:
+            q_weight_dict = self.gather_from_ep_ranks(full_q_weight, megatron_module, self.hf_param)
+            s_dict = self.gather_from_ep_ranks_scale(full_scale, megatron_module, self.hf_param)
+            for k, v in s_dict.items():
+                scale_name = k + "_scale_inv"
+                q_weight_dict[scale_name] = v
+            return q_weight_dict
+
+        hf_name = str(self.hf_param)
+        scale_name = hf_name + "_scale_inv"
+
+        quant_result = {hf_name: full_q_weight, scale_name: full_scale}
+
+        return quant_result
+
+
+def _pad_right_dim0(x: torch.Tensor, pad_size: int) -> torch.Tensor:
+    padder = torch.zeros((pad_size, *x.shape[1:]), dtype=x.dtype, device=x.device)
+    return torch.cat([x, padder], dim=0)
 
 
 class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
@@ -884,20 +1479,71 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         original unsharded weight and emits it under the external (HF) name.
     """
 
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Project a local row-parallel native MXFP8 weight without gathering."""
+        expected_scale_shape = torch.Size((*weight.shape[:-1], weight.shape[-1] // 32))
+        if weight_scale.shape != expected_scale_shape:
+            raise ValueError(
+                f"{global_param_name}: expected native MXFP8 scale shape {tuple(expected_scale_shape)}, "
+                f"got {tuple(weight_scale.shape)}"
+            )
+
+        global_weight_shape = list(weight.shape)
+        global_weight_shape[1] *= self.tp_size
+        shard_group: MXFP8ShardGroup = "etp" if self.is_expert else "tp"
+        return (
+            LocalMXFP8Param(
+                name=str(self.hf_param),
+                weight=weight,
+                weight_scale=weight_scale,
+                global_weight_shape=torch.Size(global_weight_shape),
+                shard_group=shard_group,
+                shard_dim=1,
+            ),
+        )
+
+    def _local_hf_sharding(
+        self, weight: torch.Tensor, megatron_module: nn.Module
+    ) -> tuple[LocalHFShardGroup, int | None, int]:
+        """Describe row-parallel local views."""
+        if weight.ndim == 1:
+            return "replicated", None, 1
+        return ("etp" if self.is_expert else "tp"), 1, self.tp_size
+
     def hf_to_megatron(
         self,
         hf_weights: torch.Tensor,
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Split weight along dim 1 and distribute to TP ranks."""
-        if self.tp_size == 1:
-            return hf_weights
-
         # Some parameters are named with global expert number, e.g. experts.weight15,
         # normalize it to experts.weight0, note we are only use the shape, dtype, device info,
         # not the actual value, so it is safe to do this.
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
+
+        # HF fused expert weights (e.g. down_proj) may be stored in [in, out]
+        # layout while Megatron expects [out, in]. Detect via the unsharded dim:
+        # RowParallel TP does not split dim 0. GTP may split it further in storage,
+        # so compare against the logical TP-local shape.
+        target_shape = _get_mapping_shape(target_param)
+        if (
+            hf_weights is not None
+            and hf_weights.ndim == 2
+            and hf_weights.shape[0] != target_shape[0]
+            and hf_weights.shape[1] == target_shape[0]
+        ):
+            hf_weights = hf_weights.t().contiguous()
+
+        if self.tp_size == 1:
+            return hf_weights
 
         # On rank 0, check for divisibility and split
         if self.tp_rank == 0:
@@ -920,10 +1566,14 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor):
+            output_shape = target_param.orig_param.shape
+        else:
+            output_shape = _get_mapping_shape(target_param)
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -943,7 +1593,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.tp_size == 1 or len(megatron_weights.shape) == 1:
+        if self.tp_size == 1 or len(megatron_weights.shape) == 1 or _module_uses_fsdp(megatron_module):
             # bias is unsharded in row parallel, so we can just return it
             full_weights = megatron_weights
         else:
@@ -954,6 +1604,56 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
+
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Gather from all TP ranks and concatenate with quantization before PP broadcast."""
+        if not quantization_checker(str(self.megatron_param)):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+
+        q_weight, scale = None, None
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+            assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
+            q_weight, scale = quant_fn(megatron_weights, quant_block_size)
+
+        q_weight = self.broadcast_from_pp_rank(q_weight, cache_key=str(self.hf_param) + "_q")
+        if q_weight is None:
+            return {}
+
+        scale = self.broadcast_from_pp_rank(scale, cache_key=str(self.hf_param) + "_scale")
+
+        if self.tp_size == 1 or len(q_weight.shape) == 1:
+            # bias is unsharded in row parallel, so we can just return it
+            full_q_weight = q_weight
+            full_scale = scale
+        else:
+            gathered_q = self.gather_from_tp_ranks(q_weight)
+            full_q_weight = torch.cat(gathered_q, dim=1)
+            # scale is typically not sharded along dim 1, so we do not concatenate it.
+            gathered_scale = self.gather_from_tp_ranks(scale)
+            full_scale = torch.cat(gathered_scale, dim=1)
+
+        if self.is_expert and not self.is_adapter:
+            q_weight_dict = self.gather_from_ep_ranks(full_q_weight, megatron_module, self.hf_param)
+            s_dict = self.gather_from_ep_ranks_scale(full_scale, megatron_module, self.hf_param)
+            for k, v in s_dict.items():
+                scale_name = k + "_scale_inv"
+                q_weight_dict[scale_name] = v
+            return q_weight_dict
+
+        hf_name = str(self.hf_param)
+        scale_name = hf_name + "_scale_inv"
+
+        quant_result = {hf_name: full_q_weight, scale_name: full_scale}
+
+        return quant_result
 
 
 class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
@@ -966,6 +1666,12 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
     during *load* (HF → Megatron) and ensure we do **not** emit duplicates
     during *export* (Megatron → HF).
     """
+
+    def _local_hf_sharding(
+        self, weight: torch.Tensor, megatron_module: nn.Module
+    ) -> tuple[LocalHFShardGroup, int | None, int]:
+        """Describe fully replicated local views."""
+        return "replicated", None, 1
 
     def hf_to_megatron(
         self,
@@ -1013,6 +1719,17 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
             return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): megatron_weights}
+
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        # ReplicatedMapping doesn't need quantization, so we just call megatron_to_hf
+        return self.megatron_to_hf(megatron_weights, megatron_module)
 
 
 class AutoMapping(MegatronParamMapping[torch.Tensor]):
@@ -1078,8 +1795,11 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         "column": {
             "ColumnParallelLinear",
             "LinearCrossEntropyModule",
+            "QuantColumnParallelLinear",
             "TEColumnParallelLinear",
             "TELayerNormColumnParallelLinear",
+            "InferenceColumnParallelLinear",
+            "InferenceLayerNormColumnParallelLinear",
             "TEColumnParallelGroupedLinear",
             "VocabParallelEmbedding",
             "DotProductAttention",  # for attention sink only
@@ -1087,7 +1807,9 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         },
         "row": {
             "RowParallelLinear",
+            "QuantRowParallelLinear",
             "TERowParallelLinear",
+            "InferenceRowParallelLinear",
             "TERowParallelGroupedLinear",
         },
         "replicated": {
@@ -1099,10 +1821,13 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "RMSNorm",
             "L2Norm",
             # Other non-parallel modules
+            "InferenceTopKRouter",
             "IdentityOp",
+            "LinearForLastLayer",
             "TopKRouter",
         },
     }
+    _FUSED_LAYER_NORM_COLUMN_PARALLEL_SUBSTRING = "LayerNormColumnParallelLinear"
 
     @classmethod
     def register_module_type(cls, module_name: str, parallelism_type: str):
@@ -1141,22 +1866,31 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
     def _get_or_create_mapping(self, parallelism_type: str) -> MegatronParamMapping[torch.Tensor]:
         """Get or create the appropriate mapping for the given type."""
         if parallelism_type == "column":
-            return ColumnParallelMapping(self.megatron_param, self.hf_param)
+            mapping = ColumnParallelMapping(self.megatron_param, self.hf_param)
         elif parallelism_type == "row":
-            return RowParallelMapping(self.megatron_param, self.hf_param)
+            mapping = RowParallelMapping(self.megatron_param, self.hf_param)
         elif parallelism_type == "replicated":
-            return ReplicatedMapping(self.megatron_param, self.hf_param)
+            mapping = ReplicatedMapping(self.megatron_param, self.hf_param)
         else:
             raise ValueError(f"Unknown parallelism type: {parallelism_type}")
 
+        # AutoMapping materializes this delegate lazily, after task construction.
+        if self._pg_collection is not None:
+            mapping.set_process_groups_from_pg_collection(self._pg_collection)
+        return mapping
+
     def _detect_parallelism_type(self, module: nn.Module) -> str:
         """Detect parallelism type from module."""
-        module_type = type(module).__name__
+        if is_modelopt_dynamic_module(module):
+            module_type = module.get_original_cls_by_level(level=0).__name__
+        else:
+            module_type = type(module).__name__
 
         # Handle fused modules like TELayerNormColumnParallelLinear
         # These modules have both column-parallel weights (weight, bias)
         # and replicated layer norm weights (layer_norm_weight, layer_norm_bias)
-        if module_type == "TELayerNormColumnParallelLinear":
+        is_layernorm_column_parallel = self._FUSED_LAYER_NORM_COLUMN_PARALLEL_SUBSTRING in module_type
+        if is_layernorm_column_parallel:
             # Check the actual parameter name to determine the correct parallelism type
             if self.megatron_param and (
                 self.megatron_param.endswith("layer_norm_weight") or self.megatron_param.endswith("layer_norm_bias")
@@ -1207,14 +1941,60 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             f"Currently known module types:\n{json.dumps(known_types, indent=2)}"
         )
 
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Delegate direct native MXFP8 export to the detected mapping."""
+        if not self.local_hf_param_specs(global_param_name):
+            raise ValueError(f"{global_param_name}: mapping does not expose canonical local HF views")
+        if self.permute_dims is not None or getattr(self, "transpose_on_export", False):
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support mapping transforms")
+        if megatron_module is None or _module_uses_fsdp(megatron_module):
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
+
+        if self._mapping is None:
+            try:
+                self._detected_type = self._detect_parallelism_type(megatron_module)
+                self._mapping = self._get_or_create_mapping(self._detected_type)
+            except ValueError as error:
+                raise ValueError(f"{global_param_name}: {error}") from error
+
+        return self._mapping.local_mxfp8_params(
+            weight,
+            weight_scale,
+            global_param_name=global_param_name,
+            megatron_module=megatron_module,
+        )
+
+    def _local_hf_sharding(
+        self, weight: torch.Tensor, megatron_module: nn.Module
+    ) -> tuple[LocalHFShardGroup, int | None, int]:
+        """Describe local HF sharding through the detected concrete mapping."""
+        mapping = self._mapping
+        if mapping is None:
+            try:
+                parallelism_type = self._detect_parallelism_type(megatron_module)
+                mapping = self._get_or_create_mapping(parallelism_type)
+            except ValueError as error:
+                raise ValueError(f"{self.megatron_param}: {error}") from error
+        return mapping._local_hf_sharding(weight, megatron_module)
+
     def hf_to_megatron(
         self,
         hf_weights: torch.Tensor,
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Delegate to appropriate mapping based on module type."""
-        # Apply permutation if specified (before distribution)
-        if self.permute_dims is not None and self.tp_rank == 0:
+        # Apply permutation if specified (before distribution).
+        # Must be applied on ALL ranks (not just tp_rank 0) because some delegate
+        # mappings (e.g. ReplicatedMapping) expect hf_weights to have the correct
+        # shape on every rank.
+        if self.permute_dims is not None:
             hf_weights = torch.permute(hf_weights, self.permute_dims).contiguous()
 
         # Detect type and create delegate on first use
@@ -1233,18 +2013,30 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Need to determine type even if module is None (different PP rank)
         assert self.megatron_param is not None, "`megatron_param` is required for AutoMapping."
 
-        if self._mapping is None:
+        mapping = self._mapping
+        if mapping is None:
             if megatron_module is not None:
-                self._detected_type = self._detect_parallelism_type(megatron_module)
+                detected_type = self._detect_parallelism_type(megatron_module)
                 # Broadcast to other ranks
-                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type, "detected_type")
+                detected_type = self.broadcast_obj_from_pp_rank(detected_type, "detected_type")
             else:
                 # Receive from owning rank
-                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
+                detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
 
-            self._mapping = self._get_or_create_mapping(self._detected_type)
+            # A stage-local export has nothing to receive for a non-local task.
+            # Full export must instead reject missing owners in the broadcast helper.
+            if _SKIP_PP_BROADCAST.get() and detected_type is None:
+                return {}
 
-        result = self._mapping.megatron_to_hf(megatron_weights, megatron_module)
+            mapping = self._get_or_create_mapping(detected_type)
+            # A PP-local export skips this task on non-owning stages. Do not
+            # cache the lazy delegate only on the owner, or a later full export
+            # could enter different PP collectives on different ranks.
+            if not _SKIP_PP_BROADCAST.get():
+                self._detected_type = detected_type
+                self._mapping = mapping
+
+        result = mapping.megatron_to_hf(megatron_weights, megatron_module)
 
         # Apply reverse permutation if specified (after gathering)
         if self.permute_dims is not None and result:
@@ -1258,6 +2050,40 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             # Update the result with the correct HF param name
             result = {str(self.hf_param): permuted_tensor}
 
+        return result
+
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Delegate to appropriate mapping based on module type with quantization before PP broadcast."""
+        assert self.megatron_param is not None, "`megatron_param` is required for AutoMapping."
+
+        if self._mapping is None:
+            if megatron_module is not None:
+                self._detected_type = self._detect_parallelism_type(megatron_module)
+                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type, "detected_type")
+            else:
+                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
+            self._mapping = self._get_or_create_mapping(self._detected_type)
+
+        result = self._mapping.megatron_to_hf_quant(
+            megatron_weights, megatron_module, quantization_checker, quant_fn, quant_block_size
+        )
+
+        # Apply reverse permutation if specified (after gathering)
+        if self.permute_dims is not None and result:
+            # We assume result has the main tensor at self.hf_param key.
+            # Scale tensors (if any) shouldn't be permuted, or handled depending on structure.
+            key = str(self.hf_param)
+            tensor = result[key]
+
+            permuted_tensor = torch.permute(tensor, self.permute_dims).contiguous()
+            result[key] = permuted_tensor
         return result
 
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
@@ -1330,6 +2156,57 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # TP/PP distribution mechanics.
         self._tp_mapping = AutoMapping(megatron_param, megatron_param)
 
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Split a local native MXFP8 QKV shard into canonical Q, K, and V parameters."""
+        config = self._get_config(megatron_module)
+        if config.num_attention_heads % self.tp_size:
+            raise ValueError(
+                f"{global_param_name}: num_attention_heads={config.num_attention_heads} "
+                f"is not divisible by tp_size={self.tp_size}"
+            )
+        if config.num_query_groups % self.tp_size:
+            raise ValueError(
+                f"{global_param_name}: num_query_groups={config.num_query_groups} "
+                f"is not divisible by tp_size={self.tp_size}"
+            )
+
+        local_config = cast(
+            TransformerConfig,
+            SimpleNamespace(
+                num_attention_heads=config.num_attention_heads // self.tp_size,
+                num_query_groups=config.num_query_groups // self.tp_size,
+                kv_channels=config.kv_channels,
+                hidden_size=config.hidden_size,
+                attention_output_gate=getattr(config, "attention_output_gate", False),
+            ),
+        )
+        qkv_weights = split_qkv_weights(local_config, weight, feature_dim=weight.shape[-1])
+        qkv_scales = split_qkv_weights(local_config, weight_scale, feature_dim=weight_scale.shape[-1])
+        names = (self.hf_param["q"], self.hf_param["k"], self.hf_param["v"])
+
+        params = []
+        for name, component_weight, component_scale in zip(names, qkv_weights, qkv_scales):
+            global_weight_shape = list(component_weight.shape)
+            global_weight_shape[0] *= self.tp_size
+            params.append(
+                LocalMXFP8Param(
+                    name=name,
+                    weight=component_weight,
+                    weight_scale=component_scale,
+                    global_weight_shape=torch.Size(global_weight_shape),
+                    shard_group="tp",
+                    shard_dim=0,
+                )
+            )
+        return tuple(params)
+
     def hf_to_megatron(
         self,
         hf_weights: Dict[str, torch.Tensor],
@@ -1361,7 +2238,25 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Dequantize if needed
         if megatron_weights is not None:
             megatron_weights = self.maybe_dequantize(megatron_weights)
+        return self._megatron_to_hf(megatron_weights, megatron_module, scale_row_block_size=None)
 
+    def megatron_to_hf_scale(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        *,
+        row_block_size: int,
+    ) -> Dict[str, torch.Tensor]:
+        """Gather and split QKV inverse scales using an explicit row block size."""
+        return self._megatron_to_hf(megatron_weights, megatron_module, scale_row_block_size=row_block_size)
+
+    def _megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        *,
+        scale_row_block_size: int | None,
+    ) -> Dict[str, torch.Tensor]:
         # ------------------------------------------------------------------
         # Broadcast / retrieve the transformer configuration so that every PP
         # rank (also the ones that will early-return) participates in the
@@ -1385,8 +2280,13 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Check if we're dealing with biases (1D) or weights (2D)
         if packed_qkv.ndim == 1:
+            if scale_row_block_size is not None:
+                raise ValueError("QKV inverse scales must be at least two-dimensional")
             # Split biases
             q, k, v = split_qkv_biases(config, packed_qkv)
+        elif scale_row_block_size is not None:
+            q, k, v = _split_qkv_weights_scale_by_row(config, packed_qkv, scale_row_block_size)
+            q, k, v = q.squeeze(-1), k.squeeze(-1), v.squeeze(-1)
         else:
             # Split weights
             q, k, v = split_qkv_weights(config, packed_qkv)
@@ -1397,6 +2297,79 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             self.hf_param["v"]: v,
         }
 
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Convert weights FROM Megatron format with quantization before PP broadcast."""
+        if not quantization_checker(str(self.megatron_param)):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
+        else:
+            config = self._get_config(megatron_module)
+            import copy
+
+            config = remove_non_pickleables(copy.copy(config), max_depth=3)
+            config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
+
+        head_num = config.num_attention_heads
+        head_size = config.kv_channels or (config.hidden_size // head_num)
+        hidden_size = config.hidden_size
+        assert quant_block_size is not None, "quant_block_size must be provided for quantization"
+        assert head_size % quant_block_size[0] == 0, (
+            f"head_size {head_size} is not divisible by quant_block_size {quant_block_size[0]}"
+        )
+        assert hidden_size % quant_block_size[1] == 0, (
+            f"hidden_size {hidden_size} is not divisible by quant_block_size {quant_block_size[1]}"
+        )
+        # Delegate TP/PP gathering and quantization.
+        packed_dict = self._tp_mapping.megatron_to_hf_quant(
+            megatron_weights, megatron_module, lambda _: True, quant_fn, quant_block_size
+        )
+
+        if not packed_dict:
+            return {}
+
+        packed_qkv = packed_dict.get(self.megatron_param)
+        scale_name = self.megatron_param + "_scale_inv"
+        packed_scale = packed_dict.get(scale_name)
+
+        if packed_qkv is None:
+            # Fallback to finding the tensor if exact string match fails
+            for k, v in packed_dict.items():
+                if ".scale" in k or "_scale" in k:
+                    packed_scale = v
+                else:
+                    packed_qkv = v
+
+        # Check if we're dealing with biases (1D) or weights (2D)
+        if packed_qkv.ndim == 1:
+            # Split biases
+            raise ValueError("Biases are usually not quantized. Biases are not supported for quantization.")
+        else:
+            # Split weights
+            q_q, k_q, v_q = split_qkv_weights(config, packed_qkv)
+            q_scale, k_scale, v_scale = split_qkv_weights_scale(config, packed_scale, quant_block_size)
+
+        quant_result = {}
+
+        def add_to_result(result, q_tensor, scale_tensor, hf_name):
+            result[hf_name] = q_tensor
+            scale_name = hf_name + "_scale_inv"
+            result[scale_name] = scale_tensor
+
+        add_to_result(quant_result, q_q, q_scale, self.hf_param["q"])
+        add_to_result(quant_result, k_q, k_scale, self.hf_param["k"])
+        add_to_result(quant_result, v_q, v_scale, self.hf_param["v"])
+
+        return quant_result
+
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         """Return a new *resolved* QKVMapping instance."""
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
@@ -1406,6 +2379,86 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             resolved_hf_param["q"],
             resolved_hf_param["k"],
             resolved_hf_param["v"],
+        )
+
+
+class QKVGMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """QKV mapping that also fuses a per-head scalar gate (``g_proj``).
+
+    Megatron format follows the attention module selected by the provider. For
+    regular QKV modules, gate rows are appended after the standard
+    GQA-interleaved QKV block. For Megatron-Core ``attention_output_gate``
+    modules, the scalar gate is expanded across each head dimension and
+    interleaved as the module's output-gate block.
+
+    External (HF) format: four separate tensors ``q_proj``, ``k_proj``,
+    ``v_proj``, ``g_proj``.
+    """
+
+    def __init__(self, megatron_param: str, q: str, k: str, v: str, g: str):
+        super().__init__(megatron_param, {"q": q, "k": k, "v": v, "g": g})
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def hf_to_megatron(
+        self,
+        hf_weights: Dict[str, torch.Tensor],
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+            if hf_weights["q"].ndim == 1:
+                # Biases not supported for the fused gate variant (Step-3.5 has
+                # add_qkv_bias=False and g_proj has no bias).
+                raise NotImplementedError("QKVGMapping does not support bias tensors; add_qkv_bias must be False.")
+            merged = merge_qkvg_weights(
+                config,
+                hf_weights["q"],
+                hf_weights["k"],
+                hf_weights["v"],
+                hf_weights["g"],
+            )
+        else:
+            merged = None
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "qkvg_config")
+        else:
+            config = self._get_config(megatron_module)
+            config = remove_non_pickleables(config, max_depth=3)
+            config = self.broadcast_obj_from_pp_rank(config, "qkvg_config")
+
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not packed_dict:
+            return {}
+
+        packed_qkvg = next(iter(packed_dict.values()))
+        if packed_qkvg.ndim == 1:
+            raise NotImplementedError("QKVGMapping does not support bias tensors; add_qkv_bias must be False.")
+        q, k, v, g = split_qkvg_weights(config, packed_qkvg)
+        return {
+            self.hf_param["q"]: q,
+            self.hf_param["k"]: k,
+            self.hf_param["v"]: v,
+            self.hf_param["g"]: g,
+        }
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(
+            resolved_megatron_param,
+            resolved_hf_param["q"],
+            resolved_hf_param["k"],
+            resolved_hf_param["v"],
+            resolved_hf_param["g"],
         )
 
 
@@ -1522,11 +2575,13 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
 
             # Define component indices in the concatenated tensor
-            z_shard_idx = torch.arange(d_inner)
-            x_shard_idx = torch.arange(d_inner, 2 * d_inner)
-            B_shard_idx = torch.arange(2 * d_inner, 2 * d_inner + d_tot_ssm)
-            C_shard_idx = torch.arange(2 * d_inner + d_tot_ssm, 2 * d_inner + 2 * d_tot_ssm)
-            dt_shard_idx = torch.arange(2 * (d_inner + d_tot_ssm), 2 * (d_inner + d_tot_ssm) + config.mamba_num_heads)
+            z_shard_idx = torch.arange(d_inner, device=hf_weights.device)
+            x_shard_idx = torch.arange(d_inner, 2 * d_inner, device=hf_weights.device)
+            B_shard_idx = torch.arange(2 * d_inner, 2 * d_inner + d_tot_ssm, device=hf_weights.device)
+            C_shard_idx = torch.arange(2 * d_inner + d_tot_ssm, 2 * d_inner + 2 * d_tot_ssm, device=hf_weights.device)
+            dt_shard_idx = torch.arange(
+                2 * (d_inner + d_tot_ssm), 2 * (d_inner + d_tot_ssm) + config.mamba_num_heads, device=hf_weights.device
+            )
 
             # Reshape for tensor parallel distribution
             target_shape = (self.tp_size, -1, config.hidden_size)
@@ -1560,23 +2615,27 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Broadcast config to all PP ranks for collective communication
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, cache_key="config")
         else:
             config = self._get_config(megatron_module)
             # create shallow copy and remove non-picklable objects with max depth=3
             config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
         d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
         d_tot_ssm_local = (config.mamba_state_dim * config.mamba_num_groups) // self.tp_size
         n_heads_local = config.mamba_num_heads // self.tp_size
 
         # Extract local components
-        z_shard_idx = torch.arange(d_inner_local)
-        x_shard_idx = torch.arange(d_inner_local) + d_inner_local
-        B_shard_idx = torch.arange(d_tot_ssm_local) + 2 * d_inner_local
-        C_shard_idx = torch.arange(d_tot_ssm_local) + 2 * d_inner_local + d_tot_ssm_local
-        dt_shard_idx = torch.arange(n_heads_local) + 2 * (d_inner_local + d_tot_ssm_local)
+        z_shard_idx = torch.arange(d_inner_local, device=megatron_weights.device)
+        x_shard_idx = torch.arange(d_inner_local, device=megatron_weights.device) + d_inner_local
+        B_shard_idx = torch.arange(d_tot_ssm_local, device=megatron_weights.device) + 2 * d_inner_local
+        C_shard_idx = (
+            torch.arange(d_tot_ssm_local, device=megatron_weights.device) + 2 * d_inner_local + d_tot_ssm_local
+        )
+        dt_shard_idx = torch.arange(n_heads_local, device=megatron_weights.device) + 2 * (
+            d_inner_local + d_tot_ssm_local
+        )
 
         local_components = [
             megatron_weights[z_shard_idx],
@@ -1615,7 +2674,9 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self._tp_mapping = ColumnParallelMapping(megatron_param, megatron_param)
 
     @abstractmethod
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         ...
 
@@ -1635,7 +2696,7 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
                 assert "bias" in self.megatron_param, "Only bias and weight are supported for conv1d"
                 target_shape = (self.tp_size, -1)
 
-            shard_idx = self.get_shard_idx(config, local_tp=False)
+            shard_idx = self.get_shard_idx(config, local_tp=False, device=hf_weights.device)
 
             # Extract and reshape components
             sharded_weights = [hf_weights[idx].reshape(target_shape) for idx in shard_idx]
@@ -1663,14 +2724,14 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Broadcast config to all PP ranks for collective communication
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, cache_key="config")
         else:
             config = self._get_config(megatron_module)
             # create shallow copy and remove non-picklable objects with max depth=3
             config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
-        shard_idx = self.get_shard_idx(config, local_tp=True)
+        shard_idx = self.get_shard_idx(config, local_tp=True, device=megatron_weights.device)
 
         local_components = [megatron_weights[idx] for idx in shard_idx]
 
@@ -1694,7 +2755,9 @@ class GDNConv1dMapping(ChunkedMapping):
     tensor-parallel distributed format for GDN SSM layers.
     """
 
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         qk_dim = config.linear_key_head_dim * config.linear_num_key_heads
         v_dim = config.linear_value_head_dim * config.linear_num_value_heads
@@ -1702,9 +2765,9 @@ class GDNConv1dMapping(ChunkedMapping):
             qk_dim = qk_dim // self.tp_size
             v_dim = v_dim // self.tp_size
 
-        q_shard_idx = torch.arange(qk_dim)
-        k_shard_idx = torch.arange(qk_dim) + qk_dim
-        v_shard_idx = torch.arange(v_dim) + qk_dim * 2
+        q_shard_idx = torch.arange(qk_dim, device=device)
+        k_shard_idx = torch.arange(qk_dim, device=device) + qk_dim
+        v_shard_idx = torch.arange(v_dim, device=device) + qk_dim * 2
 
         return [q_shard_idx, k_shard_idx, v_shard_idx]
 
@@ -1716,7 +2779,9 @@ class MambaConv1dMapping(ChunkedMapping):
     tensor-parallel distributed format for Mamba SSM layers.
     """
 
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         d_inner = config.mamba_num_heads * config.mamba_head_dim
         d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
@@ -1725,9 +2790,9 @@ class MambaConv1dMapping(ChunkedMapping):
             d_tot_ssm = d_tot_ssm // self.tp_size
 
         # Extract local components
-        x_shard_idx = torch.arange(d_inner)
-        B_shard_idx = torch.arange(d_tot_ssm) + d_inner
-        C_shard_idx = torch.arange(d_tot_ssm) + d_inner + d_tot_ssm
+        x_shard_idx = torch.arange(d_inner, device=device)
+        B_shard_idx = torch.arange(d_tot_ssm, device=device) + d_inner
+        C_shard_idx = torch.arange(d_tot_ssm, device=device) + d_inner + d_tot_ssm
 
         return [x_shard_idx, B_shard_idx, C_shard_idx]
 
@@ -1782,12 +2847,12 @@ class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # collective communication.
         # ------------------------------------------------------------------
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, cache_key="config")
         else:
             config = self._get_config(megatron_module)
             # create shallow copy and remove non-picklable objects with max depth=3
             config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
         # Delegate TP/PP gathering.
         packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
@@ -1882,11 +2947,11 @@ class GDNLinearMappingSeparate(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Broadcast config across PP ranks (mirrors GDNLinearMapping).
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, cache_key="config")
         else:
             config = self._get_config(megatron_module)
             config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
         packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
         if not packed_dict:
@@ -1974,6 +3039,10 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # This keeps the format-handling (merge/split) concerns separate from
         # TP/PP distribution mechanics.
         self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
+        """Require normal conversion to undo the Megatron QKV interleaving."""
+        return ()
 
     def hf_to_megatron(
         self,
@@ -2085,6 +3154,45 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         """
         super().__init__(megatron_param, {"gate": gate, "up": up})
 
+    def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
+        """Describe the gate and up views of the local fused projection."""
+        if getattr(self, "is_grouped_export", False):
+            return ()
+        return (
+            LocalHFParamSpec(self.hf_param["gate"], -2, 0, 2),
+            LocalHFParamSpec(self.hf_param["up"], -2, 1, 2),
+        )
+
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Split a local native MXFP8 FC1 shard into gate and up projections."""
+        specs = self.local_hf_param_specs(global_param_name)
+        if not specs:
+            raise ValueError(f"{global_param_name}: mapping does not expose canonical local HF views")
+        if megatron_module is None or _module_uses_fsdp(megatron_module):
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
+        shard_group: MXFP8ShardGroup = "etp" if self.is_expert else "tp"
+        return _project_gated_native_mxfp8(
+            weight,
+            weight_scale,
+            names=(specs[0].name, specs[1].name),
+            global_param_name=global_param_name,
+            shard_group=shard_group,
+            shard_size=self.tp_size,
+        )
+
+    def _local_hf_sharding(
+        self, weight: torch.Tensor, megatron_module: nn.Module
+    ) -> tuple[LocalHFShardGroup, int | None, int]:
+        """Describe fused gate/up projections as column-parallel views."""
+        return ("etp" if self.is_expert else "tp"), -2, self.tp_size
+
     def hf_to_megatron(
         self,
         hf_weights: Dict[str, torch.Tensor],
@@ -2127,10 +3235,14 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor):
+            output_shape = target_param.orig_param.shape
+        else:
+            output_shape = _get_mapping_shape(target_param)
         # Scatter the concatenated shards to each rank
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -2157,8 +3269,11 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             gate, up = torch.chunk(fused_mlp, 2, dim=0)
 
         else:
-            # Gather shards from all TP ranks
-            gathered_shards = self.gather_from_tp_ranks(megatron_weights)
+            if _module_uses_fsdp(megatron_module):
+                gathered_shards = torch.chunk(megatron_weights, self.tp_size, dim=0)
+            else:
+                # Gather shards from all TP ranks
+                gathered_shards = self.gather_from_tp_ranks(megatron_weights)
 
             # Split each shard back into gate and up parts
             gate_parts = []
@@ -2181,6 +3296,105 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         return {self.hf_param["gate"]: gate, self.hf_param["up"]: up}
 
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Convert weights FROM Megatron format with quantization before PP broadcast."""
+        if not quantization_checker(str(self.megatron_param)):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+
+        fused_q, fused_scale = None, None
+
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+            assert quant_block_size is not None, "quant_block_size must be provided for quantization"
+
+            if len(megatron_weights.shape) == 2:
+                # Calculate the shape of gate and up shards without performing the actual chunk
+                dim0_chunk = megatron_weights.shape[0] // 2
+                dim1_chunk = megatron_weights.shape[1]
+
+                if dim0_chunk % quant_block_size[0] != 0 or dim1_chunk % quant_block_size[1] != 0:
+                    raise ValueError(
+                        f"gate_shard and up_shard shape ({dim0_chunk}, {dim1_chunk}) cannot be divided by quant_block_size {quant_block_size}"
+                    )
+
+            assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
+            fused_q, fused_scale = quant_fn(megatron_weights, quant_block_size)
+
+        fused_q = self.broadcast_from_pp_rank(fused_q, cache_key=str(self.hf_param["gate"]) + "_fused_q")
+        fused_scale = self.broadcast_from_pp_rank(fused_scale, cache_key=str(self.hf_param["gate"]) + "_fused_scale")
+
+        if fused_q is None:
+            return {}
+
+        if self.tp_size == 1:
+            full_gate_q, full_up_q = torch.chunk(fused_q, 2, dim=0)
+            if len(fused_scale.shape) > 0:
+                full_gate_scale, full_up_scale = torch.chunk(fused_scale, 2, dim=0)
+            else:
+                raise ValueError(f"fused_scale cannot be splitted, {self.megatron_param} has {fused_scale.shape=}")
+        else:
+            gathered_fused_q = self.gather_from_tp_ranks(fused_q)
+            gate_q_parts = []
+            up_q_parts = []
+            for shard in gathered_fused_q:
+                gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
+                gate_q_parts.append(gate_shard)
+                up_q_parts.append(up_shard)
+            full_gate_q = torch.cat(gate_q_parts, dim=0)
+            full_up_q = torch.cat(up_q_parts, dim=0)
+
+            if len(fused_scale.shape) > 0:
+                gathered_fused_scale = self.gather_from_tp_ranks(fused_scale)
+                gate_scale_parts = []
+                up_scale_parts = []
+                for shard in gathered_fused_scale:
+                    gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
+                    gate_scale_parts.append(gate_shard)
+                    up_scale_parts.append(up_shard)
+                full_gate_scale = torch.cat(gate_scale_parts, dim=0)
+                full_up_scale = torch.cat(up_scale_parts, dim=0)
+            else:
+                raise ValueError(f"fused_scale cannot be splitted, {self.megatron_param} has {fused_scale.shape=}")
+        if self.is_expert:
+            ep_gate_dict = self.gather_from_ep_ranks(full_gate_q, megatron_module, self.hf_param["gate"])
+            ep_up_dict = self.gather_from_ep_ranks(full_up_q, megatron_module, self.hf_param["up"])
+
+            quant_result = {**ep_gate_dict, **ep_up_dict}
+
+            ep_gate_scale_dict = self.gather_from_ep_ranks_scale(
+                full_gate_scale, megatron_module, self.hf_param["gate"]
+            )
+            for k, v in ep_gate_scale_dict.items():
+                scale_name = k + "_scale_inv"
+                quant_result[scale_name] = v
+
+            ep_up_scale_dict = self.gather_from_ep_ranks_scale(full_up_scale, megatron_module, self.hf_param["up"])
+            for k, v in ep_up_scale_dict.items():
+                scale_name = k + "_scale_inv"
+                quant_result[scale_name] = v
+
+            return quant_result
+
+        quant_result = {}
+
+        def add_to_result(result, q_tensor, scale_tensor, hf_name):
+            result[hf_name] = q_tensor
+            scale_name = hf_name + "_scale_inv"
+            result[scale_name] = scale_tensor
+
+        add_to_result(quant_result, full_gate_q, full_gate_scale, self.hf_param["gate"])
+        add_to_result(quant_result, full_up_q, full_up_scale, self.hf_param["up"])
+
+        return quant_result
+
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         """Return a new *resolved* GatedMLPMapping instance."""
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
@@ -2197,6 +3411,10 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
     Mapping for zero-centered RMSNorm to standard RMSNorm.
     """
 
+    def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
+        """Require normal conversion to restore the standard RMSNorm values."""
+        return ()
+
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         hf_weights = hf_weights.clone()
         hf_weights.data -= 1
@@ -2211,6 +3429,276 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
         value = hf_weights[key].clone()
         value.data += 1
         return {key: value}
+
+
+def _align_expert_weight_to_shape(
+    weight: torch.Tensor,
+    target_shape: torch.Size,
+    name: str,
+    transpose_hint: bool | None = None,
+) -> torch.Tensor:
+    """Align an expert weight tensor to match a Megatron target shape.
+
+    Args:
+        weight: The weight tensor to align.
+        target_shape: The expected Megatron parameter shape.
+        name: Name used in error messages.
+        transpose_hint: If ``True``, transpose the last two dims unconditionally.
+            If ``False``, return as-is (assert shape already matches).
+            If ``None`` (default), auto-detect: returns the tensor directly if
+            the shape matches, transposes the last two dims if the transposed
+            shape matches, or raises ``ValueError`` otherwise. Auto-detection
+            is ambiguous for square 2-D weights — pass an explicit
+            ``transpose_hint`` in that case.
+    """
+    if transpose_hint is True:
+        result = weight.t().contiguous() if weight.ndim == 2 else weight.transpose(-1, -2).contiguous()
+        if tuple(result.shape) != tuple(target_shape):
+            raise ValueError(
+                f"Unexpected {name} shape after transpose: {tuple(result.shape)}; expected {tuple(target_shape)}."
+            )
+        return result
+    if transpose_hint is False:
+        if tuple(weight.shape) != tuple(target_shape):
+            raise ValueError(f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}.")
+        return weight
+    # Auto-detect (transpose_hint is None)
+    if tuple(weight.shape) == tuple(target_shape):
+        return weight
+    if weight.ndim == 2 and weight.shape[0] == weight.shape[1]:
+        raise ValueError(
+            f"Cannot auto-detect transpose for square {name} weight {tuple(weight.shape)}; "
+            f"pass an explicit transpose_hint=True/False."
+        )
+    if weight.ndim == 2 and tuple(weight.t().shape) == tuple(target_shape):
+        return weight.t().contiguous()
+    raise ValueError(f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}.")
+
+
+class _LooseGatedMLPMapping(GatedMLPMapping):
+    """GatedMLPMapping that skips wildcard validation for fused expert mappings."""
+
+    is_grouped_export = True
+
+
+class FusedExpertMapping(AutoMapping):
+    """Mapping for fused expert weights: 1 HF tensor [num_experts, ...] <-> N Megatron per-expert tensors.
+
+    HF side: Single tensor with shape [num_experts, ...]
+    Megatron side: Per-expert tensors (one param per expert)
+
+    Import: Extracts single expert from fused HF tensor, auto-aligns shape,
+            delegates to AutoMapping for TP distribution.
+    Export: AutoMapping handles TP/EP gathering per expert, then the conversion
+            loop merges all experts via the ``is_grouped_export`` protocol.
+
+    Replaces per-model expert mapping classes and eliminates the need for
+    ``maybe_modify_converted_hf_weight`` / ``hf_weights_cache`` on bridges.
+    """
+
+    is_grouped_export = True
+
+    def __init__(
+        self,
+        megatron_param: str,
+        hf_param: str,
+        permute_dims: tuple[int, ...] | None = None,
+        transpose_on_export: bool = False,
+    ):
+        super().__init__(megatron_param, hf_param, permute_dims)
+        self.allow_hf_name_mismatch = True
+        self.transpose_on_export = transpose_on_export
+
+    @property
+    def group_key(self) -> str:
+        """Tasks sharing the same group_key are merged during export."""
+        return self.hf_param
+
+    def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
+        """Describe a canonical per-expert view, not the grouped destination layout.
+
+        Grouped transposition applies only after expert assembly. These logical
+        views do not qualify direct native MXFP8 transport, which rejects it.
+        """
+        # Grouped destination transposition does not change the canonical expert view.
+        if self.permute_dims is not None:
+            return ()
+        expert_idx = extract_expert_number_from_param(global_param_name or self.megatron_param)
+        prefix = self.hf_param.removesuffix(".weight").removesuffix(".down_proj")
+        return (LocalHFParamSpec(f"{prefix}.{expert_idx}.down_proj.weight"),)
+
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Project one local native MXFP8 FC2 expert without gathering."""
+        if self.permute_dims is not None or self.transpose_on_export:
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support mapping transforms")
+        if megatron_module is None or _module_uses_fsdp(megatron_module):
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
+        _validate_native_mxfp8_pair(weight, weight_scale, global_param_name)
+
+        global_weight_shape = list(weight.shape)
+        global_weight_shape[1] *= self.tp_size
+        return (
+            LocalMXFP8Param(
+                name=self.local_hf_param_specs(global_param_name)[0].name,
+                weight=weight,
+                weight_scale=weight_scale,
+                global_weight_shape=torch.Size(global_weight_shape),
+                shard_group="etp",
+                shard_dim=1,
+            ),
+        )
+
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+
+        expert_idx = extract_expert_number_from_param(self.megatron_param)
+        expert_weight = hf_weights[expert_idx] if hf_weights.ndim >= 3 else hf_weights
+        # Pass the full (unsharded) expert weight directly to AutoMapping, which handles
+        # TP scatter. We must NOT align against target_param.shape here because that shape
+        # is already TP-sharded and would fail for TP > 1.
+        return super().hf_to_megatron(expert_weight, megatron_module)
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(resolved_megatron_param, resolved_hf_param, self.permute_dims, self.transpose_on_export)
+
+
+class FusedGatedExpertMapping(AutoMapping):
+    """Mapping for fused gated expert weights (gate+up projection).
+
+    HF side: Single tensor with shape [num_experts, 2*intermediate, hidden]
+    Megatron side: Per-expert linear_fc1 tensors (with gate+up interleaved)
+
+    Import: Extracts single expert, splits into gate+up, delegates to
+            GatedMLPMapping for interleaved TP distribution.
+    Export: GatedMLPMapping handles TP/EP gathering, gate+up are fused back,
+            conversion loop merges all experts via the ``is_grouped_export`` protocol.
+    """
+
+    is_grouped_export = True
+
+    def __init__(
+        self,
+        megatron_param: str,
+        hf_param: str,
+        permute_dims: tuple[int, ...] | None = None,
+        transpose_on_export: bool = False,
+    ):
+        super().__init__(megatron_param, hf_param, permute_dims)
+        self.allow_hf_name_mismatch = True
+        self.transpose_on_export = transpose_on_export
+        self._gated_mapping = _LooseGatedMLPMapping(
+            megatron_param=self.megatron_param,
+            gate=f"{self.hf_param}.gate",
+            up=f"{self.hf_param}.up",
+        )
+
+    @property
+    def group_key(self) -> str:
+        """Tasks sharing the same group_key are merged during export."""
+        return self.hf_param
+
+    def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
+        """Describe canonical gate/up views, not the grouped destination layout.
+
+        Grouped transposition applies only after expert assembly. These logical
+        views do not qualify direct native MXFP8 transport, which rejects it.
+        """
+        # Grouped destination transposition does not change the canonical expert views.
+        if self.permute_dims is not None:
+            return ()
+        expert_idx = extract_expert_number_from_param(global_param_name or self.megatron_param)
+        prefix = self.hf_param.removesuffix(".weight").removesuffix(".gate_up_proj")
+        return (
+            LocalHFParamSpec(f"{prefix}.{expert_idx}.gate_proj.weight", -2, 0, 2),
+            LocalHFParamSpec(f"{prefix}.{expert_idx}.up_proj.weight", -2, 1, 2),
+        )
+
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Project one local native MXFP8 FC1 expert into gate and up views."""
+        if self.permute_dims is not None or self.transpose_on_export:
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support mapping transforms")
+        if megatron_module is None or _module_uses_fsdp(megatron_module):
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
+
+        specs = self.local_hf_param_specs(global_param_name)
+        return _project_gated_native_mxfp8(
+            weight,
+            weight_scale,
+            names=(specs[0].name, specs[1].name),
+            global_param_name=global_param_name,
+            shard_group="etp",
+            shard_size=self.tp_size,
+        )
+
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+
+        expert_idx = extract_expert_number_from_param(self.megatron_param)
+        expert_weight = hf_weights[expert_idx] if hf_weights.ndim >= 3 else hf_weights
+
+        normalized_param = self._normalize_expert_param_name(self.megatron_param)
+        _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
+        target_shape = _get_mapping_shape(target_param)
+
+        if target_shape[0] % 2 != 0:
+            raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")
+
+        if isinstance(target_param, DTensor):
+            gate_full_shape = (target_shape[0] // 2, target_shape[1])
+        else:
+            # target_shape is the TP-sharded Megatron shape; compute the full
+            # unsharded shape so raw HF weights can be validated before TP scatter.
+            gate_full_shape = (target_shape[0] // 2 * self.tp_size, target_shape[1])
+        gate_up_full_shape = (gate_full_shape[0] * 2, target_shape[1])
+
+        if expert_weight.ndim == 3 and expert_weight.shape[0] == 2:
+            gate = _align_expert_weight_to_shape(expert_weight[0], gate_full_shape, "gate")
+            up = _align_expert_weight_to_shape(expert_weight[1], gate_full_shape, "up")
+        else:
+            expert_weight = _align_expert_weight_to_shape(expert_weight, gate_up_full_shape, "gate_up")
+            gate, up = torch.chunk(expert_weight, 2, dim=0)
+
+        return self._gated_mapping.hf_to_megatron({"gate": gate, "up": up}, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not converted:
+            return {}
+
+        fused: Dict[str, torch.Tensor] = {}
+        for name, tensor in converted.items():
+            if not name.endswith(".gate"):
+                continue
+            base_name = name[: -len(".gate")]
+            up_tensor = converted.get(f"{base_name}.up")
+            if up_tensor is None:
+                continue
+            concat_dim = 0 if tensor.ndim == 2 else 1
+            fused[base_name] = torch.cat([tensor, up_tensor], dim=concat_dim)
+        return fused
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(resolved_megatron_param, resolved_hf_param, self.permute_dims, self.transpose_on_export)
 
 
 def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -2280,12 +3768,12 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(config, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -2293,6 +3781,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -2367,14 +3856,74 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
         return qkv.reshape([-1, hidden_size])
 
 
+def merge_qkvg_weights(
+    provider: TransformerConfig,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+) -> torch.Tensor:
+    """Merge Q, K, V, and per-head scalar gate into Megatron's fused linear_qkv format.
+
+    Layout is selected by ``provider.attention_output_gate``:
+
+    * ``False``: standard GQA-interleaved QKV block followed by ``num_heads``
+      scalar gate rows.
+    * ``True``: Megatron-Core gated-attention layout ``[Q, gate, K, V]`` per
+      query group. The HF scalar gate row for each head is expanded across the
+      head dimension so MCore can apply it elementwise after attention.
+
+    Args:
+        provider: Model configuration provider.
+        q/k/v: Same as :func:`merge_qkv_weights`.
+        g: Per-head gate projection weights ``[num_heads, hidden_size]`` (bias
+            shape ``[num_heads]``).
+    """
+    if getattr(provider, "attention_output_gate", False):
+        head_num = provider.num_attention_heads
+        num_query_groups = provider.num_query_groups
+        heads_per_group = head_num // num_query_groups
+        head_size = provider.kv_channels or (provider.hidden_size // head_num)
+        hidden_size = provider.hidden_size
+
+        if g.ndim != q.ndim:
+            raise ValueError(f"QKV/gate tensor rank mismatch: q.ndim={q.ndim}, g.ndim={g.ndim}")
+        if g.shape[0] != head_num:
+            raise ValueError(f"Expected scalar gate rows for {head_num} heads, got shape={tuple(g.shape)}")
+
+        q_reshaped = q.view(head_num, head_size, hidden_size)
+        k_reshaped = k.view(num_query_groups, head_size, hidden_size)
+        v_reshaped = v.view(num_query_groups, head_size, hidden_size)
+        g_reshaped = g.view(head_num, 1, hidden_size).expand(-1, head_size, -1)
+
+        qkvg_weights = []
+        for i in range(num_query_groups):
+            q_group = q_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
+            g_group = g_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
+            k_group = k_reshaped[i : i + 1]
+            v_group = v_reshaped[i : i + 1]
+            qkvg_weights.extend([q_group, g_group, k_group, v_group])
+        return torch.cat(qkvg_weights, dim=0).reshape(-1, hidden_size)
+
+    qkv = merge_qkv_weights(provider, q, k, v)
+    if g.ndim != qkv.ndim:
+        raise ValueError(f"QKV/gate tensor rank mismatch: qkv.ndim={qkv.ndim}, g.ndim={g.ndim}")
+    return torch.cat([qkv, g], dim=0)
+
+
 def split_qkv_weights(
-    provider: TransformerConfig, qkv: torch.Tensor
+    provider: TransformerConfig,
+    qkv: torch.Tensor,
+    feature_dim: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Split Megatron's interleaved QKV tensor into separate Q, K, V matrices.
 
     Args:
         provider (TransformerConfig): Model configuration provider.
         qkv (torch.Tensor): Interleaved QKV weights in Megatron format.
+        feature_dim: Trailing tensor dimension used for reshape/split.
+            Defaults to ``provider.hidden_size`` for base weights, but LoRA
+            paths can pass the adapter rank explicitly.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
@@ -2395,19 +3944,23 @@ def split_qkv_weights(
     if is_bias:
         hidden_size = 1
         qkv_reshaped = qkv.view(qkv_total_dim, head_size)
+    elif feature_dim is not None:
+        # Explicit feature_dim (e.g. LoRA rank).
+        hidden_size = feature_dim
+        qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
     else:
-        hidden_size = qkv.shape[-1]
+        hidden_size = provider.hidden_size
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
 
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(provider, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -2415,6 +3968,7 @@ def split_qkv_weights(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -2440,6 +3994,146 @@ def split_qkv_weights(
         v = v.reshape(-1, hidden_size)
 
     return q, k, v
+
+
+def split_qkv_weights_scale(
+    provider: TransformerConfig, qkv: torch.Tensor, quant_block_size: Tuple[int, int]
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split Megatron's interleaved QKV tensor into separate Q, K, V matrices.
+
+    Args:
+        provider (TransformerConfig): Model configuration provider.
+        qkv (torch.Tensor): Interleaved QKV weights in Megatron format.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
+            weight matrices.
+    """
+    return _split_qkv_weights_scale_by_row(provider, qkv, quant_block_size[0])
+
+
+def _split_qkv_weights_scale_by_row(
+    provider: TransformerConfig, qkv: torch.Tensor, row_block_size: int
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    head_num = provider.num_attention_heads
+    num_query_groups = provider.num_query_groups
+    heads_per_group = head_num // num_query_groups
+    head_size = (provider.kv_channels or (provider.hidden_size // head_num)) // row_block_size
+
+    if getattr(provider, "attention_output_gate", False):
+        qkv_total_dim = 2 * head_num + 2 * num_query_groups
+        total_heads_per_group = 2 * heads_per_group + 2
+    else:
+        qkv_total_dim = head_num + 2 * num_query_groups
+        total_heads_per_group = heads_per_group + 2
+    is_bias = qkv.ndim == 1
+
+    if is_bias:
+        hidden_size = 1
+        qkv_reshaped = qkv.view(qkv_total_dim, head_size)
+    else:
+        hidden_size = qkv.shape[1]
+        qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
+
+    # Extract Q, K, V from interleaved pattern
+    q_slice = torch.cat(
+        [
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
+            for i in range(num_query_groups)
+        ]
+    )
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
+
+    if getattr(provider, "attention_output_gate", False):
+        z_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        # In HF implementation, matrix Q and Z are mixed, so we need to concatenate them.
+        q = torch.cat([qkv_reshaped[q_slice], qkv_reshaped[z_slice]], dim=1)
+    else:
+        q = qkv_reshaped[q_slice]
+    k = qkv_reshaped[k_slice]
+    v = qkv_reshaped[v_slice]
+
+    assert q.numel() + k.numel() + v.numel() == qkv.numel(), (
+        f"QKV weights are not correctly merged, {q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
+    )
+
+    if is_bias:
+        q = q.reshape(-1)
+        k = k.reshape(-1)
+        v = v.reshape(-1)
+    else:
+        q = q.reshape(-1, hidden_size, 1)
+        k = k.reshape(-1, hidden_size, 1)
+        v = v.reshape(-1, hidden_size, 1)
+
+    return q, k, v
+
+
+def split_qkvg_weights(
+    provider: TransformerConfig,
+    qkvg: torch.Tensor,
+    feature_dim: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split Megatron's fused linear_qkv tensor into (Q, K, V, gate).
+
+    Inverse of :func:`merge_qkvg_weights`.
+    """
+    head_num = provider.num_attention_heads
+    if getattr(provider, "attention_output_gate", False):
+        num_query_groups = provider.num_query_groups
+        heads_per_group = head_num // num_query_groups
+        head_size = provider.kv_channels or (provider.hidden_size // head_num)
+        hidden_size = feature_dim or qkvg.shape[-1]
+        total_heads_per_group = 2 * heads_per_group + 2
+        qkvg_total_dim = 2 * head_num + 2 * num_query_groups
+        qkvg_reshaped = qkvg.view(qkvg_total_dim, head_size, hidden_size)
+
+        q_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkvg.device
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        g_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                    device=qkvg.device,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group, device=qkvg.device)
+        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group, device=qkvg.device)
+
+        q = qkvg_reshaped[q_slice].reshape(-1, hidden_size)
+        k = qkvg_reshaped[k_slice].reshape(-1, hidden_size)
+        v = qkvg_reshaped[v_slice].reshape(-1, hidden_size)
+        g = qkvg_reshaped[g_slice].reshape(head_num, head_size, hidden_size)[:, 0, :]
+        return q, k, v, g
+
+    gate_rows = head_num
+    if qkvg.shape[0] <= gate_rows:
+        raise ValueError(
+            f"fused qkvg tensor too small for gate split: shape={tuple(qkvg.shape)}, gate_rows={gate_rows}"
+        )
+    qkv = qkvg[:-gate_rows]
+    g = qkvg[-gate_rows:]
+    q, k, v = split_qkv_weights(provider, qkv, feature_dim=feature_dim)
+    return q, k, v, g
 
 
 def merge_gdn_linear_weights(
@@ -2493,12 +4187,26 @@ def merge_gdn_linear_weights(
     return in_proj
 
 
-def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor, tp_size: int = 1) -> torch.Tensor:
-    """Split GDN linear weights into QKVZ and BA."""
+def split_gdn_linear_weights(
+    provider: TransformerConfig,
+    in_proj: torch.Tensor,
+    tp_size: int = 1,
+    feature_dim: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split GDN linear weights into QKVZ and BA.
+
+    Args:
+        provider: Transformer config with GDN dimensions.
+        in_proj: Packed in-proj tensor.
+        tp_size: Tensor-parallel world size used for packing layout.
+        feature_dim: Trailing tensor dimension used for reshape/split.
+            Defaults to ``provider.hidden_size`` for base weights, but LoRA
+            paths can pass the adapter rank here.
+    """
 
     assert tp_size >= 1, f"tp_size must be greater than 0, but got {tp_size=}"
 
-    hidden_size = provider.hidden_size
+    feature_dim = provider.hidden_size if feature_dim is None else feature_dim
     qk_head_dim = provider.linear_key_head_dim
     v_head_dim = provider.linear_value_head_dim
     num_qk_heads = provider.linear_num_key_heads
@@ -2507,7 +4215,7 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor,
     qk_dim_local_tp = qk_head_dim * num_qk_heads_local_tp
     v_dim_local_tp = v_head_dim * num_v_heads_local_tp
 
-    in_proj = in_proj.reshape(tp_size, -1, hidden_size)
+    in_proj = in_proj.reshape(tp_size, -1, feature_dim)
     q, k, v, z, b, a = torch.split(
         in_proj,
         [
@@ -2521,12 +4229,12 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor,
         dim=1,
     )
 
-    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, hidden_size) for weight in [q, k, v, z, b, a]]
+    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, feature_dim) for weight in [q, k, v, z, b, a]]
     qkvz = torch.cat([q, k, v, z], dim=1)
     ba = torch.cat([b, a], dim=1)
 
-    qkvz = qkvz.reshape(-1, hidden_size)
-    ba = ba.reshape(-1, hidden_size)
+    qkvz = qkvz.reshape(-1, feature_dim)
+    ba = ba.reshape(-1, feature_dim)
 
     assert qkvz.numel() + ba.numel() == in_proj.numel(), (
         f"QKVZBA weights are not correctly split, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
@@ -2599,6 +4307,7 @@ def _split_gdn_grouped_to_separate(
     config: TransformerConfig,
     qkvz: torch.Tensor,
     ba: torch.Tensor,
+    feature_dim: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Convert head-grouped ``qkvz`` and ``ba`` tensors (as produced by
     :func:`split_gdn_linear_weights`) back into four flat tensors.
@@ -2606,7 +4315,7 @@ def _split_gdn_grouped_to_separate(
     Returns:
         Tuple of (qkv, z, b, a) where each tensor has a flat per-component layout.
     """
-    hidden_size = config.hidden_size
+    feature_dim = config.hidden_size if feature_dim is None else feature_dim
     qk_head_dim = config.linear_key_head_dim
     v_head_dim = config.linear_value_head_dim
     num_qk_heads = config.linear_num_key_heads
@@ -2615,31 +4324,31 @@ def _split_gdn_grouped_to_separate(
 
     expected_qkvz_dim0 = num_qk_heads * (qk_head_dim * 2 + v_per_group * v_head_dim * 2)
     expected_ba_dim0 = num_qk_heads * v_per_group * 2
-    if qkvz.ndim != 2 or qkvz.shape[0] != expected_qkvz_dim0 or qkvz.shape[1] != hidden_size:
+    if qkvz.ndim != 2 or qkvz.shape[0] != expected_qkvz_dim0 or qkvz.shape[1] != feature_dim:
         raise ValueError(
-            f"qkvz shape mismatch: expected ({expected_qkvz_dim0}, {hidden_size}), got {tuple(qkvz.shape)}"
+            f"qkvz shape mismatch: expected ({expected_qkvz_dim0}, {feature_dim}), got {tuple(qkvz.shape)}"
         )
-    if ba.ndim != 2 or ba.shape[0] != expected_ba_dim0 or ba.shape[1] != hidden_size:
-        raise ValueError(f"ba shape mismatch: expected ({expected_ba_dim0}, {hidden_size}), got {tuple(ba.shape)}")
+    if ba.ndim != 2 or ba.shape[0] != expected_ba_dim0 or ba.shape[1] != feature_dim:
+        raise ValueError(f"ba shape mismatch: expected ({expected_ba_dim0}, {feature_dim}), got {tuple(ba.shape)}")
 
     # --- Split grouped QKVZ ---
-    qkvz_g = qkvz.reshape(num_qk_heads, -1, hidden_size)
+    qkvz_g = qkvz.reshape(num_qk_heads, -1, feature_dim)
     q_g, k_g, v_g, z_g = torch.split(
         qkvz_g,
         [qk_head_dim, qk_head_dim, v_per_group * v_head_dim, v_per_group * v_head_dim],
         dim=1,
     )
-    q_flat = q_g.reshape(-1, hidden_size)
-    k_flat = k_g.reshape(-1, hidden_size)
-    v_flat = v_g.reshape(-1, hidden_size)
-    z_flat = z_g.reshape(-1, hidden_size)
+    q_flat = q_g.reshape(-1, feature_dim)
+    k_flat = k_g.reshape(-1, feature_dim)
+    v_flat = v_g.reshape(-1, feature_dim)
+    z_flat = z_g.reshape(-1, feature_dim)
     qkv = torch.cat([q_flat, k_flat, v_flat], dim=0)
 
     # --- Split grouped BA ---
-    ba_g = ba.reshape(num_qk_heads, -1, hidden_size)
+    ba_g = ba.reshape(num_qk_heads, -1, feature_dim)
     b_g, a_g = torch.split(ba_g, [v_per_group, v_per_group], dim=1)
-    b_flat = b_g.reshape(-1, hidden_size)
-    a_flat = a_g.reshape(-1, hidden_size)
+    b_flat = b_g.reshape(-1, feature_dim)
+    a_flat = a_g.reshape(-1, feature_dim)
 
     return qkv, z_flat, b_flat, a_flat
 
@@ -2669,8 +4378,8 @@ def split_kv_biases(config: TransformerConfig, kv: torch.Tensor) -> Tuple[torch.
 
     kv_reshaped = kv.view(kv_total_dim, head_size)
 
-    k_slice = torch.arange(0, kv_total_dim, 2)
-    v_slice = torch.arange(1, kv_total_dim, 2)
+    k_slice = torch.arange(0, kv_total_dim, 2, device=kv.device)
+    v_slice = torch.arange(1, kv_total_dim, 2, device=kv.device)
 
     k = kv_reshaped[k_slice].reshape(-1)
     v = kv_reshaped[v_slice].reshape(-1)
@@ -2704,8 +4413,8 @@ def split_kv_weights(provider: TransformerConfig, kv: torch.Tensor) -> Tuple[tor
 
     kv_reshaped = kv.view(kv_total_dim, head_size, hidden_size)
 
-    k_slice = torch.arange(0, kv_total_dim, 2)
-    v_slice = torch.arange(1, kv_total_dim, 2)
+    k_slice = torch.arange(0, kv_total_dim, 2, device=kv.device)
+    v_slice = torch.arange(1, kv_total_dim, 2, device=kv.device)
 
     k = kv_reshaped[k_slice].reshape(-1, hidden_size)
     v = kv_reshaped[v_slice].reshape(-1, hidden_size)

@@ -29,6 +29,10 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
 )
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.training.utils.packed_seq_utils import (
+    repack_mcore_thd_position_ids,
+    unpack_mcore_thd_tensor_for_position_ids,
+)
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
@@ -125,6 +129,19 @@ class Qwen25VLModel(MegatronModule):
         self.get_image_features = types.MethodType(Qwen2_5_VLModel.get_image_features, self)
         self.get_video_features = types.MethodType(Qwen2_5_VLModel.get_video_features, self)
         self.get_rope_index = types.MethodType(Qwen2_5_VLModel.get_rope_index, self)
+        # get_vision_position_ids is only available in transformers 5.3.0+
+        if is_transformers_min_version("5.3.0"):
+            self.get_vision_position_ids = types.MethodType(Qwen2_5_VLModel.get_vision_position_ids, self)
+
+    @property
+    def decoder(self):
+        """Expose language model decoder for mcore inference compatibility.
+
+        mcore's MambaInferenceStateConfig.from_model() calls get_attr_wrapped_model(model, "decoder"),
+        which only traverses .module wrappers. VLM models store the decoder under language_model.decoder,
+        so we expose it here to allow the Mamba check to run and correctly return None.
+        """
+        return getattr(self.language_model, "decoder", None)
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -141,6 +158,7 @@ class Qwen25VLModel(MegatronModule):
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
+        mm_token_type_ids: Optional[torch.IntTensor] = None,
         labels: Tensor = None,
         inference_context: BaseInferenceContext = None,
         packed_seq_params: PackedSeqParams = None,
@@ -157,6 +175,8 @@ class Qwen25VLModel(MegatronModule):
             The temporal, height and width of feature shape of each video in LLM.
         second_per_grid_ts (`torch.Tensor` of shape `(num_videos)`, *optional*):
             The time interval (in seconds) for each grid along the temporal dimension in the 3D position IDs.
+        mm_token_type_ids (`torch.IntTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Token type IDs distinguishing text (0) from multimodal (1) tokens. Required by transformers >= 5.3.0.
         """
 
         if self.pre_process:
@@ -190,19 +210,51 @@ class Qwen25VLModel(MegatronModule):
             )  # [b, decoder_seq_len, h_language] -> [decoder_seq_len, b, h_language]
 
             if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         # Compute MRoPE position_ids on ALL pipeline stages
         # Each stage has input_ids and visual grid info from the data iterator
         # This avoids any broadcasting overhead
+        rope_input_ids = input_ids
         hf_attention_mask = None
-        position_ids, rope_deltas = self.get_rope_index(
-            input_ids,
-            image_grid_thw,
-            video_grid_thw,
-            second_per_grid_ts=second_per_grid_ts,
-            attention_mask=hf_attention_mask,
-        )
+        packed_row_starts = None
+        packed_row_lengths = None
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+            rope_input_ids, hf_attention_mask, packed_row_starts, packed_row_lengths = (
+                unpack_mcore_thd_tensor_for_position_ids(input_ids, packed_seq_params)
+            )
+
+        # Build mm_token_type_ids: 0=text, 1=image, 2=video
+        mm_token_type_ids = torch.zeros_like(rope_input_ids, dtype=torch.int)
+        mm_token_type_ids[rope_input_ids == self.config.image_token_id] = 1
+        mm_token_type_ids[rope_input_ids == self.config.video_token_id] = 2
+
+        # In transformers 5.3.0+, get_rope_index requires mm_token_type_ids as the second argument
+        if is_transformers_min_version("5.3.0"):
+            position_ids, rope_deltas = self.get_rope_index(
+                rope_input_ids,
+                mm_token_type_ids,
+                image_grid_thw,
+                video_grid_thw,
+                second_per_grid_ts=second_per_grid_ts,
+                attention_mask=hf_attention_mask,
+            )
+        else:
+            position_ids, rope_deltas = self.get_rope_index(
+                rope_input_ids,
+                image_grid_thw,
+                video_grid_thw,
+                second_per_grid_ts=second_per_grid_ts,
+                attention_mask=hf_attention_mask,
+            )
+        if packed_row_starts is not None and packed_row_lengths is not None:
+            position_ids = repack_mcore_thd_position_ids(
+                position_ids,
+                padded_starts=packed_row_starts,
+                lengths=packed_row_lengths,
+                total_length=input_ids.size(1),
+            )
 
         outputs = self.language_model.forward(
             input_ids=None,

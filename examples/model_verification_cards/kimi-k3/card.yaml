@@ -1,0 +1,249 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: kimi_k3
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. This card covers the Kimi K3 language backbone in the published
+  multimodal checkpoint. It does not claim support for the vision tower or
+  multimodal inputs. Full-checkpoint GPU import and deterministic Megatron
+  greedy text generation are verified. CPU conversion, GPU export,
+  full-model Hugging Face/Megatron forward correlation, and every training
+  workflow remain unverified.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - inference
+    unverified:
+      - hf_to_megatron_cpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+  training:
+    GB300:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: moonshotai/Kimi-K3
+  hf_revision: 9f62e4e9fffbd0a83ddd60e1c209d828994b3569  # pragma: allowlist secret
+  architecture: KimiK3ForConditionalGeneration
+  min_transformers_version: "4.56.2"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.06
+  bridge_commit: ae77a6703c61669f15936a12ddf542c2cf5cbc3b  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No CPU Hugging Face-to-Megatron conversion result is claimed. Future
+      verification must import the complete pinned language backbone with the
+      public conversion launcher, persist iter_0000000, reload it, and audit all
+      mapped keys, shapes, dtypes, and values.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    bridge_commit: cec012e568c55a6c0906622d8a5b0986a79f40cf  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 12 --gpus-per-node 4
+      --hf-model moonshotai/Kimi-K3
+      --hf-revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
+      --megatron-path work/model-verification/kimi-k3/imported-megatron
+      --torch-dtype bfloat16 --tp 2 --pp 3 --ep 8 --etp 2
+      --distributed-timeout-minutes 180 --trust-remote-code
+    last_verified: 2026-07-28
+    expected_result: >
+      On 48x GB200, the pinned complete checkpoint imports at
+      TP2/PP3/EP8/ETP2 and exits successfully in 27:01. Published MXFP4
+      routed-expert weights are dequantized to BF16, and iter_0000000 is
+      persisted with 48 distributed-checkpoint shards, metadata, and the
+      recorded 93-layer run configuration. Exact Hugging Face round-trip
+      parity is tracked separately by megatron_to_hf_gpu.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No CPU Megatron-to-Hugging-Face conversion result is claimed. Future
+      verification depends on a complete persisted Megatron import and must
+      write, strictly reload, and exactly audit the exported Hugging Face
+      language-backbone weights against the pinned source revision.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No GPU Megatron-to-Hugging-Face conversion result is claimed. All 69
+      source KDA A_log tensors were audited: each stores 96 active heads plus
+      32 zero-valued inactive entries, for 2,208 checked padding values.
+      Import validation drops only this zero padding, and export unit tests
+      restore it with zeros. A four-layer diagnostic proxy completed
+      low-memory GPU import and distributed streaming export. Its seven
+      safetensors shards and index, totaling 58,482,941,904 bytes, were
+      byte-identical to an export from the previous default-save import; this
+      validates the low-memory I/O behavior, not full-model parity. Against the
+      published proxy source, all 16,402 keys and shapes matched and A_log
+      padding was valid. Three o_norm tensors changed from FP32 to BF16, and
+      16,128 value mismatches were concentrated in MXFP4 expert packed weights
+      and scales because import dequantizes them to BF16 before export
+      requantizes them. Full verification therefore still requires the pinned
+      complete model to export and strictly reload, exact comparison of
+      lossless tensors, and a declared numerical criterion for lossy MXFP4
+      reconstruction.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A four-layer diagnostic proxy matched the next token and measured logit
+      cosine similarity 0.9998329878 and Pearson correlation 0.9998273849.
+      This is not a full-model comparison. Verification still requires the
+      pinned complete language backbone on both implementations, the same
+      prompt, a matching next token, cosine similarity of at least 0.99, and
+      reported maximum and mean absolute logit differences.
+
+  inference:
+    status: verified
+    precision: bf16
+    bridge_commit: eb91f8be86e5f88771bfa020b33cd74dd3de80ad  # pragma: allowlist secret
+    command: >
+      uv run python examples/conversion/hf_to_megatron_generate_text.py
+      --hf_model_path moonshotai/Kimi-K3 --trust-remote-code
+      --apply-chat-template --thinking-mode disabled
+      --prompt "What is 15% of 240? Answer in one short sentence."
+      --max_new_tokens 32 --tp 1 --pp 3 --ep 8 --etp 1
+    last_verified: 2026-07-27
+    expected_result: >-
+      On 24x GB300, the pinned complete language backbone imports directly into
+      Megatron at TP1/PP3/EP8/ETP1. The command exits successfully in 22:59
+      after exactly 32 new greedy tokens and prints this completion,
+      represented with JSON Unicode escapes for the model control-token
+      brackets:
+      "15% of 240 = 0.15 × 240 = 36.\u003c|close|\u003ethink\u003c|sep|\u003e\u003c|open|\u003eresponse\u003c|sep|\u003e15% of 240 is 36.".
+
+  pretrain:
+    GB300:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Training was intentionally excluded from this model-only verification
+        pass. A future public Kimi K3 language-backbone recipe must complete a
+        bounded 100-step pretrain run with finite loss, no skipped or NaN
+        iterations, all five metrics, and a reloadable final checkpoint.
+
+  sft:
+    GB300:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Training was intentionally excluded from this model-only verification
+        pass. A future public Kimi K3 language-backbone recipe must complete a
+        pinned-data 100-step full-SFT run with finite loss, no skipped or NaN
+        iterations, all five metrics, and a reloadable final checkpoint.
+
+  sft_export_inference:
+    GB300:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        No post-SFT export or inference result is claimed because SFT was
+        intentionally excluded from this model-only verification pass. Future
+        verification requires a completed SFT run followed by a strict Hugging
+        Face export reload and deterministic greedy text generation.
+
+  sft_long_context:
+    GB300:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Training was intentionally excluded from this model-only verification
+        pass. A future public long-context SFT recipe must define supported
+        sequence packing and context parallelism, complete 100 steps with finite
+        loss and no skipped or NaN iterations, and record all five metrics.
+
+  peft:
+    GB300:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Training was intentionally excluded from this model-only verification
+        pass. A future Kimi K3 PEFT recipe with an audited adapter target set
+        must complete 100 steps with finite loss, no skipped or NaN iterations,
+        all five metrics, and a reloadable adapter checkpoint.
+
+  checkpoint_resume:
+    GB300:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        Training was intentionally excluded from this model-only verification
+        pass. A future direct continuation must restore model, optimizer,
+        scheduler, data-order, and RNG state, match declared sentinel losses
+        within tolerance, and save a reloadable checkpoint to a distinct output
+        root.

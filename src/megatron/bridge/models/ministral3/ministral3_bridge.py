@@ -32,6 +32,10 @@ Supported models:
 Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
+from typing import Mapping, Union
+
+import torch
+
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -40,7 +44,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.conversion.quantization_utils import maybe_dequantize_fp8
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 
 
@@ -73,7 +78,7 @@ class Ministral3Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Ministral3ModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Ministral3ModelProvider:
         """
         Create a Ministral3ModelProvider from a HuggingFace pretrained VL model.
 
@@ -87,17 +92,44 @@ class Ministral3Bridge(MegatronModelBridge):
 
         # Ministral 3 has separate text_config and vision_config
         text_config = getattr(hf_config, "text_config", hf_config)
+        tie_word_embeddings = getattr(text_config, "tie_word_embeddings", False)
+        # Transformers supplies a top-level default for composite configs even
+        # when the checkpoint declares the effective value only in text_config.
+        # Keep the config copied by save_hf_pretrained consistent with the
+        # language model and its exported lm_head.
+        hf_config.tie_word_embeddings = tie_word_embeddings
+        params_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
         provider = Ministral3ModelProvider(
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,
             num_layers=text_config.num_hidden_layers,
-            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
+            num_attention_heads=text_config.num_attention_heads,
+            num_query_groups=text_config.num_key_value_heads,
+            kv_channels=text_config.head_dim,
+            seq_length=text_config.max_position_embeddings,
+            share_embeddings_and_output_weights=tie_word_embeddings,
             rotary_base=text_config.rope_parameters["rope_theta"],
             vocab_size=text_config.vocab_size,
+            params_dtype=params_dtype,
+            fp16=params_dtype == torch.float16,
+            bf16=params_dtype == torch.bfloat16,
             hf_config=hf_config,
+            image_token_id=getattr(hf_config, "image_token_index", 10),
         )
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Ministral3ModelProvider) -> dict[str, object]:
+        """Convert a Ministral 3 provider to its nested HuggingFace config layout."""
+        text_config = super().megatron_to_hf_config(provider)
+        top_level_keys = ("architectures", "model_type")
+        hf_config = {key: text_config.pop(key) for key in top_level_keys if key in text_config}
+        if "torch_dtype" in text_config:
+            hf_config["dtype"] = text_config.pop("torch_dtype")
+        hf_config["tie_word_embeddings"] = text_config.get("tie_word_embeddings", False)
+        hf_config["text_config"] = text_config
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -170,6 +202,46 @@ class Ministral3Bridge(MegatronModelBridge):
 
         return MegatronMappingRegistry(*mapping_list)
 
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: Union[str, dict[str, str]],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
+        """Load HF weights and dequantize FP8 tensors on the fly.
+
+        Ministral-3-*-Instruct-2512 stores LM weights in FP8 (float8_e4m3fn) with
+        separate ``weight_scale_inv`` scalar tensors.  The true bfloat16 weight is::
+
+            w_bf16 = fp8_weight.to(bfloat16) * weight_scale_inv
+
+        This override applies dequantization transparently so that the bridge produces
+        correct Megatron checkpoints without a separate preprocessing step.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+        if isinstance(hf_weights, dict):
+            # Compound params (QKV / GatedMLP): dequantize each component individually
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Dequantize *weight* if it is stored as FP8.
+
+        Looks up ``param_name + "_scale_inv"`` in *hf_state_dict* and applies::
+
+            w_bf16 = weight.to(bfloat16) * scale_inv
+        """
+        scale_key = param_name + "_scale_inv"
+        return maybe_dequantize_fp8(weight, hf_state_dict.get(scale_key))
+
 
 # Register the bridge if Mistral3ForConditionalGeneration is available
 if HAS_MISTRAL3 and Mistral3ForConditionalGeneration is not None:
@@ -179,7 +251,7 @@ if HAS_MISTRAL3 and Mistral3ForConditionalGeneration is not None:
     # Dynamically register the bridge with Ministral3Model as target
     try:
         Ministral3Bridge = MegatronModelBridge.register_bridge(
-            source=Mistral3ForConditionalGeneration, target=Ministral3Model
+            source=Mistral3ForConditionalGeneration, target=Ministral3Model, model_type="mistral3"
         )(Ministral3Bridge)
     except Exception:
         # If registration fails, the bridge will still work manually

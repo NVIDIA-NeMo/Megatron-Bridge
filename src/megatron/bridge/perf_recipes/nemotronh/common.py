@@ -1,0 +1,261 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ruff: noqa: F401
+"""Common helpers for nemotronh performance recipes."""
+
+from pathlib import Path
+
+import torch
+from megatron.core.quantization.utils import load_quantization_recipe
+
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
+    nemotron_3_super_pretrain_16gpu_h100_bf16_config as nemotron_3_super_pretrain_config,
+)
+from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
+from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import (
+    MixedPrecisionConfig,
+    nemotron_3_super_bf16_with_nvfp4_mixed,
+    nemotron_3_ultra_bf16_with_nvfp4_mixed,
+)
+from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
+
+
+_TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
+
+# Number of GPUs in a single GB300 multi-node NVLink (MNNVL) domain
+# (16 nodes x 4 GPUs). Each Megatron-FSDP optimizer instance is sharded within one
+# NVLink domain (HSDP), matching ``--num-distributed-optimizer-instances $((nodes/16))``
+# in the reference Megatron-LM launch script.
+_GB300_NVLINK_DOMAIN_GPUS = 64
+
+
+def _apply_nemotron_3_nano_perf_defaults(cfg: ConfigContainer) -> None:
+    """Apply the canonical Nemotron 3 Nano performance workload defaults."""
+    cfg.model.seq_length = 8192
+    cfg.dataset.seq_length = 8192
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    # Preserve the optimizer-state precision used by the measured performance
+    # recipes even if the source library recipe later adopts different
+    # optimizer-state storage for a constrained hardware target.
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+
+def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
+    """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
+    cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
+    # Although MCore PR 4358 is merged,
+    # Megatron-FSDP's ParamAndGradBuffer has no NVFP4 packed-storage support, unlike the
+    # legacy DDP buffer, so FP4 primary weights fault during buffer init.
+    cfg.fp4_param_gather = False
+    return cfg
+
+
+def _nemotron_3_ultra_nvfp4_precision() -> MixedPrecisionConfig:
+    """Return the NVFP4 precision config used by Nemotron 3 Ultra perf recipes."""
+    cfg = nemotron_3_ultra_bf16_with_nvfp4_mixed()
+    return cfg
+
+
+def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
+    """Apply shared Nemotron 3 Super perf defaults after recipe-specific overrides."""
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    # The Nemotron 3 Super base recipe is memory-bounded for 16-GPU support
+    # runs. Benchmarks measure throughput on larger systems, so restore
+    # overlapped collectives and full-precision optimizer state.
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.checkpoint.async_save = False
+
+    _benchmark_common(cfg)
+
+
+def _enable_nemotron_3_super_full_iteration(cfg: ConfigContainer) -> None:
+    """Enable the HybridEP full-iteration stack for Nemotron 3 Super."""
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = None
+
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_scope = []
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.model.offload_modules = []
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = False
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+
+    # Nemotron 3 Super uses two MTP layers. MCore only supports expert-parallel
+    # A2A overlap and delayed wgrad with at most one MTP layer.
+    cfg.comm_overlap = None
+    cfg.model.overlap_moe_expert_parallel_comm = False
+    cfg.model.delay_wgrad_compute = False
+
+
+def _enable_nemotron_3_5_lightning_full_iteration(cfg: ConfigContainer) -> None:
+    """Enable full-iteration capture with static MoE buffers for Lightning."""
+    set_full_iteration_cuda_graph(cfg.model)
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    # Static receive capacity avoids dispatcher CPU synchronization during capture.
+    # The training loop retries capacity overflows without padding.
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_use_grouped_tensor = True
+    cfg.model.moe_paged_stash = False
+    cfg.model.offload_modules = []
+
+
+def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
+    """Apply shared Nemotron 3 Ultra perf defaults after recipe-specific overrides."""
+
+    # Native cross-entropy fusion
+    # TE fusion has known stability issues and is rejected by Megatron-LM arg validation.
+    _benchmark_common(cfg, cross_entropy_impl="native")
+
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.checkpoint.async_save = False
+
+    # MoE token dispatcher + grouped-GEMM / router fusions
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False  # unsupported by MCore during training
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_router_fusion = True
+
+    # CuteDSL fused grouped MLP + TE op fuser
+    cfg.model.use_transformer_engine_op_fuser = True
+
+    # Kernel / graph selections.
+    cfg.model.attention_backend = "fused"
+    cfg.model.use_fused_weighted_squared_relu = True
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+    cfg.model.init_method_std = 0.0099
+
+    # Batch sizing with manual GC.
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    # High priority NCCL stream for the EP communicator + longer init timeout
+    cfg.dist.high_priority_stream_groups = ["ep"]
+    cfg.dist.distributed_timeout_minutes = 30
+
+    # Optimizer / scheduler
+    cfg.optimizer.lr = 8.0e-4
+    cfg.optimizer.min_lr = 8.0e-6
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.scheduler.start_weight_decay = 0.1
+    cfg.scheduler.end_weight_decay = 0.1
+    cfg.scheduler.lr_decay_style = "WSD"
+
+    # DDP bucketing
+    cfg.ddp.num_buckets = 48
+
+
+def _apply_nemotron_3_ultra_gtp(cfg: ConfigContainer) -> None:
+    """Apply rack-local dense GTP settings for Nemotron 3 Ultra on GB300.
+
+    Dense weights are sharded across one 64-GPU NVLink domain. Routed-expert
+    weights remain unsharded by GTP because EP64 already spans that domain;
+    this avoids expert-weight all-gathers across racks.
+    """
+    cfg.dist.use_megatron_fsdp = False
+    cfg.ddp.use_megatron_fsdp = False
+
+    # GTP is controlled through the user-facing total weight-shard counts.
+    # TP1 x GTP64 gives one dense-weight shard per GPU within a GB300 rack.
+    cfg.model.tensor_parallel_num_weight_shards = _GB300_NVLINK_DOMAIN_GPUS
+    cfg.model.expert_tensor_parallel_num_weight_shards = cfg.model.expert_tensor_parallel_size
+
+    # GTP currently supports only one distributed-optimizer instance.
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+
+
+def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> None:
+    """Apply Megatron-FSDP (HSDP) settings for Nemotron 3 Ultra on GB300.
+
+    Shards params/grads/optimizer
+    within each NVLink domain and replicate (optimizer-sharded) across domains, with
+    BF16 gradient comm, FP32 main params, and BF16 main grads. Applied last so it
+    wins over the generic perf defaults.
+    """
+    # Base Megatron-FSDP enablement
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.keep_fp8_transpose_cache = False
+
+    # average_in_collective is not supported with Megatron-FSDP.
+    cfg.ddp.average_in_collective = False
+    cfg.model.init_model_with_meta_device = True
+    cfg.checkpoint.load = None
+
+    # HSDP: shard within an NVLink domain, replicate (optim-sharded) across domains.
+    num_optim_instances = max(1, num_gpus // _GB300_NVLINK_DOMAIN_GPUS)
+    cfg.ddp.num_distributed_optimizer_instances = num_optim_instances
+
+    # HSDP across NVLink domains. Megatron-FSDP
+    # only enables HSDP when num_distributed_optimizer_instances > 1; with a single
+    # NVLink domain HSDP is off, so the outer strategy must be "no_shard" (otherwise
+    # the first param all-gather hits a None HSDP helper buffer).
+    cfg.ddp.outer_dp_sharding_strategy = "optim" if num_optim_instances > 1 else "no_shard"
+
+    cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.bfloat16
+    cfg.ddp.megatron_fsdp_main_params_dtype = torch.float32
+    cfg.ddp.megatron_fsdp_main_grads_dtype = torch.bfloat16
+
+    # incompatible with BF16 FSDP main grads
+    cfg.model.gradient_accumulation_fusion = False
+
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"

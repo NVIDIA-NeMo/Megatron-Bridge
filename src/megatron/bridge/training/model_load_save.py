@@ -14,8 +14,6 @@
 
 import argparse
 import logging
-import os
-import socket
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Literal, Optional, Union
@@ -24,15 +22,19 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.utils import get_model_config
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
-from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.checkpointing import _CpuTorchDistSaveShardedStrategy, save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
+from megatron.bridge.training.gtp import _get_checkpoint_weight_topology, _validate_checkpoint_weight_topology
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import file_exists
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -44,6 +46,30 @@ HF_BASED_TOKENIZERS = [
     "GPT2BPETokenizer",
     "HuggingFaceTokenizer",
 ]
+
+
+def _uses_hybrid_rng_tracker(model_cfg: Any) -> bool:
+    is_hybrid_model = getattr(model_cfg, "is_hybrid_model", False)
+    if isinstance(is_hybrid_model, bool) and is_hybrid_model:
+        return True
+
+    hybrid_layer_pattern = getattr(model_cfg, "hybrid_layer_pattern", None)
+    return isinstance(hybrid_layer_pattern, str) and bool(hybrid_layer_pattern)
+
+
+def _disable_cuda_graphs_for_hybrid_load(model_cfg: Any) -> None:
+    if not _uses_hybrid_rng_tracker(model_cfg):
+        return
+
+    for name, value in (
+        ("cuda_graph_impl", "none"),
+        ("enable_cuda_graph", False),
+        ("external_cuda_graph", False),
+    ):
+        if hasattr(model_cfg, name):
+            setattr(model_cfg, name, value)
+    if hasattr(model_cfg, "cuda_graph_scope") or hasattr(model_cfg, "cuda_graph_modules"):
+        clear_cuda_graph_modules(model_cfg)
 
 
 def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
@@ -95,22 +121,20 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     Useful for operations that require Megatron's parallel state but should run
     standalone (e.g., loading distributed checkpoints).
 
+    Uses an in-process store for rendezvous: this context is intentionally
+    single-process (world_size=1, rank=0), so it does not need a TCPStore
+    endpoint. A TCPStore rendezvous would either race on a dynamically picked
+    port (the socket is closed before init binds it) or silently inherit the
+    caller's MASTER_ADDR/MASTER_PORT settings.
+
     Args:
         backend: The distributed backend to use ("gloo" for CPU, "nccl" for GPU).
 
     Yields:
         None.
     """
-    if "MASTER_ADDR" in os.environ and "MASTER_PORT" in os.environ:
-        init_method = None
-    else:
-        # Find an available port dynamically
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("localhost", 0))
-            addr, port = s.getsockname()
-        init_method = f"tcp://{addr}:{port}"
-
-    dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
+    store = dist.HashStore()
+    dist.init_process_group(backend=backend, store=store, world_size=1, rank=0)
     parallel_state.initialize_model_parallel()
 
     # Initialize RNG tracker for model initialization
@@ -132,6 +156,32 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     finally:
         parallel_state.destroy_model_parallel()
         dist.destroy_process_group()
+
+
+def _get_or_initialize_pg_collection(
+    model_cfg: TransformerConfig | ModelConfig,
+) -> ProcessGroupCollection:
+    """Return MPU process groups, initializing model-parallel state when needed."""
+    from megatron.bridge.training.gtp import configure_gtp_remat
+
+    configure_gtp_remat(model_cfg)
+    if not parallel_state.is_initialized():
+        parallel_state.initialize_model_parallel(
+            tensor_model_parallel_size=model_cfg.tensor_model_parallel_size,
+            pipeline_model_parallel_size=model_cfg.pipeline_model_parallel_size,
+            virtual_pipeline_model_parallel_size=model_cfg.virtual_pipeline_model_parallel_size,
+            context_parallel_size=model_cfg.context_parallel_size or 1,
+            expert_model_parallel_size=model_cfg.expert_model_parallel_size or 1,
+            expert_tensor_parallel_size=model_cfg.expert_tensor_parallel_size,
+            gtp_remat_size=getattr(model_cfg, "gtp_weight_remat_size", 1),
+            expert_gtp_remat_size=getattr(model_cfg, "expert_gtp_weight_remat_size", 1),
+        )
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+
+            model_parallel_cuda_manual_seed(0)
+
+    return ProcessGroupCollection.use_mpu_process_groups()
 
 
 def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
@@ -171,6 +221,11 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
     else:
         cfg = _tokenizer_config_from_args(mlm_args)
 
+    hf_tokenizer_kwargs = kwargs.get("hf_tokenizer_kwargs")
+    caller_trusts_remote_code = kwargs.get("trust_remote_code") is True or (
+        isinstance(hf_tokenizer_kwargs, dict) and hf_tokenizer_kwargs.get("trust_remote_code") is True
+    )
+
     for key, val in kwargs.items():
         if hasattr(cfg, key):
             setattr(cfg, key, val)
@@ -179,15 +234,41 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
                 f"Attempting to set a non-existent attribute '{key}' on TokenizerConfig.\nState of TokenizerConfig before attempting this override: {cfg}"
             )
 
+    if getattr(cfg, "trust_remote_code", False) is True and not caller_trusts_remote_code:
+        raise ValueError(
+            "Checkpoint tokenizer config requested trust_remote_code=True. "
+            "Pass trust_remote_code=True to load_tokenizer() only if you trust the checkpoint tokenizer code."
+        )
+
     if cfg.tokenizer_type in HF_BASED_TOKENIZERS and cfg.tokenizer_model == Path():
         cfg.tokenizer_model = Path(checkpoint_path) / "tokenizer"
 
     return build_tokenizer(cfg)
 
 
+def _normalize_moe_dispatcher_sm_config(model_dict: dict[str, Any]) -> None:
+    """Migrate legacy per-backend MoE SM counts when MCore supports the unified field."""
+    unified_key = "moe_flex_dispatcher_num_sms"
+    if not hasattr(TransformerConfig, unified_key):
+        return
+
+    # TODO: remove this guard when MCore dev includes commit 2d7060f44fc9 and Bridge no longer
+    # supports checkpoints saved with the legacy per-backend SM-count fields.
+    if model_dict.get(unified_key) is None:
+        backend = model_dict.get("moe_flex_dispatcher_backend", "deepep")
+        legacy_key = "moe_hybridep_num_sms" if backend == "hybridep" else "moe_deepep_num_sms"
+        legacy_value = model_dict.get(legacy_key)
+        if legacy_value is not None:
+            model_dict[unified_key] = legacy_value
+
+    for legacy_key in ("moe_deepep_num_sms", "moe_hybridep_num_sms"):
+        if legacy_key in model_dict:
+            model_dict[legacy_key] = None
+
+
 def load_model_config(
     checkpoint_path: str,
-) -> tuple[TransformerConfig, Optional[argparse.Namespace]]:
+) -> tuple[TransformerConfig | ModelConfig, Optional[argparse.Namespace]]:
     """Returns the model config saved in the checkpoint.
 
     Supports checkpoints saved with either Megatron Bridge or MegatronLM.
@@ -208,7 +289,7 @@ def load_model_config(
         read_run_config,
     )
     from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _transformer_config_from_args
-    from megatron.bridge.utils.instantiate_utils import instantiate
+    from megatron.bridge.utils.instantiate_utils import _resolve_target, instantiate
 
     run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
 
@@ -216,6 +297,14 @@ def load_model_config(
         run_config = read_run_config(run_config_filename)
         mbridge_ckpt = True
         mlm_args = None
+
+        # For backward compatibility reasons only
+        model_dict = run_config.get("model", {})
+        if model_dict.get("hybrid_override_pattern") and not model_dict.get("hybrid_layer_pattern"):
+            model_dict["hybrid_layer_pattern"] = model_dict.pop("hybrid_override_pattern")
+        if isinstance(model_dict.get("pipeline_model_parallel_layout"), dict):
+            model_dict["pipeline_model_parallel_layout"] = None
+        _normalize_moe_dispatcher_sm_config(model_dict)
     else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)
@@ -224,7 +313,18 @@ def load_model_config(
             raise RuntimeError(f"Checkpoint at {checkpoint_path} is not in a supported format.")
 
     if mbridge_ckpt:
-        model_cfg = instantiate(run_config["model"])
+        if "_builder_" in run_config["model"]:
+            model_dict = run_config["model"]
+            target = model_dict.get("_target_")
+            if isinstance(target, str):
+                model_config_cls = _resolve_target(target, full_key="model._target_")
+                if not isinstance(model_config_cls, type) or not issubclass(model_config_cls, ModelConfig):
+                    raise TypeError(f"Builder model target must resolve to a ModelConfig class, got {target!r}.")
+                model_cfg = model_config_cls.from_dict(model_dict)
+            else:
+                model_cfg = ModelConfig.from_dict(model_dict)
+        else:
+            model_cfg = instantiate(run_config["model"])
     else:
         model_cfg = _transformer_config_from_args(mlm_args)
 
@@ -233,8 +333,8 @@ def load_model_config(
 
 def build_and_load_model(
     checkpoint_path: str,
-    model_cfg: TransformerConfig,
-    model_type: Optional[Literal["gpt", "mamba"]] = None,
+    model_cfg: TransformerConfig | ModelConfig,
+    model_type: Optional[Literal["gpt", "hybrid", "mamba"]] = None,
     megatron_args: Optional[argparse.Namespace] = None,
     return_state_dict: bool = False,
     use_cpu_init: bool = False,
@@ -252,7 +352,7 @@ def build_and_load_model(
         model_cfg: Model config from load_model_config(). Either a TransformerConfig or
             a model provider (e.g. GPTModelProvider) depending on source of checkpoint.
         model_type: If the checkpoint is from MegatronLM, the model type is required. Currently,
-            only GPT and Mamba models are supported.
+            GPT and Hybrid models are supported; "mamba" is accepted as a deprecated alias.
         megatron_args: If the checkpoint is from MegatronLM, this is required.
         return_state_dict: If True, return the state dict instead of model instance. Default: False.
         use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
@@ -269,7 +369,7 @@ def build_and_load_model(
         _load_model_weights_from_checkpoint,
     )
     from megatron.bridge.training.mlm_compat.arguments import _tokenizer_config_from_args
-    from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
+    from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _hybrid_provider
     from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 
     if has_modelopt_state(checkpoint_path):
@@ -278,12 +378,34 @@ def build_and_load_model(
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
-        if isinstance(model_cfg, ModelProviderMixin):
+        if isinstance(model_cfg, (ModelProviderMixin, ModelConfig)):
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
-            return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
+            pg_collection = _get_or_initialize_pg_collection(model_cfg)
+
+            if isinstance(model_cfg, ModelProviderMixin):
+                return model_cfg.provide_distributed_model(
+                    wrap_with_ddp=False,
+                    use_cpu_initialization=use_cpu_init,
+                    pg_collection=pg_collection,
+                )
+
+            # Note: `use_cpu_initialization` is not passed as an explicit kwarg here,
+            # unlike the ModelProviderMixin path which passes it directly to
+            # `provide_distributed_model`. Instead, it is handled by the
+            # `megatron_cpu_init_context` context manager (see below), which sets
+            # the flag on the config object. This is intentional — we do not want
+            # to duplicate TransformerConfig fields like `use_cpu_initialization`
+            # as kwargs on `build_distributed_models`.
+            if not use_cpu_init:
+                # Like the provider override above, clear the flag a CPU import saved
+                # in the config, so a GPU load builds the model on the GPU.
+                model_cfg.use_cpu_initialization = False
+            builder_cls = model_cfg.get_builder_cls()
+            builder = builder_cls(model_cfg)
+            return builder.build_distributed_models(pg_collection, wrap_with_ddp=False)
         else:
-            assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
+            assert model_type in ("gpt", "hybrid", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
 
             # Generate the unpadded vocab size based on the tokenizer from the checkpoint
@@ -298,7 +420,7 @@ def build_and_load_model(
                 megatron_args.make_vocab_size_divisible_by,
                 model_cfg.tensor_model_parallel_size,
             )
-            provider = _gpt_provider if model_type == "gpt" else _mamba_provider
+            provider = _gpt_provider if model_type == "gpt" else _hybrid_provider
             return _get_model(megatron_args, provider, model_cfg)
 
     # Auto-detect if we should skip temp dist context
@@ -345,7 +467,7 @@ def build_and_load_model(
 
 def load_megatron_model(
     checkpoint_path: str,
-    model_type: Optional[Literal["gpt", "mamba"]] = None,
+    model_type: Optional[Literal["gpt", "hybrid", "mamba"]] = None,
     return_state_dict: bool = False,
     use_cpu_init: bool = False,
     skip_temp_dist_context: Optional[bool] = None,
@@ -359,7 +481,7 @@ def load_megatron_model(
         checkpoint_path: path to an MCore distributed checkpoint directory
                           (e.g., /path/to/model/checkpoints/iter_0000001).
         model_type: If the checkpoint is from MegatronLM, the model type is required. Currently,
-            only GPT and Mamba models are supported.
+            GPT and Hybrid models are supported; "mamba" is accepted as a deprecated alias.
         return_state_dict: If True, return the state dict instead of model instance. Default: False.
         use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
                      If False, use GPU initialization and NCCL backend. Default: False.
@@ -374,6 +496,10 @@ def load_megatron_model(
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
     model_cfg, mlm_args = load_model_config(checkpoint_path)
+    # Deserialized providers have not been finalized yet: derive GTP from the
+    # saved public shard counts before resetting the model-parallel defaults.
+    saved_weight_topology = _get_checkpoint_weight_topology(model_cfg)
+    saved_pipeline_model_parallel_size = getattr(model_cfg, "pipeline_model_parallel_size", 1)
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
     model_cfg.pipeline_model_parallel_size = 1
@@ -382,19 +508,64 @@ def load_megatron_model(
     model_cfg.context_parallel_size = 1
     model_cfg.expert_model_parallel_size = 1
     model_cfg.expert_tensor_parallel_size = 1
+    model_cfg.tensor_parallel_num_weight_shards = None
+    model_cfg.expert_tensor_parallel_num_weight_shards = None
+    model_cfg.gtp_weight_remat_size = 1
+    model_cfg.expert_gtp_weight_remat_size = 1
+    if getattr(model_cfg, "hybrid_layer_pattern", None):
+        model_cfg.hybrid_layer_pattern = model_cfg.hybrid_layer_pattern.replace("|", "")
     model_cfg.sequence_parallel = False
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
+    model_cfg.overlap_moe_expert_parallel_comm = False  # Required with EP=1
+    model_cfg.delay_wgrad_compute = False  # Required with overlap=False
+    _disable_cuda_graphs_for_hybrid_load(model_cfg)
     if use_cpu_init:
         model_cfg.fp8 = None
         model_cfg.fp8_param = False
 
     # Apply model-parallel overrides if provided
     if mp_overrides:
+        # Allowlist of fields where explicitly passing None clears the saved value;
+        # other None overrides are ignored. Omitted fields are not overridden here.
+        # For example, inference may override a saved moe_expert_capacity_factor=1.1
+        # with None to disable capacity-based token dropping. Ignoring that None
+        # would incorrectly retain the training-time capacity limit.
+        nullable_overrides = {
+            "pipeline_model_parallel_layout",
+            "moe_expert_capacity_factor",
+            "moe_expert_rank_capacity_factor",
+            "moe_router_force_biased",
+        }
         for key, value in mp_overrides.items():
-            if hasattr(model_cfg, key) and value is not None:
+            if hasattr(model_cfg, key) and (value is not None or key in nullable_overrides):
                 setattr(model_cfg, key, value)
+
+        if (
+            "pipeline_model_parallel_size" in mp_overrides
+            and model_cfg.pipeline_model_parallel_size != saved_pipeline_model_parallel_size
+            and "pipeline_model_parallel_layout" not in mp_overrides
+        ):
+            model_cfg.pipeline_model_parallel_layout = None
+
+    # A saved flexible layout describes PP/VPP stage ownership. It must not be
+    # reinterpreted as virtual pipeline chunks after collapsing to one rank.
+    if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
+        model_cfg.pipeline_model_parallel_layout = None
+
+    _validate_checkpoint_weight_topology(
+        saved=saved_weight_topology, requested=_get_checkpoint_weight_topology(model_cfg)
+    )
+
+    # DeepEP and NCCL EP flex backends require TPxEP > 1, so single-rank loads fall back to allgather.
+    # MCore allows shared-expert overlap only with alltoall and flex, so disable it with the fallback.
+    if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
+        tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
+        ep = getattr(model_cfg, "expert_model_parallel_size", 1)
+        if tp * ep == 1:
+            model_cfg.moe_token_dispatcher_type = "allgather"
+            model_cfg.moe_shared_expert_overlap = False
 
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
@@ -470,16 +641,18 @@ def save_megatron_model(
             hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
         )
 
-    # Get model config from the first model instance
-    model_config = get_model_config(model[0])
+    # Builder-backed models retain their complete outer ModelConfig for
+    # checkpoint reconstruction. Legacy provider models expose their provider
+    # through ``config`` as before.
+    model_config = getattr(model[0], "model_config", None)
+    if not isinstance(model_config, ModelConfig):
+        model_config = get_model_config(model[0])
 
-    # Validate that the model config is a model provider
-    if not isinstance(model_config, ModelProviderMixin):
+    if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):
         raise TypeError(
-            f"Expected model config to be an instance of ModelProviderMixin, "
+            "Expected model config to be an instance of ModelConfig or ModelProviderMixin, "
             f"but got {type(model_config).__name__}. "
-            f"Model configs must inherit from ModelProviderMixin to ensure proper "
-            f"model instantiation and configuration handling."
+            "Model configs must support builder- or provider-backed reconstruction."
         )
 
     # Create global state for checkpointing
@@ -504,6 +677,42 @@ def save_megatron_model(
         dist=None,
     )
 
+    # Complete tokenizer construction and persistence before save_checkpoint publishes
+    # the root selectors for this checkpoint.
+    if tokenizer_config is not None:
+        from megatron.training.checkpointing import save_tokenizer_assets
+
+        from megatron.bridge.training.checkpointing import get_checkpoint_name
+
+        tokenizer_error: Exception | None = None
+        try:
+            tokenizer = build_tokenizer(tokenizer_config)
+            checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
+            save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name, raise_on_error=True)
+        except Exception as error:
+            tokenizer_error = error
+
+        if torch.distributed.is_initialized():
+            tokenizer_errors: list[str | None] = [None] * torch.distributed.get_world_size()
+            local_error = None if tokenizer_error is None else f"{type(tokenizer_error).__name__}: {tokenizer_error}"
+            torch.distributed.all_gather_object(tokenizer_errors, local_error)
+            failures = [error for error in tokenizer_errors if error is not None]
+            if failures:
+                raise RuntimeError(f"Failed to save tokenizer assets on one or more ranks: {failures}")
+        elif tokenizer_error is not None:
+            raise tokenizer_error
+
+    runtime_config = getattr(model[0], "config", None)
+    use_cpu_save_strategy = getattr(runtime_config, "use_cpu_initialization", False) is True
+    if isinstance(model_config, ModelConfig):
+        transformer_config = getattr(model_config, "transformer", None)
+        use_cpu_save_strategy = (
+            use_cpu_save_strategy or getattr(transformer_config, "use_cpu_initialization", False) is True
+        )
+    checkpointing_context = None
+    if ckpt_format == "torch_dist" and use_cpu_save_strategy:
+        checkpointing_context = {"save_strategy": _CpuTorchDistSaveShardedStrategy("torch_dist", 1)}
+
     if low_memory_save:
         # Low-memory save flow: process factories incrementally, freeing memory as we go
         import gc
@@ -521,17 +730,13 @@ def save_megatron_model(
         from megatron.bridge.training.checkpointing import (
             _build_sharded_state_dict_metadata,
             generate_state_dict,
-            get_rng_state,
         )
         from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
         logger.info("[LOW_MEMORY_SAVE] Generating state dict...")
 
-        # Get RNG state (minimal, since save_rng=False)
+        # Conversion checkpoints intentionally omit RNG state.
         pg_collection = get_pg_collection(model)
-        rng_state = get_rng_state(
-            data_parallel_random_init=False, ckpt_format=ckpt_format, pg_collection=pg_collection
-        )
 
         # Build sharded state dict metadata
         sharded_sd_metadata = _build_sharded_state_dict_metadata(False, state.cfg.checkpoint)
@@ -542,11 +747,12 @@ def save_megatron_model(
             model,
             optimizer=None,
             opt_param_scheduler=None,
-            rng_state=rng_state,
+            rng_state=None,
             iteration=0,
             optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
             model_sd_kwargs=dict(metadata=sharded_sd_metadata),
             rerun_state=None,
+            pg_collection=pg_collection,
         )
 
         # Build a map from storage data_ptr to model parameter
@@ -666,6 +872,8 @@ def save_megatron_model(
             num_floating_point_operations_so_far=0,
             prebuilt_state_dict=state_dict,
             pg_collection=pg_collection,
+            checkpointing_context=checkpointing_context,
+            callback_manager=None,
         )
     else:
         # Save the checkpoint
@@ -675,23 +883,9 @@ def save_megatron_model(
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=checkpointing_context,
+            callback_manager=None,
         )
-
-    # Save tokenizer files separately if tokenizer config is provided
-    if tokenizer_config is not None:
-        from megatron.bridge.training.checkpointing import (
-            get_checkpoint_name,
-            save_tokenizer_assets,
-        )
-
-        # Build the tokenizer
-        tokenizer = build_tokenizer(tokenizer_config)
-
-        # Get the checkpoint name for step 0
-        checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
-
-        # Save tokenizer files
-        save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name)
 
 
 def dtype_from_str(dtype: str) -> torch.dtype:
@@ -709,11 +903,11 @@ def dtype_from_str(dtype: str) -> torch.dtype:
     if not isinstance(dtype, str):
         raise TypeError(f"Expected str, got {type(dtype)}")
 
-    if dtype in ("float16", "fp16", "16", "16-mixed"):
-        return torch.float16
-    elif dtype in ("bfloat16", "bf16-mixed"):
-        return torch.bfloat16
-    else:
+    from megatron.bridge.utils.activation_map import str_to_dtype
+
+    try:
+        return str_to_dtype(dtype)
+    except ValueError:
         return torch.float32
 
 

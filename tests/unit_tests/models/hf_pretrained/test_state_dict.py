@@ -180,11 +180,12 @@ class TestStateDictKeyRetrieval:
         assert len(keys) == 7
         assert keys == sorted(keys)
 
-    def test_items_method(self, mock_model):
-        """Test items method."""
+    def test_inherited_mapping_items(self, mock_model):
+        """Test items behavior inherited from Mapping."""
         state_dict_source = mock_model.state_dict()
         state_dict = StateDict(state_dict_source)
 
+        assert "items" not in StateDict.__dict__
         items = list(state_dict.items())
 
         assert isinstance(items, list)
@@ -198,6 +199,22 @@ class TestStateDictKeyRetrieval:
 
         assert "transformer.wte.weight" in state_dict
         assert "missing.key" not in state_dict
+
+    def test_membership_follows_wrapped_get_all_keys(self, mock_model):
+        """Membership tracks a temporarily wrapped source.get_all_keys (as the Kimi bridges do)."""
+        state_dict = StateDict(mock_model.state_dict())
+        source = state_dict.source
+        assert "lm_head.virtual" not in state_dict  # build the key set before wrapping
+
+        original_get_all_keys = source.get_all_keys
+        source.get_all_keys = lambda: original_get_all_keys() + ["lm_head.virtual"]
+        try:
+            assert "lm_head.virtual" in state_dict
+        finally:
+            source.get_all_keys = original_get_all_keys
+
+        assert "lm_head.virtual" not in state_dict
+        assert "lm_head.weight" in state_dict
 
 
 class TestStateDictTensorLoading:
@@ -397,70 +414,287 @@ class TestStateDictIndexing:
             _ = state_dict[123]
 
 
-class TestStateDictConvenienceMethods:
-    """Test convenience methods for pattern matching."""
+class TestSafeTensorsStateSourceSave:
+    """Test streaming safetensors save behavior."""
 
-    def test_regex_method(self, mock_model):
-        """Test regex convenience method."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
+    def test_save_generator_ignores_source_key_prefixes(self, tmp_path, capsys):
+        from safetensors.torch import save_file
 
-        tensors = state_dict.regex(r".*\.weight$")
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        save_file(
+            {
+                "model.weight": torch.ones(1),
+                "mtp.0.weight": torch.ones(1),
+            },
+            source_dir / "model-00001-of-00001.safetensors",
+        )
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {
+                        "model.weight": "model-00001-of-00001.safetensors",
+                        "mtp.0.weight": "model-00001-of-00001.safetensors",
+                    },
+                },
+                f,
+            )
 
-        assert isinstance(tensors, dict)
-        assert len(tensors) > 0
-        assert all(key.endswith(".weight") for key in tensors)
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(
+            iter([("model.weight", torch.zeros(1))]),
+            output_dir,
+            ignored_source_key_prefixes=("mtp.",),
+        )
 
-    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
-    def test_glob_method(self, mock_model):
-        """Test glob convenience method."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
+        output = capsys.readouterr().out
+        assert "Error:" not in output
+        assert "Success: All tensors from the original checkpoint were written." in output
 
-        tensors = state_dict.glob("transformer.*.weight")
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
 
-        assert isinstance(tensors, dict)
-        assert len(tensors) > 0
-        assert all(key.startswith("transformer") and key.endswith("weight") for key in tensors)
+    def test_filter_source_keys_filters_expected_map(self):
+        source_map = {
+            "model.weight": "model.safetensors",
+            "model.weight_scale_inv": "model.safetensors",
+            "mtp.0.weight": "model.safetensors",
+            "mtp_extra.weight": "model.safetensors",
+        }
+
+        assert SafeTensorsStateSource._filter_source_keys(None, ("mtp.",), ("_scale_inv",)) == {}
+        assert SafeTensorsStateSource._filter_source_keys(source_map, None, None) == source_map
+        assert SafeTensorsStateSource._filter_source_keys(source_map, ("mtp.",), ("_scale_inv",)) == {
+            "model.weight": "model.safetensors",
+            "mtp_extra.weight": "model.safetensors",
+        }
+
+    @pytest.mark.parametrize("distributed_save", [False, True])
+    def test_save_generator_ignores_source_key_suffixes(self, tmp_path, distributed_save):
+        from safetensors import safe_open
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        shard = "model-00001-of-00001.safetensors"
+        save_file(
+            {
+                "model.weight": torch.ones(1),
+                "model.weight_scale_inv": torch.ones(1),
+            },
+            source_dir / shard,
+        )
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {
+                        "model.weight": shard,
+                        "model.weight_scale_inv": shard,
+                    },
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(
+            iter([("model.weight", torch.zeros(1))]),
+            output_dir,
+            distributed_save=distributed_save,
+            ignored_source_key_suffixes=("_scale_inv",),
+        )
+
+        with safe_open(output_dir / shard, framework="pt") as output:
+            assert output.keys() == ["model.weight"]
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": shard}
+
+    def test_distributed_save_generator_ignores_source_key_prefixes_without_initialized_dist(self, tmp_path):
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        save_file(
+            {
+                "model.weight": torch.ones(1),
+                "mtp.0.weight": torch.ones(1),
+            },
+            source_dir / "model-00001-of-00001.safetensors",
+        )
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {
+                        "model.weight": "model-00001-of-00001.safetensors",
+                        "mtp.0.weight": "model-00001-of-00001.safetensors",
+                    },
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(
+            iter([("model.weight", torch.zeros(1))]),
+            output_dir,
+            distributed_save=True,
+            ignored_source_key_prefixes=("mtp.",),
+        )
+
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
 
 
-class TestStateDictCachingAndOptimization:
-    """Test caching and optimization features."""
+class TestSafeTensorsStateSourceResolve:
+    """Test SafeTensorsStateSource._resolve_path with revision and offline mode."""
 
-    def test_caching(self, mock_model):
-        """Test that StateDict works correctly with mocked model."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
+    def test_resolve_path_with_revision(self, tmp_path):
+        revision = "b5968e9190ef"  # pragma: allowlist secret
+        source = SafeTensorsStateSource("some/model-repo", revision=revision)
+        with patch("huggingface_hub.snapshot_download") as mock_download:
+            mock_download.return_value = str(tmp_path)
+            resolved = source.path
+            mock_download.assert_called_once()
+            _, kwargs = mock_download.call_args
+            assert kwargs.get("repo_id") == "some/model-repo"
+            assert kwargs.get("revision") == revision
+            assert resolved == tmp_path
 
-        # First call
-        keys1 = list(state_dict.keys())
+    def test_resolve_path_offline_mode(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("huggingface_hub.constants.HF_HUB_OFFLINE", True)
+        source = SafeTensorsStateSource("some/model-repo", revision="my-tag")
+        with patch("huggingface_hub.snapshot_download") as mock_download:
+            mock_download.return_value = str(tmp_path)
+            resolved = source.path
+            mock_download.assert_called_once()
+            _, kwargs = mock_download.call_args
+            assert kwargs.get("revision") == "my-tag"
+            assert kwargs.get("local_files_only") is True
+            assert resolved == tmp_path
 
-        # Second call
-        keys2 = list(state_dict.keys())
+    def test_pretrained_base_passes_revision(self):
+        class DummyPreTrained(PreTrainedBase):
+            def __init__(self, model_name_or_path, revision=None):
+                super().__init__(revision=revision)
+                self.model_name_or_path = model_name_or_path
 
-        assert keys1 == keys2
+            def _load_config(self):
+                pass
 
-    def test_index_file_parsing(self, temp_safetensors_dir):
-        """Test that StateDict can be created with SafeTensorsStateSource."""
+            def _load_model(self):
+                pass
 
-        # Create a mock StateSource
-        class MockStateSource(StateSource):
-            def get_all_keys(self):
-                return ["transformer.wte.weight", "lm_head.weight"]
+        obj = DummyPreTrained("deepseek-ai/DeepSeek-V4-Pro", revision="abc1234")
+        with patch.object(SafeTensorsStateSource, "_resolve_path", return_value=Path("/tmp")):
+            accessor = obj.state
+            source = accessor.source
+            assert isinstance(source, SafeTensorsStateSource)
+            assert source.revision == "abc1234"
 
-            def load_tensors(self, keys):
-                result = {}
-                for key in keys:
-                    if key in self.get_all_keys():
-                        result[key] = torch.randn(10, 10)
-                return result
 
-            def keys(self):
-                return self.get_all_keys()
+class TestSafeTensorsStateSourceCache:
+    """Small-tensor cache and safe_open handle reuse in SafeTensorsStateSource.load_tensors."""
 
-        mock_source = MockStateSource()
-        state_dict = StateDict(mock_source)
+    @staticmethod
+    def _write_checkpoint(root: Path, tensors: dict, filename: str = "model-00001-of-00001.safetensors") -> None:
+        from safetensors.torch import save_file
 
-        # Verify we can get keys
-        keys = list(state_dict.keys())
-        assert len(keys) == 2
+        root.mkdir(parents=True, exist_ok=True)
+        save_file(tensors, root / filename)
+        index = {"metadata": {}, "weight_map": {k: filename for k in tensors}}
+        (root / "model.safetensors.index.json").write_text(json.dumps(index))
+
+    @staticmethod
+    def _count_safe_open(monkeypatch):
+        import safetensors
+
+        calls = {"n": 0}
+        real = safetensors.safe_open
+
+        def counting(*args, **kwargs):
+            calls["n"] += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(safetensors, "safe_open", counting)
+        return calls
+
+    def test_small_cache_returns_independent_tensors(self, tmp_path):
+        self._write_checkpoint(tmp_path, {"w.scale": torch.tensor([1.0]), "w.weight": torch.ones(4, 4)})
+        source = SafeTensorsStateSource(tmp_path)
+
+        first = source.load_tensors(["w.scale"])["w.scale"]
+        first.zero_()
+        second = source.load_tensors(["w.scale"])["w.scale"]
+        assert second.item() == 1.0
+        second.fill_(7.0)
+        assert source.load_tensors(["w.scale"])["w.scale"].item() == 1.0
+
+    def test_retry_refreshes_incomplete_shard(self, tmp_path, monkeypatch):
+        from safetensors.torch import save_file
+
+        shard = "model-00001-of-00001.safetensors"
+        self._write_checkpoint(tmp_path, {"text.other": torch.zeros(2)}, shard)
+        index = {"metadata": {}, "weight_map": {"text.other": shard, "text.weight": shard}}
+        (tmp_path / "model.safetensors.index.json").write_text(json.dumps(index))
+
+        def replace_shard(_seconds):
+            complete = tmp_path / "complete.safetensors"
+            save_file({"text.other": torch.zeros(2), "text.weight": torch.ones(2)}, complete)
+            complete.replace(tmp_path / shard)
+
+        monkeypatch.setattr("time.sleep", replace_shard)
+        source = SafeTensorsStateSource(tmp_path, key_prefix="text.")
+        loaded = source.load_tensors(["weight"])
+        assert torch.equal(loaded["weight"], torch.ones(2))
+
+    @pytest.mark.parametrize("cache_small,reuse_handles", [("1", "1"), ("1", "0"), ("0", "1"), ("0", "0")])
+    def test_cache_and_handle_switches(self, tmp_path, monkeypatch, cache_small, reuse_handles):
+        self._write_checkpoint(tmp_path, {"w.scale": torch.tensor([2.0]), "w.weight": torch.ones(8, 8)})
+        monkeypatch.setenv("MBRIDGE_STATE_CACHE_SMALL_TENSORS", cache_small)
+        monkeypatch.setenv("MBRIDGE_STATE_REUSE_HANDLES", reuse_handles)
+        calls = self._count_safe_open(monkeypatch)
+        source = SafeTensorsStateSource(tmp_path)
+
+        for _ in range(3):
+            assert source.load_tensors(["w.scale"])["w.scale"].item() == 2.0
+        opens_after_scales = calls["n"]
+        if cache_small == "1":
+            assert opens_after_scales == 1  # first read opens the shard, the two cache hits do not
+        elif reuse_handles == "1":
+            assert opens_after_scales == 1  # one handle, reused for all three reads
+        else:
+            assert opens_after_scales == 3  # baseline behaviour: one safe_open per load_tensors
+
+        # w.weight (64 elements) is also below the default small-tensor threshold, so with the
+        # cache on its second read is a hit; with the cache off every read goes to the shard.
+        for _ in range(2):
+            assert source.load_tensors(["w.weight"]).keys() == {"w.weight"}
+        extra_opens = calls["n"] - opens_after_scales
+        expected = {("1", "1"): 0, ("1", "0"): 1, ("0", "1"): 0, ("0", "0"): 2}
+        assert extra_opens == expected[(cache_small, reuse_handles)]
+
+    def test_cache_threshold_and_instance_isolation(self, tmp_path, monkeypatch):
+        self._write_checkpoint(tmp_path, {"small": torch.ones(4), "big": torch.ones(16)})
+        monkeypatch.setenv("MBRIDGE_STATE_SMALL_TENSOR_NUMEL", "4")
+        monkeypatch.setenv("MBRIDGE_STATE_REUSE_HANDLES", "0")
+        calls = self._count_safe_open(monkeypatch)
+
+        source = SafeTensorsStateSource(tmp_path)
+        source.load_tensors(["small", "big"])
+        assert set(source._small_tensor_cache) == {"small"}  # inclusive threshold: 4 <= 4 cached, 16 is not
+        source.load_tensors(["small"])
+        assert calls["n"] == 1  # served from the cache
+        source.load_tensors(["big"])
+        assert calls["n"] == 2  # re-read from the shard
+
+        other = SafeTensorsStateSource(tmp_path)
+        assert other._small_tensor_cache == {}
+        other.load_tensors(["small"])
+        assert calls["n"] == 3  # a new instance starts cold

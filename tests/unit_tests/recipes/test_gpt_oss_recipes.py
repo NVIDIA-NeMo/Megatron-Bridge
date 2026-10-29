@@ -1,0 +1,320 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Unit tests for GPT-OSS recipe configuration builders.
+
+For each exported recipe function in ``megatron.bridge.recipes.gpt_oss``:
+- Call the config factory (parameterless API).
+- Assert a valid ``ConfigContainer`` is returned.
+- For FP8 current-scaling variants, verify that the FP8 mixed-precision
+  preset and the ``moe_router_padding_for_fp8`` flag are applied.
+- For MXFP8 (Blackwell) variants, verify that the MXFP8 mixed-precision
+  preset and the ``moe_router_padding_for_fp8`` flag are applied.
+"""
+
+import importlib
+from collections.abc import Callable
+
+import pytest
+
+
+_gpt_oss_module = importlib.import_module("megatron.bridge.recipes.gpt_oss")
+_ALL_RECIPE_CASES = [
+    (name, getattr(_gpt_oss_module, name))
+    for name in getattr(_gpt_oss_module, "__all__", [])
+    if callable(getattr(_gpt_oss_module, name, None))
+]
+
+_MXFP8_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "mxfp8" in name]
+_HOPPER_FP8_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "fp8_current_scaling" in name]
+_ALL_FP8_RECIPE_CASES = _MXFP8_RECIPE_CASES + _HOPPER_FP8_RECIPE_CASES
+_BASE_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "fp8" not in name]
+
+
+def _recipe_ids(recipe_cases):
+    return [name for name, _ in recipe_cases]
+
+
+def _build_recipe_config(recipe_name: str, recipe_func: Callable):
+    if "peft" in recipe_name:
+        return recipe_func(peft_scheme="lora")
+    return recipe_func()
+
+
+def _assert_basic_config(cfg):
+    from megatron.bridge.training.config import ConfigContainer
+
+    assert isinstance(cfg, ConfigContainer)
+    assert cfg.model is not None
+    assert cfg.train is not None
+    assert cfg.optimizer is not None
+    assert cfg.scheduler is not None
+    assert cfg.dataset is not None
+    assert cfg.logger is not None
+    assert cfg.tokenizer is not None
+    assert cfg.checkpoint is not None
+    assert cfg.rng is not None
+    assert cfg.train.global_batch_size >= 1
+    assert cfg.train.micro_batch_size >= 1
+    assert cfg.dataset.seq_length >= 1
+
+
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _BASE_RECIPE_CASES, ids=_recipe_ids(_BASE_RECIPE_CASES))
+def test_base_recipe_builds_valid_config(recipe_name: str, recipe_func: Callable):
+    """Each base GPT-OSS recipe should return a valid ConfigContainer."""
+    cfg = _build_recipe_config(recipe_name, recipe_func)
+    _assert_basic_config(cfg)
+
+
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _ALL_FP8_RECIPE_CASES, ids=_recipe_ids(_ALL_FP8_RECIPE_CASES))
+def test_fp8_recipe_builds_valid_config(recipe_name: str, recipe_func: Callable):
+    """Each FP8 GPT-OSS recipe should return a valid ConfigContainer."""
+    cfg = _build_recipe_config(recipe_name, recipe_func)
+    _assert_basic_config(cfg)
+
+
+@pytest.mark.parametrize(
+    ("recipe_name", "recipe_func"),
+    _HOPPER_FP8_RECIPE_CASES,
+    ids=_recipe_ids(_HOPPER_FP8_RECIPE_CASES),
+)
+def test_hopper_fp8_recipe_enables_fp8_mixed_precision(recipe_name: str, recipe_func: Callable):
+    """Hopper FP8 variants must set the bf16_with_fp8_current_scaling_mixed preset."""
+    cfg = _build_recipe_config(recipe_name, recipe_func)
+    assert cfg.mixed_precision == "bf16_with_fp8_current_scaling_mixed", (
+        f"{recipe_name}: expected mixed_precision=bf16_with_fp8_current_scaling_mixed, got {cfg.mixed_precision!r}"
+    )
+
+
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _MXFP8_RECIPE_CASES, ids=_recipe_ids(_MXFP8_RECIPE_CASES))
+def test_mxfp8_recipe_enables_mxfp8_mixed_precision(recipe_name: str, recipe_func: Callable):
+    """Blackwell MXFP8 variants must use mxfp8 fp8_recipe with e4m3 fp8."""
+    cfg = _build_recipe_config(recipe_name, recipe_func)
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8", (
+        f"{recipe_name}: expected fp8_recipe=mxfp8, got {cfg.mixed_precision.fp8_recipe!r}"
+    )
+    assert cfg.mixed_precision.fp8 == "e4m3", f"{recipe_name}: expected fp8=e4m3, got {cfg.mixed_precision.fp8!r}"
+
+
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _ALL_FP8_RECIPE_CASES, ids=_recipe_ids(_ALL_FP8_RECIPE_CASES))
+def test_fp8_recipe_enables_moe_router_padding(recipe_name: str, recipe_func: Callable):
+    """All FP8 variants must enable moe_router_padding_for_fp8 on the model config."""
+    cfg = _build_recipe_config(recipe_name, recipe_func)
+    assert getattr(cfg.model, "moe_router_padding_for_fp8", False) is True, (
+        f"{recipe_name}: expected moe_router_padding_for_fp8=True"
+    )
+
+
+def test_fp8_pretrain_inherits_base_pretrain_config():
+    """gpt_oss_20b_pretrain_fp8_current_scaling_config should inherit base pretrain settings."""
+    from megatron.bridge.recipes.gpt_oss import (
+        gpt_oss_20b_pretrain_config,
+        gpt_oss_20b_pretrain_fp8_current_scaling_config,
+    )
+
+    base = gpt_oss_20b_pretrain_config()
+    fp8 = gpt_oss_20b_pretrain_fp8_current_scaling_config()
+
+    assert fp8.model.num_layers == base.model.num_layers
+    assert fp8.train.global_batch_size == base.train.global_batch_size
+    assert fp8.dataset.seq_length == base.dataset.seq_length
+    assert fp8.mixed_precision == "bf16_with_fp8_current_scaling_mixed"
+    assert fp8.model.moe_router_padding_for_fp8 is True
+    assert base.model.moe_router_padding_for_fp8 is False
+
+
+def test_fp8_sft_inherits_base_sft_config():
+    """gpt_oss_20b_sft_fp8_current_scaling_config should inherit base SFT settings."""
+    from megatron.bridge.recipes.gpt_oss import (
+        gpt_oss_20b_sft_config,
+        gpt_oss_20b_sft_fp8_current_scaling_config,
+    )
+
+    base = gpt_oss_20b_sft_config()
+    fp8 = gpt_oss_20b_sft_fp8_current_scaling_config()
+
+    assert fp8.model.num_layers == base.model.num_layers
+    assert fp8.train.global_batch_size == base.train.global_batch_size
+    assert fp8.mixed_precision == "bf16_with_fp8_current_scaling_mixed"
+    assert fp8.model.moe_router_padding_for_fp8 is True
+    assert base.model.moe_router_padding_for_fp8 is False
+
+
+def test_gpt_oss_20b_sft_32k_overrides_batch_and_sequence_length():
+    """gpt_oss_20b_sft_32k_config should inherit SFT defaults with a 32K context and GBS32."""
+    from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_sft_32k_config
+    from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import gpt_oss_20b_sft_8gpu_h100_bf16_32k_config
+
+    assert gpt_oss_20b_sft_32k_config is gpt_oss_20b_sft_8gpu_h100_bf16_32k_config
+
+    cfg = gpt_oss_20b_sft_32k_config()
+    _assert_basic_config(cfg)
+    assert cfg.model.seq_length == 32768
+    assert cfg.dataset.seq_length == 32768
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 32768
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+
+
+def test_fp8_peft_inherits_base_peft_config():
+    """gpt_oss_20b_peft_fp8_current_scaling_config should inherit base PEFT settings."""
+    from megatron.bridge.recipes.gpt_oss import (
+        gpt_oss_20b_peft_config,
+        gpt_oss_20b_peft_fp8_current_scaling_config,
+    )
+
+    base = gpt_oss_20b_peft_config(peft_scheme="lora")
+    fp8 = gpt_oss_20b_peft_fp8_current_scaling_config(peft_scheme="lora")
+
+    assert fp8.model.num_layers == base.model.num_layers
+    assert fp8.peft is not None
+    assert base.peft is not None
+    assert fp8.mixed_precision == "bf16_with_fp8_current_scaling_mixed"
+    assert fp8.model.moe_router_padding_for_fp8 is True
+    assert base.model.moe_router_padding_for_fp8 is False
+
+
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_fp8_peft_supports_lora_and_dora(peft_scheme: str):
+    """FP8 PEFT config should work with both lora and dora schemes."""
+    from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_peft_fp8_current_scaling_config
+
+    cfg = gpt_oss_20b_peft_fp8_current_scaling_config(peft_scheme=peft_scheme)
+    _assert_basic_config(cfg)
+    assert cfg.peft is not None
+    assert cfg.mixed_precision == "bf16_with_fp8_current_scaling_mixed"
+
+
+def test_mxfp8_pretrain_inherits_base_pretrain_config():
+    """gpt_oss_20b_pretrain_mxfp8_config should inherit base pretrain settings."""
+    from megatron.bridge.recipes.gpt_oss import (
+        gpt_oss_20b_pretrain_config,
+        gpt_oss_20b_pretrain_mxfp8_config,
+    )
+
+    base = gpt_oss_20b_pretrain_config()
+    mxfp8 = gpt_oss_20b_pretrain_mxfp8_config()
+
+    assert mxfp8.model.num_layers == base.model.num_layers
+    assert mxfp8.train.global_batch_size == base.train.global_batch_size
+    assert mxfp8.dataset.seq_length == base.dataset.seq_length
+    assert mxfp8.mixed_precision.fp8_recipe == "mxfp8"
+    assert mxfp8.model.moe_router_padding_for_fp8 is True
+    assert base.model.moe_router_padding_for_fp8 is False
+
+
+def test_mxfp8_sft_inherits_base_sft_config():
+    """gpt_oss_20b_sft_mxfp8_config should inherit base SFT settings."""
+    from megatron.bridge.recipes.gpt_oss import (
+        gpt_oss_20b_sft_config,
+        gpt_oss_20b_sft_mxfp8_config,
+    )
+
+    base = gpt_oss_20b_sft_config()
+    mxfp8 = gpt_oss_20b_sft_mxfp8_config()
+
+    assert mxfp8.model.num_layers == base.model.num_layers
+    assert mxfp8.train.global_batch_size == base.train.global_batch_size
+    assert mxfp8.mixed_precision.fp8_recipe == "mxfp8"
+    assert mxfp8.model.moe_router_padding_for_fp8 is True
+    assert base.model.moe_router_padding_for_fp8 is False
+    assert mxfp8.mixed_precision.fp8_param_gather is False
+    assert mxfp8.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
+
+
+def test_mxfp8_peft_inherits_base_peft_config():
+    """gpt_oss_20b_peft_mxfp8_config should inherit base PEFT settings."""
+    from megatron.bridge.recipes.gpt_oss import (
+        gpt_oss_20b_peft_config,
+        gpt_oss_20b_peft_mxfp8_config,
+    )
+
+    base = gpt_oss_20b_peft_config(peft_scheme="lora")
+    mxfp8 = gpt_oss_20b_peft_mxfp8_config(peft_scheme="lora")
+
+    assert mxfp8.model.num_layers == base.model.num_layers
+    assert mxfp8.peft is not None
+    assert base.peft is not None
+    assert mxfp8.mixed_precision.fp8_recipe == "mxfp8"
+    assert mxfp8.model.moe_router_padding_for_fp8 is True
+    assert base.model.moe_router_padding_for_fp8 is False
+
+
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_mxfp8_peft_supports_lora_and_dora(peft_scheme: str):
+    """MXFP8 PEFT config should work with both lora and dora schemes."""
+    from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_peft_mxfp8_config
+
+    cfg = gpt_oss_20b_peft_mxfp8_config(peft_scheme=peft_scheme)
+    _assert_basic_config(cfg)
+    assert cfg.peft is not None
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+
+
+def _gpt_oss_hf_config():
+    from transformers import GptOssConfig
+
+    config = GptOssConfig()
+    config.architectures = ["GptOssForCausalLM"]
+    return config
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self):
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        return AutoBridge.from_hf_config(_gpt_oss_hf_config()).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GPT-OSS recipes must use get_model_config(), not the legacy provider API")
+
+
+def _gpt_oss_perf_recipe_factories():
+    from megatron.bridge import perf_recipes
+    from tests.unit_tests.recipes.recipe_test_utils import discover_recipe_factories
+
+    return [
+        factory
+        for factory in discover_recipe_factories(perf_recipes)
+        if factory.__module__.startswith("megatron.bridge.perf_recipes.gpt_oss.")
+    ]
+
+
+_STRICT_RECIPE_CASES = [*_ALL_RECIPE_CASES, *((f.__name__, f) for f in _gpt_oss_perf_recipe_factories())]
+
+
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _STRICT_RECIPE_CASES, ids=_recipe_ids(_STRICT_RECIPE_CASES))
+def test_each_recipe_uses_strict_builder_config(recipe_name: str, recipe_func: Callable, monkeypatch):
+    """Library and perf recipes only set fields that the builder-backed model config declares."""
+    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+    from megatron.bridge.recipes.gpt_oss.h100 import gpt_oss as h100_gpt_oss
+    from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+
+    patch_recipe_construction_dependencies(monkeypatch)
+    monkeypatch.setattr(h100_gpt_oss, "AutoBridge", _BuilderOnlyBridge)
+
+    cfg = _build_recipe_config(recipe_name, recipe_func)
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.softmax_type == "learnable"
+    if recipe_func.__module__.startswith("megatron.bridge.recipes."):
+        # Some perf recipes deliberately benchmark with plain RoPE.
+        assert cfg.model.position_embedding_type == "yarn"

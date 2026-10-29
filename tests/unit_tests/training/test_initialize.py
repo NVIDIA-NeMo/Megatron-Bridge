@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import tempfile
 import warnings
 from pathlib import Path
@@ -20,8 +21,50 @@ from unittest.mock import Mock, patch
 import pytest
 import yaml
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.training.initialize import _initialize_tp_communicators
+from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.training.config import DistributedInitConfig
+from megatron.bridge.training.initialize import (
+    _initialize_tp_communicators,
+    _setup_flight_recorder_env,
+    initialize_megatron,
+    set_jit_fusion_options,
+)
+
+
+_FR_ENV_VARS = [
+    "TORCH_FR_DUMP_TEMP_FILE",
+    "TORCH_NCCL_DEBUG_INFO_TEMP_FILE",
+    "TORCH_NCCL_TRACE_BUFFER_SIZE",
+    "TORCH_NCCL_DUMP_ON_TIMEOUT",
+    "TORCH_INCLUDE_STACK_TRACE",
+    "TORCH_INCLUDE_ONLY_ACTIVE",
+    "TORCH_NCCL_EXTRA_DUMP_ON_EXEC",
+]
+
+
+def test_set_jit_fusion_options_preserves_builder_config_for_warmup() -> None:
+    """JIT warmup needs GPT outer fields like seq_length plus transformer proxy fields."""
+    model_config = BridgeGPTModelConfig(
+        transformer=TransformerConfig(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            ffn_hidden_size=256,
+            use_cpu_initialization=True,
+        ),
+        vocab_size=256,
+        seq_length=128,
+    )
+
+    with (
+        patch("megatron.bridge.training.initialize.is_torch_min_version", return_value=True),
+        patch("megatron.bridge.training.initialize._warmup_jit_function") as warmup_jit_function,
+    ):
+        set_jit_fusion_options(model_config, micro_batch_size=1)
+
+    warmup_jit_function.assert_called_once_with(model_config, 1)
 
 
 class TestInitializeTPCommunicators:
@@ -61,7 +104,7 @@ class TestInitializeTPCommunicators:
             ):
                 _initialize_tp_communicators(mock_gpt_config, micro_batch_size=4)
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_from_string_file(self, mock_init_ub, mock_gpt_config):
         """Test loading tp_comm_overlap_cfg from a string file path."""
         # Create a temporary YAML file
@@ -83,7 +126,7 @@ class TestInitializeTPCommunicators:
         finally:
             Path(config_file_path).unlink()
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_from_dict(self, mock_init_ub, mock_gpt_config):
         """Test loading tp_comm_overlap_cfg from a dictionary."""
         config_data = {"buffer_size": 2048, "overlap_enabled": False}
@@ -97,7 +140,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["ub_cfgs"] == config_data
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_none(self, mock_init_ub, mock_gpt_config):
         """Test when tp_comm_overlap_cfg is None."""
         mock_gpt_config.tp_comm_overlap_cfg = None
@@ -110,7 +153,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["ub_cfgs"] == {}
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_input_shape_calculation_gpt(self, mock_init_ub, mock_gpt_config):
         """Test input_shape calculation for GPT model."""
         mock_gpt_config.seq_length = 1024
@@ -129,13 +172,13 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["shape"] == expected_shape
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
-    def test_te_version_2_7_0_fp8_disabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
-        """Test TE version 2.7.0+ path with FP8 disabled."""
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
+    def test_te_version_2_8_0_fp8_disabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
+        """Test TE version 2.8.0+ path with FP8 disabled."""
         mock_gpt_config.fp8 = None
 
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             mock_quant_mode.FP8 = "FP8"
             mock_quant_mode.NONE = "NONE"
 
@@ -147,13 +190,13 @@ class TestInitializeTPCommunicators:
             assert call_args[1]["tp_size"] == mock_gpt_config.tensor_model_parallel_size
             assert call_args[1]["bootstrap_backend"] == mock_gpt_config.tp_comm_bootstrap_backend
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
-    def test_te_version_2_7_0_fp8_enabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
-        """Test TE version 2.7.0+ path with FP8 enabled."""
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
+    def test_te_version_2_8_0_fp8_enabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
+        """Test TE version 2.8.0+ path with FP8 enabled."""
         mock_gpt_config.fp8 = "e4m3"
 
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             mock_quant_mode.FP8 = "FP8"
             mock_quant_mode.NONE = "NONE"
 
@@ -163,16 +206,16 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
-    def test_te_version_2_7_0_fp8_with_bf16_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
-        """Test TE version 2.7.0+ path with FP8 and BF16 first/last layers."""
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
+    def test_te_version_2_8_0_fp8_with_bf16_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
+        """Test TE version 2.8.0+ path with FP8 and BF16 first/last layers."""
         mock_gpt_config.fp8 = "e4m3"
         mock_gpt_config.first_last_layers_bf16 = True
         mock_gpt_config.num_layers_at_start_in_bf16 = 2
         mock_gpt_config.num_layers_at_end_in_bf16 = 1
 
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             mock_quant_mode.FP8 = "FP8"
             mock_quant_mode.NONE = "NONE"
 
@@ -182,16 +225,16 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8", "NONE"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
-    def test_te_version_2_7_0_fp8_with_bf16_layers_no_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
-        """Test TE version 2.7.0+ path with FP8 and BF16 flag but no BF16 layers."""
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
+    def test_te_version_2_8_0_fp8_with_bf16_layers_no_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
+        """Test TE version 2.8.0+ path with FP8 and BF16 flag but no BF16 layers."""
         mock_gpt_config.fp8 = "e4m3"
         mock_gpt_config.first_last_layers_bf16 = True
         mock_gpt_config.num_layers_at_start_in_bf16 = 0
         mock_gpt_config.num_layers_at_end_in_bf16 = 0
 
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             mock_quant_mode.FP8 = "FP8"
             mock_quant_mode.NONE = "NONE"
 
@@ -201,7 +244,19 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
+    def test_te_version_2_7_0_uses_legacy_fp8_flag(self, mock_init_ub, mock_gpt_config):
+        """TE 2.7 predates the public quantization-mode enum and uses use_fp8."""
+        mock_gpt_config.fp8 = "e4m3"
+
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "1.9.0"):
+            _initialize_tp_communicators(mock_gpt_config, micro_batch_size=4)
+
+        call_args = mock_init_ub.call_args
+        assert call_args[1]["use_fp8"] is True
+        assert "quantization_modes" not in call_args[1]
+
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_te_version_1_9_0_fp8_disabled(self, mock_init_ub, mock_gpt_config):
         """Test TE version 1.9.0+ path with FP8 disabled."""
         mock_gpt_config.fp8 = None
@@ -215,7 +270,7 @@ class TestInitializeTPCommunicators:
             assert call_args[1]["tp_size"] == mock_gpt_config.tensor_model_parallel_size
             assert call_args[1]["bootstrap_backend"] == mock_gpt_config.tp_comm_bootstrap_backend
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_te_version_1_9_0_fp8_enabled(self, mock_init_ub, mock_gpt_config):
         """Test TE version 1.9.0+ path with FP8 enabled."""
         mock_gpt_config.fp8 = "e4m3"
@@ -227,7 +282,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is True
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_mpi_backend(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with MPI backend."""
@@ -245,7 +300,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is False
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_non_mpi_backend_warning(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with non-MPI backend shows warning."""
@@ -267,7 +322,7 @@ class TestInitializeTPCommunicators:
             mock_new_group.assert_called_once_with(backend="mpi")
             mock_init_ub.assert_called_once()
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_fp8_enabled(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with FP8 enabled."""
@@ -284,12 +339,12 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is True
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_version_checking_logic(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test that version checking logic works correctly."""
-        # Test 2.7.0+ path
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        # Test 2.8.0+ path, where TE publicly exports UserBufferQuantizationMode.
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             _initialize_tp_communicators(mock_gpt_config, micro_batch_size=4)
             call_args = mock_init_ub.call_args
             assert "quantization_modes" in call_args[1]
@@ -309,3 +364,231 @@ class TestInitializeTPCommunicators:
             assert "use_fp8" in call_args[1]
             assert "quantization_modes" not in call_args[1]
             assert "bootstrap_backend" not in call_args[1]
+
+
+class TestDistributedInitConfigFlightRecorder:
+    """Test suite for DistributedInitConfig flight recorder fields."""
+
+    def test_default_values(self):
+        cfg = DistributedInitConfig()
+        assert cfg.flight_recorder_dump_path is None
+        assert cfg.flight_recorder_trace_buffer_size == 2000
+        assert cfg.flight_recorder_dump_on_timeout is True
+        assert cfg.flight_recorder_include_stack_trace is False
+        assert cfg.flight_recorder_include_only_active is True
+        assert cfg.flight_recorder_extra_dump_on_exec is True
+
+    def test_custom_values(self):
+        cfg = DistributedInitConfig(
+            flight_recorder_dump_path="/tmp/fr_dump",
+            flight_recorder_trace_buffer_size=5000,
+            flight_recorder_dump_on_timeout=False,
+            flight_recorder_include_stack_trace=True,
+            flight_recorder_include_only_active=False,
+            flight_recorder_extra_dump_on_exec=False,
+        )
+        assert cfg.flight_recorder_dump_path == "/tmp/fr_dump"
+        assert cfg.flight_recorder_trace_buffer_size == 5000
+        assert cfg.flight_recorder_dump_on_timeout is False
+        assert cfg.flight_recorder_include_stack_trace is True
+        assert cfg.flight_recorder_include_only_active is False
+        assert cfg.flight_recorder_extra_dump_on_exec is False
+
+
+class TestSetupFlightRecorderEnv:
+    """Test suite for _setup_flight_recorder_env helper."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self):
+        """Remove all flight-recorder env vars before and after each test."""
+        saved = {}
+        for var in _FR_ENV_VARS:
+            if var in os.environ:
+                saved[var] = os.environ.pop(var)
+        yield
+        for var in _FR_ENV_VARS:
+            os.environ.pop(var, None)
+        os.environ.update(saved)
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_no_path_no_env_is_noop(self, _mock_rank):
+        """When no dump path is configured and no env vars are set, nothing happens."""
+        cfg = DistributedInitConfig()
+        _setup_flight_recorder_env(cfg)
+        for var in _FR_ENV_VARS:
+            assert var not in os.environ
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_config_path_sets_all_env_vars(self, _mock_rank):
+        """When flight_recorder_dump_path is set in config, all env vars are populated."""
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr_test")
+        _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_FR_DUMP_TEMP_FILE"] == "/tmp/fr_test"
+        assert os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] == "/tmp/fr_test"
+        assert os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] == "2000"
+        assert os.environ["TORCH_NCCL_DUMP_ON_TIMEOUT"] == "1"
+        assert os.environ["TORCH_INCLUDE_STACK_TRACE"] == "0"
+        assert os.environ["TORCH_INCLUDE_ONLY_ACTIVE"] == "1"
+        assert os.environ["TORCH_NCCL_EXTRA_DUMP_ON_EXEC"] == "1"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_custom_config_values_reflected_in_env(self, _mock_rank):
+        """Non-default config values are correctly converted to env var strings."""
+        cfg = DistributedInitConfig(
+            flight_recorder_dump_path="/data/traces",
+            flight_recorder_trace_buffer_size=8000,
+            flight_recorder_dump_on_timeout=False,
+            flight_recorder_include_stack_trace=True,
+            flight_recorder_include_only_active=False,
+            flight_recorder_extra_dump_on_exec=False,
+        )
+        _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] == "8000"
+        assert os.environ["TORCH_NCCL_DUMP_ON_TIMEOUT"] == "0"
+        assert os.environ["TORCH_INCLUDE_STACK_TRACE"] == "1"
+        assert os.environ["TORCH_INCLUDE_ONLY_ACTIVE"] == "0"
+        assert os.environ["TORCH_NCCL_EXTRA_DUMP_ON_EXEC"] == "0"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_env_var_takes_precedence_over_config(self, _mock_rank):
+        """Pre-existing env vars are preserved; config values are ignored with a warning."""
+        os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] = "9999"
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] == "9999"
+        warning_messages = [str(x.message) for x in w]
+        assert any("TORCH_NCCL_TRACE_BUFFER_SIZE" in m and "9999" in m for m in warning_messages)
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_env_path_precedence_over_config_path(self, _mock_rank):
+        """TORCH_FR_DUMP_TEMP_FILE env var takes precedence over config dump_path."""
+        os.environ["TORCH_FR_DUMP_TEMP_FILE"] = "/env/path"
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/config/path")
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_FR_DUMP_TEMP_FILE"] == "/env/path"
+        assert os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] == "/env/path"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_nccl_debug_info_env_triggers_setup(self, _mock_rank):
+        """TORCH_NCCL_DEBUG_INFO_TEMP_FILE alone triggers flight recorder setup."""
+        os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] = "/env/nccl_path"
+        cfg = DistributedInitConfig()
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_FR_DUMP_TEMP_FILE"] == "/env/nccl_path"
+        assert os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] == "/env/nccl_path"
+        assert "TORCH_NCCL_TRACE_BUFFER_SIZE" in os.environ
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_fr_dump_env_takes_precedence_over_nccl_debug_info_env(self, _mock_rank):
+        """TORCH_FR_DUMP_TEMP_FILE has higher priority than TORCH_NCCL_DEBUG_INFO_TEMP_FILE."""
+        os.environ["TORCH_FR_DUMP_TEMP_FILE"] = "/env/fr"
+        os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] = "/env/nccl"
+        cfg = DistributedInitConfig()
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_FR_DUMP_TEMP_FILE"] == "/env/fr"
+        assert os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] == "/env/nccl"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_warning_for_every_preexisting_var(self, _mock_rank):
+        """A warning is emitted for each pre-existing env var."""
+        for var in _FR_ENV_VARS:
+            os.environ[var] = "preset"
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        warning_messages = [str(x.message) for x in w]
+        for var in _FR_ENV_VARS:
+            assert any(var in m for m in warning_messages), f"No warning for {var}"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0)
+    def test_rank_0_prints_env_vars(self, _mock_rank, capsys):
+        """Rank 0 prints the flight recorder env var summary."""
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr")
+        _setup_flight_recorder_env(cfg)
+        captured = capsys.readouterr()
+        assert "Flight recorder env vars:" in captured.out
+        assert "TORCH_FR_DUMP_TEMP_FILE=/tmp/fr" in captured.out
+        assert "TORCH_NCCL_TRACE_BUFFER_SIZE=2000" in captured.out
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_non_rank_0_does_not_print(self, _mock_rank, capsys):
+        """Non-rank-0 processes do not print the flight recorder summary."""
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr")
+        _setup_flight_recorder_env(cfg)
+        captured = capsys.readouterr()
+        assert "Flight recorder env vars:" not in captured.out
+
+
+@pytest.mark.parametrize("lazy", [False, True])
+def test_torch_dist_init_resets_default_logging_ranks(lazy):
+    from types import SimpleNamespace
+
+    from megatron.core._rank_utils import get_default_log_ranks, set_default_log_ranks
+
+    from megatron.bridge.training.initialize import torch_dist_init
+
+    original = get_default_log_ranks()
+    try:
+        set_default_log_ranks({0, 4})
+        with (
+            patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()),
+            patch("megatron.bridge.training.initialize._set_random_seed"),
+            patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.initialize.parallel_state"),
+        ):
+            model = SimpleNamespace(
+                num_moe_experts=None, cuda_graph_impl="none", tp_comm_overlap=False, tensor_model_parallel_size=1
+            )
+            result = torch_dist_init(model, SimpleNamespace(lazy_mpu_init=lazy), Mock(), 1, 1, None, None, False)
+            assert get_default_log_ranks() == (0,)
+            if lazy:
+                result()
+                assert get_default_log_ranks() == (0,)
+    finally:
+        set_default_log_ranks(original)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("deterministic_mode", [True, False])
+def test_initialize_megatron_pins_triton_autotune_only_in_deterministic_mode(deterministic_mode: bool) -> None:
+    """Timed Triton autotuning is pinned before any kernel runs, only when deterministic_mode is on."""
+    cfg = Mock()
+    cfg.model.deterministic_mode = deterministic_mode
+    cfg.inprocess_restart = None
+    cfg.profiling = None
+
+    with (
+        patch("megatron.bridge.training.initialize.init_num_microbatches_calculator"),
+        patch("megatron.bridge.training.initialize.init_rerun_state"),
+        patch("megatron.bridge.training.initialize.torch_dist_init", return_value=None) as torch_dist_init,
+        patch("megatron.bridge.training.initialize.tuning") as tuning,
+        patch("megatron.bridge.training.initialize.torch.distributed.is_initialized", return_value=False),
+    ):
+        calls = Mock()
+        calls.attach_mock(tuning, "tuning")
+        calls.attach_mock(torch_dist_init, "torch_dist_init")
+        initialize_megatron(cfg, allow_no_cuda=True)
+
+    called = [name for name, _, _ in calls.mock_calls]
+    if deterministic_mode:
+        tuning.install.assert_called_once_with(deterministic=True)
+        assert called.index("tuning.install") < called.index("torch_dist_init")
+    else:
+        tuning.install.assert_not_called()
+    torch_dist_init.assert_called_once()

@@ -1,15 +1,123 @@
-# Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
 """Megatron tokenizers."""
 
+import dataclasses
+from copy import copy
+from pathlib import Path
+from typing import Optional
+
+from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.tokenizers import MegatronTokenizer
+from megatron.core.tokenizers.utils.build_tokenizer import build_tokenizer as build_mcore_tokenizer
 
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 
-MEGATRON_TOKENIZERS = ["BertWordPieceLowerCase", "BertWordPieceCase", "GPT2BPETokenizer"]
+def _resolve_chat_template(config: TokenizerConfig) -> Optional[str]:
+    """Resolve the effective chat template from ``config``.
 
-SP_TOKENIZERS = ["SentencePieceTokenizer", "GPTSentencePieceTokenizer", "Llama2Tokenizer"]
+    Returns ``chat_template`` verbatim when set, or the contents of the file at
+    ``chat_template_path`` (local path or ``msc://`` URL) otherwise.
+
+    Args:
+        config: Tokenizer configuration.
+
+    Returns:
+        The chat template string, or ``None`` when neither field is set.
+
+    Raises:
+        ValueError: If both ``chat_template`` and ``chat_template_path`` are set.
+    """
+    if config.chat_template_path is None:
+        return config.chat_template
+    if config.chat_template is not None:
+        raise ValueError("Set only one of `chat_template` or `chat_template_path`, not both.")
+
+    path = config.chat_template_path
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        with msc.open(str(path), "r") as f:
+            return f.read()
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+
+_HF_TOKENIZER_SNAPSHOT_ALLOW_PATTERNS = (
+    "config.json",
+    "tokenizer*",
+    "special_tokens_map.json",
+    "added_tokens.json",
+    "vocab*",
+    "merges*",
+    "*.model",
+    "*.spm",
+    "*.tiktoken",
+    "*.py",
+    "*.jinja",
+    "chat_template*",
+    "chat_templates/*",
+)
+_HF_MODEL_WEIGHT_IGNORE_PATTERNS = (
+    "*.safetensors",
+    "*.bin",
+    "*.pt",
+    "*.pth",
+    "*.ckpt",
+    "*.h5",
+    "*.msgpack",
+    "*.gguf",
+    "*.onnx",
+    "*.npz",
+)
+
+
+def _is_local_tokenizer_path(tokenizer_model: object) -> bool:
+    """Return whether a tokenizer reference is explicitly a local path."""
+    if isinstance(tokenizer_model, Path):
+        return True
+    if not isinstance(tokenizer_model, str):
+        return False
+
+    path = Path(tokenizer_model).expanduser()
+    return path.exists() or path.is_absolute() or tokenizer_model.startswith(("./", "../", "~"))
+
+
+def _resolve_hf_tokenizer_revision(config: TokenizerConfig) -> TokenizerConfig:
+    """Resolve an immutable Hugging Face tokenizer revision without mutating persisted config."""
+    if config.tokenizer_type != "HuggingFaceTokenizer":
+        return config
+
+    hf_tokenizer_kwargs = config.hf_tokenizer_kwargs or {}
+    revision = hf_tokenizer_kwargs.get("revision")
+    if revision is None:
+        return config
+    if not isinstance(revision, str) or not revision.strip():
+        raise ValueError("hf_tokenizer_kwargs.revision must be a non-empty string")
+
+    tokenizer_model = config.tokenizer_model
+    if not isinstance(tokenizer_model, str) or _is_local_tokenizer_path(tokenizer_model):
+        return config
+
+    from huggingface_hub import snapshot_download
+
+    snapshot_path = snapshot_download(
+        repo_id=tokenizer_model,
+        revision=revision,
+        allow_patterns=list(_HF_TOKENIZER_SNAPSHOT_ALLOW_PATTERNS),
+        ignore_patterns=list(_HF_MODEL_WEIGHT_IGNORE_PATTERNS),
+    )
+
+    resolved_config = copy(config)
+    resolved_config.tokenizer_model = snapshot_path
+    if "use_fast" in hf_tokenizer_kwargs:
+        resolved_config.tokenizer_hf_no_use_fast = not hf_tokenizer_kwargs["use_fast"]
+    if "include_special_tokens" in hf_tokenizer_kwargs:
+        resolved_config.tokenizer_hf_no_include_special_tokens = not hf_tokenizer_kwargs["include_special_tokens"]
+    if "trust_remote_code" in hf_tokenizer_kwargs:
+        resolved_config.trust_remote_code = hf_tokenizer_kwargs["trust_remote_code"]
+    return resolved_config
 
 
 def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
@@ -23,76 +131,14 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
     Returns:
         MegatronTokenizer: An instance of the initialized tokenizer.
     """
-    kwargs = {}
-    tokenizer_library = None
-    tokenizer_path = None
-    if config.tokenizer_type in MEGATRON_TOKENIZERS:
-        tokenizer_library = "megatron"
-        tokenizer_path = config.tokenizer_type
-        kwargs["additional_special_tokens"] = config.special_tokens if config.special_tokens else []
-        if tokenizer_path == "BertWordPieceCase":
-            special_tokens = {}
-            special_tokens["additional_special_tokens"] = [f"<extra_id_{i}>" for i in range(100)]
-            kwargs = special_tokens
-        kwargs["vocab_file"] = config.vocab_file
-        kwargs["merges_file"] = config.merge_file
-        if config.hf_tokenizer_kwargs:
-            kwargs.update(config.hf_tokenizer_kwargs)
-    elif config.tokenizer_type in SP_TOKENIZERS:
-        tokenizer_library = "sentencepiece"
-        tokenizer_path = config.tokenizer_model
-        kwargs["chat_template"] = config.chat_template
-        kwargs["special_tokens"] = config.special_tokens
-        kwargs.update(config.sp_tokenizer_kwargs)
-    elif config.tokenizer_type == "TikTokenizer":
-        tokenizer_library = "tiktoken"
-        tokenizer_path = config.tokenizer_model
-        kwargs["chat_template"] = config.chat_template
-        if config.tiktoken_pattern:
-            kwargs["pattern"] = config.tiktoken_pattern
-        if config.vocab_size:
-            kwargs["vocab_size"] = config.vocab_size
-        kwargs["num_special_tokens"] = config.tiktoken_num_special_tokens
-        kwargs["special_tokens"] = config.special_tokens
-        kwargs["vocab_size"] = config.vocab_size
-    elif config.tokenizer_type == "HuggingFaceTokenizer":
-        tokenizer_library = "huggingface"
-        tokenizer_path = config.tokenizer_model
-        kwargs["chat_template"] = config.chat_template
-        kwargs["vocab_file"] = config.vocab_file
-        kwargs["merges_file"] = config.merge_file
-        kwargs["additional_special_tokens"] = config.special_tokens if config.special_tokens else []
-        if config.hf_tokenizer_kwargs:
-            kwargs.update(config.hf_tokenizer_kwargs)
-    elif config.tokenizer_type == "MultimodalTokenizer":
-        tokenizer_library = "multimodal"
-        kwargs["prompt_format"] = config.tokenizer_prompt_format
-        kwargs["special_tokens"] = config.special_tokens
-        kwargs["image_tag_type"] = config.image_tag_type
-        kwargs["force_system_message"] = config.force_system_message
-    elif config.tokenizer_type == "SFTTokenizer":
-        tokenizer_library = "sft"
-        tokenizer_path = config.tokenizer_model
-        kwargs["prompt_format"] = config.tokenizer_prompt_format
-    elif config.tokenizer_type in ["NullTokenizer", "NullMultimodalTokenizer"]:
-        tokenizer_library = "null-text" if config.tokenizer_type == "NullTokenizer" else "null-multimodal"
-        if config.vocab_size:
-            kwargs["vocab_size"] = config.vocab_size - 1
-        # TODO(mcore-guard): Remove try/except once mcore main and dev both support
-        # "null-text"/"null-multimodal" tokenizer library names (dev renamed "null" → split names).
-        try:
-            metadata = {"library": tokenizer_library}
-            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
-        except AssertionError:
-            metadata = {"library": "null"}
-            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
+    from megatron.bridge.utils.common_utils import warn_rank_0
 
-        return tokenizer
+    warn_rank_0(
+        "`build_tokenizer` is deprecated and will be removed soon. "
+        "Please, use `megatron.core.tokenizers.utils.build_tokenizer` instead."
+    )
 
-    if config.metadata_path:
-        metadata = config.metadata_path
-    else:
-        metadata = {"library": tokenizer_library}
-    tokenizer = MegatronTokenizer.from_pretrained(tokenizer_path=tokenizer_path, metadata_path=metadata, **kwargs)
+    if config.chat_template_path is not None:
+        config = dataclasses.replace(config, chat_template=_resolve_chat_template(config), chat_template_path=None)
 
-    return tokenizer
+    return build_mcore_tokenizer(_resolve_hf_tokenizer_revision(config), **kwargs)

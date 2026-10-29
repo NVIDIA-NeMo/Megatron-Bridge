@@ -16,6 +16,11 @@ import importlib
 from typing import Callable
 
 import pytest
+from transformers import Qwen2Config
+
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _qwen_module = importlib.import_module("megatron.bridge.recipes.qwen")
@@ -77,12 +82,41 @@ class _FakeBridge:
     def __init__(self):
         pass
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Qwen2 recipes must use get_model_config(), not the legacy provider API")
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self) -> BridgeGPTModelConfig:
+        config = Qwen2Config(
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=80,
+            num_attention_heads=8,
+            num_key_value_heads=4,
+            max_position_embeddings=32768,
+            vocab_size=151936,
+        )
+        config.architectures = ["Qwen2ForCausalLM"]
+        model_config = AutoBridge.from_hf_config(config).get_model_config()
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        return model_config
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Qwen2 recipes must not call the legacy provider API")
 
 
 def _assert_basic_config(cfg):
@@ -102,11 +136,9 @@ def _assert_basic_config(cfg):
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
 
-    # Check sequence length (different attribute names for different dataset types)
-    if hasattr(cfg.dataset, "sequence_length"):
-        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
-    elif hasattr(cfg.dataset, "seq_length"):
-        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+    # Check sequence length for canonical dataset configs.
+    if hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1
     else:
         # Some other dataset type
         assert cfg.dataset is not None
@@ -137,7 +169,7 @@ def _apply_test_overrides(cfg, name: str):
 def test_each_qwen2_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     func_name = recipe_func.__name__
     is_peft = "peft" in func_name.lower()
@@ -173,7 +205,7 @@ def test_qwen2_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.Monk
     """Test that each Qwen2/2.5 SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func()
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -197,7 +229,7 @@ def test_qwen2_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mon
     """Test that each Qwen2/2.5 PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme="lora")
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -222,7 +254,7 @@ def test_qwen2_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch
     """Test that PEFT configurations are correctly applied with different schemes."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -233,21 +265,19 @@ def test_qwen2_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch
     assert cfg.peft is not None
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_qwen2_7b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_qwen2_7b_sft_offline_packing_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that offline packing is configured through real dataset fields."""
     from megatron.bridge.recipes.qwen import qwen2_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen2_7b_sft_config()
     _apply_test_overrides(cfg, "qwen2_7b_sft_config")
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs is not None
 
 
 def test_qwen2_7b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -255,7 +285,7 @@ def test_qwen2_7b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen2_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen2_7b_sft_config()
     _apply_test_overrides(cfg, "qwen2_7b_sft_config")
@@ -272,7 +302,7 @@ def test_qwen2_7b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen2_7b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen2_7b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "qwen2_7b_peft_config")
@@ -289,7 +319,7 @@ def test_qwen2_72b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen2_72b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen2_72b_sft_config()
     _apply_test_overrides(cfg, "qwen2_72b_sft_config")
@@ -306,7 +336,7 @@ def test_qwen2_72b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen2_72b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen2_72b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "qwen2_72b_peft_config")
@@ -323,7 +353,7 @@ def test_qwen25_7b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen25_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen25_7b_sft_config()
     _apply_test_overrides(cfg, "qwen25_7b_sft_config")
@@ -340,7 +370,7 @@ def test_qwen25_7b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen25_7b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen25_7b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "qwen25_7b_peft_config")
@@ -357,7 +387,7 @@ def test_qwen25_14b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen25_14b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen25_14b_sft_config()
     _apply_test_overrides(cfg, "qwen25_14b_sft_config")
@@ -374,7 +404,7 @@ def test_qwen25_14b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen25_14b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen25_14b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "qwen25_14b_peft_config")
@@ -391,7 +421,7 @@ def test_qwen25_32b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen25_32b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen25_32b_sft_config()
     _apply_test_overrides(cfg, "qwen25_32b_sft_config")
@@ -408,7 +438,7 @@ def test_qwen25_32b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen25_32b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen25_32b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "qwen25_32b_peft_config")
@@ -425,7 +455,7 @@ def test_qwen25_72b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen25_72b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen25_72b_sft_config()
     _apply_test_overrides(cfg, "qwen25_72b_sft_config")
@@ -442,7 +472,7 @@ def test_qwen25_72b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen25_72b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen25_72b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "qwen25_72b_peft_config")
@@ -452,3 +482,19 @@ def test_qwen25_72b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     # For LoRA, 72B should use TP=8, PP=1
     assert cfg.model.tensor_model_parallel_size == 8
     assert cfg.model.pipeline_model_parallel_size == 1
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN2_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_each_qwen2_recipe_uses_strict_builder_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every Qwen2/2.5 recipe should configure a ModelConfig without provider fallback."""
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _BuilderOnlyBridge)
+
+    if "peft" in recipe_func.__name__.lower():
+        cfg = recipe_func(peft_scheme="lora")
+    else:
+        cfg = recipe_func()
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.normalization == "RMSNorm"
+    assert cfg.model.add_qkv_bias is True
+    assert cfg.model.position_embedding_type == "rope"

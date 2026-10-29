@@ -1,0 +1,585 @@
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Example:
+  # Vision-Language generation with image from URL:
+  uv run python scripts/inference/vlm_generation.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
+
+  # Vision-Language generation with local image:
+  uv run python scripts/inference/vlm_generation.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
+
+  # Text-only generation (no image):
+  uv run python scripts/inference/vlm_generation.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
+
+  # Load from Megatron checkpoint:
+  uv run python scripts/inference/vlm_generation.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
+"""
+
+import argparse
+import os
+
+import torch
+import torch.distributed as dist
+from megatron.core import parallel_state
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from transformers import AutoConfig, AutoProcessor, AutoTokenizer, GenerationConfig
+from vlm_generation_utils import (
+    decode_generated_tokens,
+    load_image,
+    pad_input_ids_to_tp_multiple,
+    patch_kimi_vision_processor,
+    process_image_inputs,
+    process_multi_image_inputs,
+    process_video_inputs,
+    to_cuda,
+)
+
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.models.nemotron_omni.inference_inputs import (
+    is_nemotron_omni,
+    load_nemotron_omni_video,
+    prepare_nemotron_omni_inputs,
+)
+from megatron.bridge.utils.common_utils import (
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+    print_rank_last,
+)
+
+
+# ---------------------------------------------------------------------------
+# Forward step
+# ---------------------------------------------------------------------------
+
+
+class SingleBatchIterator:
+    """Iterator that yields a single batch then stops.  Required by
+    ``get_forward_backward_func``."""
+
+    def __init__(
+        self,
+        input_ids,
+        position_ids,
+        attention_mask,
+        pixel_values=None,
+        image_grid_thw=None,
+        image_sizes=None,
+        mm_token_type_ids=None,
+        pixel_values_videos=None,
+        video_grid_thw=None,
+        image_position_ids=None,
+        imgs_sizes=None,
+        num_frames=None,
+    ):
+        self.batch = dict(
+            tokens=input_ids,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+        )
+        if pixel_values is not None:
+            self.batch["pixel_values"] = pixel_values
+        if image_grid_thw is not None:
+            self.batch["image_grid_thw"] = image_grid_thw
+        if image_sizes is not None:
+            self.batch["image_sizes"] = image_sizes
+        if mm_token_type_ids is not None:
+            self.batch["mm_token_type_ids"] = mm_token_type_ids
+        if pixel_values_videos is not None:
+            self.batch["pixel_values_videos"] = pixel_values_videos
+        if video_grid_thw is not None:
+            self.batch["video_grid_thw"] = video_grid_thw
+        if image_position_ids is not None:
+            self.batch["image_position_ids"] = image_position_ids
+        if imgs_sizes is not None:
+            self.batch["imgs_sizes"] = imgs_sizes
+        if num_frames is not None:
+            self.batch["num_frames"] = num_frames
+        self._yielded = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._yielded:
+            raise StopIteration
+        self._yielded = True
+        return self.batch
+
+
+def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
+    """Forward step for VLM generation."""
+    batch = next(data_iterator)
+    forward_args = {
+        "input_ids": batch["tokens"],
+        "position_ids": batch["position_ids"],
+        "attention_mask": batch.get("attention_mask"),
+    }
+    for key in (
+        "pixel_values",
+        "image_grid_thw",
+        "image_sizes",
+        "mm_token_type_ids",
+        "pixel_values_videos",
+        "video_grid_thw",
+        "image_position_ids",
+        "imgs_sizes",
+        "num_frames",
+    ):
+        if key in batch:
+            forward_args[key] = batch[key]
+
+    def loss_func(x, **kwargs):
+        return x
+
+    model_output = model(**forward_args)
+    if isinstance(model_output, tuple):
+        output_tensor, _ = model_output
+    else:
+        output_tensor = model_output
+    return output_tensor, loss_func
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
+    """Build keyword arguments for revision-pinned Hugging Face loads."""
+    return {"revision": revision} if revision is not None else {}
+
+
+def _uses_model_builder(bridge: AutoBridge) -> bool:
+    """Return whether the selected bridge supports native builder construction."""
+    return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
+
+
+def _enable_deterministic_execution() -> None:
+    """Enable the deterministic settings required by distributed MCore inference."""
+    required_environment = {
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "CUDA_DEVICE_MAX_CONNECTIONS": "1",
+        "NCCL_ALGO": "Ring",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+    }
+    invalid = {
+        name: os.environ[name]
+        for name, expected in required_environment.items()
+        if name in os.environ and os.environ[name] != expected
+    }
+    if invalid:
+        expected = ", ".join(f"{name}={value}" for name, value in required_environment.items())
+        raise ValueError(f"--deterministic requires {expected}; received {invalid}.")
+    os.environ.update(required_environment)
+
+    torch.use_deterministic_algorithms(True)
+    torch.manual_seed(0)
+    torch.cuda.manual_seed_all(0)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
+
+def _configure_builder_model(
+    bridge: AutoBridge,
+    *,
+    tp: int,
+    pp: int,
+    ep: int,
+    etp: int,
+    pp_layout: str | None = None,
+    deterministic: bool = False,
+):
+    """Configure a builder-backed model and initialize its process groups."""
+    model_config = bridge.get_model_config()
+    transformer = model_config.transformer
+    transformer.tensor_model_parallel_size = tp
+    transformer.pipeline_model_parallel_size = pp
+    transformer.expert_model_parallel_size = ep
+    transformer.expert_tensor_parallel_size = etp
+    transformer.pipeline_dtype = torch.bfloat16
+    transformer.params_dtype = torch.bfloat16
+    transformer.deterministic_mode = deterministic
+    if pp_layout:
+        transformer.pipeline_model_parallel_layout = pp_layout
+    return model_config
+
+
+def main(args) -> None:
+    """Run VLM inference with HuggingFace or Megatron checkpoints."""
+    if args.deterministic:
+        _enable_deterministic_execution()
+    maybe_initialize_distributed()
+    tp = args.tp
+    pp = args.pp
+    ep = args.ep
+    etp = args.etp
+
+    trust_remote = is_safe_repo(
+        trust_remote_code=args.trust_remote_code,
+        hf_path=args.hf_model_path,
+    )
+
+    # Detect model family for processor-specific handling
+    config = AutoConfig.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
+    model_type = getattr(config, "model_type", "")
+    is_kimi = "kimi" in model_type
+    image_token_id = getattr(config, "image_token_id", None)
+    if is_kimi and image_token_id is None:
+        image_token_id = 163605
+    is_gemma4 = "gemma4" in model_type
+    is_minimax = model_type == "minimax_m3_vl"
+    is_mistral3 = model_type == "mistral3"
+    is_omni = is_nemotron_omni(config)
+
+    # ------------------------------------------------------------------
+    # Load model
+    # ------------------------------------------------------------------
+    bridge = AutoBridge.from_hf_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
+
+    if args.megatron_model_path:
+        print_rank_0(f"Loading Megatron model from: {args.megatron_model_path}")
+        if _uses_model_builder(bridge):
+            model_config = _configure_builder_model(
+                bridge,
+                tp=tp,
+                pp=pp,
+                ep=ep,
+                etp=etp,
+                pp_layout=args.pp_layout,
+                deterministic=args.deterministic,
+            )
+            model_config.finalize()
+            bridge._get_or_initialize_pg_collection(model_config.transformer)
+        else:
+            model_provider = bridge.to_megatron_provider(load_weights=False)
+            model_provider.tensor_model_parallel_size = tp
+            model_provider.pipeline_model_parallel_size = pp
+            model_provider.expert_model_parallel_size = ep
+            model_provider.expert_tensor_parallel_size = etp
+            model_provider.pipeline_dtype = torch.bfloat16
+            model_provider.deterministic_mode = args.deterministic
+            model_provider.init_model_with_meta_device = True
+            if args.pp_layout:
+                model_provider.pipeline_model_parallel_layout = args.pp_layout
+            model_provider.finalize()
+            model_provider.initialize_model_parallel(seed=0)
+
+        mp_overrides = {
+            "tensor_model_parallel_size": tp,
+            "pipeline_model_parallel_size": pp,
+            "expert_model_parallel_size": ep,
+            "expert_tensor_parallel_size": etp,
+            "pipeline_dtype": torch.bfloat16,
+            "deterministic_mode": args.deterministic,
+            # Preserve the saved dispatcher, but never drop tokens or force routing in inference.
+            "moe_expert_capacity_factor": None,
+            "moe_expert_rank_capacity_factor": None,
+            "moe_paged_stash": False,
+            "moe_ncclep_zero_copy": False,
+            "moe_pad_expert_input_to_capacity": False,
+            "moe_router_force_load_balancing": False,
+            "moe_router_force_biased": None,
+            "moe_hybridep_pad_uneven_dispatch_inputs": True,
+        }
+        if args.pp_layout:
+            mp_overrides["pipeline_model_parallel_layout"] = args.pp_layout
+        model = bridge.load_megatron_model(
+            args.megatron_model_path,
+            mp_overrides=mp_overrides,
+            wrap_with_ddp=False,
+        )
+    else:
+        print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
+        if _uses_model_builder(bridge):
+            model_config = _configure_builder_model(
+                bridge,
+                tp=tp,
+                pp=pp,
+                ep=ep,
+                etp=etp,
+                deterministic=args.deterministic,
+            )
+            model = bridge.get_model(
+                model_config,
+                wrap_with_ddp=False,
+                mixed_precision_wrapper=None,
+            )
+        else:
+            model_provider = bridge.to_megatron_provider(load_weights=True)
+            model_provider.tensor_model_parallel_size = tp
+            model_provider.pipeline_model_parallel_size = pp
+            model_provider.expert_model_parallel_size = ep
+            model_provider.expert_tensor_parallel_size = etp
+            model_provider.pipeline_dtype = torch.bfloat16
+            model_provider.deterministic_mode = args.deterministic
+            model_provider.finalize()
+            model_provider.initialize_model_parallel(seed=0)
+            model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+
+    def _disable_mtp(m):
+        m.config.mtp_num_layers = None
+        inner = m.module if hasattr(m, "module") else m
+        lang = getattr(inner, "language_model", inner)
+        if hasattr(lang, "mtp_process"):
+            lang.mtp_process = False
+
+    model = [m.cuda() for m in model]
+    for m in model:
+        m.eval()
+        _disable_mtp(m)
+        if hasattr(m, "config"):
+            m.config.grad_scale_func = None
+
+    # ------------------------------------------------------------------
+    # Tokenizer & processor
+    # ------------------------------------------------------------------
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
+    if is_kimi:
+        patch_kimi_vision_processor(args.hf_model_path)
+    processor = AutoProcessor.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    pad_token_id = tokenizer.pad_token_id or 0
+
+    # ------------------------------------------------------------------
+    # Process inputs
+    # ------------------------------------------------------------------
+    pixel_values = image_grid_thw = image_sizes = mm_token_type_ids = image_position_ids = None
+    pixel_values_videos = video_grid_thw = None
+    imgs_sizes = num_frames = None
+
+    if is_omni and (args.video_path or args.image_path or args.image_paths):
+        if args.video_path and (args.image_path or args.image_paths):
+            raise ValueError("Choose Omni image inputs or one video, not both.")
+        frames = metadata = images = None
+        if args.video_path:
+            frames, metadata = load_nemotron_omni_video(args.video_path, fps=args.video_fps)
+        else:
+            images = [load_image(path).convert("RGB") for path in (args.image_paths or [args.image_path])]
+        omni_inputs = prepare_nemotron_omni_inputs(
+            processor, prompt=args.prompt, images=images, video_frames=frames, video_metadata=metadata
+        )
+        input_ids_raw = omni_inputs.hf["input_ids"]
+        pixel_values = omni_inputs.bridge["pixel_values"]
+        imgs_sizes = omni_inputs.bridge["imgs_sizes"]
+        num_frames = omni_inputs.bridge["num_frames"]
+    elif args.video_path:
+        input_ids_raw, pixel_values_videos, video_grid_thw = process_video_inputs(
+            processor, args.video_path, args.prompt, fps=args.video_fps
+        )
+    elif args.image_paths:
+        input_ids_raw, pixel_values, image_grid_thw = process_multi_image_inputs(
+            processor, args.image_paths, args.prompt
+        )
+    else:
+        (
+            input_ids_raw,
+            pixel_values,
+            image_grid_thw,
+            image_sizes,
+            mm_token_type_ids,
+            image_position_ids,
+        ) = process_image_inputs(
+            processor,
+            args.image_path,
+            args.prompt,
+            is_gemma4=is_gemma4,
+            is_kimi=is_kimi,
+            is_minimax=is_minimax,
+            is_mistral3=is_mistral3,
+            image_token_id=image_token_id,
+        )
+
+    input_ids_raw = input_ids_raw.cuda()
+    pixel_values = to_cuda(pixel_values)
+    image_grid_thw = to_cuda(image_grid_thw)
+    image_sizes = to_cuda(image_sizes)
+    mm_token_type_ids = to_cuda(mm_token_type_ids)
+    pixel_values_videos = to_cuda(pixel_values_videos)
+    video_grid_thw = to_cuda(video_grid_thw)
+    image_position_ids = to_cuda(image_position_ids)
+    imgs_sizes = to_cuda(imgs_sizes)
+    num_frames = to_cuda(num_frames)
+
+    # ------------------------------------------------------------------
+    # Greedy generation loop
+    # ------------------------------------------------------------------
+    prompt_length = input_ids_raw.size(1)
+    generated_ids = input_ids_raw.clone()
+    try:
+        generation_config = GenerationConfig.from_pretrained(
+            args.hf_model_path,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
+    except OSError:
+        generation_config = GenerationConfig.from_model_config(config)
+    stop_token_ids = generation_config.eos_token_id
+    if stop_token_ids is None:
+        stop_token_ids = [tokenizer.eos_token_id]
+    elif isinstance(stop_token_ids, int):
+        stop_token_ids = [stop_token_ids]
+    stop_tokens = set(stop_token_ids)
+
+    for step in range(args.max_new_tokens):
+        with torch.no_grad():
+            print_rank_0(f"Generation step {step}")
+
+            real_seq_len = generated_ids.size(1)
+            input_ids = pad_input_ids_to_tp_multiple(generated_ids, tp, pad_token_id)
+
+            mm_ids_padded = None
+            if mm_token_type_ids is not None:
+                mm_ids_padded = pad_input_ids_to_tp_multiple(mm_token_type_ids, tp, 0)
+
+            position_ids = (
+                torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device)
+                .unsqueeze(0)
+                .expand_as(input_ids)
+            )
+
+            fwd_bwd_function = get_forward_backward_func()
+            iterator = SingleBatchIterator(
+                input_ids,
+                position_ids,
+                None,
+                pixel_values,
+                image_grid_thw,
+                image_sizes,
+                mm_ids_padded,
+                pixel_values_videos=pixel_values_videos,
+                video_grid_thw=video_grid_thw,
+                image_position_ids=image_position_ids,
+                imgs_sizes=imgs_sizes,
+                num_frames=num_frames,
+            )
+
+            output = fwd_bwd_function(
+                forward_step_func=vlm_forward_step,
+                data_iterator=iterator,
+                model=model,
+                num_microbatches=1,
+                forward_only=True,
+                seq_length=input_ids.size(1),
+                micro_batch_size=1,
+                collect_non_loss_data=True,
+            )
+            if isinstance(output, list) and len(output) > 0:
+                output = output[0]
+
+            if parallel_state.is_pipeline_last_stage():
+                world_size = parallel_state.get_tensor_model_parallel_world_size()
+                gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
+                dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
+                output = torch.cat(gathered_tensors, dim=2)
+
+                last_pos = real_seq_len - 1
+                next_token_ids = torch.argmax(output[:, last_pos], dim=-1, keepdim=True)
+
+                if step < 5:
+                    print_rank_last(
+                        f"Step {step}: output shape={output.shape}, "
+                        f"real_seq_len={real_seq_len}, var={output.var():.4f}"
+                    )
+                    logits = output[0, last_pos, :]
+                    top5_vals, top5_ids = torch.topk(logits, 5)
+                    top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
+                    print_rank_last(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
+                    print_rank_last(
+                        f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})"
+                    )
+            else:
+                next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
+
+            torch.distributed.broadcast(next_token_ids, get_last_rank())
+            generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
+
+            if mm_token_type_ids is not None:
+                mm_token_type_ids = torch.cat(
+                    [mm_token_type_ids, torch.zeros_like(next_token_ids, dtype=mm_token_type_ids.dtype)], dim=-1
+                )
+
+            if next_token_ids.item() in stop_tokens:
+                break
+
+    generated_text = decode_generated_tokens(tokenizer, generated_ids, prompt_length)
+    print_rank_0("======== GENERATED TEXT OUTPUT ========")
+    if args.image_path:
+        print_rank_0(f"Image: {args.image_path}")
+    print_rank_0(f"Prompt: {args.prompt}")
+    print_rank_0(f"Generated: {generated_text}")
+    print_rank_0("=======================================")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="VLM Generation from HuggingFace Models")
+    parser.add_argument("--hf_model_path", type=str, required=True, help="Path to the HuggingFace VL model.")
+    parser.add_argument(
+        "--hf-revision",
+        dest="hf_revision",
+        default=None,
+        help="Hugging Face revision for reproducible model and processor loading.",
+    )
+    parser.add_argument("--prompt", type=str, default="Describe this image.", help="Input prompt.")
+    parser.add_argument("--max_new_tokens", type=int, default=20, help="Maximum number of new tokens to generate.")
+    parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
+    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
+    parser.add_argument(
+        "--pp_layout", type=str, default=None, help="Pipeline model parallel layout (e.g. 'Et*15|t*15|t*16|t*15L')"
+    )
+    parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to Megatron model checkpoint")
+    parser.add_argument("--image_path", type=str, default=None, help="Path or URL to a single image (optional).")
+    parser.add_argument(
+        "--image_paths",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Paths to N image files in order (multi-image; Qwen or Nemotron Omni).",
+    )
+    parser.add_argument("--video_path", type=str, default=None, help="Path to a video file (Qwen or Nemotron Omni).")
+    parser.add_argument(
+        "--video_fps", type=float, default=2.0, help="Frames per second to sample from the video (default: 2.0)."
+    )
+    parser.add_argument("--trust_remote_code", action="store_true", help="Trust remote code for HF model loading")
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Require deterministic distributed kernels and seed all inference RNGs.",
+    )
+    args = parser.parse_args()
+
+    main(args)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()

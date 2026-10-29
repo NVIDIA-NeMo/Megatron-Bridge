@@ -1,0 +1,28 @@
+# MiniMax-M2
+
+[MiniMax-M2](https://huggingface.co/MiniMaxAI/MiniMax-M2) is a large sparse MoE language model from MiniMaxAI. Megatron Bridge supports MiniMax-M2 and architecture-compatible M2.5/M2.7 checkpoints through the `MiniMaxM2Bridge`.
+
+## Supported Variants
+
+| Variant | Hugging Face ID | Notes |
+|---------|-----------------|-------|
+| MiniMax-M2 | `MiniMaxAI/MiniMax-M2` | 456B total, 45.9B active |
+| MiniMax-M2.5 | `MiniMaxAI/MiniMax-M2.5` | Same `MiniMaxM2ForCausalLM` architecture |
+| MiniMax-M2.7 | `MiniMaxAI/MiniMax-M2.7` | Same `MiniMaxM2ForCausalLM` architecture |
+
+## Architecture Notes
+
+- Sparse MoE with 256 experts and top-8 routing.
+- Sigmoid router with expert-bias correction.
+- FP8 block-wise checkpoint weights are dequantized during import.
+- Uses full-dimension QK RMSNorm; the bridge provides custom Q/K norm mappings for tensor-parallel shards.
+- MTP modules are not currently mapped.
+
+## Examples
+
+For Slurm conversion, inference, hardware requirements, and validated parallelism settings, see the [MiniMax-M2 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/minimax/minimax_m2/README.md).
+
+## Related Implementation
+
+- Bridge implementation: [`src/megatron/bridge/models/minimax_m2`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/minimax_m2)
+- Examples: [`examples/models/minimax/minimax_m2`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/minimax/minimax_m2)

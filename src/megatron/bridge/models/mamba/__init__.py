@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.mamba.mamba_builder import MambaModelBuilder, MambaModelConfig
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 __all__ = [
+    "MambaModelBuilder",
+    "MambaModelConfig",
     "MambaModelProvider",
 ]

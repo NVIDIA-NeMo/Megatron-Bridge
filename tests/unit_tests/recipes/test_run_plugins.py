@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 
 try:
@@ -28,12 +29,12 @@ except ImportError:
 
 if HAS_NEMO_RUN:
     from megatron.bridge.recipes.run_plugins import (
+        CometPlugin,
+        CometPluginScriptArgs,
         FaultTolerancePlugin,
         FaultTolerancePluginScriptArgs,
         NsysPlugin,
         NsysPluginScriptArgs,
-        PerfEnvPlugin,
-        PerfEnvPluginScriptArgs,
         PreemptionPlugin,
         PreemptionPluginScriptArgs,
         PyTorchProfilerPlugin,
@@ -48,7 +49,7 @@ def create_test_config(**kwargs):
     from megatron.core.distributed import DistributedDataParallelConfig
     from megatron.core.optimizer import OptimizerConfig
 
-    from megatron.bridge.models.llama import Llama3ModelProvider8B
+    from megatron.bridge.models.gpt_provider import GPTModelProvider
     from megatron.bridge.training.config import (
         CheckpointConfig,
         ConfigContainer,
@@ -78,8 +79,31 @@ def create_test_config(**kwargs):
     min_lr = kwargs.pop("min_lr", 1e-5)
 
     # Create model config with apply_rope_fusion=False
-    model_cfg = Llama3ModelProvider8B(
+    model_cfg = GPTModelProvider(
+        normalization="RMSNorm",
+        activation_func=F.silu,
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        add_bias_linear=False,
+        attention_dropout=0.0,
+        hidden_dropout=0.0,
+        share_embeddings_and_output_weights=False,
+        bias_activation_fusion=True,
+        masked_softmax_fusion=True,
+        persist_layer_norm=True,
+        bias_dropout_fusion=True,
         apply_rope_fusion=False,  # Disable to avoid TE/Apex requirement
+        num_query_groups=8,
+        init_method_std=0.01,
+        layernorm_epsilon=1e-05,
+        rotary_percent=1.0,
+        rotary_base=500_000,
+        seq_length=8192,
+        num_layers=32,
+        hidden_size=4096,
+        ffn_hidden_size=14336,
+        num_attention_heads=32,
+        cross_entropy_fusion_impl="te",
         tensor_model_parallel_size=tensor_model_parallel_size,
         pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_dtype=pipeline_dtype,
@@ -140,7 +164,7 @@ def create_test_config(**kwargs):
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=None,  # Mock data
             blend_per_split=None,
@@ -618,247 +642,159 @@ class TestWandbPlugin:
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
-class TestPerfEnvPlugin:
-    """Test PerfEnvPlugin functionality."""
+class TestCometPlugin:
+    """Test CometPlugin functionality.
+
+    Mirrors the TestWandbPlugin pattern. CometPlugin gates its setup on the
+    COMET_API_KEY environment variable being set; when present it forwards the
+    key into the executor's env_vars and emits the documented Hydra-style CLI
+    overrides (`logger.comet_project`, `logger.comet_workspace`,
+    `logger.comet_experiment_name`).
+    """
 
     def test_initialization(self):
-        """Test plugin initialization with default values."""
-        plugin = PerfEnvPlugin()
-        assert plugin.enable_layernorm_sm_margin is True
-        assert plugin.layernorm_sm_margin == 16
-        assert plugin.enable_vboost is False
-        assert plugin.nccl_pp_comm_chunksize is None
-        assert plugin.gpu_sm100_or_newer is False
-        assert plugin.enable_manual_gc is True
-        assert plugin.manual_gc_interval == 100
+        """Plugin initialization stores all fields."""
+        plugin = CometPlugin(
+            project="test_project",
+            name="test_run",
+            workspace="test_workspace",
+        )
+        assert plugin.project == "test_project"
+        assert plugin.name == "test_run"
+        assert plugin.workspace == "test_workspace"
+        assert plugin.script_args_converter_fn is None
 
-    def test_setup_environment_variables(self):
-        """Test environment variable setup."""
-        plugin = PerfEnvPlugin(
-            enable_layernorm_sm_margin=True,
-            layernorm_sm_margin=32,
-            gpu_sm100_or_newer=True,
-            tp_size=4,
-            cp_size=2,
-            pp_size=4,
-            nccl_pp_comm_chunksize=2048,
+    def test_initialization_optional_fields_default_to_none(self):
+        """name and workspace are optional and default to None."""
+        plugin = CometPlugin(project="only_project")
+        assert plugin.project == "only_project"
+        assert plugin.name is None
+        assert plugin.workspace is None
+
+    @patch.dict(os.environ, {"COMET_API_KEY": "test_api_key"})
+    def test_setup_with_script_task(self):
+        """All three fields produce the documented Hydra overrides."""
+        plugin = CometPlugin(
+            project="script_project",
+            workspace="script_workspace",
+            name="script_run",
         )
 
-        # Create mock task and executor
         task = MagicMock(spec=run.Script)
         task.args = []
 
         executor = MagicMock()
         executor.env_vars = {}
 
-        # Run setup
         plugin.setup(task, executor)
 
-        # Verify environment variables
-        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "32"  # sm100 with tp>1
-        assert executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "32"
-        assert executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == "32"
-        assert executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] == "2048"
+        # API key is forwarded into the executor's env_vars.
+        assert executor.env_vars["COMET_API_KEY"] == "test_api_key"
 
-    def test_setup_with_older_gpu(self):
-        """Test setup with older GPU architecture."""
-        plugin = PerfEnvPlugin(gpu_sm100_or_newer=False, tp_size=2, cp_size=1)
+        # CLI overrides are appended in the documented order.
+        expected_args = [
+            "logger.comet_project=script_project",
+            "logger.comet_workspace=script_workspace",
+            "logger.comet_experiment_name=script_run",
+        ]
+        for arg in expected_args:
+            assert arg in task.args
 
-        # Create mock task and executor
+    @patch.dict(os.environ, {"COMET_API_KEY": "test_api_key"})
+    def test_setup_with_only_required_field(self):
+        """When name and workspace are None, only the project override is emitted."""
+        plugin = CometPlugin(project="bare_project")
+
         task = MagicMock(spec=run.Script)
         task.args = []
 
         executor = MagicMock()
         executor.env_vars = {}
 
-        # Run setup
         plugin.setup(task, executor)
 
-        # Verify CUDA_DEVICE_MAX_CONNECTIONS is 1 for older GPUs
-        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "1"
+        assert "logger.comet_project=bare_project" in task.args
+        # Optional overrides must NOT be emitted when their values are None.
+        assert not any(arg.startswith("logger.comet_workspace=") for arg in task.args)
+        assert not any(arg.startswith("logger.comet_experiment_name=") for arg in task.args)
 
-    def test_vboost_with_slurm_executor(self):
-        """Test vboost setup with SlurmExecutor."""
-        plugin = PerfEnvPlugin(enable_vboost=True)
+    @patch.dict(os.environ, {}, clear=True)
+    def test_setup_without_api_key_warns_and_does_not_propagate(self):
+        """Missing COMET_API_KEY ⇒ warning + no env_var + no CLI overrides."""
+        plugin = CometPlugin(project="test_project", name="run", workspace="ws")
 
-        # Create mock task
         task = MagicMock(spec=run.Script)
         task.args = []
 
-        # Create SLURM executor
-        executor = MagicMock(spec=run.SlurmExecutor)
-        executor.env_vars = {}
-        executor.nodes = 2
-        executor.tunnel = MagicMock()
-        executor.tunnel.job_dir = "/job/dir"
-        executor.setup_lines = ""
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        # Verify vboost command was added to setup lines
-        assert "sudo nvidia-smi boost-slider --vboost 1" in executor.setup_lines
-        assert "srun" in executor.setup_lines
-        assert "--ntasks=2" in executor.setup_lines
-
-    def test_setup_with_script_task(self):
-        """Test setup with run.Script task."""
-        plugin = PerfEnvPlugin(enable_manual_gc=True, manual_gc_interval=150)
-
-        # Create mock script task
-        task = MagicMock(spec=run.Script)
-        task.args = []
-
-        # Create mock executor
         executor = MagicMock()
         executor.env_vars = {}
 
-        # Run setup
-        plugin.setup(task, executor)
+        import megatron.bridge.recipes.run_plugins
 
-        # Verify CLI overrides for manual GC
-        assert "train.manual_gc=true" in task.args
-        assert "train.manual_gc_interval=150" in task.args
+        with patch.object(megatron.bridge.recipes.run_plugins.logger, "warning") as mock_warning:
+            plugin.setup(task, executor)
 
+        mock_warning.assert_called_once()
+        warning_msg = mock_warning.call_args[0][0]
+        assert "COMET_API_KEY environment variable is not set" in warning_msg
+
+        # Neither env var nor CLI overrides should be set.
+        assert "COMET_API_KEY" not in executor.env_vars
+        assert task.args == []
+
+    @patch.dict(os.environ, {"COMET_API_KEY": "test_api_key"})
+    def test_setup_raises_for_non_script_task(self):
+        """API key set + non-Script task ⇒ NotImplementedError (documented contract)."""
+        plugin = CometPlugin(project="test_project")
+
+        # A run.Partial task is not supported — only run.Script is.
+        task = MagicMock(spec=run.Partial)
+
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        with pytest.raises(NotImplementedError, match="CometPlugin is only supported for run.Script tasks"):
+            plugin.setup(task, executor)
+
+        # The API key is still forwarded to the executor BEFORE the type check
+        # — confirm that contract too so a future refactor doesn't drop it.
+        assert executor.env_vars["COMET_API_KEY"] == "test_api_key"
+
+    @patch.dict(os.environ, {"COMET_API_KEY": "test_api_key"})
     def test_custom_script_args_converter(self):
-        """Test setup with custom script args converter."""
+        """A custom converter replaces the default Hydra-style overrides entirely."""
 
-        # Define a custom converter
-        def custom_converter(args: PerfEnvPluginScriptArgs):
-            result = []
-            if args.enable_manual_gc:
-                result.append("--enable-gc")
-                result.append(f"--gc-interval={args.manual_gc_interval}")
+        def custom_converter(args: CometPluginScriptArgs):
+            result = ["--comet"]
+            result.append(f"--comet-project={args.project}")
+            if args.workspace:
+                result.append(f"--comet-workspace={args.workspace}")
+            if args.name:
+                result.append(f"--comet-name={args.name}")
             return result
 
-        plugin = PerfEnvPlugin(
-            enable_manual_gc=True, manual_gc_interval=250, script_args_converter_fn=custom_converter
+        plugin = CometPlugin(
+            project="custom_project",
+            workspace="custom_workspace",
+            name="custom_run",
+            script_args_converter_fn=custom_converter,
         )
 
-        # Create mock script task
         task = MagicMock(spec=run.Script)
         task.args = []
 
-        # Create mock executor
         executor = MagicMock()
         executor.env_vars = {}
 
-        # Run setup
         plugin.setup(task, executor)
 
-        # Verify custom converter was used
-        assert "--enable-gc" in task.args
-        assert "--gc-interval=250" in task.args
-        # Verify hydra-style args are NOT present
-        assert "train.manual_gc=true" not in task.args
-
-    def test_cuda_max_connections_with_deepep_enabled(self):
-        """Test that DeepEP sets CUDA_DEVICE_MAX_CONNECTIONS to 32."""
-        plugin = PerfEnvPlugin(moe_flex_dispatcher_backend="deepep", tp_size=1, cp_size=1, pp_size=1, num_gpus=8)
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Script)
-        task.args = []
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "32"
-        assert plugin.dp_size == 8
-
-    def test_cuda_max_connections_with_a2a_overlap_enabled(self):
-        """Test that a2a_overlap prevents setting CUDA_DEVICE_MAX_CONNECTIONS to 1 on older GPUs."""
-        plugin = PerfEnvPlugin(gpu_sm100_or_newer=False, a2a_overlap=True, tp_size=2, cp_size=1, pp_size=1, num_gpus=8)
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Script)
-        task.args = []
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
-        assert plugin.dp_size == 4
-
-    def test_cuda_max_connections_without_a2a_overlap_older_gpu(self):
-        """Test that without a2a_overlap, CUDA_DEVICE_MAX_CONNECTIONS is set to 1 on older GPUs with TP."""
-        plugin = PerfEnvPlugin(
-            gpu_sm100_or_newer=False, a2a_overlap=False, tp_size=4, cp_size=1, pp_size=1, num_gpus=8
-        )
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Script)
-        task.args = []
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "1"
-        assert plugin.dp_size == 2
-
-    def test_cuda_max_connections_sm100_with_multiple_parallelisms(self):
-        """Test CUDA_DEVICE_MAX_CONNECTIONS on SM100+ with both TP/CP and DP/PP."""
-        plugin = PerfEnvPlugin(
-            gpu_sm100_or_newer=True, tp_size=2, cp_size=2, pp_size=2, num_gpus=16, moe_flex_dispatcher_backend=None
-        )
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Script)
-        task.args = []
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        assert plugin.dp_size == 2
-        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "32"
-
-    def test_cuda_max_connections_sm100_with_tp_only(self):
-        """Test CUDA_DEVICE_MAX_CONNECTIONS on SM100+ with only TP (no DP or PP)."""
-        plugin = PerfEnvPlugin(gpu_sm100_or_newer=True, tp_size=8, cp_size=1, pp_size=1, num_gpus=8)
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Script)
-        task.args = []
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        assert plugin.dp_size == 1
-        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
-
-    def test_cuda_max_connections_default_case(self):
-        """Test CUDA_DEVICE_MAX_CONNECTIONS defaults to 8 when no special conditions apply."""
-        plugin = PerfEnvPlugin(
-            gpu_sm100_or_newer=False,
-            moe_flex_dispatcher_backend=None,
-            tp_size=1,
-            cp_size=1,
-            pp_size=1,
-            num_gpus=8,
-            a2a_overlap=False,
-        )
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Script)
-        task.args = []
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        assert plugin.dp_size == 8
-        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
+        # Custom converter output is present.
+        assert "--comet" in task.args
+        assert "--comet-project=custom_project" in task.args
+        assert "--comet-workspace=custom_workspace" in task.args
+        assert "--comet-name=custom_run" in task.args
+        # Hydra-style overrides are NOT emitted when a custom converter is supplied.
+        assert "logger.comet_project=custom_project" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")

@@ -1,0 +1,8 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lightning"
+version = "2.5.0.post0"
+description = "Stub: lightning is pre-installed in the base container and blocked on PyPI"

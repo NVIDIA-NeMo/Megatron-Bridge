@@ -19,8 +19,8 @@ import numpy
 import torch
 from PIL import Image
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 class MockQwen25VLDataset(torch.utils.data.Dataset):
@@ -190,6 +190,9 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
 
     # HF processor/model ID for Qwen2.5-VL
     hf_model_path: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+
+    # Qwen2.5-VL processing depends on Hugging Face custom code.
+    trust_remote_code: Optional[bool] = True
 
     # Sample generation options
     prompt: str = "Describe this image."

@@ -2,12 +2,33 @@
 
 """Dataloaders."""
 
+import functools
+import multiprocessing
+import os
 import random
 from typing import Any, Callable, Iterator, Optional
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+
+
+def _close_nvidia_device_fds() -> None:
+    """Close inherited NVIDIA device descriptors in a DataLoader worker."""
+    for fd in os.listdir("/proc/self/fd"):
+        try:
+            path = os.readlink(f"/proc/self/fd/{fd}")
+            if path.startswith("/dev/nvidia"):
+                os.close(int(fd))
+        except OSError:
+            pass
+
+
+def _initialize_worker(worker_id: int, *, worker_init_fn: Optional[Callable]) -> None:
+    """Release inherited GPU descriptors, then invoke the caller initializer."""
+    _close_nvidia_device_fds()
+    if worker_init_fn is not None:
+        worker_init_fn(worker_id)
 
 
 def build_pretraining_data_loader(
@@ -21,10 +42,13 @@ def build_pretraining_data_loader(
     collate_fn: Optional[Callable] = None,
     pin_memory: bool = True,
     persistent_workers: bool = False,
+    prefetch_factor: int | None = None,
     data_parallel_rank: int = 0,
     data_parallel_size: int = 1,
     drop_last: Optional[bool] = True,
     global_batch_size: Optional[int] = None,
+    seed: int | None = None,
+    shuffle: bool = True,
 ) -> Optional[DataLoader]:
     """Build a dataloader for pretraining.
 
@@ -44,11 +68,18 @@ def build_pretraining_data_loader(
         collate_fn: Optional custom collate function.
         pin_memory: Whether to pin memory for the DataLoader.
         persistent_workers: Whether to use persistent workers.
+        prefetch_factor: Number of batches each worker loads in advance. None keeps PyTorch's
+                         default. Ignored when num_workers is 0.
         data_parallel_rank: Rank of the current GPU in the data parallel group.
         data_parallel_size: Total number of GPUs in the data parallel group.
         drop_last: Whether to drop last incomplete batch.
         global_batch_size: Total batch size across all data parallel ranks.
                           Required for 'batch' dataloader_type.
+        seed: Explicit shuffle seed for the global-batch sampler. Supplying the
+              dataset seed keeps pipeline stages on the same sample order even
+              though their model RNG seeds differ.
+        shuffle: Whether the 'batch' sampler reshuffles each epoch (seeded, deterministic).
+                 False yields dataset order; other sampler types ignore this.
 
     Returns:
         A PyTorch DataLoader instance, or the dataset itself if dataloader_type is
@@ -97,6 +128,8 @@ def build_pretraining_data_loader(
             data_parallel_size=data_parallel_size,
             drop_last=drop_last,
             pad_samples_to_global_batch_size=not drop_last,
+            seed=seed,
+            shuffle=shuffle,
         )
     elif dataloader_type == "external":
         # External dataloaders are passed through. User is expected to provide a
@@ -104,6 +137,13 @@ def build_pretraining_data_loader(
         return dataset
     else:
         raise Exception("{} dataloader type is not supported.".format(dataloader_type))
+
+    maybe_worker_init_fn = None
+    worker_kwargs = {}
+    if num_workers > 0:
+        maybe_worker_init_fn = functools.partial(_initialize_worker, worker_init_fn=worker_init_fn)
+        if prefetch_factor is not None:
+            worker_kwargs["prefetch_factor"] = prefetch_factor
 
     # Torch dataloader.
     return DataLoader(
@@ -113,7 +153,8 @@ def build_pretraining_data_loader(
         pin_memory=pin_memory,
         collate_fn=collate_fn,
         persistent_workers=persistent_workers,
-        worker_init_fn=worker_init_fn,
+        worker_init_fn=maybe_worker_init_fn,
+        **worker_kwargs,
     )
 
 
@@ -147,6 +188,7 @@ class MegatronPretrainingSampler:
         self.consumed_samples = consumed_samples
         self.micro_batch_size = micro_batch_size
         self.data_parallel_rank = data_parallel_rank
+        self.data_parallel_size = data_parallel_size
         self.micro_batch_times_data_parallel_size = self.micro_batch_size * data_parallel_size
         self.drop_last = drop_last
 
@@ -175,6 +217,18 @@ class MegatronPretrainingSampler:
 
     def __iter__(self) -> Iterator[list[int]]:
         """Yields lists of indices for each microbatch assigned to this rank."""
+        remaining_samples = self.total_samples - self.consumed_samples
+        if (
+            not self.drop_last
+            and self.data_parallel_size > 1
+            and remaining_samples % self.micro_batch_times_data_parallel_size != 0
+        ):
+            raise ValueError(
+                "drop_last=False is unsupported for a partial distributed batch with "
+                f"dataloader_type='single': {remaining_samples} remaining samples are not divisible by "
+                f"micro_batch_size ({self.micro_batch_size}) x data_parallel_size ({self.data_parallel_size})."
+            )
+
         batch = []
         # Last batch will be dropped if drop_last is not set False
         for idx in range(self.consumed_samples, self.total_samples):
@@ -198,6 +252,13 @@ class MegatronPretrainingBatchSampler:
     are padded to the same length, which is critical for fine-tuning with variable
     sequence lengths.
 
+    The sampler is epoch-aware: it advances ``consumed_samples`` as it yields so that
+    when it is re-iterated (e.g. wrapped in ``cyclic_iter`` for multi-epoch
+    fine-tuning), each new epoch starts from the beginning of the dataset instead of
+    permanently re-applying the resume offset. When ``shuffle`` is enabled the per-epoch
+    order is a deterministic, ``seed``- and epoch-derived permutation, so resuming from a
+    checkpoint reproduces the same order as an uninterrupted run.
+
     Args:
         total_samples: Total number of samples in the dataset.
         consumed_samples: Number of samples already consumed (for resuming).
@@ -207,6 +268,10 @@ class MegatronPretrainingBatchSampler:
         data_parallel_size: Total number of GPUs in the data parallel group.
         drop_last: If True, drops the last incomplete batch.
         pad_samples_to_global_batch_size: If True, pads incomplete batches with -1 indices.
+        shuffle: If True, reshuffle the sample order every epoch using a deterministic,
+            seed- and epoch-derived permutation. Defaults to True for fine-tuning.
+        seed: Base random seed for the per-epoch shuffle. Defaults to the current
+            torch global seed. Only used when ``shuffle`` is True.
     """
 
     def __init__(
@@ -219,6 +284,8 @@ class MegatronPretrainingBatchSampler:
         data_parallel_size: int,
         drop_last: bool = True,
         pad_samples_to_global_batch_size: bool = False,
+        shuffle: bool = True,
+        seed: int | None = None,
     ) -> None:
         self.total_samples = total_samples
         self.consumed_samples = consumed_samples
@@ -227,6 +294,8 @@ class MegatronPretrainingBatchSampler:
         self.data_parallel_size = data_parallel_size
         self.drop_last = drop_last
         self.pad_samples_to_global_batch_size = pad_samples_to_global_batch_size
+        self.shuffle = shuffle
+        self.seed = int(torch.initial_seed() if seed is None else seed)
         self.micro_batch_times_data_parallel_size = self.micro_batch_size * data_parallel_size
 
         assert self.total_samples > 0, "no sample to consume: {}".format(self.total_samples)
@@ -255,7 +324,9 @@ class MegatronPretrainingBatchSampler:
         Since we now yield the full global batch at once (not split into microbatches),
         this returns the number of global batches.
         """
-        num_available_samples = self.total_samples - self.consumed_samples % self.total_samples
+        active_total_samples = self._active_total_samples()
+        current_epoch_samples = self.consumed_samples % active_total_samples
+        num_available_samples = active_total_samples - current_epoch_samples
         if self.drop_last:
             num_global_batches = num_available_samples // self._global_batch_size
         else:
@@ -263,6 +334,23 @@ class MegatronPretrainingBatchSampler:
 
         # Each call to __iter__ yields one global batch
         return num_global_batches
+
+    def _active_total_samples(self) -> int:
+        """Return the sample-count unit used for epoch/offset accounting."""
+        if self.drop_last:
+            active_total_samples = (self.total_samples // self._global_batch_size) * self._global_batch_size
+            assert active_total_samples > 0, (
+                "drop_last=True requires at least one full global batch; "
+                f"got total_samples={self.total_samples}, global_batch_size={self._global_batch_size}"
+            )
+            return active_total_samples
+
+        if self.pad_samples_to_global_batch_size:
+            return (
+                (self.total_samples + self._global_batch_size - 1) // self._global_batch_size
+            ) * self._global_batch_size
+
+        return self.total_samples
 
     def __iter__(self) -> Iterator[list[int]]:
         """Yields lists of indices for the full global batch assigned to this rank.
@@ -276,10 +364,33 @@ class MegatronPretrainingBatchSampler:
         1. Compute max_length across the entire global batch
         2. Pad all samples to the same length
         3. Then split into microbatches with consistent sequence length
+
+        The sampler is epoch-aware. It derives the current epoch and the within-epoch
+        offset from ``consumed_samples`` and advances ``consumed_samples`` as it yields.
+        When wrapped in ``cyclic_iter`` for multi-epoch fine-tuning, each re-iteration
+        therefore starts a fresh epoch (offset 0) rather than repeatedly re-applying the
+        resume offset, which previously caused the head of every post-resume epoch to be
+        skipped and the tail to be replayed.
         """
+        active_total_samples = self._active_total_samples()
+        epoch = self.consumed_samples // active_total_samples
+        current_epoch_samples = self.consumed_samples % active_total_samples
+
+        if self.shuffle:
+            # Deterministic, seed- and epoch-derived permutation so a resumed run
+            # reproduces the same per-epoch order as an uninterrupted run.
+            g = torch.Generator()
+            g.manual_seed(self.seed + epoch)
+            idx_order = torch.randperm(self.total_samples, generator=g).tolist()
+        else:
+            idx_order = list(range(self.total_samples))
+
+        # Skip samples already consumed within the current epoch (mid-epoch resume).
+        idx_order = idx_order[current_epoch_samples:]
+
         batch = []
         # Last batch will be dropped if drop_last is True
-        for idx in range(self.consumed_samples % self.total_samples, self.total_samples):
+        for idx in idx_order:
             batch.append(idx)
             if len(batch) == self._global_batch_size:
                 # Distribute indices in interleaved fashion across ranks
@@ -292,6 +403,10 @@ class MegatronPretrainingBatchSampler:
                     )
                 ]
                 assert len(all_indices) == self._global_batch_size_on_this_data_parallel_rank
+
+                # Advance so the next re-iteration starts a fresh epoch (offset 0) rather
+                # than re-applying the resume offset and replaying the tail.
+                self.consumed_samples += self._global_batch_size
 
                 # Yield ALL indices at once (not split into microbatches)
                 # The training loop will handle splitting after collation
@@ -306,6 +421,11 @@ class MegatronPretrainingBatchSampler:
             if self.pad_samples_to_global_batch_size:
                 num_pad = self._global_batch_size // self.data_parallel_size - len(all_indices)
                 all_indices = all_indices + [-1] * num_pad
+
+            if self.pad_samples_to_global_batch_size:
+                self.consumed_samples += self._global_batch_size
+            else:
+                self.consumed_samples += len(batch)
 
             # Yield ALL indices at once
             yield all_indices
@@ -325,7 +445,7 @@ class RandomSeedDataset(Dataset):
     def __init__(self, dataset: Dataset, seed: int) -> None:
         """Initialize RandomSeedDataset."""
         self.base_seed = seed
-        self.curr_seed = seed
+        self.curr_seed = multiprocessing.Value("q", seed, lock=False)
         self.dataset = dataset
 
     def __len__(self) -> int:
@@ -334,11 +454,11 @@ class RandomSeedDataset(Dataset):
 
     def set_epoch(self, epoch: int) -> None:
         """Set the current epoch number to adjust the random seed."""
-        self.curr_seed = self.base_seed + epoch
+        self.curr_seed.value = self.base_seed + epoch
 
     def __getitem__(self, idx: int) -> Any:
         """Get an item from the dataset, setting the random seed first."""
-        seed = idx + self.curr_seed
+        seed = idx + self.curr_seed.value
         torch.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)
@@ -421,12 +541,11 @@ class MegatronPretrainingRandomSampler:
             random_idx = torch.randperm(bucket_size, generator=g).tolist()
             idx_range = [start_idx + x for x in random_idx[bucket_offset:]]
         else:
-            full_bucket_size = (self.total_samples // self.micro_batch_size) * self.micro_batch_size
             full_bucket_offset = current_epoch_samples
             g = torch.Generator()
             g.manual_seed(self.epoch)
-            idx_range_total = torch.randperm(full_bucket_size, generator=g).tolist()
-            idx_range_active = idx_range_total[full_bucket_offset:]
+            idx_range_total = torch.randperm(self.total_samples, generator=g).tolist()
+            idx_range_active = idx_range_total[full_bucket_offset:active_total_samples]
             idx_range = idx_range_active[self.data_parallel_rank :: self.data_parallel_size]
 
         batch = []

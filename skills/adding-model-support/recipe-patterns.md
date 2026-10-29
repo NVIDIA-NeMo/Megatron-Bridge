@@ -1,0 +1,194 @@
+# Recipe Patterns
+
+Recipes provide pre-configured `ConfigContainer` objects for training each model variant.
+
+Reference implementations:
+- **VLM:** `src/megatron/bridge/recipes/qwen_vl/qwen35_vl.py`
+- **LLM (builder-backed config):** `src/megatron/bridge/recipes/qwen/h100/qwen3.py`
+
+## File Structure
+
+```text
+src/megatron/bridge/recipes/<family>/
+├── __init__.py          # Import and expose recipe functions
+└── <model>.py           # Recipe functions for all sizes
+```
+
+## Recipe Function Pattern
+
+Each model size gets dedicated functions for SFT, PEFT, and optionally pretrain:
+
+```python
+def <model>_<size>_sft_config() -> ConfigContainer:
+    """SFT config for <Model> <Size>."""
+    cfg = _sft_common()  # or _sft_common_vlm() for VLMs
+
+    # Model
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
+
+    # Parallelism
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.sequence_parallel = True
+
+    # Training
+    cfg.training.max_steps = 100
+    cfg.training.global_batch_size = 128
+    cfg.training.micro_batch_size = 1
+
+    # Optimizer
+    cfg.optimizer.lr = 5e-6
+    cfg.optimizer.weight_decay = 0.01
+
+    # VLM-specific (if applicable)
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+
+    return cfg
+
+
+def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """PEFT config for <Model> <Size>."""
+    cfg = _peft_common()  # or _peft_common_vlm() for VLMs
+
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
+
+    # PEFT typically uses smaller parallelism
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+
+    # PEFT uses higher LR
+    cfg.optimizer.lr = 2e-4
+
+    # PEFT config
+    peft_cfg = default_peft_config(peft_scheme)
+    cfg.peft = peft_cfg
+
+    return cfg
+```
+
+`get_model_config()` returns a builder-backed `ModelConfig`. Flat assignments such as
+`cfg.model.tensor_model_parallel_size` route to the nested transformer config, and assigning a field
+that neither config declares raises `AttributeError`. Families that have not migrated to the builder
+path still use `.to_megatron_provider(load_weights=False)`.
+
+Keep each recipe function self-contained: start from the shared `_*_common()` base and set every other option inside the function, repeating lines rather than adding family-private helpers or calling another recipe, since users usually read and copy a single recipe.
+
+## Common Base Functions
+
+| Function | Use Case |
+|----------|----------|
+| `_pretrain_common()` | LLM pretraining |
+| `_sft_common()` | LLM supervised fine-tuning |
+| `_peft_common()` | LLM parameter-efficient fine-tuning |
+| `_sft_common_vlm()` | VLM SFT (adds vision dataset, null tokenizer) |
+| `_peft_common_vlm()` | VLM PEFT |
+
+VLM variants additionally set:
+- `cfg.dataset` to `HFConversationDatasetProvider` (e.g., CORD-v2)
+- `cfg.dataset.hf_processor_path` for the vision processor
+- `NullTokenizer` (tokenization handled by processor)
+- DDP without overlap (for vision model compatibility)
+
+## Parallelism Guidelines
+
+**Constraint:** `max(TP*CP, EP) * PP` = minimum GPUs, with 8 GPUs per node.
+
+| Model Size | TP | PP | EP | CP | Notes |
+|-----------|----|----|----|----|-------|
+| &lt; 3B | 1 | 1 | 1 | 1 | Single GPU |
+| 3-8B | 2 | 1 | 1 | 1 | |
+| 8-13B | 4 | 1 | 1 | 1 | |
+| 13-70B | 4 | 4 | 1 | 1 | |
+| MoE (any) | 1-2 | 1-4 | 8-32 | 1 | EP dominates |
+
+**Rules:**
+- TP must be &lt;= `num_key_value_heads`
+- When EP &gt; 1 and TP &gt; 1, `sequence_parallel` must be True
+- PEFT typically uses smaller parallelism (TP=1, PP=1)
+
+## Export / Registration
+
+### Family `__init__.py`
+
+```python
+from megatron.bridge.recipes.<family>.<model> import (
+    <model>_<size1>_sft_config,
+    <model>_<size1>_peft_config,
+    <model>_<size2>_sft_config,
+    <model>_<size2>_peft_config,
+)
+
+__all__ = [
+    "<model>_<size1>_sft_config",
+    "<model>_<size1>_peft_config",
+    # ...
+]
+```
+
+### Top-level `recipes/__init__.py`
+
+Add a wildcard import:
+
+```python
+from megatron.bridge.recipes.<family> import *
+```
+
+### `train_any_basic.py`
+
+Add entry to `config_map` dict, docstring model list, and `--model` argparse choices.
+
+## Recipe Test Patterns
+
+### Unit test (no GPU)
+
+Patch the recipe module's `AutoBridge` with a fake bridge that returns a real, strict model config
+built from a tiny HF config, and make the legacy provider API fail. Then verify the
+`ConfigContainer` structure:
+
+```python
+class _BuilderOnlyBridge:
+    @staticmethod
+    def from_hf_pretrained(hf_path, **kwargs):
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self):
+        return AutoBridge.from_hf_config(_tiny_hf_config()).get_model_config()
+
+    def to_megatron_provider(self, load_weights=False):
+        raise AssertionError("recipes must use get_model_config()")
+
+
+def test_sft_config(monkeypatch):
+    monkeypatch.setattr(my_model_recipes, "AutoBridge", _BuilderOnlyBridge)
+    cfg = model_size_sft_config()
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.training.global_batch_size == 128
+```
+
+Shared recipe tests in other directories may stub `AutoBridge` too. When a family moves to
+`get_model_config()`, search `tests/unit_tests/recipes/` for those stubs and add the method.
+
+### Functional test (GPU)
+
+Use `run_pretrain_vl_recipe_test()` from `tests/functional_tests/recipes/utils.py`:
+
+```python
+RECIPES = [
+    (model_size_sft_config, "model_size_sft", {}, {}),
+]
+
+PEFT_RECIPES = [
+    (partial(model_size_peft_config, peft="lora"), "model_size_peft", {}, {}),
+]
+```
+
+### Five training scenarios to cover (VLMs)
+
+1. SFT nothing frozen
+2. SFT language frozen (train vision + projection)
+3. SFT vision + language frozen (train projection only)
+4. PEFT with vision frozen
+5. PEFT with nothing frozen

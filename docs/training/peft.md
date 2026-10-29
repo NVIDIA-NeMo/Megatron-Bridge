@@ -18,8 +18,8 @@ As language models continue to grow in size, PEFT is gaining popularity for its 
 PEFT is configured as an optional attribute in `ConfigContainer`:
 
 ```python
-from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 
 config = ConfigContainer(
     # ... other required configurations
@@ -30,15 +30,36 @@ config = ConfigContainer(
         dropout=0.1,
     ),
     checkpoint=CheckpointConfig(
-        pretrained_checkpoint="/path/to/pretrained/checkpoint",  # Required for PEFT
+        pretrained_checkpoint="/checkpoints/base_model",  # Required for PEFT
         save="/path/to/peft/checkpoints",
     ),
 )
 ```
 
 ```{note}
-**Requirements**: PEFT requires `checkpoint.pretrained_checkpoint` to be set to load the base model weights.
+**Requirement:** PEFT requires `checkpoint.pretrained_checkpoint` to load the frozen base model weights before adapters are inserted. This path may be a native Megatron checkpoint base directory, a specific native Megatron `iter_N` directory, or a local Hugging Face full-model directory containing `config.json` and model weight files. A remote Hugging Face model ID is not a checkpoint path; download it locally or convert it to Megatron format first.
+
+When resuming adapter training, keep `checkpoint.pretrained_checkpoint` pointed at the same base model and set `checkpoint.load` to the PEFT adapter checkpoint directory.
 ```
+
+### MoE router state and checkpoint compatibility
+
+When expert-bias routing is enabled, gradient finalization updates the router's
+`expert_bias` buffer even when the router weights are frozen. PEFT checkpoints
+therefore retain these buffers alongside adapter parameters. Adapter reload and
+merge into a full model preserve this state.
+
+Older adapter checkpoints may omit these buffers. The adapter inference/merge
+loader rejects such checkpoints for a bias-enabled model, including when its
+`strict=False` option is used: that option does not permit missing distributed
+checkpoint tensors. The separate training-resume loader follows
+`checkpoint.dist_ckpt_strictness`; a permissive policy may retain the base-model
+bias, which is not exact recovery of the trained router state. Missing trained
+biases cannot be reconstructed from adapter weights alone.
+
+Standalone Hugging Face adapter export does not serialize router-bias buffers.
+For models whose biases changed during PEFT, merge the native adapter checkpoint
+into the base model and export the resulting full Hugging Face model instead.
 
 ## Supported PEFT Methods
 
@@ -66,13 +87,15 @@ lora_config = LoRA(
 ```
 
 #### Key Parameters
-The following table lists key hyperparameters for configuring DoRA, which control its module targeting, adaptation rank, scaling behavior, and regularization strategy.
+The following table lists key hyperparameters for configuring LoRA, which control its module targeting, adaptation rank, scaling behavior, and regularization strategy.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `target_modules` | `List[str]` | All linear layers | Modules to apply DoRA to |
+| `target_modules` | `List[str]` | All linear layers | Modules to apply LoRA to |
 | `dim` | `int` | `32` | Rank of the low-rank adaptation |
-| `alpha` | `float` | `16` | Scaling parameter for DoRA |
-| `dropout` | `float` | `0.0` | Dropout rate for DoRA layers |
+| `alpha` | `float` | `32` | Scaling parameter for LoRA |
+| `dropout` | `float` | `0.0` | Dropout rate for LoRA layers |
+| `normalize_moe_lora` | `bool` | `False` | Reduce expert-layer rank to `dim // moe_router_topk` while keeping dense layers at the full rank |
+| `share_expert_adapters` | `bool` | `True` | Share one adapter across all local experts on an EP rank instead of creating one adapter per local expert |
 
 #### Target Modules
 The following table lists specific submodules within transformer architectures that are commonly targeted for LoRA, enabling efficient fine-tuning of attention and feedforward components:
@@ -92,6 +115,87 @@ lora_config = LoRA(
         "*.layers.0.*.linear_qkv",   # First layer only
         "*.layers.1.*.linear_qkv",   # Second layer only
     ]
+)
+```
+
+#### MoE Expert Adapter Modes
+
+`LoRA` and `CanonicalLoRA` expose MoE-specific controls for grouped expert
+MLP layers such as `linear_fc1`, `linear_fc2`, `linear_fc1_up`, and
+`linear_fc1_gate`:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `share_expert_adapters` | `bool` | `True` | Preserve the original behavior and share one adapter across all local experts on each EP rank |
+| `normalize_moe_lora` | `bool` | `False` | Use `dim // moe_router_topk` for expert layers only so MoE adapter capacity stays comparable to a dense model |
+| `experts_shared_outer_loras` | `bool` | `False` | `LoRA` only. Shared-outer layout for grouped experts: the gate/up LoRA-A and the down LoRA-B are shared across experts while the other factor stays per expert (SGLang's `experts_shared_outer_loras` serving contract) |
+
+- `share_expert_adapters=True` keeps the original shared-adapter behavior for grouped expert linears.
+- `share_expert_adapters=False` opts into per-local-expert adapters.
+- `normalize_moe_lora=True` only changes expert layers; non-expert layers still use the full `dim`.
+- `dim` must be divisible by `moe_router_topk` when `normalize_moe_lora=True`.
+- When expert tensor parallelism shards a non-input-parallel expert layer, Megatron Bridge may round the effective expert rank up to the expert-TP granularity so the adapter can be partitioned cleanly.
+
+```python
+from megatron.bridge.peft.lora import LoRA
+
+lora_config = LoRA(
+    target_modules=["linear_fc1", "linear_fc2"],
+    dim=8,
+    normalize_moe_lora=True,
+    share_expert_adapters=False,
+)
+```
+
+##### Expert-parallel synchronization of shared adapters
+
+Adapter weights that serve every expert (the default shared adapter, and the shared
+factor of each `experts_shared_outer_loras=True` adapter) are replicated across
+expert-parallel ranks, but Megatron-Core's expert DDP only reduces gradients over
+expert-data-parallel replicas. Megatron Bridge therefore sums those gradients across
+the expert-parallel group once per step, coalesced into a single collective right
+after the data-parallel gradient sync, the same point where Megatron-Core sums
+sequence-parallel layernorm gradients across tensor parallelism. The training loop
+installs this automatically for PEFT runs through `finalize_model_grads_with_expert_adapter_sync`
+(`megatron.bridge.peft.utils`), and it stays correct with
+`gradient_accumulation_fusion` enabled because it reads the fused `main_grad` buffers.
+
+External training loops that call Megatron-Core's `finalize_model_grads` themselves
+must install the Bridge wrapper (or call `allreduce_expert_parallel_replicated_grads`
+right after their own finalize step):
+
+```python
+from functools import partial
+
+from megatron.bridge.peft.utils import finalize_model_grads_with_expert_adapter_sync
+
+model_config.finalize_model_grads_func = partial(
+    finalize_model_grads_with_expert_adapter_sync, pg_collection=pg_collection
+)
+```
+
+A per-layer fallback hook keeps eagerly computed weight gradients in sync until the
+finalize path takes over (Bridge's setup removes the hooks before the first step; otherwise
+the wrapper's first call does). The fallback cannot cover fused weight-gradient accumulation
+and logs a warning in that case.
+
+#### LoRA+
+
+[LoRA+](https://arxiv.org/abs/2402.12354) trains the B matrix (`linear_out`) at a higher learning rate than A (`linear_in`) by a fixed ratio `lr_B = lora_plus_ratio * lr_A` (paper default 16). The ratio is set on the optimizer, not the `LoRA` adapter: when it differs from `1.0`, `get_lora_plus_config_overrides` (`megatron.bridge.peft.lora`) builds Megatron-Core per-group overrides giving the `*.linear_out.weight` group `max_lr`/`min_lr` scaled by the ratio. Pass `1.0` (or skip the call) to keep a single learning rate.
+
+```python
+from megatron.bridge.peft.lora import get_lora_plus_config_overrides
+from megatron.core.optimizer import OptimizerConfig, get_megatron_optimizer
+
+opt_config = OptimizerConfig(optimizer="adam", lr=1e-4, bf16=True)
+
+# LoRA+ LR split: lr_B = lora_plus_ratio * lr_A; pass 1.0 (or skip) to disable.
+lora_plus_ratio = 16
+config_overrides = get_lora_plus_config_overrides(opt_config, lora_plus_ratio)
+optimizer = get_megatron_optimizer(
+    config=opt_config,
+    model_chunks=model_chunks,
+    config_overrides=config_overrides,
 )
 ```
 
@@ -130,23 +234,23 @@ Let $A_q = A_k = A_v = A_{qkv}$ (weight tying)
 Then
 
 $$
-\begin{align}
-& [query \quad key \quad value] \\
-= & [W_q x + B_q A_q x \quad W_k x + B_k A_k x \quad W_v x + B_v A_v x] \quad\quad \text{(canonical formulation)} \\
-= & [W_q x + B_q (A_{qkv} x) \quad W_k x + B_k (A_{qkv} x) \quad W_v x + B_v (A_{qkv} x)] \\
-= & [W_q \quad W_k \quad W_v] x + [B_q \quad B_k \quad B_v]A_{qkv} x \\
-= & W_{qkv} x + B_{qkv} A_{qkv} x  \quad\quad \text{(performant formulation)}
-\end{align}
+\begin{aligned}
+[query \quad key \quad value]
+&= [W_q x + B_q A_q x \quad W_k x + B_k A_k x \quad W_v x + B_v A_v x] \quad\quad \text{(canonical formulation)} \\
+&= [W_q x + B_q (A_{qkv} x) \quad W_k x + B_k (A_{qkv} x) \quad W_v x + B_v (A_{qkv} x)] \\
+&= [W_q \quad W_k \quad W_v] x + [B_q \quad B_k \quad B_v]A_{qkv} x \\
+&= W_{qkv} x + B_{qkv} A_{qkv} x  \quad\quad \text{(performant formulation)}
+\end{aligned}
 $$
 
 Note: dimensions of weight matrices are as follows:
 
 $$
 \begin{align}
-W_q:     &\ h \times n_q d          \qquad & A_q:     &\ h \times r \qquad  & B_q:     &\ r \times n_q d \\
-W_k:     &\ h \times n_{kv} d       \qquad & A_k:     &\ h \times r \qquad  & B_k:     &\ r \times n_{kv} d \\
-W_v:     &\ h \times n_{kv} d       \qquad & A_v:     &\ h \times r \qquad  & B_v:     &\ r \times n_{kv} d \\
-W_{qkv}: &\ h \times (n_q+2n_{kv})d \qquad & A_{qkv}: &\ h \times r \qquad  & B_{qkv}: &\ r \times (n_q+2n_{kv})d
+W_q:     &\ n_q d \times h          \qquad & A_q:     &\ r \times h \qquad  & B_q:     &\ n_q d \times r \\
+W_k:     &\ n_{kv} d \times h       \qquad & A_k:     &\ r \times h \qquad  & B_k:     &\ n_{kv} d \times r \\
+W_v:     &\ n_{kv} d \times h       \qquad & A_v:     &\ r \times h \qquad  & B_v:     &\ n_{kv} d \times r \\
+W_{qkv}: &\ (n_q+2n_{kv})d \times h \qquad & A_{qkv}: &\ r \times h \qquad  & B_{qkv}: &\ (n_q+2n_{kv})d \times r
 \end{align}
 $$
 
@@ -177,6 +281,9 @@ canonical_lora_config = CanonicalLoRA(
 )
 ```
 
+`CanonicalLoRA` exposes the same `normalize_moe_lora` and
+`share_expert_adapters` controls as `LoRA` for MoE expert layers.
+
 #### Key Parameters
 
 | Parameter | Type | Default | Description |
@@ -188,6 +295,8 @@ canonical_lora_config = CanonicalLoRA(
 | `dropout_position` | `Literal["pre", "post"]` | `"pre"` | Position for applying dropout |
 | `lora_A_init_method` | `str` | `"xavier"` | Initialization method for LoRA A matrix |
 | `lora_B_init_method` | `str` | `"zero"` | Initialization method for LoRA B matrix |
+| `normalize_moe_lora` | `bool` | `False` | Reduce expert-layer rank to `dim // moe_router_topk` while keeping dense layers at the full rank |
+| `share_expert_adapters` | `bool` | `True` | Share one adapter across all local experts on an EP rank instead of creating one adapter per local expert |
 
 #### Target Modules for Canonical LoRA
 
@@ -232,17 +341,24 @@ The following parameters define how LoRA is applied to your model. They control 
 |-----------|------|---------|-------------|
 | `target_modules` | `List[str]` | All linear layers | Modules to apply DoRA to |
 | `dim` | `int` | `32` | Rank of the low-rank adaptation |
-| `alpha` | `float` | `16` | Scaling parameter for DoRA |
+| `alpha` | `float` | `64` | Scaling parameter for DoRA |
 | `dropout` | `float` | `0.0` | Dropout rate for DoRA layers |
 
 ## Full Configuration Example
 
 ```python
 from megatron.bridge.training.config import (
-    ConfigContainer, TrainingConfig, CheckpointConfig
+    CheckpointConfig,
+    ConfigContainer,
+    SchedulerConfig,
+    TrainingConfig,
 )
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.hf_processors.squad import process_squad_example
+from megatron.bridge.data.builders import (
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.peft.lora import LoRA
 from megatron.core.optimizer import OptimizerConfig
 
@@ -267,13 +383,20 @@ config = ConfigContainer(
         lr_warmup_iters=100,
         lr_decay_iters=1000,
     ),
-    dataset=HFDatasetConfig(
-        dataset_name="squad",
-        process_example_fn=process_squad_example,
+    dataset=GPTSFTDatasetConfig(
         seq_length=512,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        hf_validation_proportion=0.1,
+        seed=5678,
+        do_validation=True,
+        do_test=False,
+        dataset_kwargs={"pad_to_max_length": True},
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=512),
     ),
     checkpoint=CheckpointConfig(
-        pretrained_checkpoint="/path/to/pretrained/model",  # Required
+        pretrained_checkpoint="/checkpoints/base_model",  # Required for PEFT
         save="/path/to/peft/checkpoints",
         save_interval=200,
     ),
@@ -298,7 +421,7 @@ The PEFT framework introduces a modular design for integrating adapters into lar
 1. **Base PEFT Class**: All PEFT methods inherit from the abstract {py:class}`bridge.peft.base.PEFT` base class, which defines the core interface for module transformation.
 2. **Module Transformation**: PEFT traverses the model structure to identify and transform target modules individually.
 3. **Adapter Integration**: Adapters are injected into selected modules using a pre-wrap hook during model initialization.
-4. **Checkpoint Integration**: Only adapter parameters are saved and loaded during checkpointing; base model weights remain frozen and unchanged.
+4. **Checkpoint Integration**: Adapter parameters and updated MoE router expert-bias buffers are saved and loaded during checkpointing; base model weights remain frozen.
 
 ### PEFT Workflow in Training
 
@@ -306,8 +429,8 @@ The training workflow for PEFT follows a structured sequence that ensures effici
 1. **Model Loading**: The base model is initialized from a specified pretrained checkpoint.
 2. **PEFT Application**: Adapter transformations are applied after Megatron Core model initialization, but before distributed wrapping.
 3. **Parameter Freezing**: Base model parameters are frozen to reduce training complexity; only adapter parameters are updated.
-4. **Adapter Weight Loading**: When resuming training, adapter weights are restored from the checkpoint.
-5. **Checkpoint Saving**: Only adapter states are saved, resulting in significantly smaller checkpoint files.
+4. **Adapter Weight Loading**: When resuming training, adapter weights and saved router expert-bias buffers are restored from the checkpoint.
+5. **Checkpoint Saving**: Adapter states and router expert-bias buffers are saved, resulting in significantly smaller checkpoint files than full-model checkpoints.
 
 ### Key Benefits
 

@@ -110,6 +110,12 @@ pretrain(config, forward_step, callbacks=manager)
 | `on_test_step_end` | After each test step | `state`, `model`, `user_state` |
 | `on_test_end` | After test completes | `state`, `model`, `user_state`, `total_loss_dict` |
 
+### Checkpoint Events
+| Event | When Fired | Available Context Fields |
+|-------|------------|-------------------------|
+| `on_checkpoint_save` | When checkpoint was saved| `state`, `model`, `user_state`, `optimizer` |
+
+
 ## CallbackContext
 
 The {py:class}`bridge.training.callbacks.CallbackContext` provides access to framework state:

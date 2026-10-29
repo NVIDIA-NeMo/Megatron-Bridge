@@ -1,4 +1,7 @@
 comment: false
+ignore:
+  - "examples"
+  - "scripts"
 coverage:
   status:
     project: false

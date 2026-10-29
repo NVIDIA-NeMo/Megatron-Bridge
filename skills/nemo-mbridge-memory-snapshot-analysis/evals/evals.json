@@ -1,0 +1,31 @@
+[
+  {
+    "id": "memory-snapshot-analysis-compare-two-runs",
+    "question": "Use the nemo-mbridge-memory-snapshot-analysis skill. I ran the same Megatron Bridge recipe twice with different parallelism and set ProfilingConfig(record_memory_history=True). I have snapshot_0.pickle from each run and the second one peaks about 20 GB higher. Which script do I run to find out which allocations account for the difference, and how do I make the attribution finer-grained if everything lands on one wrapper function?",
+    "expected_skill": "nemo-mbridge-memory-snapshot-analysis",
+    "expected_script": "skills/nemo-mbridge-memory-snapshot-analysis/scripts/compare_snapshots.py",
+    "ground_truth": "Run compare_snapshots.py with the two per-rank pickles: python3 skills/nemo-mbridge-memory-snapshot-analysis/scripts/compare_snapshots.py A_0.pickle B_0.pickle. It emits an allocator-settings diff, a side-by-side segments baseline, a per-step or full-trace summary, and a drill-down at the largest divergence with live allocations grouped by source and sorted by delta. When sources are over-aggregated onto a single wrapper, pass --frame-depth 2 to split by two levels of user code, and --top N to widen the list. Compare the same rank in both runs, since profile_ranks defaults to [0] and the files are written as snapshot_{rank}.pickle.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-memory-snapshot-analysis skill before answering.",
+      "Recommend compare_snapshots.py as the script for the two-snapshot comparison.",
+      "Explain that --frame-depth 2 gives finer source attribution when grouping is too coarse.",
+      "Note that the comparison must be rank-matched because snapshots are written per rank.",
+      "Do not suggest that the user write a new snapshot parsing script from scratch."
+    ]
+  },
+  {
+    "id": "memory-snapshot-analysis-missing-step-annotations",
+    "question": "Use the nemo-mbridge-memory-snapshot-analysis skill. I set ProfilingConfig(record_memory_history=True, memory_snapshot_path='/nemo_run/snapshot.pickle', profile_ranks=[0]) on a Megatron Bridge pretrain job, but when I try the per-step replay on the resulting snapshot_0.pickle it says there are no ProfilerStep annotations. Is my snapshot broken, and what can I still do with it?",
+    "expected_skill": "nemo-mbridge-memory-snapshot-analysis",
+    "expected_script": null,
+    "ground_truth": "The snapshot is not broken. In Megatron Bridge, record_memory_history and use_pytorch_profiler are independent flags, and ProfilerStep#N markers specifically come from the PyTorch profiler's step boundaries. The external_annotations list is not empty in this case — it still carries allocator-level record_function markers such as nccl:all_reduce, nccl:all_gather_into_tensor_coalesced, Optimizer.step#FusedAdam.step, and DataLoader iteration — but it contains zero ProfilerStep entries, so replay_step.py cannot run and exits 1. The other workflows still work: compare_snapshots.py automatically falls back to a full-trace replay, and plot_timeline.py and replay_to_time.py never needed step boundaries. parse_snapshot.py gives the overview. To get per-step drill-down on a future run, additionally set use_pytorch_profiler=True, which cannot be combined with use_nsys_profiler.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-memory-snapshot-analysis skill before answering.",
+      "State that the snapshot is valid and the missing step markers are expected for this config.",
+      "Explain that ProfilerStep markers require use_pytorch_profiler=True, not just record_memory_history=True.",
+      "Avoid claiming that external_annotations is empty; note that NCCL, optimizer, and dataloader markers are still present.",
+      "Name the workflows that still work without step markers: compare_snapshots fallback, plot_timeline, replay_to_time, parse_snapshot.",
+      "Mention that use_pytorch_profiler and use_nsys_profiler are mutually exclusive."
+    ]
+  }
+]

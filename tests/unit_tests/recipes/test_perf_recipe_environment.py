@@ -1,0 +1,308 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for explicit flat performance recipe environment settings."""
+
+import ast
+import re
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from megatron.bridge.perf_recipes._common import _benchmark_common
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
+
+
+_CANONICAL_RECIPE_NAME = re.compile(
+    r".+_(?:pretrain|sft|peft)_\d+gpu_[a-z0-9]+_(?:bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config"
+)
+_RECIPE_ROOT = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
+_INLINE_CORE_ENV_NAMES = {
+    "CUDA_DEVICE_MAX_CONNECTIONS",
+    "NCCL_NVLS_ENABLE",
+    "NVTE_BWD_LAYERNORM_SM_MARGIN",
+    "NVTE_FWD_LAYERNORM_SM_MARGIN",
+    "TORCH_NCCL_AVOID_RECORD_STREAMS",
+}
+_HYBRID_EP_ENV_NAMES = {
+    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+    "NVLINK_DOMAIN_SIZE",
+    "USE_MNNVL",
+}
+_DEEPSEEK_NON_BASELINE_ENV_NAMES = {
+    "QUANTIZATION_TYPE_DEBUG",
+    "TORCHINDUCTOR_WORKER_START",
+}
+_VRNVL72_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config",
+    "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
+    "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config",
+    "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config",
+    "gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config",
+    "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "llama3_70b_pretrain_64gpu_vrnvl72_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config",
+    "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config",
+    "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config",
+    "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config",
+}
+
+
+def _function(path: Path, function_name: str) -> ast.FunctionDef:
+    tree = ast.parse(path.read_text())
+    return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name)
+
+
+def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
+    """Read the literal env mapping written in a flat recipe builder."""
+    function = _function(path, function_name)
+    local_constants = {
+        node.targets[0].id: node.value.value
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, (str, int, float, bool))
+    }
+    assignments = [
+        node
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Attribute)
+        and isinstance(node.targets[0].value, ast.Name)
+        and node.targets[0].value.id == "cfg"
+        and node.targets[0].attr == "env_vars"
+    ]
+    assert len(assignments) == 1
+    mapping = assignments[0].value
+    assert isinstance(mapping, ast.Dict)
+
+    result = COMMON_PERF_ENV_VARS.copy()
+    common_expansions = 0
+    for key, value in zip(mapping.keys, mapping.values):
+        if key is None:
+            assert isinstance(value, ast.Name) and value.id in {"COMMON_PERF_ENV_VARS", "DETERMINISM_ENV_VARS"}
+            if value.id == "COMMON_PERF_ENV_VARS":
+                common_expansions += 1
+            else:
+                result.update(DETERMINISM_ENV_VARS)
+            continue
+        if isinstance(value, ast.Name):
+            assert value.id in local_constants
+            env_value = local_constants[value.id]
+        else:
+            env_value = ast.literal_eval(value)
+        result[ast.literal_eval(key)] = env_value
+    assert common_expansions == 1
+    return result
+
+
+def _explicit_environments():
+    for path in _RECIPE_ROOT.glob("*/*/*.py"):
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and _CANONICAL_RECIPE_NAME.fullmatch(node.name) is not None:
+                yield path, node.name, _explicit_environment(path, node.name)
+
+
+def test_common_environment_defaults_are_small_and_universal():
+    assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
+
+
+def test_benchmark_common_disables_checkpoint_io_and_forces_moe_load_balancing():
+    cfg = SimpleNamespace(
+        train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        validation=SimpleNamespace(eval_iters=1, eval_interval=1),
+        tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
+        checkpoint=SimpleNamespace(save="checkpoint", load="checkpoint"),
+        logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
+        ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True, grad_reduce_in_fp32=True),
+        rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True),
+        scheduler=SimpleNamespace(lr_decay_iters=0, lr_warmup_iters=0),
+        model=SimpleNamespace(
+            use_transformer_engine_op_fuser=False,
+            apply_rope_fusion=False,
+            cross_entropy_fusion_impl="native",
+            cuda_graph_impl=None,
+            cuda_graph_scope=[],
+            moe_flex_dispatcher_backend=None,
+            num_moe_experts=8,
+            moe_router_force_load_balancing=False,
+        ),
+        mixed_precision=SimpleNamespace(grad_reduce_in_fp32=True),
+    )
+
+    _benchmark_common(cfg)
+
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 100
+    assert cfg.validation.eval_iters == 1
+    assert cfg.validation.eval_interval == 1
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
+    assert cfg.checkpoint.save is None
+    assert cfg.checkpoint.load is None
+    assert cfg.model.moe_router_force_load_balancing is True
+
+    cfg.model.moe_router_force_load_balancing = False
+    _benchmark_common(cfg)
+    assert cfg.model.moe_router_force_load_balancing is True
+
+
+def test_every_flat_recipe_builder_declares_its_environment_inline():
+    invalid = []
+
+    for path in _RECIPE_ROOT.glob("*/*/*.py"):
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef) or _CANONICAL_RECIPE_NAME.fullmatch(node.name) is None:
+                continue
+            builder = f"{path.relative_to(_RECIPE_ROOT)}:{node.name}"
+            try:
+                _explicit_environment(path, node.name)
+            except AssertionError:
+                invalid.append(builder)
+            assert not any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Name)
+                and decorator.func.id == "perf_recipe_environment"
+                for decorator in node.decorator_list
+            )
+
+    assert not invalid
+
+
+def test_explicit_environment_invariants_across_all_flat_recipes():
+    """Keep duplicated inline settings complete without deriving them at runtime."""
+    for path, function_name, environment in _explicit_environments():
+        assert environment.keys() >= _INLINE_CORE_ENV_NAMES
+
+        cudnn_names = {"NVTE_NORM_BWD_USE_CUDNN", "NVTE_NORM_FWD_USE_CUDNN"}
+        assert environment.keys().isdisjoint(cudnn_names) or environment.keys() >= cudnn_names
+        if path.parent.name == "vrnvl72":
+            assert environment["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+            uses_cudnn_layernorm = function_name in _VRNVL72_CUDNN_LAYERNORM_RECIPES
+            assert (environment.keys() >= cudnn_names) == uses_cudnn_layernorm
+            if uses_cudnn_layernorm:
+                assert all(environment[name] == 1 for name in cudnn_names)
+
+        hybrid_ep_names = environment.keys() & _HYBRID_EP_ENV_NAMES
+        assert not hybrid_ep_names or hybrid_ep_names == _HYBRID_EP_ENV_NAMES
+        if hybrid_ep_names:
+            gpu = path.parent.name
+            nvlink_domain_size = 72 if gpu in {"gb200", "gb300", "vrnvl72"} else 8
+            assert environment["NVLINK_DOMAIN_SIZE"] == nvlink_domain_size
+            assert environment["USE_MNNVL"] == int(nvlink_domain_size == 72)
+            assert environment["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] <= nvlink_domain_size
+
+        if "_nvfp4" in function_name:
+            assert environment["NVTE_USE_FAST_MATH"] == 1
+        if path.parts[-3] == "deepseek":
+            assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
+            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+            if function_name.endswith("_deterministic_config"):
+                # Bit-exact recipes pin deterministic TE kernels.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
+            elif function_name in {
+                "deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config",
+                "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
+            }:
+                # Match the kernel policy across systems; fused SwiGLU dprob uses atomic reductions.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
+            elif path.parent.name == "gb300" and path.stem == "deepseek_v3":
+                # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale
+                # gradient is accumulated with atomics; TE raises when bit-exact execution is requested,
+                # so these recipes must not pin NVTE_ALLOW_NONDETERMINISTIC_ALGO=0.
+                assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in environment
+            else:
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+            if "NCCL_EP_HT_EM_PULL_PUSH" in environment:
+                # NCCL EP recipes drop the HybridEP tuning that nothing reads on that backend.
+                assert not hybrid_ep_names
+            else:
+                assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "function_name", "expected"),
+    [
+        (
+            "qwen/h100/qwen3_moe.py",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            {
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+                "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+                "NVLINK_DOMAIN_SIZE": 8,
+                "USE_MNNVL": 0,
+            },
+        ),
+        (
+            "deepseek/gb200/deepseek_v3.py",
+            "deepseek_v3_pretrain_256gpu_gb200_bf16_config",
+            {
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+                "NVLINK_DOMAIN_SIZE": 72,
+                "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+                "USE_MNNVL": 1,
+            },
+        ),
+        (
+            "llama/h100/llama3.py",
+            "llama3_8b_pretrain_8gpu_h100_fp8cs_config",
+            {
+                "NCCL_CTA_POLICY": 1,
+                "NVTE_NORM_BWD_USE_CUDNN": 1,
+                "NVTE_NORM_FWD_USE_CUDNN": 1,
+            },
+        ),
+        (
+            "wan/h100/wan.py",
+            "wan_14b_pretrain_32gpu_h100_bf16_config",
+            {"CUDA_DEVICE_MAX_CONNECTIONS": 1},
+        ),
+    ],
+)
+def test_representative_recipe_specific_environment_is_visible(relative_path, function_name, expected):
+    environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
+
+    assert environment.items() >= expected.items()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "function_name"),
+    [
+        ("deepseek/gb200/deepseek_v3.py", "deepseek_v3_pretrain_256gpu_gb200_bf16_config"),
+        ("deepseek/gb300/deepseek_v3.py", "deepseek_v3_pretrain_256gpu_gb300_bf16_config"),
+        ("qwen/gb200/qwen3_moe.py", "qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config"),
+        ("qwen/gb300/qwen3_moe.py", "qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config"),
+    ],
+)
+def test_te_layer_graph_pipeline_recipes_keep_only_cpp_errors(relative_path, function_name):
+    """TE layer-graph capture with PP>1 floods stderr with PyTorch 2.14 C++ deprecation warnings."""
+    environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
+
+    assert environment["TORCH_CPP_LOG_LEVEL"] == "ERROR"

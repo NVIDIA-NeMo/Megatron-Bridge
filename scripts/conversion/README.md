@@ -1,0 +1,246 @@
+# Checkpoint conversion launcher
+
+`convert.sh` is the supported command-line entry point for Hugging Face ↔
+Megatron checkpoint conversion. It uses NeMo Run for both local execution and
+Slurm submission and selects one of two conversion backends:
+
+- `--device cpu`: CPU conversion, with optional distributed import and export
+  across Gloo ranks for checkpoints that cannot be converted on one host;
+- `--device gpu`: distributed conversion with one process per GPU and TP, PP,
+  EP, and ETP support.
+
+Run `./scripts/conversion/convert.sh import --help`,
+`./scripts/conversion/convert.sh export --help`, or
+`./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
+
+Synchronous Slurm runs check job status every 60 seconds by default. Increase
+this with `--poll-interval SECONDS` (minimum 60), or use `--detach` to submit
+without monitoring. Logs remain in the NeMo Run experiment directory; the
+waiter does not start a separate scheduler-querying log tailer. A monitoring
+error or interruption does not cancel the submitted job. Local conversion is
+unchanged.
+
+### Megatron-LM checkpoint compatibility
+
+Training with Megatron-LM and later relying on Megatron Bridge for Hugging Face
+export is **not recommended**. Megatron-LM checkpoints normally store their
+arguments in `common.pt` instead of the `run_config.yaml` used by the supported
+Bridge export launcher, so the launcher cannot consume them directly. For an
+existing trusted checkpoint, the
+[best-effort compatibility guidance](../../docs/megatron-lm-to-megatron-bridge.md#best-effort-export-of-an-existing-megatron-lm-checkpoint)
+describes how to generate and validate the required provider configuration. It
+does not guarantee compatibility, and any unclassified metadata mismatch must
+stop the export.
+
+Output from `scripts/translate_mlm_to_bridge.py` is best-effort configuration
+guidance for a new Bridge run. It is not checkpoint metadata and must not be
+renamed or inserted as `run_config.yaml`.
+
+## Local CPU conversion
+
+Local execution uses the current Megatron Bridge environment and waits for the
+conversion to finish.
+
+```bash
+./scripts/conversion/convert.sh import \
+  --executor local \
+  --device cpu \
+  --hf-model meta-llama/Llama-3.2-1B \
+  --megatron-path /workspace/models/llama32-1b
+
+./scripts/conversion/convert.sh export \
+  --executor local \
+  --device cpu \
+  --hf-model meta-llama/Llama-3.2-1B \
+  --megatron-path /workspace/models/llama32-1b/iter_0000000 \
+  --hf-path /workspace/models/llama32-1b-hf
+```
+
+The default CPU import and CPU export use one process on one node. Distributed
+CPU import and export are available through the Slurm workflow below for
+checkpoints that cannot be held on one host within the available memory or
+wall-time limit.
+
+## Distributed GPU conversion on Slurm
+
+The GPU backend uses NeMo Run's torchrun launcher for local execution and
+srun-native tasks for Slurm. Users should not wrap the command in `torchrun`,
+`srun`, or `sbatch`.
+
+The requested topology must satisfy `nodes * gpus-per-node % (TP * PP) == 0` and
+`nodes * gpus-per-node % (ETP * EP * PP) == 0`. Expert parallelism is an
+alternative slicing of the same ranks rather than an extra multiplicand, so it
+is not part of the first product. Ranks left over after either split form
+data-parallel replicas.
+
+```bash
+export HF_TOKEN="$(<${HOME}/HF_TOKEN)"
+
+./scripts/conversion/convert.sh import \
+  --executor slurm \
+  --device gpu \
+  --nodes 1 \
+  --gpus-per-node 8 \
+  --account ACCOUNT \
+  --partition PARTITION \
+  --time 01:00:00 \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge \
+  --env HF_TOKEN \
+  --hf-model Qwen/Qwen3-30B-A3B \
+  --megatron-path /workspace/models/qwen3-30b-a3b \
+  --tp 1 --pp 1 --ep 8 --etp 1
+```
+
+For export, add `--hf-path`. Distributed Hugging Face saving is enabled by
+default for the GPU backend to avoid gathering the full model on rank zero.
+Use `--no-distributed-save` only when the model fits comfortably on rank zero.
+
+GPU import uses the faster checkpoint save path by default. For models that
+would otherwise run out of GPU memory while saving the imported checkpoint,
+add `--low-memory-save`. This releases model shards as they are saved, but can
+increase conversion time, so enable it only when the default path does not fit:
+
+```bash
+./scripts/conversion/convert.sh import \
+  --executor slurm \
+  --device gpu \
+  --nodes 1 \
+  --gpus-per-node 8 \
+  --hf-model MODEL \
+  --megatron-path /workspace/models/large-model \
+  --tp 1 --pp 1 --ep 8 --etp 1 \
+  --low-memory-save
+```
+
+No cluster-specific `srun` flags are added by default. If the target cluster
+requires extra flags, repeat `--srun-arg=ARG`. For example, a Pyxis/Enroot
+cluster may use:
+
+```bash
+--srun-arg=--mpi=pmix \
+--srun-arg=--no-container-mount-home \
+--srun-arg=--container-writable
+```
+
+The `=` form is required when `ARG` begins with `-`.
+
+For allocation-level settings, pass
+`--additional-slurm-params 'segment=1;reservation=testing'` with `--executor slurm`.
+This uses the same semicolon-separated `KEY=VALUE` format as the training launcher.
+Values become sbatch parameters, not srun flags or conversion-worker arguments.
+The launcher retains control of `export` to preserve name-only environment forwarding.
+
+## Distributed round-trip validation
+
+Like `import` and `export`, the `roundtrip` command runs the shared
+`scripts/conversion/run_conversion.py` worker through the NeMo Run local or
+Slurm executor. It compares weights after the Hugging Face → Megatron → Hugging
+Face conversion and requires the GPU backend. The standalone
+`examples/conversion/hf_megatron_roundtrip_multi_gpu.py` example remains
+available for direct `torch.distributed.run` usage.
+
+```bash
+./scripts/conversion/convert.sh roundtrip \
+  --executor local \
+  --device gpu \
+  --gpus-per-node 8 \
+  --hf-model Qwen/Qwen3-30B-A3B \
+  --tp 1 --pp 1 --ep 8 --etp 1 \
+  --trust-remote-code
+```
+
+`--hf-model` and `--hf-model-id` are aliases. Round-trip validation converts the
+Hugging Face weights into a distributed Megatron model, exports them back in
+memory, and compares them with the original weights. It does not read or write
+Megatron checkpoints or write a Hugging Face output; use the `import` and
+`export` commands for persistent conversion. For long multi-node validations, set
+`--distributed-timeout-minutes` to raise the NCCL process-group timeout.
+
+## CPU conversion on Slurm
+
+CPU mode submits one task and does not request GPUs or GRES:
+
+```bash
+./scripts/conversion/convert.sh import \
+  --executor slurm \
+  --device cpu \
+  --nodes 1 \
+  --mem 1T \
+  --account ACCOUNT \
+  --partition CPU_PARTITION \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge \
+  --env HF_TOKEN \
+  --hf-model meta-llama/Llama-3.2-1B \
+  --megatron-path /workspace/models/llama32-1b
+```
+
+For a very large Megatron checkpoint, distribute the export load and save
+across CPU processes. This uses Gloo, initializes every model shard on CPU, and
+enables distributed Hugging Face saving by default. It does not request GPUs.
+CPU describes weight placement: model initialization can still require CUDA RNG
+state. The verified distributed GLM-5/5.2 CPU workflows require a visible CUDA
+device on each node, so select GPU-equipped nodes for those models.
+
+Example export launch:
+
+```bash
+./scripts/conversion/convert.sh export \
+  --executor slurm \
+  --device cpu \
+  --nodes 4 \
+  --cpu-processes-per-node 8 \
+  --cpus-per-task 16 \
+  --mem 0 \
+  --exclusive \
+  --account ACCOUNT \
+  --partition PARTITION \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --hf-model MODEL \
+  --megatron-path /workspace/models/model/iter_0000000 \
+  --hf-path /workspace/models/model-hf \
+  --tp 1 --pp 4 --ep 8 --etp 1
+```
+
+The topology must satisfy
+`nodes * cpu-processes-per-node % (TP * PP) == 0` and
+`nodes * cpu-processes-per-node % (ETP * EP * PP) == 0`. Distributed CPU export
+requires distributed saving.
+
+Distributed CPU import uses the same launcher shape. Every process initializes
+its model shard in host memory, streams its share of the Hugging Face weights,
+and writes a regular `torch_dist` Megatron checkpoint. `--low-memory-save`
+remains GPU-only:
+
+```bash
+./scripts/conversion/convert.sh import \
+  --executor slurm \
+  --device cpu \
+  --nodes 4 \
+  --cpu-processes-per-node 8 \
+  --cpus-per-task 16 \
+  --mem 0 \
+  --exclusive \
+  --account ACCOUNT \
+  --partition PARTITION \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --hf-model MODEL \
+  --megatron-path /workspace/models/model \
+  --tp 1 --pp 4 --ep 8 --etp 1
+```
+
+`--env` accepts names only. Export values in the launcher environment so
+secrets are inherited by Slurm without being materialized in generated job
+scripts. Use `--submission-dry-run` to inspect a rendered job and `--detach`
+when a Slurm command should return immediately after submission. Local execution
+always waits so worker failures propagate to the launcher.
+
+## Optional container backend
+
+Slurm conversion also supports an [all-Lustre direct-Enroot backend](../common/README.md).
+Pyxis remains the default; local conversion is unchanged.

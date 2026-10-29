@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -22,6 +23,9 @@ import torch
 from transformers import AutoConfig, PreTrainedModel
 
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict, StateSource
+
+
+logger = logging.getLogger(__name__)
 
 
 class PreTrainedBase(ABC):
@@ -68,11 +72,84 @@ class PreTrainedBase(ABC):
         """Get the artifacts dictionary mapping artifact names to their attribute names."""
         return {artifact: f"_{artifact}" for artifact in self.ARTIFACTS}
 
+    @staticmethod
+    def _cleanup_hf_local_dir_cache(target_path: Path) -> None:
+        """Remove Hugging Face Hub metadata created by hf_hub_download(local_dir=...)."""
+        huggingface_cache = target_path / ".cache" / "huggingface"
+        if huggingface_cache.exists():
+            shutil.rmtree(huggingface_cache, ignore_errors=True)
+
+        try:
+            (target_path / ".cache").rmdir()
+        except OSError:
+            pass
+
+    @staticmethod
+    def _copy_cached_hub_files(
+        repo_id: str,
+        target_path: Path,
+        patterns: List[str],
+        *,
+        revision: str | None,
+    ) -> List[str]:
+        """Copy files matching patterns from the local Hugging Face cache snapshot of a Hub repository.
+
+        Used when the Hub cannot be listed, for example with HF_HUB_OFFLINE=1. Each pattern is
+        resolved separately, so a pattern whose files are not all cached does not block the others.
+        Files are matched and placed by their repository-relative paths, as Hub downloads are.
+
+        Args:
+            repo_id: Hugging Face Hub repository ID.
+            target_path: Directory to copy the files into.
+            patterns: File names or glob patterns, matched against repository-relative paths.
+            revision: Hub revision to read from the cache; None uses the cached default branch.
+
+        Returns:
+            List of copied repository-relative file names; empty if nothing matching is cached.
+        """
+        import fnmatch
+
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError:
+            return []
+
+        revision_kwargs = {"revision": revision} if revision is not None else {}
+        copied_files = []
+        for file_spec in patterns:
+            try:
+                # allow_patterns limits huggingface_hub's cached-snapshot completeness check to the
+                # requested files, so unrelated files missing from the cache do not fail the lookup.
+                snapshot_dir = Path(
+                    snapshot_download(
+                        repo_id=repo_id, local_files_only=True, allow_patterns=[file_spec], **revision_kwargs
+                    )
+                )
+            except Exception as exc:
+                logger.debug("No cached files of %s match %s: %s", repo_id, file_spec, exc)
+                continue
+
+            cached_files = sorted(path for path in snapshot_dir.rglob("*") if path.is_file())
+            for file_path in cached_files:
+                repo_file = file_path.relative_to(snapshot_dir).as_posix()
+                if repo_file in copied_files or not fnmatch.fnmatch(repo_file, file_spec):
+                    continue
+                target_file = target_path / repo_file
+                try:
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(file_path, target_file)
+                    copied_files.append(repo_file)
+                except OSError:
+                    # Silently skip files that can't be copied
+                    pass
+        return copied_files
+
     def _copy_custom_modeling_files(
         self,
         source_path: Union[str, Path],
         target_path: Union[str, Path],
         file_patterns: Optional[List[str]] = None,
+        revision: str | None = None,
     ) -> List[str]:
         """Copy files matching patterns from source to target directory.
 
@@ -85,6 +162,7 @@ class PreTrainedBase(ABC):
             file_patterns: Optional list of file names or patterns to copy.
                 Supports both exact file names (e.g., "vocab.json") and glob patterns
                 (e.g., "*.json"). If not provided, defaults to self.custom_file_patterns.
+            revision: Optional Hugging Face Hub revision to use for remote sources.
 
         Returns:
             List of successfully copied file names
@@ -115,7 +193,8 @@ class PreTrainedBase(ABC):
                 from huggingface_hub import hf_hub_download, list_repo_files
 
                 # Get list of all files in the repository
-                repo_files = list_repo_files(str(source_path))
+                revision_kwargs = {"revision": revision} if revision is not None else {}
+                repo_files = list_repo_files(str(source_path), **revision_kwargs)
 
                 # Use fnmatch for both patterns and exact file names
                 import fnmatch
@@ -129,15 +208,25 @@ class PreTrainedBase(ABC):
                                 filename=repo_file,
                                 local_dir=target_path,
                                 local_dir_use_symlinks=False,
+                                **revision_kwargs,
                             )
                             copied_files.append(repo_file)
                         except Exception:
                             # Silently skip files that can't be downloaded
                             pass
+                self._cleanup_hf_local_dir_cache(target_path)
 
-            except Exception:
-                # If HuggingFace Hub operations fail, silently continue
-                pass
+            except Exception as exc:
+                # The Hub cannot be listed (for example with HF_HUB_OFFLINE=1), so use the files
+                # that loading this revision already placed in the local Hugging Face cache.
+                cached_files = self._copy_cached_hub_files(str(source_path), target_path, patterns, revision=revision)
+                copied_files.extend(file_name for file_name in cached_files if file_name not in copied_files)
+                logger.info(
+                    "Could not list %s on the Hugging Face Hub (%s); copied %s from the local cache.",
+                    source_path,
+                    type(exc).__name__,
+                    cached_files or "no files",
+                )
 
         return copied_files
 
@@ -164,13 +253,24 @@ class PreTrainedBase(ABC):
         """
         save_path = Path(save_directory)
         save_path.mkdir(parents=True, exist_ok=True)
+        revision = self.init_kwargs.get("revision")
+        revision = revision if isinstance(revision, str) else None
 
         _ = getattr(self, "config")  # trigger lazy loading of config
         if hasattr(self, "_config") and self._config is not None:
             if hasattr(self._config, "quantization_config"):
                 # quantized export is not supported currently
                 del self._config.quantization_config
-            self._config.save_pretrained(save_path)
+            auto_map_missing = object()
+            auto_map = vars(self._config).get("auto_map", auto_map_missing)
+            strip_auto_map = auto_map is not auto_map_missing and getattr(self, "trust_remote_code", False) is not True
+            if strip_auto_map:
+                delattr(self._config, "auto_map")
+            try:
+                self._config.save_pretrained(save_path)
+            finally:
+                if strip_auto_map:
+                    self._config.auto_map = auto_map
 
         # Iterate over required artifacts to save them in a predictable order
         for name in self.ARTIFACTS:
@@ -185,7 +285,29 @@ class PreTrainedBase(ABC):
         for name in self.OPTIONAL_ARTIFACTS:
             artifact = getattr(self, name, None)
             if artifact is not None and hasattr(artifact, "save_pretrained"):
-                artifact.save_pretrained(save_path)
+                try:
+                    artifact.save_pretrained(save_path)
+                except ValueError:
+                    if name != "generation_config":
+                        raise
+
+                    source_path = original_source_path or getattr(self, "model_name_or_path", None)
+                    if source_path is None:
+                        raise
+
+                    copied_files = self._copy_custom_modeling_files(
+                        source_path=source_path,
+                        target_path=save_path,
+                        file_patterns=["generation_config.json"],
+                        revision=revision,
+                    )
+                    if "generation_config.json" not in copied_files:
+                        raise
+
+                    logger.warning(
+                        "GenerationConfig.save_pretrained() rejected the source artifact; "
+                        "preserved the original generation_config.json instead."
+                    )
 
         # Download/copy additional files if specified
         if additional_files:
@@ -193,6 +315,7 @@ class PreTrainedBase(ABC):
                 source_path=original_source_path or self.model_name_or_path,
                 target_path=save_path,
                 file_patterns=additional_files,
+                revision=revision,
             )
 
         # Preserve custom modeling files if trust_remote_code was used
@@ -218,14 +341,14 @@ class PreTrainedBase(ABC):
                         src_file = sys.modules[model_class.__module__].__file__
                         src_path = Path(src_file).parent
                         source_paths.append(src_path)
-                    except OSError:  # ignore if model_name_or_path does not contain the modeling file
-                        pass
+                    except Exception as e:
+                        logger.debug("Could not load dynamic module for %s: %s", self.model_name_or_path, e)
 
             if hasattr(self, "model_name_or_path") and self.model_name_or_path:
                 source_paths.append(self.model_name_or_path)
 
             for source_path in source_paths:
-                copied_files = self._copy_custom_modeling_files(source_path, save_path)
+                copied_files = self._copy_custom_modeling_files(source_path, save_path, revision=revision)
                 if copied_files:
                     # Successfully copied files, no need to try other paths
                     break
@@ -273,11 +396,13 @@ class PreTrainedBase(ABC):
         or a ".safetensors" checkpoint on disk, enabling lazy loading of tensors.
 
         Examples:
+            import re
+
             model.state()  # Get full state dict
             model.state["key"]  # Get single entry
             model.state[["key1", "key2"]]  # Get multiple entries
             model.state["*.weight"]  # Glob pattern
-            model.state.regex(r".*\\.bias$")  # Regex pattern
+            model.state[re.compile(r".*\\.bias$")]  # Regex pattern
         """
         if self._state_dict_accessor is None:
             source: Optional[Union[Dict[str, torch.Tensor], StateSource]] = None
@@ -285,7 +410,9 @@ class PreTrainedBase(ABC):
             if hasattr(self, "_model") and self._model is not None:
                 source = self.model.state_dict()
             elif hasattr(self, "model_name_or_path") and self.model_name_or_path:
-                source = SafeTensorsStateSource(self.model_name_or_path)
+                revision = self.init_kwargs.get("revision")
+                revision = revision if isinstance(revision, str) else None
+                source = SafeTensorsStateSource(self.model_name_or_path, revision=revision)
 
             if source is None:
                 raise ValueError(

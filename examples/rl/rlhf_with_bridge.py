@@ -353,21 +353,24 @@ def main() -> None:
             rewards.append(score)
         rewards_t = torch.tensor(rewards, dtype=torch.float32, device=device)
 
-        # 3) Build inputs for Megatron policy: we train on the generated full sequence
-        # Teacher-forcing on generated sequence to get log-probs
-        policy_inputs = gen_tokenizer(
-            texts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=args.seq_length,
-        )
-        input_ids = policy_inputs["input_ids"].to(device)
-        attention_mask = policy_inputs["attention_mask"].to(device)
+        # 3) Build inputs for Megatron policy from the exact sampled token trajectory.
+        # The loss applies only to generated actions, including the first terminal EOS.
+        prompt_length = batch_inputs["input_ids"].shape[1]
+        completion_ids = gen_out[:, prompt_length:]
+        completion_mask = torch.ones_like(completion_ids, dtype=batch_inputs["attention_mask"].dtype)
+        if gen_tokenizer.eos_token_id is not None:
+            eos_token_ids = torch.as_tensor(gen_tokenizer.eos_token_id, device=device).reshape(-1)
+            is_eos = completion_ids.unsqueeze(-1).eq(eos_token_ids).any(dim=-1)
+            eos_count = is_eos.to(dtype=torch.int64).cumsum(dim=1)
+            completion_mask.masked_fill_((eos_count - is_eos.to(dtype=torch.int64)) > 0, 0)
+
+        input_ids = gen_out
+        attention_mask = torch.cat((batch_inputs["attention_mask"], completion_mask), dim=1)
+        loss_mask = torch.cat((torch.zeros_like(batch_inputs["attention_mask"]), completion_mask), dim=1)
 
         # Microbatch iterator yields one batch per microstep
         mb_iter = make_microbatch_iterator(
-            {"input_ids": input_ids, "attention_mask": attention_mask},
+            {"input_ids": input_ids, "attention_mask": attention_mask, "loss_mask": loss_mask},
             num_microbatches=1,
         )
 
@@ -381,8 +384,8 @@ def main() -> None:
             log_probs = F.log_softmax(shift_logits, dim=-1)
             # gather logp of taken tokens
             ll_selected = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
-            # mask padding
-            shift_mask = batch["attention_mask"][:, 1:].float()
+            # Mask prompt conditioning tokens and padding after the generated EOS.
+            shift_mask = batch["loss_mask"][:, 1:].float()
             ll_selected = ll_selected * shift_mask
             # REINFORCE loss: -reward * sum_t logp(a_t)
             # broadcast rewards to sequence length

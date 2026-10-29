@@ -21,6 +21,7 @@ import torch
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.olmoe.olmoe_bridge import OlMoEBridge
@@ -480,85 +481,113 @@ class TestAutoBridgeIntegration:
         assert AutoBridge.supports(non_causal_config) == False
 
 
-class TestOlMoEBridgeParameterMapping:
-    """Test parameter mapping functionality in OlMoEBridge."""
+class TestOlMoEBuilderConfig:
+    """Builder-backed ModelConfig path for OlMoE."""
 
-    @pytest.fixture
-    def mock_olmoe_state_dict(self):
-        """Create a mock state dict with OLMoE parameter names."""
-        return {
-            "model.embed_tokens.weight": torch.randn(50304, 2048),
-            "model.norm.weight": torch.randn(2048),
-            "model.layers.0.input_layernorm.weight": torch.randn(2048),
-            "model.layers.0.post_attention_layernorm.weight": torch.randn(2048),
-            "model.layers.0.self_attn.q_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.self_attn.k_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.self_attn.v_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.self_attn.o_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.self_attn.q_norm.weight": torch.randn(2048),
-            "model.layers.0.self_attn.k_norm.weight": torch.randn(2048),
-            "model.layers.0.mlp.gate_proj.weight": torch.randn(1024, 2048),
-            "model.layers.0.mlp.up_proj.weight": torch.randn(1024, 2048),
-            "model.layers.0.mlp.down_proj.weight": torch.randn(2048, 1024),
-            "model.layers.0.mlp.gate.weight": torch.randn(64, 2048),  # Router
-            "model.layers.0.mlp.experts.0.gate_proj.weight": torch.randn(1024, 2048),
-            "model.layers.0.mlp.experts.0.up_proj.weight": torch.randn(1024, 2048),
-            "model.layers.0.mlp.experts.0.down_proj.weight": torch.randn(2048, 1024),
-            "lm_head.weight": torch.randn(50304, 2048),
-        }
+    @staticmethod
+    def _config(**overrides):
+        from transformers import OlmoeConfig
 
-    def test_mapping_registry_has_olmoe_specific_mappings(self):
-        """Test that mapping registry includes OLMoE-specific mappings."""
+        kwargs = dict(
+            hidden_size=64,
+            intermediate_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            num_experts=8,
+            num_experts_per_tok=2,
+            max_position_embeddings=4096,
+            vocab_size=128,
+            router_aux_loss_coef=0.01,
+            torch_dtype="bfloat16",
+        )
+        kwargs.update(overrides)
+        config = OlmoeConfig(**kwargs)
+        config.architectures = ["OlmoeForCausalLM"]
+        return config
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in OlMoEBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert OlMoEBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert OlMoEBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        from unittest.mock import patch
+
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+        from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
+
+        config = self._config()
         bridge = OlMoEBridge()
-        mapping_registry = bridge.mapping_registry()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            result = bridge.hf_config_to_model_config(config)
 
-        # This test verifies that the mapping registry was created
-        assert mapping_registry is not None
+        assert isinstance(result, BridgeGPTModelConfig)
+        assert result.transformer_layer_spec is olmoe_layer_spec
+        assert result.kv_channels == config.hidden_size // config.num_attention_heads
+        assert result.qk_layernorm is True
+        assert result.normalization == "RMSNorm"
+        assert result.position_embedding_type == "rope"
+        assert result.num_moe_experts == config.num_experts
+        assert result.moe_router_topk == config.num_experts_per_tok
+        assert result.moe_ffn_hidden_size == config.intermediate_size
+        assert result.moe_router_load_balancing_type == "seq_aux_loss"
+        assert result.moe_router_pre_softmax is True
+        assert result.moe_router_score_function == "softmax"
+        assert result.moe_token_dispatcher_type == "alltoall"
 
-    def test_olmoe_qk_layernorm_mapping(self):
-        """Test that OLMoE bridge handles QK layernorm mappings correctly."""
+    def test_model_config_matches_provider_runtime_config(self):
+        from dataclasses import fields
+
+        from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
+
+        config = self._config()
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
         bridge = OlMoEBridge()
-        mapping_registry = bridge.mapping_registry()
 
-        # OLMoE uses QK layernorm, so there should be q_norm and k_norm mappings
-        assert mapping_registry is not None
+        mapped_kwargs = bridge.hf_config_to_model_config_kwargs(config)
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
 
-    def test_olmoe_moe_expert_mapping(self):
-        """Test that OLMoE bridge includes MoE expert mappings."""
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        comparable_fields = sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"})
+
+        assert set(mapped_kwargs) - {"transformer_layer_spec"} <= set(comparable_fields)
+        for field_name in comparable_fields:
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+        # Both paths build the QK-layernorm attention through the same OlMoE layer spec.
+        assert model_config.transformer_layer_spec is olmoe_layer_spec
+        assert provider.transformer_layer_spec is olmoe_layer_spec
+
+    def test_non_softmax_scoring_is_rejected_on_builder_path(self):
+        config = self._config()
+        config.scoring_func = "sigmoid"
+
+        with pytest.raises(ValueError, match="scoring_func='softmax'"):
+            OlMoEBridge().hf_config_to_model_config(config)
+
+    def test_layer_spec_matches_between_provider_and_builder_config(self):
+        """The OlMoE layer spec is identical whether built from the provider or the builder config."""
+        from megatron.bridge.models.olmoe.olmoe_provider import OLMoESelfAttention, olmoe_layer_spec
+
+        config = self._config()
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
         bridge = OlMoEBridge()
-        mapping_registry = bridge.mapping_registry()
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(mock_pretrained)
 
-        # OLMoE has experts, so it should have expert-specific mappings
-        assert mapping_registry is not None
-
-    def test_olmoe_router_mapping(self):
-        """Test that OLMoE bridge includes router mappings."""
-        bridge = OlMoEBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # OLMoE has a router for expert selection
-        assert mapping_registry is not None
-
-    def test_olmoe_gated_mlp_mapping(self):
-        """Test that OLMoE bridge includes gated MLP mappings."""
-        bridge = OlMoEBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # OLMoE uses gated MLP, so it should have GatedMLPMapping
-        assert mapping_registry is not None
-
-    def test_olmoe_qkv_mapping(self):
-        """Test that OLMoE bridge includes QKV mappings."""
-        bridge = OlMoEBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # OLMoE needs to combine Q, K, V projections
-        assert mapping_registry is not None
-
-    def test_olmoe_separate_embeddings(self):
-        """Test that OLMoE bridge handles separate embeddings correctly."""
-        bridge = OlMoEBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # OLMoE can have separate embeddings and output layer
-        assert mapping_registry is not None
+        builder_spec = olmoe_layer_spec(model_config)
+        assert builder_spec.submodules.self_attention.module is OLMoESelfAttention
+        # functools.partial (used for the MoE layer) compares by identity, so compare structure.
+        assert repr(builder_spec) == repr(olmoe_layer_spec(provider))

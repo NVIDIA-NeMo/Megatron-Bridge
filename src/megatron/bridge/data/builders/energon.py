@@ -1,0 +1,455 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Serializable configuration and runtime builder for Energon VLM data."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, Literal
+
+from transformers import AutoProcessor, AutoTokenizer, Qwen3VLProcessor
+
+from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, validate_declarative_mapping
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+
+
+def _validate_hf_path(path: str, *, field_name: str) -> None:
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError(f"{field_name} must be a non-empty string.")
+
+
+@dataclass(kw_only=True)
+class EnergonTaskEncoderConfig:
+    """Declarative extension contract for Energon task encoders.
+
+    Subclass this config (or a built-in config) with model-owned dataclass
+    fields and override ``build_task_encoder`` to construct the runtime encoder.
+    Config instances must not store processors, tokenizers, or runtime encoders.
+    Restoring custom config classes uses Bridge's existing target allowlist.
+    """
+
+    supports_native_packing: ClassVar[bool] = False
+    """Whether the encoder implements Energon's native packing contract."""
+
+    def validate(self) -> None:
+        """Validate model-owned fields without constructing runtime objects."""
+
+    def validate_dataset(self, dataset_config: EnergonDatasetConfig) -> None:
+        """Validate or synchronize model-owned fields with resolved dataset settings.
+
+        Called during dataset finalization and before runtime construction,
+        after generic validation. Training finalizes the dataset after deriving
+        padding settings; preliminary generic validation does not call this hook.
+        Implementations must be idempotent, must not construct runtime objects,
+        and must not modify generic dataset settings. Recipe/CLI overrides and
+        training-derived padding settings are available when the builder runs.
+
+        Args:
+            dataset_config: Enclosing dataset settings used to validate or
+                derive model-owned fields.
+        """
+
+    def build_task_encoder(self, dataset_config: EnergonDatasetConfig) -> object:
+        """Construct an encoder from validated, resolved settings at runtime.
+
+        Custom encoders override this method and own loading their runtime
+        assets. The default implementation constructs the built-in encoders.
+
+        Args:
+            dataset_config: Validated dataset settings after overrides.
+
+        Returns:
+            The runtime Energon task encoder.
+        """
+        return _build_builtin_energon_task_encoder(dataset_config)
+
+
+@dataclass(kw_only=True)
+class HFEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
+    """Serializable settings for the generic Hugging Face Energon task encoder.
+
+    ``hf_processor_revision`` optionally pins the processor artifact load.
+    ``visual_keys`` names processor output tensors retained in the model batch.
+    ``min_pixels`` and ``max_pixels`` are independent processor preprocessing
+    bounds controlling visual resolution and token cost; they are not output keys.
+    ``return_padding_mask`` adds a boolean ``padding_mask`` (True marks padding)
+    to padded batches, so forward steps that consume it can keep padding tokens
+    out of MoE routing and router statistics.
+    """
+
+    hf_processor_path: str
+    hf_processor_revision: str | None = None
+    visual_keys: tuple[str, ...] = ("pixel_values",)
+    min_pixels: int | None = None
+    max_pixels: int | None = None
+    trust_remote_code: bool | None = None
+    return_padding_mask: bool = False
+
+    def validate(self) -> None:
+        """Validate generic Hugging Face task-encoder settings."""
+        _validate_hf_path(self.hf_processor_path, field_name="hf_processor_path")
+        if self.hf_processor_revision is not None and (
+            not isinstance(self.hf_processor_revision, str) or not self.hf_processor_revision.strip()
+        ):
+            raise ValueError("hf_processor_revision must be a non-empty string when set.")
+        if not self.visual_keys or not all(isinstance(key, str) and key for key in self.visual_keys):
+            raise ValueError("visual_keys must contain non-empty strings.")
+
+    def validate_dataset(self, dataset_config: EnergonDatasetConfig) -> None:
+        """Reject a padding mask request for in-batch packed batches."""
+        if self.return_padding_mask and dataset_config.enable_in_batch_packing:
+            raise ValueError(
+                "return_padding_mask applies to padded batches only; in-batch packing marks padding "
+                "through its sequence boundaries instead."
+            )
+
+
+@dataclass(kw_only=True)
+class QwenVLEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
+    """Serializable settings for the Qwen-VL Energon task encoder.
+
+    Qwen's visual output keys are model-owned. ``min_pixels`` and
+    ``max_pixels`` instead bound processor preprocessing and visual-token cost.
+    ``hf_processor_revision`` optionally pins both tokenizer and processor
+    artifact loads.
+    """
+
+    supports_native_packing: ClassVar[bool] = True
+
+    hf_processor_path: str
+    hf_processor_revision: str | None = None
+    temporal_patch_size: int = 2
+    spatial_merge_size: int = 2
+    patch_size: int = 14
+    min_pixels: int = 200704
+    max_pixels: int = 1003520
+    max_num_images: int | None = 10
+    max_num_frames: int | None = 60
+    max_visual_tokens: int | None = 16384
+    trust_remote_code: bool | None = None
+
+    def validate(self) -> None:
+        """Validate Qwen-VL task-encoder settings."""
+        _validate_hf_path(self.hf_processor_path, field_name="hf_processor_path")
+        if self.hf_processor_revision is not None and (
+            not isinstance(self.hf_processor_revision, str) or not self.hf_processor_revision.strip()
+        ):
+            raise ValueError("hf_processor_revision must be a non-empty string when set.")
+        for field_name in ("temporal_patch_size", "spatial_merge_size", "patch_size", "min_pixels", "max_pixels"):
+            if getattr(self, field_name) <= 0:
+                raise ValueError(f"{field_name} must be greater than 0.")
+        for field_name in ("max_num_images", "max_num_frames", "max_visual_tokens"):
+            value = getattr(self, field_name)
+            if value is not None and value <= 0:
+                raise ValueError(f"{field_name} must be greater than 0 when set.")
+
+
+@dataclass(kw_only=True)
+class NemotronOmniEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
+    """Serializable settings for the Nemotron Omni Energon task encoder.
+
+    ``visual_keys`` is retained for configuration compatibility, but Omni owns
+    its visual input contract and supports only ``("pixel_values",)``.
+    ``hf_processor_revision`` optionally pins the processor artifact load.
+    ``temporal_video_resize_mode="processor"`` is the default and applies the
+    public aspect-preserving video grid with exact per-tubelet token counts.
+    ``"fixed_512"`` preserves the previous square policy for compatibility.
+    ``collapse_image_tokens=True`` selects the deprecated LLaVA compatibility
+    path and cannot be combined with processor-driven temporal sizing. The
+    default ``False`` selects the canonical expanded-sequence path.
+    """
+
+    hf_processor_path: str
+    hf_processor_revision: str | None = None
+    max_audio_duration: float
+    num_mel_bins: int
+    visual_keys: tuple[str, ...]
+    temporal_patch_size: int
+    video_fps: float
+    video_nframes: int
+    use_temporal_video_embedder: bool
+    patch_dim: int
+    temporal_video_resize_mode: Literal["fixed_512", "processor"] = "processor"
+    collapse_image_tokens: bool = False
+    trust_remote_code: bool | None = None
+
+    def validate(self) -> None:
+        """Validate Nemotron Omni task-encoder settings."""
+        _validate_hf_path(self.hf_processor_path, field_name="hf_processor_path")
+        if self.hf_processor_revision is not None and (
+            not isinstance(self.hf_processor_revision, str) or not self.hf_processor_revision.strip()
+        ):
+            raise ValueError("hf_processor_revision must be a non-empty string when set.")
+        if self.max_audio_duration <= 0:
+            raise ValueError("max_audio_duration must be greater than 0.")
+        for field_name in ("num_mel_bins", "temporal_patch_size", "video_nframes", "patch_dim"):
+            if getattr(self, field_name) <= 0:
+                raise ValueError(f"{field_name} must be greater than 0.")
+        if self.video_fps <= 0:
+            raise ValueError("video_fps must be greater than 0.")
+        if self.temporal_video_resize_mode not in ("fixed_512", "processor"):
+            raise ValueError("temporal_video_resize_mode must be either 'fixed_512' or 'processor'.")
+        if (
+            self.use_temporal_video_embedder
+            and self.collapse_image_tokens
+            and self.temporal_video_resize_mode == "processor"
+        ):
+            raise ValueError(
+                "temporal_video_resize_mode='processor' requires the canonical expanded-sequence contract."
+            )
+        if not self.visual_keys or tuple(self.visual_keys) != ("pixel_values",):
+            raise ValueError("Nemotron Omni visual_keys must be exactly ('pixel_values',).")
+
+
+@dataclass(kw_only=True)
+class EnergonDatasetConfig(DataloaderConfig):
+    """Serializable configuration for an Energon-backed multimodal dataset."""
+
+    path: str | None = None
+    seq_length: int
+    micro_batch_size: int
+    task_encoder: EnergonTaskEncoderConfig
+    dataloader_type: Literal["external"] | None = "external"
+    do_validation: bool = True
+    do_test: bool = False
+    num_val_workers: int | None = None
+    shuffle_buffer_size: int = 100
+    max_samples_per_sequence: int | None = None
+    packing_buffer_size: int | None = None
+    dataset_kwargs: dict[str, Any] = field(default_factory=dict)
+    enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
+
+    def validate(self) -> None:
+        """Validate declarative fields before training derives dataset settings."""
+        if not isinstance(self.path, str) or not self.path.strip():
+            raise ValueError("EnergonDatasetConfig.path must be set to a non-empty dataset path.")
+        if self.seq_length <= 0:
+            raise ValueError("seq_length must be greater than 0.")
+        if self.micro_batch_size <= 0:
+            raise ValueError("micro_batch_size must be greater than 0.")
+        if self.num_workers < 0:
+            raise ValueError("num_workers must be greater than or equal to 0.")
+        if self.num_val_workers is not None and self.num_val_workers < 0:
+            raise ValueError("num_val_workers must be greater than or equal to 0 when set.")
+        if self.shuffle_buffer_size <= 0:
+            raise ValueError("shuffle_buffer_size must be greater than 0.")
+        if self.max_samples_per_sequence is not None and self.max_samples_per_sequence <= 0:
+            raise ValueError("max_samples_per_sequence must be greater than 0 when set.")
+        if self.packing_buffer_size is not None and self.packing_buffer_size <= 0:
+            raise ValueError("packing_buffer_size must be greater than 0 when set.")
+        if self.packing_buffer_size is not None and self.enable_in_batch_packing:
+            raise ValueError(
+                "packing_buffer_size and enable_in_batch_packing=True are mutually exclusive; "
+                "select exactly one packing owner."
+            )
+        if self.packing_buffer_size is not None and self.defer_in_batch_packing_to_step:
+            raise ValueError(
+                "Energon native sequence packing is incompatible with defer_in_batch_packing_to_step=True; "
+                "use the canonical vlm_step path."
+            )
+        if self.packing_buffer_size is not None and self.micro_batch_size != 1:
+            raise ValueError("Energon native sequence packing requires micro_batch_size=1.")
+        if self.pad_to_multiple_of <= 0:
+            raise ValueError("pad_to_multiple_of must be greater than 0.")
+        if self.in_batch_packing_pad_to_multiple_of <= 0:
+            raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
+        if self.do_test:
+            raise ValueError("EnergonDatasetConfig does not support a distinct test split.")
+        if not isinstance(self.task_encoder, EnergonTaskEncoderConfig):
+            raise TypeError("task_encoder must be a supported declarative Energon task-encoder config.")
+        if self.packing_buffer_size is not None and not self.task_encoder.supports_native_packing:
+            raise ValueError("The configured task encoder does not support Energon native sequence packing.")
+        validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
+        reserved_dataset_kwargs = {
+            "batch_size",
+            "max_samples_per_sequence",
+            "packing_buffer_size",
+            "shuffle_buffer_size",
+            "split_part",
+            "task_encoder",
+            "worker_config",
+        }
+        conflicting_kwargs = reserved_dataset_kwargs.intersection(self.dataset_kwargs)
+        if conflicting_kwargs:
+            raise ValueError(
+                "dataset_kwargs cannot override builder-owned arguments: " + ", ".join(sorted(conflicting_kwargs))
+            )
+        self.task_encoder.validate()
+
+    def finalize(self) -> None:
+        """Finalize dataloader fields and validate the resolved encoder settings."""
+        super().finalize()
+        self.validate()
+        self.task_encoder.validate_dataset(self)
+
+
+def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
+    """Construct the configured Energon task encoder at runtime."""
+    config.validate()
+    config.task_encoder.validate_dataset(config)
+    return config.task_encoder.build_task_encoder(config)
+
+
+def _build_builtin_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
+    task_config = config.task_encoder
+    if not isinstance(
+        task_config,
+        (HFEnergonTaskEncoderConfig, QwenVLEnergonTaskEncoderConfig, NemotronOmniEnergonTaskEncoderConfig),
+    ):
+        raise TypeError("Custom Energon task-encoder configs must override build_task_encoder().")
+    effective_packing = config.enable_in_batch_packing and not config.defer_in_batch_packing_to_step
+    enable_energon_packing = config.packing_buffer_size is not None
+
+    trust_remote_code = is_safe_repo(
+        trust_remote_code=(
+            task_config.trust_remote_code if task_config.trust_remote_code is not None else config.trust_remote_code
+        ),
+        hf_path=task_config.hf_processor_path,
+    )
+    if isinstance(task_config, HFEnergonTaskEncoderConfig):
+        from megatron.bridge.data.energon.hf_task_encoder import HFTaskEncoder
+
+        processor = AutoProcessor.from_pretrained(
+            task_config.hf_processor_path,
+            revision=task_config.hf_processor_revision,
+            trust_remote_code=trust_remote_code,
+        )
+        return HFTaskEncoder(
+            processor=processor,
+            seq_length=config.seq_length,
+            visual_keys=task_config.visual_keys,
+            min_pixels=task_config.min_pixels,
+            max_pixels=task_config.max_pixels,
+            pad_to_max_length=config.pad_to_max_length,
+            pad_to_multiple_of=config.pad_to_multiple_of,
+            enable_in_batch_packing=effective_packing,
+            in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
+            return_padding_mask=task_config.return_padding_mask,
+        )
+
+    if isinstance(task_config, QwenVLEnergonTaskEncoderConfig):
+        from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            task_config.hf_processor_path,
+            revision=task_config.hf_processor_revision,
+            trust_remote_code=trust_remote_code,
+        )
+        image_processor = Qwen3VLProcessor.from_pretrained(
+            task_config.hf_processor_path,
+            revision=task_config.hf_processor_revision,
+            trust_remote_code=trust_remote_code,
+        )
+        return QwenVLTaskEncoder(
+            tokenizer=tokenizer,
+            image_processor=image_processor,
+            temporal_patch_size=task_config.temporal_patch_size,
+            spatial_merge_size=task_config.spatial_merge_size,
+            patch_size=task_config.patch_size,
+            max_padding_length=config.seq_length,
+            min_pixels=task_config.min_pixels,
+            max_pixels=task_config.max_pixels,
+            max_num_images=task_config.max_num_images,
+            max_num_frames=task_config.max_num_frames,
+            max_visual_tokens=task_config.max_visual_tokens,
+            pad_to_max_length=config.pad_to_max_length,
+            pad_to_multiple_of=config.pad_to_multiple_of,
+            enable_in_batch_packing=effective_packing,
+            enable_energon_packing=enable_energon_packing,
+            in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
+        )
+
+    from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
+
+    processor = AutoProcessor.from_pretrained(
+        task_config.hf_processor_path,
+        revision=task_config.hf_processor_revision,
+        trust_remote_code=trust_remote_code,
+    )
+    return NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=config.seq_length,
+        max_audio_duration=task_config.max_audio_duration,
+        num_mel_bins=task_config.num_mel_bins,
+        visual_keys=task_config.visual_keys,
+        temporal_patch_size=task_config.temporal_patch_size,
+        video_fps=task_config.video_fps,
+        video_nframes=task_config.video_nframes,
+        use_temporal_video_embedder=task_config.use_temporal_video_embedder,
+        patch_dim=task_config.patch_dim,
+        temporal_video_resize_mode=task_config.temporal_video_resize_mode,
+        collapse_image_tokens=task_config.collapse_image_tokens,
+        pad_to_max_length=config.pad_to_max_length,
+        pad_to_multiple_of=config.pad_to_multiple_of,
+        enable_in_batch_packing=effective_packing,
+        in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
+    )
+
+
+class EnergonDatasetBuilder:
+    """Build Energon runtime dataloader iterators from declarative config."""
+
+    def __init__(self, config: EnergonDatasetConfig) -> None:
+        config.validate()
+        self.config = config
+
+    def build(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, None]:
+        """Build requested Energon train and validation iterators."""
+        from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
+
+        assert self.config.path is not None
+        build_train = context.train_samples > 0
+        build_validation = self.config.do_validation and context.valid_samples > 0
+        task_encoder = build_energon_task_encoder(self.config) if build_train or build_validation else None
+        datamodule = EnergonMultiModalDataModule(
+            path=self.config.path,
+            tokenizer=context.tokenizer,
+            seq_length=self.config.seq_length,
+            task_encoder=task_encoder,
+            validation_task_encoder=task_encoder,
+            micro_batch_size=self.config.micro_batch_size,
+            num_workers=self.config.num_workers,
+            num_val_workers=self.config.num_val_workers,
+            pin_memory=self.config.pin_memory,
+            shuffle_buffer_size=self.config.shuffle_buffer_size,
+            max_samples_per_sequence=self.config.max_samples_per_sequence,
+            packing_buffer_size=self.config.packing_buffer_size,
+            pg_collection=context.pg_collection,
+            **self.config.dataset_kwargs,
+        )
+        train = datamodule.train_dataloader() if build_train else None
+        validation = iter(datamodule.val_dataloader()) if build_validation else None
+        return train, validation, None
+
+
+def energon_train_valid_test_datasets_provider(
+    train_val_test_num_samples: list[int],
+    dataset_config: EnergonDatasetConfig,
+    tokenizer: Any | None = None,
+    pg_collection: Any | None = None,
+) -> tuple[Any | None, Any | None, None]:
+    """Build Energon iterators through the canonical runtime builder."""
+    context = DatasetBuildContext(
+        train_samples=train_val_test_num_samples[0],
+        valid_samples=train_val_test_num_samples[1],
+        test_samples=train_val_test_num_samples[2],
+        tokenizer=tokenizer,
+        pg_collection=pg_collection,
+    )
+    return EnergonDatasetBuilder(dataset_config).build(context)

@@ -1,0 +1,28 @@
+# GLM-4.7 and GLM-4.7-Flash
+
+[GLM-4.7](https://huggingface.co/zai-org/GLM-4.7) and [GLM-4.7-Flash](https://huggingface.co/zai-org/GLM-4.7-Flash) are GLM MoE language models from Zhipu AI. Megatron Bridge supports both checkpoints, with the full GLM-4.7 model handled by the GLM-4.5 bridge registration and the Flash variant handled by a dedicated GLM-4.7-Flash bridge.
+
+## Supported Variants
+
+| Variant | Hugging Face ID | Bridge | Notes |
+|---------|-----------------|--------|-------|
+| GLM-4.7 | `zai-org/GLM-4.7` | `GLM45Bridge` | Full MoE model, about 358B total parameters and 32B active |
+| GLM-4.7-Flash | `zai-org/GLM-4.7-Flash` | `GLM47FlashBridge` | MLA + MoE model, about 30B total parameters and 3B active |
+
+## Architecture Notes
+
+- GLM-4.7 uses the `glm4_moe` architecture already covered by `GLM45Bridge`.
+- GLM-4.7-Flash uses `glm4_moe_lite`, Multi-Latent Attention, GLM-style MoE routing, and expert-bias routing.
+- GLM-4.7-Flash stores per-expert gate/up/down tensors in Hugging Face checkpoint format; the bridge maps them into Megatron MoE tensors.
+- `transformers >= 5.0.0rc0` is required for the GLM-4.7 Hugging Face model classes used by these bridges.
+
+## Examples
+
+For checkpoint conversion, inference, hardware notes, and validated parallelism settings, see the [GLM-4.7 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/glm47/README.md).
+
+## Related Implementation
+
+- GLM-4.7 bridge path: [`src/megatron/bridge/models/glm/glm45_bridge.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/glm/glm45_bridge.py)
+- GLM-4.7-Flash bridge path: [`src/megatron/bridge/models/glm/glm47_flash_bridge.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/glm/glm47_flash_bridge.py)
+- Examples: [`examples/models/glm47`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/glm47)
+

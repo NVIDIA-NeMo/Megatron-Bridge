@@ -15,46 +15,147 @@
 """
 Unit tests for Qwen3VL Model implementation.
 
-Run with: torchrun --nproc_per_node=8 -m pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
-Or for single GPU: pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
+Run with: uv run torchrun --nproc_per_node=8 -m pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
+Or for single GPU: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
 """
 
 import datetime
 import os
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import Mock
 
-import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from PIL import Image
-from transformers import AutoProcessor, Qwen3VLMoeConfig
+from transformers import Qwen3VLMoeConfig
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
+    Qwen3VLModel,
+    _get_cp_local_vision_embed_indices,
+    _get_packed_seq_padding_mask,
+    _is_packed_input_pre_sharded,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig
 
 
-@pytest.fixture(scope="module")
-def processor():
-    """Load HuggingFace processor once for all tests."""
-    return AutoProcessor.from_pretrained("Qwen/Qwen3-VL-30B-A3B-Instruct")
+def _make_packed_seq_params(cu_seqlens: list[int]) -> PackedSeqParams:
+    cu_seqlens_tensor = torch.tensor(cu_seqlens, dtype=torch.int32)
+    max_seqlen = max(end - start for start, end in zip(cu_seqlens[:-1], cu_seqlens[1:]))
+    return PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens_tensor,
+        cu_seqlens_kv=cu_seqlens_tensor,
+        cu_seqlens_q_padded=cu_seqlens_tensor,
+        cu_seqlens_kv_padded=cu_seqlens_tensor,
+        max_seqlen_q=max_seqlen,
+        max_seqlen_kv=max_seqlen,
+    )
+
+
+def test_packed_seq_padding_mask_excludes_only_physical_gaps():
+    """Build MoE routing padding from THD boundaries, independent of the loss mask."""
+    logical = torch.tensor([0, 3, 5], dtype=torch.int32)
+    physical = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=logical,
+        cu_seqlens_kv=logical,
+        cu_seqlens_q_padded=physical,
+        cu_seqlens_kv_padded=physical,
+        total_tokens=8,
+    )
+
+    padding_mask = _get_packed_seq_padding_mask(
+        packed_seq_params,
+        total_tokens=8,
+        device=torch.device("cpu"),
+    )
+
+    assert padding_mask is not None
+    assert padding_mask.tolist() == [[False, False, False, True, False, False, True, True]]
+
+
+def test_is_packed_input_pre_sharded_uses_global_physical_length():
+    packed_seq_params = _make_packed_seq_params([0, 8, 16])
+
+    assert _is_packed_input_pre_sharded(torch.zeros((1, 8), dtype=torch.long), packed_seq_params, cp_size=2)
+    assert not _is_packed_input_pre_sharded(torch.zeros((1, 16), dtype=torch.long), packed_seq_params, cp_size=2)
+
+
+@pytest.mark.parametrize(
+    ("cp_rank", "local_vision_mask", "expected_indices"),
+    [
+        (0, [1, 0, 1, 1, 0, 0, 1, 0], [0, 3, 4, 8]),
+        (1, [1, 1, 0, 0, 1, 0, 1, 1], [1, 2, 5, 6, 7]),
+    ],
+)
+def test_get_cp_local_vision_embed_indices_multiple_segments(
+    cp_rank,
+    local_vision_mask,
+    expected_indices,
+    monkeypatch,
+):
+    packed_seq_params = _make_packed_seq_params([0, 8, 16])
+    counts_by_rank = (
+        torch.tensor([[1, 2], [0, 1]], dtype=torch.long),
+        torch.tensor([[2, 0], [1, 2]], dtype=torch.long),
+    )
+    cp_group = SimpleNamespace(size=lambda: 2, rank=lambda: cp_rank)
+
+    def fake_all_gather(outputs, _local_counts, group):
+        assert group is cp_group
+        for output, counts in zip(outputs, counts_by_rank):
+            output.copy_(counts)
+
+    monkeypatch.setattr(torch.distributed, "all_gather", fake_all_gather)
+
+    indices = _get_cp_local_vision_embed_indices(
+        torch.tensor(local_vision_mask, dtype=torch.bool).reshape(1, -1),
+        packed_seq_params,
+        vision_embed_count=9,
+        cp_group=cp_group,
+        embed_device=torch.device("cpu"),
+    )
+
+    assert indices.tolist() == expected_indices
+
+
+def test_get_cp_local_vision_embed_indices_allows_zero_vision_tokens(monkeypatch):
+    packed_seq_params = _make_packed_seq_params([0, 8])
+    cp_group = SimpleNamespace(size=lambda: 2, rank=lambda: 0)
+
+    def fake_all_gather(outputs, _local_counts, group):
+        assert group is cp_group
+        outputs[0].zero_()
+        outputs[1].copy_(torch.tensor([[1, 1]], dtype=torch.long))
+
+    monkeypatch.setattr(torch.distributed, "all_gather", fake_all_gather)
+
+    indices = _get_cp_local_vision_embed_indices(
+        torch.zeros((1, 4), dtype=torch.bool),
+        packed_seq_params,
+        vision_embed_count=2,
+        cp_group=cp_group,
+        embed_device=torch.device("cpu"),
+    )
+
+    assert indices.shape == (0,)
 
 
 @pytest.fixture(scope="module")
 def hf_config():
-    """Load HuggingFace config once for all tests."""
-    return Qwen3VLMoeConfig.from_pretrained("Qwen/Qwen3-VL-30B-A3B-Instruct")
-
-
-@pytest.fixture
-def random_image():
-    """Generate a random PIL image."""
-    random_array = np.random.randint(0, 256, (224, 224, 3), dtype=np.uint8)
-    return Image.fromarray(random_array)
+    """Create a local HuggingFace config once for all tests."""
+    config = Qwen3VLMoeConfig()
+    config.vision_config.out_hidden_size = config.text_config.hidden_size
+    return config
 
 
 class TestQwen3VLModel:
@@ -196,12 +297,11 @@ class TestQwen3VLModel:
         return language_model_layer_spec
 
     @staticmethod
-    def get_data_batch(processor, random_image):
+    def get_data_batch(hf_config):
         """Generate a batch of data for model forward pass.
 
         Args:
-            processor: HuggingFace processor.
-            random_image: Random PIL image.
+            hf_config: HuggingFace config object.
 
         Returns:
             dict: A dictionary containing all inputs needed for model forward pass:
@@ -212,36 +312,28 @@ class TestQwen3VLModel:
                 - pixel_values_videos: Video pixel values (None for images only)
                 - video_grid_thw: Video grid dimensions (None for images only)
         """
-        # Create a sample message with image and text
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "image": random_image,  # Pass PIL Image directly
-                    },
-                    {"type": "text", "text": "Describe this image."},
-                ],
-            }
-        ]
-
-        # Process inputs using HuggingFace processor
-        inputs = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
+        vision_config = hf_config.vision_config
+        image_grid_thw = torch.tensor([[1, 14, 14]], dtype=torch.long)
+        num_patches = int(image_grid_thw.prod(dim=1).sum().item())
+        patch_dim = vision_config.in_channels * vision_config.temporal_patch_size * vision_config.patch_size**2
+        pixel_values = torch.randn(num_patches, patch_dim)
+        num_image_tokens = num_patches // vision_config.spatial_merge_size**2
+        input_ids = torch.tensor(
+            [
+                [hf_config.vision_start_token_id]
+                + [hf_config.image_token_id] * num_image_tokens
+                + [hf_config.vision_end_token_id, 1]
+            ],
+            dtype=torch.long,
         )
 
         batch = {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs.get("attention_mask"),
-            "pixel_values": inputs.get("pixel_values"),
-            "image_grid_thw": inputs.get("image_grid_thw"),
-            "pixel_values_videos": inputs.get("pixel_values_videos"),
-            "video_grid_thw": inputs.get("video_grid_thw"),
+            "input_ids": input_ids,
+            "attention_mask": torch.ones_like(input_ids),
+            "pixel_values": pixel_values,
+            "image_grid_thw": image_grid_thw,
+            "pixel_values_videos": None,
+            "video_grid_thw": None,
             "position_ids": None,
             "labels": None,
         }
@@ -344,6 +436,53 @@ class TestQwen3VLModel:
         weight_no_decoder = model_no_decoder.shared_embedding_or_output_weight()
         assert weight_no_decoder is None
 
+    @pytest.mark.parametrize(
+        ("vocab_size", "should_pad_vocab", "expected_vocab_size"),
+        [
+            (151669, True, 152064),
+            (248077, True, 248320),
+            (151936, False, 151936),
+        ],
+    )
+    def test_language_model_honors_vocab_padding_policy(
+        self,
+        hf_config,
+        monkeypatch,
+        vocab_size,
+        should_pad_vocab,
+        expected_vocab_size,
+    ):
+        """Apply tokenizer-derived padding before constructing the Qwen language model."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        language_transformer_config.vocab_size = vocab_size
+        language_transformer_config.should_pad_vocab = should_pad_vocab
+        language_transformer_config.make_vocab_size_divisible_by = 128
+        language_transformer_config.tensor_model_parallel_size = 4
+
+        language_model = Mock()
+        language_model.config.cuda_graph_impl = "none"
+        language_model.share_embeddings_and_output_weights = False
+        language_model_constructor = Mock(return_value=language_model)
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.Qwen3VLGPTModel",
+            language_model_constructor,
+        )
+
+        Qwen3VLModel(
+            vision_transformer_config=self.get_vision_transformer_config(hf_config),
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            pre_process=False,
+            post_process=True,
+            add_encoder=False,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+
+        assert language_model_constructor.call_args.kwargs["vocab_size"] == expected_vocab_size
+
     @pytest.mark.timeout(50)
     def test_set_input_tensor(self, hf_config):
         """Test set_input_tensor method."""
@@ -405,3 +544,637 @@ class TestQwen3VLModel:
         # This should set the input tensor on the language model instead
         model_no_pre.set_input_tensor([test_tensor])
         # No assertion here as it sets internal state
+
+    @staticmethod
+    def _attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio: int = 1) -> None:
+        """Enable dist-train flags on language config (Qwen3VLModel reads via getattr)."""
+        language_transformer_config.dist_train = DistTrainConfig(
+            use_dist_train=True,
+            vision_to_llm_dp_ratio=vision_to_llm_dp_ratio,
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
+    @pytest.mark.timeout(120)
+    def test_forward_dist_train_encoder_only(self, hf_config):
+        """use_dist_train=True, add_encoder=True, add_decoder=False: forward returns vision_module payload."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        self._attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio=1)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        model = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            vision_transformer_config=vision_transformer_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=False,
+            pg_collection=pg_collection,
+        )
+        assert model.use_dist_train is True
+        assert model.add_encoder is True and model.add_decoder is False
+
+        model.cuda()
+        batch = self.get_data_batch(hf_config)
+
+        with torch.inference_mode():
+            out = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                pixel_values=batch["pixel_values"],
+                image_grid_thw=batch["image_grid_thw"],
+                pixel_values_videos=batch["pixel_values_videos"],
+                video_grid_thw=batch["video_grid_thw"],
+            )
+
+        assert isinstance(out, dict)
+        assert "vision_module" in out
+        vm = out["vision_module"]
+        assert vm.dim() == 3
+        assert vm.shape[0] == 1
+        assert vm.shape[2] == language_transformer_config.hidden_size
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
+    @pytest.mark.timeout(180)
+    def test_forward_dist_train_decoder_only(self, hf_config):
+        """use_dist_train=True, add_encoder=False, add_decoder=True: consume vision_module then run language stack."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        self._attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio=1)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        encoder = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            vision_transformer_config=vision_transformer_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=False,
+            pg_collection=pg_collection,
+        )
+        decoder = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            vision_transformer_config=vision_transformer_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=False,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+        assert decoder.use_dist_train is True
+        assert decoder.add_encoder is False and decoder.add_decoder is True
+
+        encoder.cuda()
+        decoder.cuda()
+        batch = self.get_data_batch(hf_config)
+
+        with torch.inference_mode():
+            enc_out = encoder(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                pixel_values=batch["pixel_values"],
+                image_grid_thw=batch["image_grid_thw"],
+                pixel_values_videos=batch["pixel_values_videos"],
+                video_grid_thw=batch["video_grid_thw"],
+            )
+            vision_payload = enc_out["vision_module"].detach()
+            decoder.set_input_tensor([{"vision_module": vision_payload}])
+            out = decoder(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                pixel_values=batch["pixel_values"],
+                image_grid_thw=batch["image_grid_thw"],
+                pixel_values_videos=batch["pixel_values_videos"],
+                video_grid_thw=batch["video_grid_thw"],
+            )
+
+        assert not isinstance(out, dict), "PP last stage should return language logits/loss tensor, not a dict"
+        assert isinstance(out, torch.Tensor)
+        assert out.dim() >= 2
+
+    def test_forward_text_only_without_vision_inputs(self, monkeypatch):
+        """Text-only forward should not require vision_embeds to be materialized."""
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.reorganize_inputs",
+            lambda **_kwargs: (None, None, None),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_rope_index",
+            lambda *args, **kwargs: (
+                torch.zeros((3, args[4].shape[0], args[4].shape[1]), dtype=torch.long),
+                None,
+            ),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def embedding(self, input_ids, position_ids=None):
+                del position_ids
+                batch_size, seq_len = input_ids.shape
+                return torch.zeros((seq_len, batch_size, 4), dtype=torch.float32)
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=True,
+            square_merge_size=4,
+            config=SimpleNamespace(
+                vision_dp_when_cp=False,
+                sequence_parallel=False,
+                spatial_merge_size=4,
+            ),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            image_token_id=1,
+            video_token_id=2,
+            vision_start_token_id=3,
+            use_dist_train=False,
+        )
+
+        input_ids = torch.tensor([[11, 12]], dtype=torch.long)
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            attention_mask=None,
+            pixel_values=None,
+            pixel_values_videos=None,
+            image_grid_thw=None,
+            video_grid_thw=None,
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert language_model.last_kwargs is not None
+        assert language_model.last_kwargs["visual_pos_masks"] is None
+        assert language_model.last_kwargs["decoder_input"].shape == (2, 1, 4)
+
+    @pytest.mark.parametrize(
+        ("input_ids", "cu_seqlens"),
+        [
+            (torch.tensor([[11, 12, 21, 22]], dtype=torch.long), torch.tensor([0, 4], dtype=torch.int32)),
+            (torch.tensor([[11, 12], [21, 22]], dtype=torch.long), torch.tensor([0, 2, 4], dtype=torch.int32)),
+        ],
+        ids=("singleton", "multiple-samples"),
+    )
+    def test_forward_preserves_legacy_qwen_step_packed_bshd_behavior(
+        self,
+        monkeypatch,
+        input_ids,
+        cu_seqlens,
+    ):
+        """Legacy Qwen step inputs are converted from BSHD to THD exactly once."""
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        preprocess_calls = []
+
+        def fake_preprocess_packed_seqs(value, mask, **_kwargs):
+            preprocess_calls.append(value)
+            trailing_shape = value.shape[2:]
+            return value[mask].reshape(1, -1, *trailing_shape), object()
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.preprocess_packed_seqs",
+            fake_preprocess_packed_seqs,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=False,
+            config=SimpleNamespace(sequence_parallel=False, spatial_merge_size=4),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            image_token_id=1,
+            video_token_id=2,
+            vision_start_token_id=3,
+            use_dist_train=False,
+        )
+        labels = torch.tensor([[12, -100, 22, -100]], dtype=torch.long)
+        loss_mask = torch.tensor([[1.0, 0.0, 1.0, 0.0]])
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+        max_seqlen = int(cu_seqlens.diff().max().item())
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            cu_seqlens_q_padded=cu_seqlens,
+            cu_seqlens_kv_padded=cu_seqlens,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
+        )
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+            loss_mask=loss_mask,
+            packed_seq_params=packed_seq_params,
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert language_model.last_kwargs is not None
+        assert language_model.last_kwargs["input_ids"].tolist() == [[11, 12, 21, 22]]
+        assert language_model.last_kwargs["position_ids"].shape == (3, 1, 4)
+        assert language_model.last_kwargs["attention_mask"] is None
+        assert language_model.last_kwargs["labels"] is labels
+        assert language_model.last_kwargs["loss_mask"] is loss_mask
+        assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
+        assert language_model.last_kwargs["padding_mask"] is None
+        assert len(preprocess_calls) == 2
+
+    def test_forward_preserves_collate_packed_layout_for_sequence_parallel(self, monkeypatch):
+        """Packed SP forwards the collator's THD tensors and metadata unchanged."""
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=False,
+            config=SimpleNamespace(sequence_parallel=True),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 2),
+                pp=object(),
+            ),
+            language_model=language_model,
+            use_dist_train=False,
+        )
+        cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+        cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+            max_seqlen_q=4,
+            max_seqlen_kv=4,
+        )
+        input_ids = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 0]])
+        position_ids = torch.arange(8).view(1, 1, 8).expand(3, -1, -1).clone()
+        labels = input_ids.clone()
+        loss_mask = torch.tensor([[1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0]])
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            labels=labels,
+            loss_mask=loss_mask,
+            packed_seq_params=packed_seq_params,
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert language_model.last_kwargs is not None
+        assert language_model.last_kwargs["input_ids"] is input_ids
+        assert language_model.last_kwargs["position_ids"] is position_ids
+        assert language_model.last_kwargs["labels"] is labels
+        assert language_model.last_kwargs["loss_mask"] is loss_mask
+        assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
+        assert language_model.last_kwargs["padding_mask"].tolist() == [
+            [False, False, False, True, False, False, False, True]
+        ]
+
+    def test_forward_preserves_pre_sharded_packed_cp_layout_and_selects_vision_embeds(self, monkeypatch):
+        """Pre-sharded CP inputs stay local and select matching vision and deepstack rows."""
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_packed_seq_cp_partition_indices",
+            lambda *_args, **_kwargs: pytest.fail("pre-sharded input must not be partitioned again"),
+        )
+
+        local_vision_mask = torch.tensor([[True, False, True, False]])
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.reorganize_inputs",
+            lambda **_kwargs: (
+                torch.ones((1, 2)),
+                torch.tensor([[1, 1, 1]], dtype=torch.long),
+                local_vision_mask,
+            ),
+        )
+
+        cp_group = SimpleNamespace(size=lambda: 2, rank=lambda: 0)
+
+        def fake_all_gather(outputs, _local_counts, group):
+            assert group is cp_group
+            outputs[0].copy_(torch.tensor([[1, 1]], dtype=torch.long))
+            outputs[1].copy_(torch.tensor([[1, 1]], dtype=torch.long))
+
+        monkeypatch.setattr(torch.distributed, "all_gather", fake_all_gather)
+
+        full_vision_embeds = torch.tensor([[10.0, 10.0], [20.0, 20.0], [30.0, 30.0], [40.0, 40.0]])
+        full_deepstack_embeds = full_vision_embeds + 100.0
+
+        class DummyVisionModel:
+            def __call__(self, **_kwargs):
+                return full_vision_embeds, [full_deepstack_embeds]
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def embedding(self, input_ids, position_ids=None):
+                del position_ids
+                return torch.zeros((input_ids.size(1), input_ids.size(0), 2))
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=True,
+            square_merge_size=1,
+            config=SimpleNamespace(
+                vision_dp_when_cp=False,
+                sequence_parallel=False,
+                spatial_merge_size=1,
+            ),
+            pg_collection=SimpleNamespace(
+                cp=cp_group,
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            vision_model=DummyVisionModel(),
+            image_token_id=1,
+            video_token_id=2,
+            vision_start_token_id=3,
+            use_dist_train=False,
+        )
+        input_ids = torch.tensor([[1, 11, 1, 12]], dtype=torch.long)
+        position_ids = torch.arange(4).reshape(1, 1, 4).expand(3, -1, -1).clone()
+        packed_seq_params = _make_packed_seq_params([0, 8])
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            packed_seq_params=packed_seq_params,
+            pixel_values=torch.ones(1),
+            image_grid_thw=torch.tensor([[1, 1, 1]], dtype=torch.long),
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert language_model.last_kwargs is not None
+        assert language_model.last_kwargs["input_ids"] is input_ids
+        assert language_model.last_kwargs["position_ids"] is position_ids
+        decoder_input = language_model.last_kwargs["decoder_input"].transpose(0, 1)
+        torch.testing.assert_close(decoder_input[local_vision_mask], full_vision_embeds[[0, 3]])
+        assert torch.equal(language_model.last_kwargs["visual_pos_masks"], local_vision_mask)
+        deepstack_embeds = language_model.last_kwargs["deepstack_visual_embeds"]
+        assert deepstack_embeds is not None
+        torch.testing.assert_close(deepstack_embeds[0], full_deepstack_embeds[[0, 3]])
+
+    def test_forward_applies_one_partition_index_to_packed_cp_tensors(self, monkeypatch):
+        """Packed CP slices every sequence-aligned tensor with the same index."""
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+        cp_index = torch.tensor([0, 3, 4, 7], dtype=torch.long)
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_packed_seq_cp_partition_indices",
+            lambda *args, **kwargs: cp_index,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=False,
+            config=SimpleNamespace(sequence_parallel=False),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 2),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            use_dist_train=False,
+        )
+        cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+        cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+            max_seqlen_q=4,
+            max_seqlen_kv=4,
+        )
+        input_ids = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 0]])
+        position_ids = torch.arange(8).view(1, 1, 8).expand(3, -1, -1).clone()
+        labels = input_ids.clone()
+        loss_mask = torch.tensor([[1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0]])
+
+        output, local_loss_mask = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            labels=labels,
+            loss_mask=loss_mask,
+            packed_seq_params=packed_seq_params,
+        )
+
+        assert language_model.last_kwargs is not None
+        assert torch.equal(language_model.last_kwargs["input_ids"], input_ids.index_select(1, cp_index))
+        assert torch.equal(language_model.last_kwargs["position_ids"], position_ids.index_select(2, cp_index))
+        assert torch.equal(language_model.last_kwargs["labels"], labels.index_select(1, cp_index))
+        assert torch.equal(language_model.last_kwargs["loss_mask"], loss_mask.index_select(1, cp_index))
+        assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
+        assert language_model.last_kwargs["attention_mask"] is None
+        assert torch.equal(local_loss_mask, loss_mask.index_select(1, cp_index))
+        assert torch.equal(output, torch.ones(1))
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
+    @pytest.mark.timeout(120)
+    def test_forward_non_dist_train(self, hf_config):
+        """use_dist_train=False, add_encoder=True, add_decoder=True: multimodal forward with both encoder and decoder."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        model = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            vision_transformer_config=vision_transformer_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+        assert model.use_dist_train is False
+        assert model.add_encoder is True and model.add_decoder is True
+
+        model.cuda()
+        batch = self.get_data_batch(hf_config)
+
+        with torch.inference_mode():
+            out = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                pixel_values=batch["pixel_values"],
+                image_grid_thw=batch["image_grid_thw"],
+                pixel_values_videos=batch["pixel_values_videos"],
+                video_grid_thw=batch["video_grid_thw"],
+            )
+
+        assert isinstance(out, torch.Tensor)
+        assert out.dim() >= 2
+
+    @pytest.mark.timeout(50)
+    def test_cuda_graph_helper_aliases_do_not_register_root_modules_when_disabled(self, hf_config):
+        """CUDA graph helper aliases keep checkpoint keys under language_model when disabled."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        language_transformer_config = replace(
+            self.get_language_transformer_config(hf_config),
+            cuda_graph_impl="none",
+        )
+        assert getattr(language_transformer_config, "cuda_graph_impl", None) == "none"
+
+        model = Qwen3VLModel(
+            vision_transformer_config=self.get_vision_transformer_config(hf_config),
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+
+        assert model.decoder is model.language_model.decoder
+        assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+        assert "decoder" not in model._modules
+        assert "rotary_pos_emb" not in model._modules
+        assert getattr(model.language_model.config, "cuda_graph_impl", None) == "none"
+
+    @pytest.mark.timeout(50)
+    def test_cuda_graph_helper_exposed_when_llm_cuda_graph_enabled(self, hf_config):
+        """Root VLM mirrors LM decoder / RoPE for CUDA graph helper when cuda_graph_impl is enabled."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        language_transformer_config = replace(
+            self.get_language_transformer_config(hf_config),
+            cuda_graph_impl="transformer_engine",
+            variable_seq_lengths=False,
+            use_te_rng_tracker=True,
+        )
+
+        model = Qwen3VLModel(
+            vision_transformer_config=self.get_vision_transformer_config(hf_config),
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+
+        assert getattr(language_transformer_config, "cuda_graph_impl", None) == "transformer_engine"
+        assert model.language_model.config.variable_seq_lengths is False
+        assert model.decoder is model.language_model.decoder
+        assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+        assert model.position_embedding_type == model.language_model.position_embedding_type
+        assert "decoder" not in model._modules
+        assert "rotary_pos_emb" not in model._modules

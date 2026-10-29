@@ -144,13 +144,6 @@ def from_hf_pretrained(
     else:
         raise ValueError(f"Unsupported file format: {file_ext}. Supported formats: .yaml, .yml, .json, .toml")
 
-    # Check for trust_remote_code requirement
-    if not trust_remote_code and _contains_code_references(config_dict):
-        raise ValueError(
-            "This configuration contains class or function references. "
-            "Loading it requires trust_remote_code=True to prevent arbitrary code execution."
-        )
-
     # Convert to OmegaConf for compatibility with instantiate
     omega_conf = OmegaConf.create(config_dict)
 
@@ -158,6 +151,16 @@ def from_hf_pretrained(
     if kwargs:
         override_conf = OmegaConf.create(kwargs)
         omega_conf = OmegaConf.merge(omega_conf, override_conf)
+
+    user_config = OmegaConf.to_container(omega_conf, resolve=True)
+
+    # Check for trust_remote_code requirement after merging caller-supplied
+    # overrides so kwargs cannot inject executable targets after validation.
+    if not trust_remote_code and _contains_code_references(user_config):
+        raise ValueError(
+            "This configuration contains class or function references. "
+            "Loading it requires trust_remote_code=True to prevent arbitrary code execution."
+        )
 
     # Add _target_ if not present
     if "_target_" not in omega_conf:
@@ -309,7 +312,30 @@ def _convert_value_to_dict(value: Any) -> Any:
         return value
 
 
-def _contains_code_references(config_dict: Dict[str, Any]) -> bool:
+# Exact set of _target_ values considered safe (no code execution risk).
+# Using an exact-match allowlist prevents bypass via dangerous callables
+# in allowed modules (e.g. builtins.exec, builtins.eval, builtins.__import__).
+_SAFE_TARGETS = frozenset(
+    {
+        "str",
+        "int",
+        "float",
+        "bool",
+        "list",
+        "dict",
+        "tuple",
+        "builtins.str",
+        "builtins.int",
+        "builtins.float",
+        "builtins.bool",
+        "builtins.list",
+        "builtins.dict",
+        "builtins.tuple",
+    }
+)
+
+
+def _contains_code_references(config_dict: Any) -> bool:
     """
     Check if a configuration dictionary contains code references.
 
@@ -321,10 +347,9 @@ def _contains_code_references(config_dict: Dict[str, Any]) -> bool:
     """
     if isinstance(config_dict, dict):
         for key, value in config_dict.items():
-            # Check for _target_ that's not a built-in type
+            # Check for _target_ that's not a safe built-in type
             if key == "_target_" and isinstance(value, str):
-                # Consider it a code reference if it's not a basic type
-                if not value.startswith(("builtins.", "str", "int", "float", "bool", "list", "dict", "tuple")):
+                if value not in _SAFE_TARGETS:
                     return True
             # Check for _call_ = False which indicates a code reference
             if key == "_call_" and value is False:

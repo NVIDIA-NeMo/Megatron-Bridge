@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from huggingface_hub import constants as hf_constants
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
@@ -31,12 +32,18 @@ from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_co
 class TestSafeLoadConfigWithRetry:
     """Test suite for safe_load_config_with_retry function."""
 
+    @pytest.fixture(autouse=True)
+    def isolate_loader_time(self):
+        """Keep retry clock patches local to the loader, including jitter patches."""
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time", wraps=time):
+            yield
+
     def setup_method(self):
         """Set up test fixtures before each test method."""
         self.mock_config = MagicMock(spec=PretrainedConfig)
         self.mock_config.model_type = "llama"
         self.mock_config.architectures = ["LlamaForCausalLM"]
-        self.test_path = "meta-llama/Llama-2-7b-hf"
+        self.test_path = "meta-llama/Meta-Llama-3-8B"
 
     def test_basic_successful_load(self):
         """Test basic successful configuration loading."""
@@ -88,9 +95,7 @@ class TestSafeLoadConfigWithRetry:
 
                 # Verify file lock was used
                 expected_hash = hashlib.md5(str(self.test_path).encode()).hexdigest()
-                expected_lock_file = (
-                    Path.home() / ".cache" / "huggingface" / f".megatron_config_lock_{expected_hash}.lock"
-                )
+                expected_lock_file = Path(hf_constants.HF_HOME) / f".megatron_config_lock_{expected_hash}.lock"
                 mock_filelock.assert_called_once_with(str(expected_lock_file), timeout=60)
 
                 # Verify context manager was used
@@ -99,15 +104,23 @@ class TestSafeLoadConfigWithRetry:
 
                 assert result == self.mock_config
 
-    def test_retry_on_transient_failure(self):
+    @pytest.mark.parametrize("unrelated_sleep", [False, True])
+    def test_retry_on_transient_failure(self, unrelated_sleep):
         """Test retry mechanism on transient network failures."""
         with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             # First two calls fail, third succeeds
-            mock_auto_config.from_pretrained.side_effect = [
-                Exception("Connection timeout"),
-                Exception("Temporary network error"),
-                self.mock_config,
-            ]
+            outcomes = iter([Exception("Connection timeout"), Exception("Temporary network error"), self.mock_config])
+
+            def from_pretrained(*args, **kwargs):
+                # Other consumers of time must not affect the loader's retry accounting.
+                if unrelated_sleep:
+                    time.sleep(0)
+                outcome = next(outcomes)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+            mock_auto_config.from_pretrained.side_effect = from_pretrained
 
             with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.sleep") as mock_sleep:
                 result = safe_load_config_with_retry(self.test_path, max_retries=3, base_delay=0.1)
@@ -280,9 +293,7 @@ class TestSafeLoadConfigWithRetry:
 
                     # Verify unique lock file for each path
                     expected_hash = hashlib.md5(str(path).encode()).hexdigest()
-                    expected_lock_file = (
-                        Path.home() / ".cache" / "huggingface" / f".megatron_config_lock_{expected_hash}.lock"
-                    )
+                    expected_lock_file = Path(hf_constants.HF_HOME) / f".megatron_config_lock_{expected_hash}.lock"
 
                     # Check that FileLock was called with the correct path
                     found_call = False
@@ -339,12 +350,12 @@ class TestSafeLoadConfigWithRetry:
                 mock_auto_config.from_pretrained.assert_called_with(path, trust_remote_code=False)
                 mock_auto_config.reset_mock()
 
-    def test_custom_lock_directory_env_var(self):
+    def test_custom_lock_directory_env_var(self, tmp_path):
         """Test that MEGATRON_CONFIG_LOCK_DIR environment variable overrides default lock directory."""
         mock_lock = MagicMock()
-        custom_lock_dir = "/custom/locks"
+        custom_lock_dir = tmp_path / "locks"
 
-        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": custom_lock_dir}):
+        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": str(custom_lock_dir)}):
             with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
                 mock_filelock.return_value = mock_lock
                 mock_lock.__enter__ = Mock(return_value=mock_lock)
@@ -380,20 +391,57 @@ class TestSafeLoadConfigWithRetry:
 
                     # Verify default lock directory was used
                     expected_hash = hashlib.md5(str(self.test_path).encode()).hexdigest()
-                    expected_lock_file = (
-                        Path.home() / ".cache" / "huggingface" / f".megatron_config_lock_{expected_hash}.lock"
-                    )
+                    expected_lock_file = Path(hf_constants.HF_HOME) / f".megatron_config_lock_{expected_hash}.lock"
                     mock_filelock.assert_called_once_with(str(expected_lock_file), timeout=60)
 
                     assert result == self.mock_config
 
-    def test_custom_lock_directory_with_pathlib_path(self):
+    def test_default_lock_directory_follows_hf_home(self, tmp_path):
+        """Without MEGATRON_CONFIG_LOCK_DIR the lock lives under HF_HOME, not under $HOME."""
+        mock_lock = MagicMock()
+        hf_home = tmp_path / "hf_home"
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.hf_constants.HF_HOME", str(hf_home)):
+                with patch(
+                    "megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock"
+                ) as mock_filelock:
+                    mock_filelock.return_value = mock_lock
+                    mock_lock.__enter__ = Mock(return_value=mock_lock)
+                    mock_lock.__exit__ = Mock(return_value=None)
+
+                    with patch(
+                        "megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig"
+                    ) as mock_auto_config:
+                        mock_auto_config.from_pretrained.return_value = self.mock_config
+
+                        result = safe_load_config_with_retry(self.test_path)
+
+                        expected_hash = hashlib.md5(str(self.test_path).encode()).hexdigest()
+                        expected_lock_file = hf_home / f".megatron_config_lock_{expected_hash}.lock"
+                        mock_filelock.assert_called_once_with(str(expected_lock_file), timeout=60)
+                        assert hf_home.is_dir()
+                        assert result == self.mock_config
+
+    def test_lock_timeout_error_mentions_override(self):
+        """A lock timeout on every attempt surfaces the MEGATRON_CONFIG_LOCK_DIR hint."""
+        import filelock
+
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
+            mock_filelock.return_value.__enter__ = Mock(side_effect=filelock.Timeout("/tmp/some.lock"))
+            mock_filelock.return_value.__exit__ = Mock(return_value=None)
+
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.sleep"):
+                with pytest.raises(ValueError, match="MEGATRON_CONFIG_LOCK_DIR"):
+                    safe_load_config_with_retry(self.test_path, max_retries=1)
+
+    def test_custom_lock_directory_with_pathlib_path(self, tmp_path):
         """Test that custom lock directory works with pathlib.Path inputs."""
         mock_lock = MagicMock()
-        custom_lock_dir = "/shared/cluster/locks"
+        custom_lock_dir = tmp_path / "locks"
         path_obj = Path(self.test_path)
 
-        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": custom_lock_dir}):
+        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": str(custom_lock_dir)}):
             with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
                 mock_filelock.return_value = mock_lock
                 mock_lock.__enter__ = Mock(return_value=mock_lock)
@@ -437,13 +485,13 @@ class TestSafeLoadConfigWithRetry:
                         # Verify directory creation was attempted
                         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
-    def test_different_paths_different_locks_with_custom_dir(self):
+    def test_different_paths_different_locks_with_custom_dir(self, tmp_path):
         """Test that different model paths create different lock files in custom directory."""
         mock_lock = MagicMock()
-        custom_lock_dir = "/cluster/shared/locks"
+        custom_lock_dir = tmp_path / "locks"
         test_paths = ["model1", "model2", "org/model-name"]
 
-        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": custom_lock_dir}):
+        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": str(custom_lock_dir)}):
             with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
                 mock_filelock.return_value = mock_lock
                 mock_lock.__enter__ = Mock(return_value=mock_lock)

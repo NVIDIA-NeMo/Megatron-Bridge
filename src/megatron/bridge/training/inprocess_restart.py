@@ -48,14 +48,18 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
     ):
         warnings.warn("Set TORCH_CPP_LOG_LEVEL=error to suppress c10d waitForInput timeout warning messages")
 
+    active_world_size = config.active_world_size
+    if active_world_size is None:
+        active_world_size = int(os.getenv("WORLD_SIZE", "1"))
+
     # Layers represents a configuration for a layer of branches at a certain
     # depth in a topology tree constructed by inprocess.rank_assignment.Tree.
     # First layer contains all ranks and it's the root of the topology tree,
     # the second optional layer groups ranks by nodes.
     layers = [
         inprocess.rank_assignment.Layer(
-            min_ranks=config.active_world_size,
-            max_ranks=config.active_world_size,
+            min_ranks=active_world_size,
+            max_ranks=active_world_size,
             flag=inprocess.rank_assignment.LayerFlag.RESERVE,
         )
     ]
@@ -89,7 +93,10 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
         finalize.append(inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=torch.cuda.empty_cache))
 
     initialize = inprocess.Compose(
-        inprocess.initialize.RetryController(min_world_size=config.active_world_size),
+        inprocess.initialize.RetryController(
+            max_iterations=config.max_iterations,
+            min_world_size=active_world_size,
+        ),
         inprocess.nested_restarter.NestedRestarterHandlingCompleted(),
     )
 
@@ -102,13 +109,24 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
                     async_calls_queue.close(abort=True)
                     global_state._async_calls_queue = None
 
-                from megatron.core.dist_checkpointing.strategies.filesystem_async import _results_queue
+                from nvidia_resiliency_ext.checkpointing.async_ckpt import (
+                    filesystem_async as nvrx_filesystem_async,
+                )
 
-                global _results_queue
+                filesystems = [nvrx_filesystem_async]
+                try:
+                    from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+                except ImportError:
+                    pass  # New MCore delegates async checkpointing entirely to NVRx.
+                else:
+                    filesystems.append(mcore_filesystem_async)
 
-                if _results_queue is not None:
-                    _results_queue._manager.shutdown()
-                    del _results_queue
+                for filesystem_async in filesystems:
+                    if filesystem_async._results_queue is not None:
+                        try:
+                            filesystem_async._results_queue._manager.shutdown()
+                        finally:
+                            filesystem_async._results_queue = None
 
             except Exception:
                 pass
@@ -153,14 +171,11 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
     #   Optional[CallWrapper] or CallWrapper after binding arguments
     # - Our _pretrain function expects the CallWrapper as a keyword argument named
     #   'inprocess_call_wrapper', but NVRx may pass it differently
-    # - This adapter ensures compatibility by extracting the CallWrapper and passing
-    #   it correctly to the actual training function
-    def _adapter(*args, **kwargs):
-        # Extract the injected CallWrapper from kwargs if NVRx placed it there
-        call_wrapper = kwargs.pop("inprocess_call_wrapper", None)
-
+    # - This adapter exposes the annotated parameter NVRx needs for injection and
+    #   passes it correctly to the actual training function
+    def _adapter(*args, inprocess_call_wrapper: Optional[inprocess.CallWrapper] = None, **kwargs):
         # Call the actual training function with the CallWrapper as expected keyword arg
-        result = train_fn(*args, inprocess_call_wrapper=call_wrapper, **kwargs)
+        result = train_fn(*args, inprocess_call_wrapper=inprocess_call_wrapper, **kwargs)
         return result
 
     new_train_fn = inprocess.Wrapper(

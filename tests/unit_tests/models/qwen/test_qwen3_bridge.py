@@ -13,16 +13,19 @@
 # limitations under the License.
 
 import tempfile
+from dataclasses import fields
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import Qwen2Config, Qwen3ForCausalLM
+import torch.nn.functional as F
+from transformers import Qwen2Config, Qwen3Config, Qwen3ForCausalLM
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
@@ -85,6 +88,157 @@ class TestMegatronQwen3Bridge:
         # The @MegatronModelBridge.register_bridge decorator should register the bridge
         # Check that the class exists and has the expected base class
         assert issubclass(Qwen3Bridge, MegatronModelBridge)
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        """Qwen3 should not maintain a separate provider construction path."""
+        assert "provider_bridge" not in Qwen3Bridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        """Checkpoint conversion constructs Qwen3 through its ModelBuilder."""
+        assert Qwen3Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self, mock_pretrained_qwen3, qwen3_config):
+        """The builder config path must not route through the legacy provider."""
+        bridge = Qwen3Bridge()
+
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(
+                bridge,
+                "hf_config_to_provider_kwargs",
+                side_effect=AssertionError("provider kwargs path used"),
+            ),
+        ):
+            result = bridge.hf_config_to_model_config(mock_pretrained_qwen3.config)
+
+        assert isinstance(result, BridgeGPTModelConfig)
+        assert result.num_layers == qwen3_config.num_hidden_layers
+        assert result.hidden_size == qwen3_config.hidden_size
+        assert result.ffn_hidden_size == qwen3_config.intermediate_size
+        assert result.num_attention_heads == qwen3_config.num_attention_heads
+        assert result.num_query_groups == qwen3_config.num_key_value_heads
+        assert result.seq_length == qwen3_config.max_position_embeddings
+        assert result.rotary_base == rope_theta_from_hf(qwen3_config)
+        assert result.vocab_size == qwen3_config.vocab_size
+        assert result.share_embeddings_and_output_weights is True
+        assert result.layernorm_epsilon == qwen3_config.rms_norm_eps
+        assert result.activation_func is F.silu
+        assert result.normalization == "RMSNorm"
+        assert result.gated_linear_unit is True
+        assert result.add_bias_linear is False
+        assert result.add_qkv_bias is False
+        assert result.qk_layernorm is True
+        assert result.hidden_dropout == 0.0
+        assert result.position_embedding_type == "rope"
+
+    @pytest.mark.parametrize(
+        ("tie_word_embeddings", "torch_dtype", "rope_scaling"),
+        [
+            (True, "bfloat16", None),
+            (False, "float16", None),
+            (True, "bfloat16", {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 40960}),
+        ],
+        ids=["tied-bf16", "untied-fp16", "yarn"],
+    )
+    def test_model_config_matches_provider_runtime_config(self, tie_word_embeddings, torch_dtype, rope_scaling):
+        """Builder and provider paths agree on every comparable runtime field."""
+        config = Qwen3Config(
+            architectures=["Qwen3ForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            head_dim=16,
+            max_position_embeddings=40960,
+            num_attention_heads=8,
+            num_hidden_layers=2,
+            num_key_value_heads=4,
+            rms_norm_eps=1e-6,
+            rope_scaling=rope_scaling,
+            rope_theta=1000000.0,
+            tie_word_embeddings=tie_word_embeddings,
+            torch_dtype=torch_dtype,
+            vocab_size=128,
+        )
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = Qwen3Bridge()
+
+        mapped_kwargs = bridge.hf_config_to_model_config_kwargs(config)
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
+
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        comparable_fields = sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"})
+
+        assert set(mapped_kwargs) <= set(comparable_fields)
+        assert len(comparable_fields) > len(mapped_kwargs)
+        for field_name in comparable_fields:
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+        # The provider stores its model-construction callable directly; the new
+        # config intentionally delegates layer-spec selection to its builder.
+        assert model_config.transformer_layer_spec is None
+        assert callable(provider.transformer_layer_spec)
+
+    def test_model_config_maps_yarn_to_transformer_config(self):
+        """YaRN checkpoints keep YaRN and place its parameters where Megatron Core reads them."""
+        config = Qwen3Config(
+            architectures=["Qwen3ForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            head_dim=16,
+            max_position_embeddings=131072,
+            num_attention_heads=8,
+            num_hidden_layers=2,
+            num_key_value_heads=4,
+            rope_scaling={"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768},
+            vocab_size=128,
+        )
+
+        result = Qwen3Bridge().hf_config_to_model_config(config)
+
+        assert result.position_embedding_type == "yarn"
+        assert result.transformer.yarn_rotary_scaling_factor == 4.0
+        assert result.transformer.yarn_original_max_position_embeddings == 32768
+        # Absent keys take the Hugging Face YaRN defaults rather than None.
+        assert result.transformer.yarn_beta_fast == 32.0
+        assert result.transformer.yarn_beta_slow == 1.0
+        assert result.transformer.yarn_correction_range_round_to_int is True
+
+        hf_config = Qwen3Bridge.megatron_to_hf_config(result)
+        assert hf_config["rope_scaling"]["rope_type"] == "yarn"
+        assert hf_config["rope_scaling"]["factor"] == 4.0
+        assert hf_config["rope_scaling"]["original_max_position_embeddings"] == 32768
+
+    def test_model_config_preserves_explicit_yarn_parameters(self):
+        """Explicit YaRN keys from the checkpoint win over the Hugging Face defaults."""
+        config = Qwen3Config(
+            architectures=["Qwen3ForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            head_dim=16,
+            max_position_embeddings=131072,
+            num_attention_heads=8,
+            num_hidden_layers=2,
+            num_key_value_heads=4,
+            rope_scaling={
+                "rope_type": "yarn",
+                "factor": 4.0,
+                "original_max_position_embeddings": 32768,
+                "beta_fast": 16.0,
+                "beta_slow": 2.0,
+                "truncate": False,
+            },
+            vocab_size=128,
+        )
+
+        result = Qwen3Bridge().hf_config_to_model_config(config)
+
+        assert result.transformer.yarn_beta_fast == 16.0
+        assert result.transformer.yarn_beta_slow == 2.0
+        assert result.transformer.yarn_correction_range_round_to_int is False
 
     def test_provider_bridge_basic(self, mock_pretrained_qwen3, qwen3_config):
         """Test basic provider_bridge functionality."""
@@ -447,61 +601,49 @@ class TestAutoBridgeIntegration:
         non_causal_config.architectures = ["Qwen2Model"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
 
-    def test_list_supported_models(self):
-        """Test list_supported_models includes Qwen3ForCausalLM."""
-        # This test requires the dispatch system to be set up
-        # Since we're testing in isolation, we'll skip this test
-        # In a real environment, this would work if the bridges are registered
-        pass  # Skip for now as it requires full dispatch setup
 
+class TestQwen3BridgeMTPMapping:
+    """Tests for MTP (Multi-Token Prediction) weight mappings in Qwen3Bridge.
 
-class TestQwen3BridgeParameterMapping:
-    """Test parameter mapping functionality in Qwen3Bridge."""
+    Covers the regression reported in GitHub issue #3348 where
+    AutoBridge.export_ckpt() silently dropped all MTP parameters because
+    Qwen3Bridge had no megatron_to_hf mappings for any mtp.* keys.
+    """
 
-    @pytest.fixture
-    def mock_qwen3_state_dict(self):
-        """Create a mock state dict with Qwen3 parameter names."""
-        return {
-            "model.embed_tokens.weight": torch.randn(151936, 2048),
-            "lm_head.weight": torch.randn(151936, 2048),
-            "model.norm.weight": torch.randn(2048),
-            "model.layers.0.input_layernorm.weight": torch.randn(2048),
-            "model.layers.0.post_attention_layernorm.weight": torch.randn(2048),
-            "model.layers.0.self_attn.q_norm.weight": torch.randn(256),  # Qwen3 specific
-            "model.layers.0.self_attn.k_norm.weight": torch.randn(256),  # Qwen3 specific
-            "model.layers.0.self_attn.q_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.self_attn.k_proj.weight": torch.randn(1024, 2048),
-            "model.layers.0.self_attn.v_proj.weight": torch.randn(1024, 2048),
-            "model.layers.0.self_attn.o_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.mlp.gate_proj.weight": torch.randn(6144, 2048),
-            "model.layers.0.mlp.up_proj.weight": torch.randn(6144, 2048),
-            "model.layers.0.mlp.down_proj.weight": torch.randn(2048, 6144),
-        }
+    # All Megatron-side MTP parameter patterns exactly as stored in the registry.
+    # Derived from the WARNING lines in issue #3348 plus the full MTP
+    # parameter set seen in Qwen3NextBridge (which already had MTP support).
+    # Note: QKVMapping uses a wildcard pattern (mtp.layers.*) while all
+    # AutoMapping / GatedMLPMapping entries use a concrete index (mtp.layers.0).
+    EXPECTED_MTP_MEGATRON_PARAMS: tuple = (
+        "mtp.layers.0.eh_proj.weight",
+        "mtp.layers.0.enorm.weight",
+        "mtp.layers.0.hnorm.weight",
+        "mtp.layers.0.final_layernorm.weight",
+        "mtp.layers.0.mtp_model_layer.self_attention.linear_qkv.layer_norm_weight",
+        "mtp.layers.0.mtp_model_layer.self_attention.q_layernorm.weight",
+        "mtp.layers.0.mtp_model_layer.self_attention.k_layernorm.weight",
+        "mtp.layers.0.mtp_model_layer.self_attention.linear_proj.weight",
+        # QKVMapping stores a wildcard pattern, not a concrete layer index
+        "mtp.layers.*.mtp_model_layer.self_attention.linear_qkv.weight",
+        "mtp.layers.0.mtp_model_layer.mlp.linear_fc1.layer_norm_weight",
+        "mtp.layers.0.mtp_model_layer.mlp.linear_fc1.weight",
+        "mtp.layers.0.mtp_model_layer.mlp.linear_fc2.weight",
+    )
 
-    def test_mapping_registry_has_qwen3_specific_mappings(self):
-        """Test that mapping registry includes Qwen3-specific QK norm mappings."""
+    def _get_all_megatron_params(self, mapping_registry):
+        """Return the set of Megatron parameter patterns as stored in the registry."""
+        return {mapping.megatron_param for mapping in mapping_registry.get_all_mappings()}
+
+    def test_mtp_params_are_registered(self):
+        """All MTP Megatron parameter patterns must appear in the mapping registry."""
         bridge = Qwen3Bridge()
-        mapping_registry = bridge.mapping_registry()
+        registry = bridge.mapping_registry()
+        registered = self._get_all_megatron_params(registry)
 
-        # This test verifies that the mapping registry was created
-        # The actual parameter mappings are tested in integration tests
-        assert mapping_registry is not None
-
-    def test_qwen3_qk_norm_mapping_difference(self):
-        """Test that Qwen3 bridge includes QK norm mappings not present in Qwen2."""
-        bridge = Qwen3Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Qwen3 should have QK norm mappings
-        # This is implicitly tested by the bridge's mapping_registry method
-        # which includes the QK norm parameter mappings
-        assert mapping_registry is not None
-
-    def test_qwen3_no_qkv_bias_mapping(self):
-        """Test that Qwen3 bridge doesn't include QKV bias mappings."""
-        bridge = Qwen3Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Qwen3 doesn't have QKV bias, unlike Qwen2
-        # This is reflected in the QKVMapping not including bias terms
-        assert mapping_registry is not None
+        missing = [p for p in self.EXPECTED_MTP_MEGATRON_PARAMS if p not in registered]
+        assert not missing, (
+            f"Qwen3Bridge.mapping_registry() is missing MTP mappings for: {missing}\n"
+            "These parameters are silently dropped during AutoBridge.export_ckpt() "
+            "when mtp_num_layers >= 1 (see issue #3348)."
+        )

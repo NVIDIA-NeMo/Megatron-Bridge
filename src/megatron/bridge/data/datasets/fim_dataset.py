@@ -229,7 +229,10 @@ class GPTFIMDataset(GPTDataset):
         Maintain the same sample length (if transform creates a few extra tokens, drop them).
         """
         if self.np_rng.binomial(1, fim_rate):  # sample bernoulli dist
-            contents = tokenizer._tokenizer.ids_to_text(sample)
+            if tokenizer.library == "huggingface":
+                contents = tokenizer._tokenizer.ids_to_text(sample, remove_special_tokens=True)
+            else:
+                contents = tokenizer._tokenizer.ids_to_text(sample)
 
             # Do not apply FIM if the sample starts with no_fim_prefix
             if no_fim_prefix is not None and contents.startswith(no_fim_prefix):

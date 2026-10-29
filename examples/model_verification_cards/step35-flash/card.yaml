@@ -1,0 +1,278 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: step35_flash
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. This card intentionally limits its current verification scope to
+  model-level conversion, parity, and checkpoint-backed inference for the
+  pinned Step-3.5-Flash checkpoint. Training verification is deferred and no
+  training-support result is claimed by this card. Five model-level items are
+  verified; manual HF/Megatron logit correlation remains unverified because
+  the observed cosine similarity is below the required gate.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - inference
+    unverified:
+      - manual_forward_pass
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: stepfun-ai/Step-3.5-Flash
+  hf_revision: ab446a3de5e171ea341227e24bb1f090e1b771f7  # pragma: allowlist secret
+  architecture: Step3p5ForCausalLM
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: d5c416c50e60a6fa2ddb4a840d2ff036a08ce864  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    bridge_commit: dd0fe603c598d1e031ada0f1af4c5040b237cdef  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu
+      --nodes 1 --hf-model stepfun-ai/Step-3.5-Flash
+      --hf-revision ab446a3de5e171ea341227e24bb1f090e1b771f7
+      --megatron-path work/model-verification/step35-flash/cpu-megatron
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: 2026-08-05
+    expected_result: >
+      CPU import completed all mappings for the immutable 44-shard source,
+      constructed 199,997,706,240 parameters, and created iter_0000000. The
+      checkpoint reloaded successfully for CPU export; its subsequent strict
+      audit covered all 804 source tensors.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    bridge_commit: dd0fe603c598d1e031ada0f1af4c5040b237cdef  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model stepfun-ai/Step-3.5-Flash
+      --hf-revision ab446a3de5e171ea341227e24bb1f090e1b771f7
+      --megatron-path work/model-verification/step35-flash/imported-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --distributed-timeout-minutes 110 --trust-remote-code --low-memory-save
+    last_verified: 2026-08-05
+    expected_result: >
+      Distributed import completed at TP1/PP1/EP8/ETP1, constructed
+      33,525,780,480 parameters per rank, and created iter_0000000. The
+      persisted checkpoint then reloaded successfully for both distributed
+      export and checkpoint-backed generation.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model stepfun-ai/Step-3.5-Flash
+      --hf-revision ab446a3de5e171ea341227e24bb1f090e1b771f7
+      --megatron-path
+      work/model-verification/step35-flash/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/step35-flash/cpu-hf-export
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: 2026-08-05
+    expected_result: >
+      CPU export reloaded the imported checkpoint and wrote 44 indexed BF16
+      shards with all 804 source keys, shapes, and dtypes. Of 398,768,626,944
+      serialized bytes, 395,600,878,848 bytes across 801 tensors matched the
+      immutable source bitwise. The three published MTP output entries occupy
+      3,167,748,096 bytes and were intentionally materialized from Megatron's
+      shared lm_head representation; each exported entry matched lm_head
+      bitwise and used independent safetensors storage. A Transformers reload
+      through the pinned checkpoint's metadata/RoPE compatibility view ignored
+      only the three published inference-unused MTP layers, predicted the same
+      next token as the source (' Paris'), and reached cosine similarity
+      0.997260 with maximum/mean absolute logit differences 1.320312/0.209649.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 0b5cc0206e77b4d18139c2ff4fc0d353ea260c20  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model stepfun-ai/Step-3.5-Flash
+      --hf-revision ab446a3de5e171ea341227e24bb1f090e1b771f7
+      --megatron-path
+      work/model-verification/step35-flash/imported-megatron/iter_0000000
+      --hf-path work/model-verification/step35-flash/hf-export
+      --torch-dtype bfloat16
+      --tp 1 --pp 1 --ep 8 --etp 1 --distributed-timeout-minutes 110
+      --distributed-save --save-every-n-ranks 1 --no-progress
+      --trust-remote-code
+    last_verified: 2026-08-05
+    expected_result: >
+      Distributed export reloaded the TP1/PP1/EP8/ETP1 checkpoint and wrote 44
+      indexed BF16 shards with all 804 source keys, shapes, and dtypes. The
+      exact audit found 801 tensors and 395,600,878,848 bytes bit-identical to
+      the source. Megatron-Core shares the output head with MTP, so the three
+      source MTP output tensors were explicitly normalized to lm_head.weight;
+      all three exported copies matched that tensor bitwise and had independent
+      storage. The generic grouped-expert export path recovered from CUDA stack
+      pressure by moving only the affected merge to CPU. A Transformers reload
+      through the pinned checkpoint's metadata/RoPE compatibility view ignored
+      only the three published inference-unused MTP layers, predicted the same
+      next token as the source (' Paris'), and reached cosine similarity
+      0.997260 with maximum/mean absolute logit differences 1.320312/0.209649.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      The 2026-08-05 full-checkpoint attempt used the public model-comparison
+      launcher and memory-bounded pinned-HF reference logits for input IDs
+      [0, 671, 6102, 294, 8760, 344]. Hugging Face and Megatron both predicted
+      token 11111 (' Paris'), but cosine similarity was 0.987008, below the
+      required 0.99 gate; maximum and mean absolute logit differences were
+      4.937500 and 1.064947. Exact weight audits passed, so this remains an
+      unverified runtime-architecture/configuration follow-up rather than a
+      conversion-key mismatch. A future rerun must preserve the next-token
+      match and reach cosine similarity of at least 0.99.
+
+  inference:
+    status: verified
+    precision: bf16
+    bridge_commit: dd0fe603c598d1e031ada0f1af4c5040b237cdef  # pragma: allowlist secret
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task legacy-full-prefix-generation
+      --hf_model_path stepfun-ai/Step-3.5-Flash
+      --hf-revision ab446a3de5e171ea341227e24bb1f090e1b771f7
+      --megatron_model_path
+      work/model-verification/step35-flash/imported-megatron/iter_0000000
+      --tp 1 --pp 1 --ep 8 --etp 1
+      --prompt $'\u003c|im_start|\u003euser\nReply with exactly OK and nothing
+      else.\u003c|im_end|\u003e\n\u003c|im_start|\u003eassistant'
+      --max_new_tokens 32 --legacy-full-prefix --trust-remote-code
+    last_verified: 2026-08-05
+    expected_result: >
+      Two deterministic greedy runs reloaded the persisted TP1/PP1/EP8/ETP1
+      checkpoint and produced the byte-identical 7-token completion
+      "\nOK\n\u003c/think\u003e\nOK" before reaching EOS naturally, below the
+      configured 32-token maximum. The load produced 6,464 known CPU-merge
+      fallback warnings and briefly peaked at 80,974 MiB per rank, but cleanup
+      reduced post-load residency to 65,466 MiB and the first forward peaked
+      at 69,646 MiB. The original retained 77.6-GiB state, OOM, and empty
+      generation did not recur.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        context_parallel_size: 8
+        moe_dispatcher: deepep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The public Step-3.5-Flash H100 recipe must complete a bounded 100-step
+        run with finite loss, no skipped or NaN iterations, all five metrics,
+        and a reloadable final checkpoint. Training is deferred by this card.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A pinned-data 100-step full-SFT run must finish with finite loss, no
+        skipped or NaN iterations, all five metrics, and a reloadable final
+        checkpoint. Training is deferred by this card.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        A verified SFT checkpoint must export to Hugging Face, strictly reload,
+        and produce deterministic checkpoint-backed inference. Training and
+        post-SFT export verification are deferred by this card.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A dedicated packed long-context SFT run must complete 100 steps with
+        finite loss, no skipped or NaN iterations, all five metrics, and a
+        reloadable checkpoint. Training is deferred by this card.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A Step-3.5-Flash PEFT recipe with an audited adapter target set must
+        complete 100 steps with finite loss, all five metrics, and a reloadable
+        adapter checkpoint. Training is deferred by this card.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        A direct continuation must restore model, optimizer, scheduler,
+        data-order, and RNG state, match declared sentinel losses, and save a
+        reloadable checkpoint to a distinct output root. Training is deferred
+        by this card.

@@ -13,16 +13,18 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Dict, Mapping
+from typing import Dict, Mapping, Union
 
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
-from megatron.bridge.models.conversion.param_mapping import AutoMapping
-from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.deepseek.attention import (
+    get_deepseek_decoder_block_spec,
+    replace_mla_self_attention,
+)
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -36,6 +38,12 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 
+__all__ = ["DeepSeekV3Bridge", "_dequant_fp8_blockwise"]
+
+
+_dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
+
+
 @MegatronModelBridge.register_bridge(
     source="DeepseekV3ForCausalLM",
     target=GPTModel,
@@ -45,14 +53,46 @@ except (ImportError, ModuleNotFoundError):
 class DeepSeekV3Bridge(MegatronModelBridge):
     """Megatron Bridge for DeepSeek-V3."""
 
+    @staticmethod
+    def generate_pipeline_layout(num_layers: int, pp: int, mtp_layers: int = 1) -> list[list[str]]:
+        """Generate a pipeline-parallel layout for DeepSeek V3 conversion.
+
+        DeepSeek V3 has 61 decoder layers, so the model cannot use ordinary
+        pipeline partitioning for the practical PP sizes needed to hold the
+        full checkpoint. The conversion launcher calls this hook to distribute
+        decoder layers unevenly while keeping embeddings on the first stage and
+        MTP plus loss on the last stage.
+
+        Args:
+            num_layers: Number of decoder layers.
+            pp: Pipeline parallel size.
+            mtp_layers: Number of MTP layers.
+
+        Returns:
+            A flexible pipeline layout with exactly ``pp`` stages.
+        """
+        base_layers, extra_layers = divmod(num_layers, pp)
+        layout: list[list[str]] = []
+        for pp_rank in range(pp):
+            stage = ["decoder"] * (base_layers + int(pp_rank < extra_layers))
+            if pp_rank == 0:
+                stage.insert(0, "embedding")
+            if pp_rank == pp - 1:
+                stage.extend(["mtp"] * mtp_layers)
+                stage.append("loss")
+            layout.append(stage)
+        return layout
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = partial(get_deepseek_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        # A standalone MTP stage has no decoder layers, so the provider re-derives its
+        # layer spec from MCore and never calls the builder above. Re-apply the swap there.
+        provider.mtp_layer_spec_transform = replace_mla_self_attention
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.share_embeddings_and_output_weights = False
         provider.qk_layernorm = True
@@ -62,47 +102,105 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_router_pre_softmax = True
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_router_load_balancing_type = "seq_aux_loss"
+        # The released V3 configs omit this training-only hyperparameter, but V3 uses a
+        # small complementary sequence-wise loss alongside expert-bias load balancing.
+        provider.moe_aux_loss_coeff = getattr(hf_config, "aux_loss_alpha", 0.0001)
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
-        provider.moe_aux_loss_coeff = 0.0001
 
         provider.apply_rope_fusion = False
+        provider.gradient_accumulation_fusion = True
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
         provider.cross_entropy_fusion_impl = "te"
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
-        provider.gradient_accumulation_fusion = True
 
         provider.hidden_dropout = 0.0
         provider.attention_softmax_in_fp32 = False
 
         provider.make_vocab_size_divisible_by = 1280
-        provider.seq_length = 4096
 
         provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
 
-        # TODO: mtp
-        provider.mtp_num_layers = None
+        provider.mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or None
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: MLAModelProvider) -> dict:
+        hf_cfg = super(DeepSeekV3Bridge, cls).megatron_to_hf_config(provider)
+
+        # Megatron uses None="not set/disabled", but HF expects integers
+        hf_cfg["num_nextn_predict_layers"] = hf_cfg.get("num_nextn_predict_layers") or 0
+        hf_cfg["n_group"] = hf_cfg.get("n_group") or 1
+        hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
+
+        # Reconstruct first_k_dense_replace from moe_layer_freq (count leading dense layers)
+        moe_layer_freq = getattr(provider, "moe_layer_freq", None)
+        if moe_layer_freq is not None and isinstance(moe_layer_freq, list):
+            first_k_dense_replace = 0
+            for val in moe_layer_freq:
+                if val == 0:
+                    first_k_dense_replace += 1
+                else:
+                    break
+            hf_cfg["first_k_dense_replace"] = first_k_dense_replace
+
+        # Reconstruct n_shared_experts from moe_shared_expert_intermediate_size / moe_ffn_hidden_size
+        shared_size = getattr(provider, "moe_shared_expert_intermediate_size", None)
+        moe_ffn = getattr(provider, "moe_ffn_hidden_size", None)
+        if shared_size is not None and moe_ffn is not None and moe_ffn > 0:
+            hf_cfg["n_shared_experts"] = shared_size // moe_ffn
+
+        return hf_cfg
+
     def mapping_registry(self) -> MegatronMappingRegistry:
-        mapping_list = get_common_mapping_list()
-        mapping_list.append(
-            AutoMapping(
-                megatron_param="decoder.layers.*.mlp.router.expert_bias",
-                hf_param="model.layers.*.mlp.gate.e_score_correction_bias",
-            )
-        )
+        mapping_list = get_common_mapping_list(hf_config=self.hf_config)
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: Union[str, dict[str, str]],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
+        """Load HF weights and dequantize FP8 tensors on the fly.
+
+        DeepSeek-V3 ships linear weights as ``float8_e4m3fn`` with per-block scale
+        factors stored in ``<key>_scale_inv`` (128x128 blocks). The true bf16 weight is::
+
+            w_bf16 = fp8_weight.float() * scale_inv_block
+
+        Without this override the bridge would do a bare ``.to(bf16)`` cast in
+        ``ColumnParallelMapping.hf_to_megatron`` (param_mapping.py:905), discarding the
+        per-block scales — the resulting model produces random-looking logits.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+        if isinstance(hf_weights, dict):
+            # Compound params (QKV / GatedMLP): dequantize each component individually.
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Dequantize ``weight`` if it is stored as FP8 with a matching ``*_scale_inv``."""
+        scale_key = param_name + "_scale_inv"
+        return quantization_utils.maybe_dequantize_fp8_blockwise(weight, hf_state_dict.get(scale_key))
 
     def maybe_modify_converted_hf_weight(
         self,
@@ -110,8 +208,26 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Add rotary embedding inverse frequency parameter if needed."""
+        """Preserve source-required shared MTP aliases and rotary frequencies."""
         global_name = task.global_param_name
+        num_layers = getattr(self.hf_config, "num_hidden_layers", None)
+        if isinstance(num_layers, int):
+            shared_mtp_aliases = {
+                "embedding.word_embeddings.weight": (
+                    "model.embed_tokens.weight",
+                    f"model.layers.{num_layers}.embed_tokens.weight",
+                ),
+                "output_layer.weight": (
+                    "lm_head.weight",
+                    f"model.layers.{num_layers}.shared_head.head.weight",
+                ),
+            }
+            alias = shared_mtp_aliases.get(global_name)
+            if alias is not None:
+                source_key, alias_key = alias
+                if source_key in converted_weights_dict and alias_key in hf_state_dict:
+                    converted_weights_dict[alias_key] = converted_weights_dict[source_key]
+
         if not global_name.startswith("decoder.layers.") or not global_name.endswith(".input_layernorm.weight"):
             return converted_weights_dict
 
@@ -119,36 +235,17 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         if len(parts) < 4 or not parts[2].isdigit():
             return converted_weights_dict
 
-        inv_freq_prefix = "model.layers."
-        inv_freq_suffix = ".self_attn.rotary_emb.inv_freq"
         layer_idx = int(parts[2])
-        inv_freq_key = f"{inv_freq_prefix}{layer_idx}{inv_freq_suffix}"
+        inv_freq_key = f"model.layers.{layer_idx}.self_attn.rotary_emb.inv_freq"
         if inv_freq_key in converted_weights_dict:
             return converted_weights_dict
 
-        has_inv_freq = getattr(self, "_deepseek_has_inv_freq", None)
-        if has_inv_freq is None:
-            has_inv_freq = False
-            for key in hf_state_dict.keys():
-                if key.startswith(inv_freq_prefix) and key.endswith(inv_freq_suffix):
-                    has_inv_freq = True
-                    break
-            self._deepseek_has_inv_freq = has_inv_freq
-        if not has_inv_freq:
+        source_inv_freq = hf_state_dict.get(inv_freq_key)
+        if source_inv_freq is not None:
+            if converted_weights_dict:
+                reference_tensor = next(iter(converted_weights_dict.values()))
+                source_inv_freq = source_inv_freq.to(device=reference_tensor.device)
+            converted_weights_dict[inv_freq_key] = source_inv_freq
             return converted_weights_dict
 
-        inv_freq = getattr(self, "_deepseek_inv_freq", None)
-        if inv_freq is None:
-            rotary_dim = self.hf_config.qk_rope_head_dim
-            rotary_base = rope_theta_from_hf(self.hf_config)
-            inv_freq = 1.0 / (rotary_base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
-            self._deepseek_inv_freq = inv_freq
-
-        if converted_weights_dict:
-            reference_tensor = next(iter(converted_weights_dict.values()))
-            if inv_freq.device != reference_tensor.device:
-                inv_freq = inv_freq.to(device=reference_tensor.device)
-                self._deepseek_inv_freq = inv_freq
-
-        converted_weights_dict[inv_freq_key] = inv_freq
         return converted_weights_dict

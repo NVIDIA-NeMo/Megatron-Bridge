@@ -12,13 +12,105 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+
 import pytest
 import torch
 
-from megatron.bridge.models.kimi import KimiK2Provider
-from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout, kimi_k2_pretrain_config
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.recipes.kimi.kimi_k2 import (
+    _apply_kimi_k2_optimizer,
+    _get_kimi_k2_pipeline_layout,
+    kimi_k2_pretrain_config,
+)
+from megatron.bridge.training.config import ConfigContainer, _validate_and_sync_distributed_optimizer_settings
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
+
+class _FakeKimiK2Provider:
+    """Fake provider for testing without HF Hub I/O."""
+
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        self.vocab_size = 163840
+        self.apply_rope_fusion = False
+
+    def finalize(self):
+        return None
+
+
+class _FakeAutoBridge:
+    """Fake AutoBridge that returns a _FakeKimiK2Provider without network access."""
+
+    @classmethod
+    def from_hf_pretrained(cls, *args, **kwargs):
+        return cls()
+
+    def to_megatron_provider(self, *args, **kwargs):
+        return _FakeKimiK2Provider()
+
+
+@pytest.fixture(autouse=True)
+def _patch_autobridge(monkeypatch):
+    """Monkeypatch AutoBridge in the kimi_k2 recipe module to avoid HF Hub access."""
+    mod = importlib.import_module("megatron.bridge.recipes.kimi.kimi_k2")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("use_context_parallel", [False, True])
+@pytest.mark.parametrize(
+    "hardware,factory_name",
+    [(None, None)]
+    + [
+        (hardware, f"kimi_k2_pretrain_{gpus}gpu_{hardware}_{precision}_config")
+        for hardware, gpus, precisions in [
+            ("h100", 1024, ("bf16", "fp8cs", "fp8sc")),
+            ("b200", 256, ("bf16", "fp8cs", "fp8mx")),
+            ("gb200", 256, ("bf16", "fp8cs", "fp8mx")),
+            ("gb300", 256, ("bf16", "fp8cs", "fp8mx", "nvfp4")),
+        ]
+        for precision in precisions
+    ],
+)
+def test_kimi_resolved_overlap_preserves_legacy_execution(monkeypatch, hardware, factory_name, use_context_parallel):
+    """Check actual overlap setup for the library recipe and every perf recipe."""
+    monkeypatch.setattr(
+        _FakeAutoBridge,
+        "to_megatron_provider",
+        lambda *args, **kwargs: GPTModelProvider(
+            num_layers=64, hidden_size=128, num_attention_heads=4, vocab_size=163840, apply_rope_fusion=False
+        ),
+    )
+    factory = (
+        kimi_k2_pretrain_config
+        if hardware is None
+        else getattr(importlib.import_module(f"megatron.bridge.perf_recipes.kimi.{hardware}.kimi_k2"), factory_name)
+    )
+    cfg = factory()
+    assert cfg.ddp.bucket_size is None
+    assert cfg.ddp.overlap_grad_reduce is True
+    tp_size = cfg.model.tensor_model_parallel_size
+    expert_mp_size = cfg.model.expert_tensor_parallel_size * cfg.model.expert_model_parallel_size
+    assert expert_mp_size % tp_size == 0
+    replica_size = expert_mp_size // tp_size
+    dp_size, cp_size = (1, max(16, replica_size)) if use_context_parallel else (max(8, replica_size), 1)
+    cfg.model.context_parallel_size = cp_size
+    world_size = tp_size * cfg.model.pipeline_model_parallel_size * cp_size * dp_size
+    assert world_size % (expert_mp_size * cfg.model.pipeline_model_parallel_size) == 0
+    cfg.comm_overlap.data_parallel_size = cfg.get_data_parallel_size(world_size)
+    cfg.comm_overlap.finalize()
+    cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+    _validate_and_sync_distributed_optimizer_settings(cfg)
+    assert cfg.ddp.bucket_size is None  # Core still selects its DP-dependent default.
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather is False
+    assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+    assert cfg.optimizer.use_layer_wise_param_layout is False
+    assert cfg.ddp.use_distributed_optimizer is False
 
 
 class TestKimiK2PipelineLayout:
@@ -56,7 +148,7 @@ class TestKimiK2PretrainConfig:
 
         # Check it returns a ConfigContainer with all required components
         assert isinstance(cfg, ConfigContainer)
-        assert isinstance(cfg.model, KimiK2Provider)
+        assert cfg.model is not None
         assert cfg.train is not None
         assert cfg.optimizer is not None
         assert cfg.scheduler is not None
@@ -111,24 +203,39 @@ class TestKimiK2PretrainConfig:
         assert cfg.model.num_layers_in_last_pipeline_stage is None
 
     def test_pretrain_config_ddp_settings_for_muon(self):
-        """Test DDP settings configured for Muon optimizer."""
+        """The existing Kimi recipe retains compact, non-overlapped LayerWise Muon."""
         cfg = kimi_k2_pretrain_config()
 
-        # Muon requires these specific DDP settings
         assert cfg.ddp.overlap_grad_reduce is True
-        assert cfg.ddp.overlap_param_gather is False  # Muon needs this to be False
+        assert cfg.ddp.overlap_param_gather is False
+        assert cfg.comm_overlap.overlap_param_gather is False
         assert cfg.ddp.check_for_nan_in_grad is True
-        assert cfg.ddp.use_distributed_optimizer is False  # Muon needs this to be False
+        assert cfg.ddp.use_distributed_optimizer is False
         assert cfg.ddp.use_megatron_fsdp is False
         assert cfg.ddp.grad_reduce_in_fp32 is True
         assert cfg.ddp.average_in_collective is True
         assert cfg.ddp.data_parallel_sharding_strategy == "no_shard"
+        assert cfg.optimizer.optimizer == "dist_muon"
+        assert cfg.optimizer.use_layer_wise_param_layout is False
+
+        _validate_and_sync_distributed_optimizer_settings(cfg)
+
+        assert cfg.optimizer.optimizer == "muon"
+        assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+        assert cfg.optimizer.use_distributed_optimizer is False
+        assert cfg.ddp.use_distributed_optimizer is False
+        assert cfg.optimizer.use_layer_wise_param_layout is False
+
+        cfg.comm_overlap.finalize()
+        cfg.comm_overlap.data_parallel_size = 16
+        overlap_cfg = cfg.comm_overlap._get_optimizer_overlap_cfgs(cfg.model)
+        assert overlap_cfg.overlap_param_gather is False
 
     def test_pretrain_config_dataset_configuration(self):
         """Test dataset configuration."""
         cfg = kimi_k2_pretrain_config()
 
-        assert cfg.dataset.sequence_length == 4096
+        assert cfg.dataset.seq_length == 4096
         assert cfg.dataset.num_workers == 8
         assert cfg.dataset.data_sharding is True
         assert cfg.dataset.split == "9999,8,2"
@@ -211,8 +318,9 @@ class TestKimiK2PretrainConfig:
         assert cfg.checkpoint.async_save is False
 
     def test_pretrain_config_adam_optimizer(self):
-        """Test config with Adam optimizer has correct DDP and precision settings."""
-        cfg = kimi_k2_pretrain_config(optimizer_type="adam")
+        """Test applying Adam optimizer has correct DDP and precision settings."""
+        cfg = kimi_k2_pretrain_config()
+        _apply_kimi_k2_optimizer(cfg, "adam")
 
         assert isinstance(cfg, ConfigContainer)
         assert cfg.ddp.use_distributed_optimizer is True
@@ -221,9 +329,10 @@ class TestKimiK2PretrainConfig:
         assert cfg.mixed_precision.grad_reduce_in_fp32 is False
 
     def test_pretrain_config_invalid_optimizer_raises(self):
-        """Test that an invalid optimizer_type raises ValueError."""
+        """Test that an invalid optimizer type raises ValueError."""
+        cfg = kimi_k2_pretrain_config()
         with pytest.raises(ValueError, match="Invalid optimizer type"):
-            kimi_k2_pretrain_config(optimizer_type="invalid")
+            _apply_kimi_k2_optimizer(cfg, "invalid")
 
     def test_pretrain_config_pipeline_layout(self):
         """Test pipeline layout is configured."""
@@ -232,3 +341,4 @@ class TestKimiK2PretrainConfig:
         # Default PP=16, VP=None (1), should have a layout
         expected_layout = _get_kimi_k2_pipeline_layout(16, 1)
         assert cfg.model.pipeline_model_parallel_layout == expected_layout
+        assert cfg.model._pipeline_model_parallel_layout_builder is _get_kimi_k2_pipeline_layout

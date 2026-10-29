@@ -33,6 +33,7 @@ from transformers.generation.utils import GenerateOutput
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
+from megatron.bridge.models.hf_pretrained.state import StateDict
 
 
 # Python 3.12+ supports PEP 692 (TypedDict Unpack)
@@ -45,28 +46,6 @@ else:
 CausalLMType = TypeVar("CausalLMType", bound=AutoModelForCausalLM)
 
 
-class _ConfigOnlyPretrainedShim:
-    """Lightweight shim that provides the minimal PreTrainedCausalLM interface for config-only bridges."""
-
-    def __init__(self, config: PretrainedConfig):
-        self.config = config
-        self.model_name_or_path = getattr(config, "name_or_path", None)
-        self.trust_remote_code = getattr(config, "trust_remote_code", False)
-        self.generation_config = self._build_generation_config(config)
-
-    @staticmethod
-    def _build_generation_config(config: PretrainedConfig) -> GenerationConfig:
-        try:
-            config_dict = config.to_dict() if hasattr(config, "to_dict") else {}
-            return GenerationConfig.from_dict(config_dict)
-        except Exception:
-            return GenerationConfig()
-
-    def __repr__(self) -> str:
-        config_name = getattr(self.config, "__class__", type(self.config)).__name__
-        return f"_ConfigOnlyPretrainedShim(config={config_name})"
-
-
 class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
     """
     A generic class for Pretrained Causal Language Models with lazy loading.
@@ -77,7 +56,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         Basic usage with lazy loading:
         >>> from mbridge.pretrained import PreTrainedCausalLM
         >>> # Create instance - no model loading happens yet
-        >>> model = PreTrainedCausalLM.from_pretrained("meta-llama/Llama-2-7b-chat-hf")
+        >>> model = PreTrainedCausalLM.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
         >>> # Components are loaded on first access
         >>> config = model.config  # Loads config
         >>> tokenizer = model.tokenizer  # Loads tokenizer
@@ -91,7 +70,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         >>> from mbridge.pretrained import PreTrainedCausalLM
         >>> # Type-safe access to Llama-specific features
         >>> llama_model: PreTrainedCausalLM[LlamaForCausalLM] = PreTrainedCausalLM.from_pretrained(
-        ...     "meta-llama/Llama-2-7b-chat-hf",
+        ...     "meta-llama/Llama-3.1-8B-Instruct",
         ...     torch_dtype=torch.float16,
         ...     device="cuda"
         ... )
@@ -168,13 +147,22 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.torch_dtype = torch_dtype
         self.trust_remote_code = trust_remote_code
+        self._text_only = False
         super().__init__(**kwargs)
         # Store the original source path for custom modeling file preservation
         if model_name_or_path and trust_remote_code:
             self._original_source_path = model_name_or_path
 
+    def _get_auto_model_class(self) -> type:
+        """Select the HF loader without changing shared lazy-loading behavior."""
+        return AutoModelForCausalLM
+
     def _load_model(self) -> CausalLMType:
         """Load the model."""
+        if self._text_only:
+            # A filtered checkpoint view is for conversion, not HF's automatic
+            # loading of the original multimodal repository and prefixed keys.
+            raise NotImplementedError("Use the Megatron text model or load its standalone HF export for inference.")
         if self.model_name_or_path is None:
             raise ValueError("model_name_or_path must be provided to load model")
 
@@ -188,7 +176,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         if config is not None:
             model_kwargs["config"] = config
 
-        model = AutoModelForCausalLM.from_pretrained(self.model_name_or_path, **model_kwargs)
+        model = self._get_auto_model_class().from_pretrained(self.model_name_or_path, **model_kwargs)
         model = model.to(self.device)
 
         generation_config = getattr(self, "_generation_config", None)
@@ -722,6 +710,35 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
             ]
         )
         return "\n".join(lines)
+
+
+class _ConfigOnlyPretrainedShim(PreTrainedCausalLM):
+    """Config-backed causal LM wrapper used for provider construction without weights."""
+
+    def __init__(self, config: PretrainedConfig):
+        super().__init__(
+            model_name_or_path=getattr(config, "name_or_path", None),
+            trust_remote_code=bool(getattr(config, "trust_remote_code", False)),
+        )
+        self.config = config
+        self.generation_config = self._build_generation_config(config)
+
+    @property
+    def state(self) -> StateDict:
+        """Reject weight-state access so config-only provider construction remains weightless."""
+        raise AttributeError("Config-only pretrained wrappers do not have weight state.")
+
+    @staticmethod
+    def _build_generation_config(config: PretrainedConfig) -> GenerationConfig:
+        try:
+            config_dict = config.to_dict() if hasattr(config, "to_dict") else {}
+            return GenerationConfig.from_dict(config_dict)
+        except Exception:
+            return GenerationConfig()
+
+    def __repr__(self) -> str:
+        config_name = getattr(self.config, "__class__", type(self.config)).__name__
+        return f"_ConfigOnlyPretrainedShim(config={config_name})"
 
 
 # TypedDict definitions for method parameters

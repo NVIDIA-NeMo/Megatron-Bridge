@@ -9,7 +9,7 @@ Megatron Bridge provides a clean, parallelism-aware path to use 🤗 Hugging Fac
 The examples mirror how NeMo-RL integrates Megatron Bridge:
 
 - [nemo_rl/models/megatron/community_import.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/megatron/community_import.py)
-- [nemo_rl/models/policy/megatron_policy_worker.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/policy/megatron_policy_worker.py)
+- [nemo_rl/models/policy/megatron_policy_worker.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/policy/workers/megatron_policy_worker.py)
 
 - Local example script in this repo: [examples/rl/rlhf_with_bridge.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/rl/rlhf_with_bridge.py)
 
@@ -76,6 +76,7 @@ Translate your RL framework config into Megatron Bridge's `ConfigContainer` for 
 
 ```python
 import torch
+from megatron.bridge import AutoBridge
 from megatron.bridge.training.config import (
     ConfigContainer,
     TrainingConfig,
@@ -83,17 +84,38 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     DistributedDataParallelConfig,
     CheckpointConfig,
+    LoggerConfig,
     TokenizerConfig,
 )
 from nemo_rl.models.policy import PolicyConfig  # or your own policy cfg type
 
 # Example: map your RL config to Megatron config
 def build_megatron_config(rl_cfg: PolicyConfig, pretrained_ckpt_dir: str) -> ConfigContainer:
-    model_cfg = rl_cfg["megatron_cfg"].copy()
+    bridge = AutoBridge.from_hf_pretrained(rl_cfg["model_name"])
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+
+    # Keep framework-owned optimizer/scheduler/DDP mappings out of the model
+    # provider. Apply only provider fields, with Bridge validating each name.
+    provider_fields = (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "context_parallel_size",
+        "expert_model_parallel_size",
+        "expert_tensor_parallel_size",
+        "sequence_parallel",
+        "recompute_granularity",
+        "recompute_method",
+        "recompute_num_layers",
+    )
+    model_overrides = {name: rl_cfg["megatron_cfg"][name] for name in provider_fields if name in rl_cfg["megatron_cfg"]}
+
     # Precision
-    dtype = rl_cfg["precision"]
-    model_cfg["bf16"] = dtype == "bfloat16"
-    model_cfg["fp16"] = dtype == "float16"
+    dtype = {
+        "float32": torch.float32,
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+    }[rl_cfg["precision"]]
+    model_cfg.apply_overrides_and_finalize(dtype=dtype, overrides=model_overrides)
 
     checkpoint = CheckpointConfig(
         save_interval=100,
@@ -130,10 +152,10 @@ def build_megatron_config(rl_cfg: PolicyConfig, pretrained_ckpt_dir: str) -> Con
         tokenizer_model=rl_cfg["model_name"],
     )
 
-    return ConfigContainer(
+    cfg = ConfigContainer(
         model=model_cfg,
         checkpoint=checkpoint,
-        logger=None,
+        logger=LoggerConfig(),
         train=train,
         optimizer=opt,
         ddp=ddp,
@@ -141,6 +163,8 @@ def build_megatron_config(rl_cfg: PolicyConfig, pretrained_ckpt_dir: str) -> Con
         dataset=None,
         tokenizer=tokenizer,
     )
+    cfg.validate()
+    return cfg
 ```
 
 Initialize Megatron-Core using a helper similar to `setup_megatron_model` from NeMo-RL:
@@ -155,7 +179,7 @@ from megatron.bridge.training.state import GlobalState
 # Minimal bootstrap
 state = GlobalState()
 state.cfg = megatron_cfg
-initialize_megatron(cfg=megatron_cfg)
+pg_collection = initialize_megatron(cfg=megatron_cfg)
 set_jit_fusion_options(megatron_cfg.model, megatron_cfg.train.micro_batch_size)
 
 ckpt_ctx = init_checkpointing_context(megatron_cfg.checkpoint)
@@ -165,6 +189,7 @@ model_list = get_model(
     use_torch_fsdp2=megatron_cfg.dist.use_torch_fsdp2,
     overlap_param_gather_with_optimizer_step=megatron_cfg.optimizer.overlap_param_gather_with_optimizer_step,
     data_parallel_random_init=megatron_cfg.rng.data_parallel_random_init,
+    pg_collection=pg_collection,
 )
 optimizer, scheduler = setup_optimizer(
     optimizer_config=megatron_cfg.optimizer,
@@ -327,7 +352,28 @@ for name, weight in bridge.export_hf_weights(megatron_model, cpu=True, show_prog
 
 Point your inference engine (e.g., vLLM) to `"/path/to/hf_export"`.
 
-### B) Zero-copy streaming via ZMQ (fast refit, colocated)
+### B) Pipeline-stage-local streaming for RL weight synchronization
+
+When inference workers collectively receive shards from every training pipeline stage, avoid replicating the full
+HF stream across PP ranks:
+
+```python
+for name, weight in bridge.export_hf_weights(
+    megatron_model,
+    show_progress=False,
+    current_pp_stage_only=True,
+):
+    send_to_inference_workers(name, weight)
+```
+
+- `current_pp_stage_only` changes ownership only across the PP axis.
+- TP/EP ranks in the owning stage still gather shards and perform normal HF layout conversion.
+- Combining one representative stream from every PP stage reconstructs the normal complete export.
+- Source-only HF passthrough tensors are assigned to PP stage 0; duplicate Megatron parameters use the lowest PP owner.
+
+This mode is opt-in. Omitting the flag preserves the complete stream on every rank.
+
+### C) Zero-copy streaming via ZMQ (fast refit, colocated)
 
 Stream tensors from the training side to your inference runtime without writing to disk. The transport is ZMQ peer-to-peer with async send/recv and ping‑pong buffers for overlap; Ray is used only for lightweight coordination. This replaces the earlier ad‑hoc per‑tensor IPC handle passing and aligns with the refactor in [NVIDIA-NeMo/RL#1267](https://github.com/NVIDIA-NeMo/RL/pull/1267).
 
@@ -338,6 +384,16 @@ Stream tensors from the training side to your inference runtime without writing 
 - **Memory-aware chunking:** Use your free GPU memory budget (e.g., `NRL_REFIT_BUFFER_MEMORY_RATIO`) to decide how many parameters to include in the next chunk (the set of `keys`). The worker exposes `prepare_weights_for_ipc()` which returns `(param_info, total_available_bytes)` and resets the conversion cursor; then the controller repeatedly selects `keys` whose cumulative byte size ≤ budget and streams them to the consumer over ZMQ.
 - **Device routing:** Handles are returned under a `device_uuid` key (NVML UUID of the CUDA device). The inference side should map handles on the same device (or coordinate via your communicator). For collective updates, the worker can also broadcast tensors directly (`broadcast_weights_for_collective`).
 - **Parallelism nuances:** With TP/EP, exported HF tensors are reassembled from shards; with CP/sequence packing, shapes/dtypes are already consistent at export time. FP8 or mixed precision can affect size estimates; the worker accounts for dtype scaling when estimating bytes.
+
+**Local-view API and model/transport boundary:**
+
+`WeightConversionTask.local_hf_param_specs()` is a per-parameter optimization hint. A non-empty tuple describes canonical HF-compatible views of that one local logical Megatron tensor that may be transferred without first running Bridge collectives or layout conversion. It does not certify whole-model HF conversion or M-to-N refit support. An empty tuple means that parameter must use the normal Bridge conversion/packed-broadcast path, not that the model is unsupported.
+
+Mappings that require transpose, permutation, interleaving, or grouped-export transforms return no specs unless they provide an explicit safe override. A transport must validate support across all parameters and separately qualify the destination backend and source/destination topology before selecting an M-to-N path.
+
+`FusedExpertMapping` and `FusedGatedExpertMapping` provide such an override: their specs describe canonical per-expert views before grouped destination assembly and transposition. A non-empty spec does not qualify that grouped destination for direct transport. In particular, native MXFP8 export still rejects `transpose_on_export`; transports must retain the normal conversion fallback for those mappings.
+
+This contract is not BF16-only. For MXFP8 refit, a transport may materialize canonical logical views from quantized training storage and requantize persistent MXFP8 inference destinations in place. Direct transfer of packed MXFP8 data and scales is a different optimization and is valid only when the source and destination storage layouts, quantization backends, and topology are explicitly compatible.
 
 ```python
 import os
@@ -440,11 +496,12 @@ class MegatronBridgeAdapter:
         from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
         from megatron.bridge.models.model_provider import get_model
         from megatron.bridge.training.optim import setup_optimizer
-        initialize_megatron(cfg=self.megatron_cfg)
+        pg_collection = initialize_megatron(cfg=self.megatron_cfg)
         set_jit_fusion_options(self.megatron_cfg.model, self.megatron_cfg.train.micro_batch_size)
         self.model_list = get_model(self.megatron_cfg.model, self.megatron_cfg.ddp,
                                     use_torch_fsdp2=self.megatron_cfg.dist.use_torch_fsdp2,
-                                    overlap_param_gather_with_optimizer_step=self.megatron_cfg.optimizer.overlap_param_gather_with_optimizer_step)
+                                    overlap_param_gather_with_optimizer_step=self.megatron_cfg.optimizer.overlap_param_gather_with_optimizer_step,
+                                    pg_collection=pg_collection)
         self.model = self.model_list[0]
         self.optimizer, self.scheduler = setup_optimizer(self.megatron_cfg.optimizer, self.megatron_cfg.scheduler, self.model_list,
                                                          use_gloo_process_groups=self.megatron_cfg.dist.use_gloo_process_groups)
@@ -503,4 +560,4 @@ class MegatronBridgeAdapter:
 
 - [Bridge with 🤗 Hugging Face](./bridge-guide.md) for HF↔Megatron conversion overview
 - [nemo_rl/models/megatron/community_import.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/megatron/community_import.py) for import/export helpers
-- [nemo_rl/models/policy/megatron_policy_worker.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/policy/megatron_policy_worker.py) for end-to-end RL integration (training, logprobs, generation, refit)
+- [nemo_rl/models/policy/megatron_policy_worker.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/policy/workers/megatron_policy_worker.py) for end-to-end RL integration (training, logprobs, generation, refit)

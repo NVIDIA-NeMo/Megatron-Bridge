@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-Ministral 3 Model Provider configurations for Megatron-Core.
+Ministral 3 Model Provider configuration for Megatron-Core.
 
-This module provides configuration classes for Ministral 3 models (3B, 8B, 14B variants),
-compatible with HuggingFace's Ministral-3 model configurations.
+This module provides a provider class for Ministral 3 models, compatible with
+HuggingFace's Ministral-3 model configurations.
 
 Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 
@@ -165,56 +165,6 @@ class Ministral3ModelProvider(MistralModelProvider):
         """
         # Use parent class to create standard language model
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
-
-
-@dataclass
-class Ministral3ModelProvider3B(Ministral3ModelProvider):
-    """
-    Config for Ministral 3 3B Vision-Language Model.
-
-    Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
-
-    Model specs:
-    - 3.4B Language Model + 0.4B Vision Encoder
-    """
-
-    hidden_size: int = 3072
-    ffn_hidden_size: int = 9216
-    num_layers: int = 26
-    share_embeddings_and_output_weights: bool = True
-
-
-@dataclass
-class Ministral3ModelProvider8B(Ministral3ModelProvider):
-    """
-    Config for Ministral 3 8B Vision-Language Model.
-
-    Reference: https://huggingface.co/mistralai/Ministral-3-8B-Base-2512
-
-    Model specs:
-    - 8.4B Language Model + 0.4B Vision Encoder
-    """
-
-    hidden_size: int = 4096
-    ffn_hidden_size: int = 14336
-    num_layers: int = 34
-
-
-@dataclass
-class Ministral3ModelProvider14B(Ministral3ModelProvider):
-    """
-    Config for Ministral 3 14B Vision-Language Model.
-
-    Reference: https://huggingface.co/mistralai/Ministral-3-14B-Base-2512
-
-    Model specs:
-    - 13.5B Language Model + 0.4B Vision Encoder
-    """
-
-    hidden_size: int = 5120
-    ffn_hidden_size: int = 16384
-    num_layers: int = 40
-    rotary_base: int = 1000000000.0
 
 
 class MinistralTEDotProductAttention(MCoreTEDotProductAttention):

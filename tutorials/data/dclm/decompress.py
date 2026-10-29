@@ -15,11 +15,28 @@
 import argparse
 import glob
 import os
+import shutil
 import subprocess
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
+
+
+def _check_zstd_available() -> None:
+    """Verify the ``zstd`` binary is on PATH before launching the worker pool.
+
+    Without this check, worker ``FileNotFoundError`` exceptions from
+    ``subprocess.run`` are stored in the futures returned by
+    ``ProcessPoolExecutor.map()`` but never re-raised because the iterator is
+    discarded. The script then prints
+    ``"Files were successfully decompressed in 0.0 minutes."`` and exits 0 —
+    a silent failure that looks like success.
+    """
+    if shutil.which("zstd") is None:
+        print("ERROR: 'zstd' binary not found on PATH.", file=sys.stderr)
+        sys.exit(1)
 
 
 def arguments():
@@ -65,6 +82,8 @@ def decompress_data(path_to_save: str, source_dir: str, num_workers: int = 1) ->
         source_dir (str): path to downloaded dataset.
         num_workers (int): number of workers to be used for parallel decompressing.
     """
+    _check_zstd_available()
+
     start_time = time.time()
     print("Decompressing files...")
 

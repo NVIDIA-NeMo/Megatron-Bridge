@@ -16,7 +16,7 @@ import math
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import AutoConfig, Gemma3ForCausalLM
+from transformers import Gemma3ForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -55,11 +55,8 @@ class Gemma3ModelBridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        # Precision config is stored in the VL Config
-        hf_vl_config = AutoConfig.from_pretrained(hf_pretrained._model_name_or_path)
-
-        # Override dtype from VL config (has precision info)
-        params_dtype = self.dtype_from_hf(hf_vl_config, default=torch.float32)
+        # Keep autocast dtype aligned with the supplied HF config.
+        params_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
         provider.fp16 = params_dtype == torch.float16
         provider.bf16 = params_dtype == torch.bfloat16
         provider.params_dtype = params_dtype
@@ -75,6 +72,33 @@ class Gemma3ModelBridge(MegatronModelBridge):
         provider.rope_scaling_factor = rope_scaling_factor_from_hf(hf_config)
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma3ModelProvider) -> dict:
+        """Convert Gemma3 provider config back to HuggingFace config."""
+        hf_config = super().megatron_to_hf_config(provider)
+
+        if isinstance(provider.rotary_base, tuple):
+            rope_local_base_freq, rope_theta = provider.rotary_base
+            hf_config["rope_local_base_freq"] = rope_local_base_freq
+            hf_config["rope_theta"] = rope_theta
+
+        hf_config["sliding_window"] = provider.window_size
+
+        if provider.softmax_scale:
+            query_pre_attn_scalar = 1.0 / (provider.softmax_scale**2)
+            rounded = round(query_pre_attn_scalar)
+            if math.isclose(query_pre_attn_scalar, rounded, rel_tol=0.0, abs_tol=1e-9):
+                query_pre_attn_scalar = rounded
+            hf_config["query_pre_attn_scalar"] = query_pre_attn_scalar
+
+        if getattr(provider, "rope_scaling_factor", 1.0) != 1.0:
+            hf_config["rope_scaling"] = {
+                "factor": provider.rope_scaling_factor,
+                "type": "linear",
+            }
+
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping = {

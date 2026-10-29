@@ -15,7 +15,7 @@
 #
 # Test purpose:
 # - Parametrize over all exported OLMoE recipe functions in `megatron.bridge.recipes.olmoe`.
-# - For each recipe, monkeypatch `OlMoEModelProvider` with a lightweight fake to avoid I/O.
+# - For each recipe, monkeypatch `AutoBridge` with a lightweight fake to avoid I/O.
 # - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
 # - Verify tokenizer selection and sanity-check parallelism fields.
 #
@@ -25,6 +25,8 @@ from typing import Callable
 
 import pytest
 import torch
+
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _olmoe_module = importlib.import_module("megatron.bridge.recipes.olmoe")
@@ -73,14 +75,10 @@ def _apply_test_overrides(cfg, name: str):
     return cfg
 
 
-class _FakeOlMoEModelProvider:
-    """Fake OlMoEModelProvider for testing without model I/O."""
+class _FakeModelCfg:
+    """Fake OLMoE model config for testing without model I/O."""
 
-    def __init__(self, *args, **kwargs):
-        # Store all the kwargs that would be passed to the real provider
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
+    def __init__(self):
         # Set required attributes
         self.vocab_size = 50304  # Default vocab size for OLMoE
         self.moe_permute_fusion = True
@@ -88,18 +86,28 @@ class _FakeOlMoEModelProvider:
         self.pipeline_model_parallel_layout = None
         self.seq_length = 4096
 
-        # Set parallelism defaults if not provided
-        if not hasattr(self, "tensor_model_parallel_size"):
-            self.tensor_model_parallel_size = 1
-        if not hasattr(self, "pipeline_model_parallel_size"):
-            self.pipeline_model_parallel_size = 1
-        if not hasattr(self, "context_parallel_size"):
-            self.context_parallel_size = 1
-        if not hasattr(self, "expert_model_parallel_size"):
-            self.expert_model_parallel_size = 1
+        # Parallelism defaults; the recipes set their own values
+        self.tensor_model_parallel_size = 1
+        self.pipeline_model_parallel_size = 1
+        self.context_parallel_size = 1
+        self.expert_model_parallel_size = 1
 
     def finalize(self):
         return None
+
+
+class _FakeBridge:
+    """Fake AutoBridge that returns an OLMoE model config without Hugging Face I/O."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_FakeBridge":
+        return _FakeBridge()
+
+    def get_model_config(self) -> _FakeModelCfg:
+        return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("OLMoE recipes must use get_model_config(), not the legacy provider API")
 
 
 def _assert_basic_config(cfg):
@@ -119,11 +127,9 @@ def _assert_basic_config(cfg):
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
 
-    # Check sequence length (different attribute names for different dataset types)
-    if hasattr(cfg.dataset, "sequence_length"):
-        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
-    elif hasattr(cfg.dataset, "seq_length"):
-        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+    # Check sequence length for canonical dataset configs.
+    if hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1
     else:
         # Some other dataset type
         assert cfg.dataset is not None
@@ -134,8 +140,8 @@ def test_each_olmoe_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
 
-    # Monkeypatch the OlMoEModelProvider class
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    # Monkeypatch AutoBridge
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     func_name = recipe_func.__name__
     is_peft = "peft" in func_name.lower()
@@ -170,7 +176,7 @@ def test_olmoe_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.Monk
     """Test that each OLMoE SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func()
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -195,7 +201,7 @@ def test_olmoe_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mon
     """Test that each OLMoE PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme="lora")
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -221,7 +227,7 @@ def test_olmoe_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch
     """Test that PEFT configurations are correctly applied with different schemes."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -237,7 +243,7 @@ def test_olmoe_7b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.olmoe import olmoe_7b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = olmoe_7b_pretrain_config()
@@ -263,7 +269,7 @@ def test_olmoe_7b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.olmoe import olmoe_7b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = olmoe_7b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "olmoe_7b_peft_config")
@@ -286,7 +292,7 @@ def test_olmoe_7b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.olmoe import olmoe_7b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = olmoe_7b_peft_config(peft_scheme="dora")
     _apply_test_overrides(cfg, "olmoe_7b_peft_config")
@@ -309,7 +315,7 @@ def test_olmoe_7b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = olmoe_7b_sft_config()
     _apply_test_overrides(cfg, "olmoe_7b_sft_config")
@@ -332,7 +338,7 @@ def test_olmoe_7b_sft_precision_aware_optimizer(monkeypatch: pytest.MonkeyPatch)
     from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = olmoe_7b_sft_config()
     _apply_test_overrides(cfg, "olmoe_7b_sft_config")
@@ -353,7 +359,7 @@ def test_olmoe_7b_sft_tokenizer_with_trust_remote_code(monkeypatch: pytest.Monke
     from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = olmoe_7b_sft_config()
     _apply_test_overrides(cfg, "olmoe_7b_sft_config")
@@ -371,7 +377,7 @@ def test_olmoe_7b_pretrain_optimizer_settings(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.olmoe import olmoe_7b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = olmoe_7b_pretrain_config()
@@ -392,7 +398,7 @@ def test_olmoe_7b_pretrain_mixed_precision_config(monkeypatch: pytest.MonkeyPatc
     from megatron.bridge.recipes.olmoe import olmoe_7b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = olmoe_7b_pretrain_config()
@@ -414,7 +420,7 @@ def test_olmoe_7b_sft_mixed_precision_config(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = olmoe_7b_sft_config()
     _apply_test_overrides(cfg, "olmoe_7b_sft_config")
@@ -436,7 +442,7 @@ def test_olmoe_7b_moe_optimizations_enabled(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.olmoe import olmoe_7b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = olmoe_7b_pretrain_config()
@@ -452,7 +458,7 @@ def test_olmoe_7b_comm_overlap_config(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.olmoe import olmoe_7b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
-    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Pretrain configs use the new parameterless API
     cfg = olmoe_7b_pretrain_config()
@@ -462,3 +468,100 @@ def test_olmoe_7b_comm_overlap_config(monkeypatch: pytest.MonkeyPatch):
     # Check comm overlap config
     assert cfg.comm_overlap is not None
     assert cfg.comm_overlap.tp_comm_overlap is False
+
+
+# allenai/OLMoE-1B-7B-0125 config.json, so strict recipe tests build the real architecture offline.
+_OLMOE_1B_7B_0125_CONFIG = dict(
+    vocab_size=50304,
+    hidden_size=2048,
+    intermediate_size=1024,
+    num_hidden_layers=16,
+    num_attention_heads=16,
+    num_key_value_heads=16,
+    max_position_embeddings=4096,
+    rope_theta=10000.0,
+    rms_norm_eps=1e-5,
+    num_experts=64,
+    num_experts_per_tok=8,
+    router_aux_loss_coef=0.01,
+    norm_topk_prob=False,
+    tie_word_embeddings=False,
+    torch_dtype="float32",
+)
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig for OLMoE-1B-7B-0125 while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        assert hf_path == "allenai/OLMoE-1B-7B-0125"
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self):
+        from transformers import OlmoeConfig
+
+        from megatron.bridge import AutoBridge
+
+        config = OlmoeConfig(**_OLMOE_1B_7B_0125_CONFIG)
+        config.architectures = ["OlmoeForCausalLM"]
+        return AutoBridge.from_hf_config(config).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("OLMoE recipes must not call the legacy provider API")
+
+
+class _LegacyProviderBridge:
+    """Return the OlMoEModelProvider defaults the recipes built on before moving to get_model_config()."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_LegacyProviderBridge":
+        return _LegacyProviderBridge()
+
+    def get_model_config(self):
+        from megatron.bridge.models.olmoe import OlMoEModelProvider
+
+        return OlMoEModelProvider()
+
+
+def _build_recipe_with_bridge(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch, bridge_cls: type):
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", bridge_cls)
+    if "peft" in recipe_func.__name__:
+        return recipe_func(peft_scheme="lora")
+    return recipe_func()
+
+
+@pytest.mark.parametrize("recipe_func", _OLMOE_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_each_olmoe_recipe_uses_strict_builder_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Every OLMoE recipe should configure a ModelConfig without provider fallback."""
+    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+    from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
+
+    cfg = _build_recipe_with_bridge(recipe_func, monkeypatch, _BuilderOnlyBridge)
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.transformer_layer_spec is olmoe_layer_spec
+    assert cfg.model.num_layers == 16
+    assert cfg.model.num_moe_experts == 64
+    assert cfg.model.moe_router_topk == 8
+    assert cfg.model.qk_layernorm is True
+    assert cfg.model.recompute_granularity == "selective"
+
+
+@pytest.mark.parametrize("recipe_func", _OLMOE_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_olmoe_recipe_model_config_matches_legacy_provider(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """The builder config keeps every model setting the recipe had on OlMoEModelProvider."""
+    from dataclasses import fields
+
+    model_config = _build_recipe_with_bridge(recipe_func, monkeypatch, _BuilderOnlyBridge).model
+    provider = _build_recipe_with_bridge(recipe_func, monkeypatch, _LegacyProviderBridge).model
+
+    model_config_fields = {field.name for field in fields(model_config)}
+    model_config_fields.update(field.name for field in fields(model_config.transformer))
+    comparable_fields = sorted(model_config_fields & {field.name for field in fields(provider)})
+
+    assert {"num_layers", "num_moe_experts", "expert_model_parallel_size", "transformer_layer_spec"} <= set(
+        comparable_fields
+    )
+    for field_name in comparable_fields:
+        assert getattr(model_config, field_name) == getattr(provider, field_name), field_name

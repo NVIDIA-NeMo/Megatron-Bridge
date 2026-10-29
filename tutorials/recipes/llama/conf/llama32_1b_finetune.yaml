@@ -18,8 +18,8 @@
 
 # Data configuration
 dataset:
-  # Replace with your dataset path (JSONL format recommended)
-  # data_path: /path/to/your/finetuning_dataset.jsonl
+  # Replace with a directory containing training.jsonl, validation.jsonl, and optionally test.jsonl
+  # dataset_root: /path/to/your/gpt_sft_dataset_dir
   seq_length: 4096
 
 # Training configuration
@@ -29,7 +29,7 @@ train:
   micro_batch_size: 2
   eval_iters: 10
   eval_interval: 50
-  
+
 
 # Optimizer configuration
 optimizer:

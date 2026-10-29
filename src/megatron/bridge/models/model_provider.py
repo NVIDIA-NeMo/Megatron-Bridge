@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import abc
+import dataclasses
 import os
+import warnings
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -30,14 +32,9 @@ except ImportError:
 
         Unpack = MagicMock()
 
-
-from typing import Callable
-
 import torch
 from megatron.core import parallel_state, tensor_parallel
-from megatron.core.distributed import (
-    DistributedDataParallelConfig,
-)
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
@@ -46,6 +43,7 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.quantization.utils import get_quant_config_or_none
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
@@ -62,6 +60,50 @@ except ImportError:
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
+
+
+def _finalize_model_quantization(model: torch.nn.Module) -> None:
+    """Finalize module quantization against paths in the assembled model."""
+    for name, module in model.named_modules():
+        if hasattr(module, "finish_init"):
+            quant_config = get_quant_config_or_none(name, module.config.quant_recipe)
+            module.finish_init(quant_config)
+
+
+def _apply_mixed_precision_wrapper(
+    model: list[MegatronModule],
+    model_config: Any,
+    mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule],
+) -> list[MegatronModule]:
+    """Wrap a model while preserving parameters explicitly marked for FP32."""
+    keep_in_fp32: list[tuple[torch.nn.Module, str, torch.Tensor]] = []
+    for model_module in model:
+        for submodule in model_module.modules():
+            # Preserve the existing MCore expert-bias contract.
+            if hasattr(submodule, "_maintain_float32_expert_bias"):
+                expert_bias = getattr(submodule, "expert_bias", None)
+                if expert_bias is not None:
+                    keep_in_fp32.append((submodule, "expert_bias", expert_bias.data.clone()))
+
+            # Model-specific modules can mark direct parameters that must not be
+            # truncated by Float16Module's recursive half()/bfloat16() cast.
+            parameter_names = vars(submodule).get("_keep_in_float32_parameter_names", ())
+            if not isinstance(parameter_names, (list, tuple)):
+                raise TypeError("_keep_in_float32_parameter_names must be a list or tuple")
+            for parameter_name in parameter_names:
+                parameter = getattr(submodule, parameter_name, None)
+                if not isinstance(parameter, torch.nn.Parameter):
+                    raise TypeError(
+                        f"{type(submodule).__name__}.{parameter_name} must be a Parameter to remain in FP32"
+                    )
+                keep_in_fp32.append((submodule, parameter_name, parameter.data.clone()))
+
+    wrapped_model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
+
+    for submodule, parameter_name, fp32_data in keep_in_fp32:
+        getattr(submodule, parameter_name).data = fp32_data
+
+    return wrapped_model
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
@@ -103,6 +145,54 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         """
         pass
 
+    @abc.abstractmethod
+    def finalize(self) -> None:
+        """Finalize provider state after configuration overrides are applied."""
+        pass
+
+    def apply_overrides_and_finalize(
+        self,
+        dtype: torch.dtype | None = None,
+        overrides: Mapping[str, object] | None = None,
+    ) -> Self:
+        """Apply dtype and attribute overrides, then finalize this provider.
+
+        Args:
+            dtype: Optional parameter dtype. Also sets ``fp16`` and ``bf16``.
+            overrides: Provider attributes to set before finalization.
+
+        Returns:
+            This provider.
+        """
+        if dtype is not None:
+            self.params_dtype = dtype
+            self.fp16 = dtype == torch.float16
+            self.bf16 = dtype == torch.bfloat16
+
+        for name, value in (overrides or {}).items():
+            if not hasattr(self, name):
+                raise AttributeError(f"{type(self).__name__} has no attribute {name!r}.")
+            setattr(self, name, value)
+
+        # DeepSeek-V4 hash-routed MoE requires an explicit pipeline_model_parallel_layout
+        # when PP > 1 (the hash layers must co-locate with the embedding on the first
+        # stage). Recipes set this explicitly; auto-set it here so provider paths that
+        # bypass recipes (e.g. mbridge/verl) also work for PP > 1 without the caller
+        # supplying a layout. Only applies to DeepSeek-V4 and never overrides a user layout.
+        if (
+            getattr(self, "experimental_attention_variant", None) == "dsv4_hybrid"
+            and (getattr(self, "pipeline_model_parallel_size", 1) or 1) > 1
+            and getattr(self, "pipeline_model_parallel_layout", None) is None
+        ):
+            from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+                set_deepseek_v4_pipeline_model_parallel_layout,
+            )
+
+            set_deepseek_v4_pipeline_model_parallel_layout(self)
+
+        self.finalize()
+        return self
+
     def provide_distributed_model(
         self,
         ddp_config: DistributedDataParallelConfig | None = None,
@@ -114,7 +204,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
         data_parallel_random_init: bool = False,
-        use_cpu_initialization: None | bool = False,
+        use_cpu_initialization: bool | None = None,
         init_model_with_meta_device: bool | None = None,
         pre_wrap_hook: Union[
             Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -124,6 +214,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         pg_collection: ProcessGroupCollection | None = None,
+        *,
+        use_layer_wise_distributed_optimizer: bool = False,
+        use_layer_wise_param_layout: bool = False,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -133,6 +226,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         in the Megatron ecosystem.
 
         Args:
+            use_layer_wise_distributed_optimizer: Build DDP layouts for layer-wise optimizer state.
+            use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+                False retains compact DDP buffers and variable-size parameter synchronization.
             ddp_config: Configuration for distributed data parallel.
             model_type: Type of model (encoder, decoder, or both).
             overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
@@ -142,7 +238,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
             wrap_with_ddp: Whether to wrap model with DDP.
             data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
-            use_cpu_initialization: Initialize model on CPU.
+            use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
             init_model_with_meta_device: Initialize model on meta device.
             pre_wrap_hook: A single callable or list of callables to modify the model before it's wrapped.
                 If provided, this will override all hooks registered via `register_pre_wrap_hook`.
@@ -158,6 +254,12 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         Returns:
             A list containing the wrapped model instance.
         """
+        warnings.warn(
+            "ModelProviderMixin-based model configuration is deprecated. Migrate to ModelConfig + ModelBuilder.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         if wrap_with_ddp and not ddp_config:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
@@ -208,6 +310,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
             pg_collection=pg_collection,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
         )
 
         if final_post_wrap_hook:
@@ -230,10 +334,18 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             seed_kwargs: Additional arguments for `model_parallel_cuda_manual_seed`.
             **model_parallel_kwargs: Additional arguments for `parallel_state.initialize_model_parallel`.
         """
+        # Resolve public weight-shard counts before reading the derived GTP axes
+        # used to construct process groups and configure GTP kernels.
+        self.finalize()
         if not torch.distributed.is_initialized():
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
+        from megatron.bridge.training.gtp import configure_gtp_remat
+
+        configure_gtp_remat(self)
+        model_parallel_kwargs.setdefault("gtp_remat_size", getattr(self, "gtp_weight_remat_size", 1))
+        model_parallel_kwargs.setdefault("expert_gtp_remat_size", getattr(self, "expert_gtp_weight_remat_size", 1))
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=getattr(self, "tensor_model_parallel_size", 1),
             pipeline_model_parallel_size=getattr(self, "pipeline_model_parallel_size", 1),
@@ -423,11 +535,13 @@ class GetModelKwargs(TypedDict, total=False):
         use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
         wrap_with_ddp: Whether to wrap model with DDP.
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
-        use_cpu_initialization: Initialize model on CPU.
+        use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
         init_model_with_meta_device: Initialize model on meta device.
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
         mixed_precision_wrapper: Module wrapper to apply for fp16/bf16. None to skip.
+        use_layer_wise_distributed_optimizer: Enable LayerWise optimizer model wrapping.
+        use_layer_wise_param_layout: Opt into shard-aligned LayerWise buffers instead of compact buffers.
     """
 
     ddp_config: DistributedDataParallelConfig | None
@@ -450,26 +564,39 @@ class GetModelKwargs(TypedDict, total=False):
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
+    use_layer_wise_distributed_optimizer: bool
+    use_layer_wise_param_layout: bool
 
 
 class ModelParallelKwargs(TypedDict, total=False):
-    """Model-parallel override kwargs.
+    """Model-parallel and checkpoint inference override kwargs.
 
     Attributes map to `TransformerConfig`/provider fields that control parallelism.
     Only provided values are applied as overrides.
     """
 
     tensor_model_parallel_size: int
+    tensor_parallel_num_weight_shards: int
     pipeline_model_parallel_size: int
     num_layers_in_first_pipeline_stage: int | None
     num_layers_in_last_pipeline_stage: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
+    expert_tensor_parallel_num_weight_shards: int
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None
+    pipeline_model_parallel_layout: list[list[str]] | None
     pipeline_dtype: torch.dtype
+    moe_expert_capacity_factor: float | None
+    moe_expert_rank_capacity_factor: float | None
+    moe_paged_stash: bool
+    moe_ncclep_zero_copy: bool
+    moe_pad_expert_input_to_capacity: bool
+    moe_router_force_load_balancing: bool
+    moe_router_force_biased: float | None
+    moe_hybridep_pad_uneven_dispatch_inputs: bool
 
 
 def get_model(
@@ -483,7 +610,7 @@ def get_model(
     use_torch_fsdp2: bool = False,
     wrap_with_ddp: bool = True,
     data_parallel_random_init: bool = False,
-    use_cpu_initialization: None | bool = False,
+    use_cpu_initialization: bool | None = None,
     init_model_with_meta_device: bool | None = None,
     pre_wrap_hook: Union[
         Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -493,6 +620,8 @@ def get_model(
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     *,
     pg_collection: ProcessGroupCollection,
+    use_layer_wise_distributed_optimizer: bool = False,
+    use_layer_wise_param_layout: bool = False,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -508,17 +637,20 @@ def get_model(
             Uses the provide() method with optional pre_process(bool), post_process(bool),
             vp_stage(int) arguments for pipeline parallelism
         ddp_config: Configuration for distributed data parallel training
-        model_type: Type of model (encoder, decoder, or encoder_and_decoder)
+        model_type: Type of model (encoder, decoder)
         overlap_param_gather_with_optimizer_step: Whether to overlap parameter
             gathering with optimizer step for performance optimization
         fp16: Enable FP16 mixed precision training. If None, uses model config
         bf16: Enable BF16 mixed precision training. If None, uses model config
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
+        use_layer_wise_distributed_optimizer: Build shard-aligned DDP layouts for layer-wise optimizers.
+        use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+            False retains compact DDP buffers and variable-size parameter synchronization.
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
-        use_cpu_initialization: Whether to initialize model on CPU to save GPU memory
+        use_cpu_initialization: Override CPU initialization. None preserves the provider setting
         init_model_with_meta_device: Whether to initialize the model on the meta device
         pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
             and returns a modified list, or `None` to clear the hook. If a list is provided,
@@ -530,12 +662,34 @@ def get_model(
         list[MegatronModule]: List of model modules. Contains multiple modules
             when using virtual pipeline parallelism, otherwise a single module
     """
-    if fp16:
+    if fp16 is True and bf16 is True:
+        raise ValueError("Only one of fp16 and bf16 can be enabled.")
+
+    if fp16 is not None:
         model_provider.fp16 = fp16
-    if bf16:
+    if bf16 is not None:
         model_provider.bf16 = bf16
 
-    model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
+    # Enabling one precision mode overrides the provider's existing mode even
+    # when the caller omits the corresponding explicit False.
+    if fp16 is True and bf16 is None:
+        model_provider.bf16 = False
+    elif bf16 is True and fp16 is None:
+        model_provider.fp16 = False
+
+    if fp16 is not None or bf16 is not None:
+        if model_provider.fp16:
+            selected_dtype = torch.float16
+        elif model_provider.bf16:
+            selected_dtype = torch.bfloat16
+        else:
+            selected_dtype = torch.float32
+        for field_name in ("params_dtype", "pipeline_dtype", "autocast_dtype"):
+            if hasattr(model_provider, field_name):
+                setattr(model_provider, field_name, selected_dtype)
+
+    if use_cpu_initialization is not None:
+        model_provider.use_cpu_initialization = use_cpu_initialization
     if init_model_with_meta_device:
         model_provider.init_model_with_meta_device = True
         with torch.device("meta"):
@@ -559,6 +713,9 @@ def get_model(
             if _model is not None:
                 model = _model
 
+    for model_module in model:
+        _finalize_model_quantization(model_module)
+
     # Set tensor model parallel attributes if not set
     # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
     for model_module in model:
@@ -581,32 +738,30 @@ def get_model(
             model_module.cuda(torch.cuda.current_device())
 
     if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
-        # Save expert bias in float32 to avoid precision loss during conversion
-        keep_in_fp32 = []
-        for model_module in model:
-            for submodule in model_module.modules():
-                if hasattr(submodule, "_maintain_float32_expert_bias"):
-                    expert_bias = getattr(submodule, "expert_bias", None)
-                    if expert_bias is not None:
-                        keep_in_fp32.append((submodule, expert_bias.data.clone()))
-
-        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
-
-        # Restore expert bias to float32
-        for submodule, fp32_data in keep_in_fp32:
-            submodule.expert_bias.data = fp32_data
+        model = _apply_mixed_precision_wrapper(model, model_config, mixed_precision_wrapper)
 
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
+        effective_ddp_config = ddp_config
+        if use_layer_wise_distributed_optimizer and not use_megatron_fsdp and not use_torch_fsdp2:
+            # Direct callers can bypass ConfigContainer normalization. Keep the
+            # ordinary DistOpt flag aligned with the requested LayerWise layout
+            # without mutating their configuration object.
+            effective_ddp_config = dataclasses.replace(
+                ddp_config,
+                use_distributed_optimizer=use_layer_wise_param_layout,
+            )
         model = _ddp_wrap(
             model,
             data_parallel_random_init,
-            ddp_config,
+            effective_ddp_config,
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
             pg_collection=pg_collection,
         )
 
@@ -634,9 +789,6 @@ def _create_model(
     vp_size = getattr(model_provider, "virtual_pipeline_model_parallel_size", None)
     pp_group = pg_collection.pp
     if (pp_group.size() > 1) and (vp_size is not None):
-        assert model_type != ModelType.encoder_and_decoder, (
-            "Interleaved schedule not supported for model with both encoder and decoder"
-        )
         model = []
         for i in range(vp_size):
             pre_process = is_vp_first_stage(vp_stage=i, vp_size=vp_size) and is_pp_first_stage(pp_group)
@@ -647,18 +799,15 @@ def _create_model(
                 vp_stage=i,
             )
             this_model.model_type = model_type
+            this_model.vp_stage = i
             model.append(this_model)
     else:
         pre_process = is_pp_first_stage(pp_group)
         post_process = is_pp_last_stage(pp_group)
-        if model_type == ModelType.encoder_and_decoder:
-            # Deprecated in upstream; simplify to first/last stage semantics
-            model = model_provider.provide()
-        else:
-            model = model_provider.provide(
-                pre_process=pre_process,
-                post_process=post_process,
-            )
+        model = model_provider.provide(
+            pre_process=pre_process,
+            post_process=post_process,
+        )
         model.model_type = model_type
 
     if not isinstance(model, list):

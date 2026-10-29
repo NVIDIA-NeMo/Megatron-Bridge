@@ -1,0 +1,359 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import copy
+import inspect
+from unittest.mock import Mock, patch
+
+import pytest
+import torch
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
+from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention
+from megatron.core.transformer.enums import AttnBackend
+
+from megatron.bridge.models.hybrid import hybrid_provider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+
+def _copy_attention_config(config):
+    try:
+        from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.core.transformer.attention_layer_config":
+            raise
+        return copy.deepcopy(config)
+    return AttentionLayerConfig.from_config(config)
+
+
+class TestHybridModelProvider:
+    def test_hybrid_provider_initialization(self):
+        provider = HybridModelProvider(
+            num_layers=12,
+            hidden_size=768,
+            num_attention_heads=1,
+        )
+
+        assert provider.num_layers == 12
+        assert provider.hidden_size == 768
+        assert provider.num_attention_heads == 1
+        assert provider.fp16_lm_cross_entropy is False
+        assert provider.parallel_output is True
+        assert provider.share_embeddings_and_output_weights is False
+        assert provider.params_dtype == torch.bfloat16
+        assert provider.fp16 is False
+        assert provider.bf16 is True
+        assert provider.mamba_num_groups == 8
+        assert provider.mamba_chunk_size == 128
+        assert provider.hybrid_layer_pattern is None
+        assert provider.hybrid_stack_spec is None
+        assert provider.seq_length == 8192
+        assert provider.position_embedding_type == "none"
+        assert provider.vocab_size is None
+        assert provider.logit_dtype is None
+
+    @pytest.mark.skipif(
+        "logit_dtype" not in inspect.signature(hybrid_provider.MCoreHybridModel).parameters,
+        reason="Installed MCore predates logit_dtype",
+    )
+    def test_provide_propagates_requested_logit_dtype(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            logit_dtype=torch.float32,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel", autospec=True) as mock_model:
+            provider.provide(pre_process=True, post_process=True)
+
+        assert mock_model.call_args.kwargs["logit_dtype"] is torch.float32
+
+    @pytest.mark.skipif(
+        "logit_dtype" in inspect.signature(hybrid_provider.MCoreHybridModel).parameters,
+        reason="Installed MCore supports logit_dtype",
+    )
+    def test_requested_logit_dtype_fails_clearly_on_old_mcore(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            logit_dtype=torch.float32,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
+            provider.provide(pre_process=True, post_process=True)
+
+    def test_modelopt_spec_remaps_te_layernorm_keys(self):
+        mock_spec = Mock(spec=ModuleSpec)
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_provider.get_hybrid_stack_modelopt_spec",
+            return_value=mock_spec,
+        ) as mock_fn:
+            result = hybrid_provider.modelopt_hybrid_stack_spec()
+
+        mock_fn.assert_called_once_with(local_core_attention=False, remap_te_layernorm=True)
+        assert result is mock_spec
+
+    def test_rejects_mamba_stack_spec_argument(self):
+        module_spec = ModuleSpec(module=object)
+
+        with pytest.raises(TypeError, match="mamba_stack_spec"):
+            HybridModelProvider(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=1,
+                mamba_stack_spec=module_spec,
+            )
+
+    def test_provide_method_basic(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            make_vocab_size_divisible_by=128,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch("megatron.bridge.models.hybrid.hybrid_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
+
+                result = provider.provide(pre_process=True, post_process=True)
+
+                assert result == mock_instance
+                mock_model.assert_called_once()
+                assert mock_model.call_args.kwargs["hybrid_stack_spec"] is hybrid_provider.default_hybrid_stack_spec
+                assert "logit_dtype" not in mock_model.call_args.kwargs
+
+    @pytest.mark.parametrize(
+        ("pp_first", "pp_last", "vp_stage", "expected_pre", "expected_post"),
+        [
+            (True, False, 0, True, False),
+            (True, False, 1, False, False),
+            (False, True, 0, False, False),
+            (False, True, 1, False, True),
+        ],
+    )
+    def test_provide_routes_virtual_pipeline_stages(self, pp_first, pp_last, vp_stage, expected_pre, expected_post):
+        provider = HybridModelProvider(
+            num_layers=4,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            pipeline_model_parallel_size=2,
+            virtual_pipeline_model_parallel_size=2,
+            hybrid_layer_pattern="M|M|M|M",
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+        with (
+            patch.object(hybrid_provider, "MCoreHybridModel", autospec=True) as model,
+            patch.object(hybrid_provider, "is_pp_first_stage", return_value=pp_first),
+            patch.object(hybrid_provider, "is_pp_last_stage", return_value=pp_last),
+        ):
+            provider.provide(vp_stage=vp_stage)
+        kwargs = model.call_args.kwargs
+        assert kwargs["vp_stage"] == vp_stage
+        assert kwargs["pre_process"] is expected_pre
+        assert kwargs["post_process"] is expected_post
+        assert provider._vp_stage == vp_stage
+
+    def test_provide_preserves_runtime_config_identity_without_copying_process_groups(self):
+        class UncopyableProcessGroupCollection:
+            pp = object()
+
+            def __deepcopy__(self, memo):
+                raise TypeError("runtime process groups cannot be copied")
+
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+        )
+        pg_collection = UncopyableProcessGroupCollection()
+        provider._pg_collection = pg_collection
+
+        def create_model(**kwargs):
+            assert kwargs["config"] is provider
+            assert kwargs["config"]._pg_collection is None
+            copied_config = _copy_attention_config(kwargs["config"])
+            assert copied_config._pg_collection is None
+            return Mock(config=kwargs["config"])
+
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel", side_effect=create_model
+        ) as mock_model:
+            model = provider.provide(pre_process=True, post_process=True)
+
+        assert provider._pg_collection is pg_collection
+        assert mock_model.call_args.kwargs["pg_collection"] is pg_collection
+
+        runtime_grad_sync = Mock()
+        provider.grad_sync_func = runtime_grad_sync
+        assert model.config.grad_sync_func is runtime_grad_sync
+
+    def test_provide_method_with_vocab_padding(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=8,
+            vocab_size=50000,
+            tensor_model_parallel_size=8,
+            make_vocab_size_divisible_by=128,
+            should_pad_vocab=True,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_provider.calculate_padded_vocab_size", return_value=50176
+        ) as mock_calc_vocab:
+            with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
+                provider.provide(pre_process=True, post_process=True)
+
+                mock_calc_vocab.assert_called_once_with(50000, 128, 8)
+                assert mock_model.call_args.kwargs["vocab_size"] == 50176
+
+    def test_nondefault_mamba_chunk_size_is_applied_without_mutating_default_spec(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            mamba_chunk_size=256,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
+            provider.provide(pre_process=True, post_process=True)
+
+        configured_spec = mock_model.call_args.kwargs["hybrid_stack_spec"]
+        configured_mixer = configured_spec.submodules.mamba_layer.submodules.mixer
+        default_mixer = hybrid_provider.default_hybrid_stack_spec.submodules.mamba_layer.submodules.mixer
+        assert configured_mixer.params["chunk_size"] == 256
+        assert "chunk_size" not in default_mixer.params
+
+    @patch("megatron.bridge.models.hybrid.hybrid_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.hybrid.hybrid_provider.is_pp_last_stage", return_value=True)
+    def test_provide_method_respects_explicit_pipeline_stages(self, *_):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
+            provider.provide(pre_process=False, post_process=True)
+
+        assert mock_model.call_args.kwargs["pre_process"] is False
+        assert mock_model.call_args.kwargs["post_process"] is True
+
+    def test_hybrid_stack_spec_callable(self):
+        def custom_stack_spec():
+            spec = Mock()
+            spec.info = "custom spec"
+            return spec
+
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            hybrid_stack_spec=custom_stack_spec,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
+            provider.provide(pre_process=True, post_process=True)
+
+        spec_call_kwarg = mock_model.call_args.kwargs["hybrid_stack_spec"]
+        assert isinstance(spec_call_kwarg, Mock)
+        assert spec_call_kwarg.info == "custom spec"
+
+    @pytest.mark.parametrize("attention_backend", [AttnBackend.local, "local"])
+    def test_local_attention_clones_stack_spec_and_uses_mcore_attention(self, attention_backend):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            attention_backend=attention_backend,
+        )
+
+        resolved_spec = provider._resolve_hybrid_stack_spec()
+        resolved_core_attention = (
+            resolved_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+        )
+        default_core_attention = hybrid_provider.default_hybrid_stack_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+
+        assert resolved_spec is not hybrid_provider.default_hybrid_stack_spec
+        assert resolved_core_attention is DotProductAttention
+        assert default_core_attention is TEDotProductAttention
+
+    def test_non_local_attention_keeps_transformer_engine_stack_spec(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            attention_backend=AttnBackend.flash,
+        )
+
+        resolved_spec = provider._resolve_hybrid_stack_spec()
+        resolved_core_attention = (
+            resolved_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+        )
+
+        assert resolved_spec is hybrid_provider.default_hybrid_stack_spec
+        assert resolved_core_attention is TEDotProductAttention
+
+    def test_finalize_uses_compatible_hybrid_layer_count(self):
+        provider = HybridModelProvider(
+            hidden_size=768,
+            num_attention_heads=8,
+            hybrid_layer_pattern="M-M-|M-M*-/MM/MM",
+        )
+
+        with patch.object(hybrid_provider.TransformerConfig, "finalize", autospec=True) as mock_finalize:
+            provider.finalize()
+
+        assert provider.num_layers == 9
+        mock_finalize.assert_called_once_with(provider)
+
+    def test_finalize_mtp_num_layers_none_with_repeated_layer(self):
+        sep = hybrid_provider.Symbols.MTP_SEPARATOR
+        provider = HybridModelProvider(
+            hidden_size=128,
+            num_attention_heads=1,
+            hybrid_layer_pattern="M-M-M-M-",
+            mtp_hybrid_override_pattern="M*",
+            mtp_num_layers=None,
+            mtp_use_repeated_layer=True,
+        )
+
+        with patch.object(hybrid_provider.TransformerConfig, "finalize", autospec=True):
+            provider.finalize()
+
+        assert provider.hybrid_layer_pattern == "M-M-M-M-" + sep + "M*"
+        assert provider.mtp_num_layers is not None

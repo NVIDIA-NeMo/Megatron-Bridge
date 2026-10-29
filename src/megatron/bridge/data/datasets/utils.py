@@ -24,7 +24,7 @@ import signal
 import time
 from functools import lru_cache, partial
 from queue import Empty
-from typing import Any, Callable, Optional, Pattern, Type
+from typing import Any, Callable, Literal, Optional, Pattern, Type
 
 import numpy as np
 import torch
@@ -32,7 +32,8 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.tokenizers import MegatronTokenizer
 from torch.utils.data import Dataset
 
-from megatron.bridge.utils.common_utils import get_rank_safe
+from megatron.bridge.utils.common_utils import get_local_rank_preinit
+from megatron.bridge.utils.safe_pickle import safe_pickle_load
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -54,35 +55,73 @@ GENERATION_REGEX: Pattern[str] = re.compile(r"\{%-?\s+generation\s+-?%\}")
 __idx_version__: str = "0.2"  # index file version
 __idx_suffix__: str = "idx"  # index file suffix
 
+_MEMMAP_INDEX_CHUNK_SIZE: int = 64 * 1024 * 1024
+
 
 def build_index_from_memdata(fn, newline_int):
     """
     Build index of delimiter positions between samples in memmap.
-    Can be provided externally.
 
-    Returns a 1D array of ints.
+    The input file is scanned in fixed-size chunks to avoid allocating
+    temporary arrays proportional to the full file size.
+
+    Returns:
+        A 1D NumPy array containing delimiter positions.
     """
-    # use memmap to read file
+    # Use memmap to read the file without loading the entire file into memory.
     if MultiStorageClientFeature.is_enabled():
         msc = MultiStorageClientFeature.import_package()
         mdata = msc.numpy.memmap(fn, dtype=np.uint8, mode="r")
     else:
         mdata = np.memmap(fn, dtype=np.uint8, mode="r")
-    # find newline positions
-    midx = np.where(mdata == newline_int)[0]
-    midx_dtype = midx.dtype
-    # make sure to account for all data
-    midx = midx.tolist()
-    # add last item in case there is no new-line at the end of the file
-    if (len(midx) == 0) or (midx[-1] + 1 != len(mdata)):
-        midx = midx + [len(mdata) + 1]
 
-    # remove empty lines from end of file
-    while len(midx) > 1 and (midx[-1] - midx[-2]) < 2:
-        midx.pop(-1)
-    midx = np.asarray(midx, dtype=midx_dtype)
+    data_size = len(mdata)
 
-    # free memmap
+    # First pass: count delimiters in bounded-size chunks.
+    num_newlines = 0
+
+    for start in range(0, data_size, _MEMMAP_INDEX_CHUNK_SIZE):
+        chunk = mdata[start : start + _MEMMAP_INDEX_CHUNK_SIZE]
+        num_newlines += np.count_nonzero(chunk == newline_int)
+
+    # Add an EOF sentinel when the file does not end with a newline.
+    needs_eof = int(mdata[-1]) != newline_int
+
+    # Preallocate the exact-size index array.
+    midx = np.empty(
+        num_newlines + int(needs_eof),
+        dtype=np.intp,
+    )
+
+    # Second pass: fill the preallocated array with delimiter positions.
+    offset = 0
+
+    for start in range(0, data_size, _MEMMAP_INDEX_CHUNK_SIZE):
+        chunk = mdata[start : start + _MEMMAP_INDEX_CHUNK_SIZE]
+
+        # Find delimiter positions within this chunk.
+        local_midx = np.flatnonzero(chunk == newline_int)
+        num_found = len(local_midx)
+
+        if num_found:
+            # Shift local positions by the chunk offset to get global positions.
+            midx[offset : offset + num_found] = local_midx + start
+            offset += num_found
+
+    if needs_eof:
+        # Sentinel one past the end of file.
+        midx[offset] = data_size + 1
+
+    # Remove trailing empty lines: when two consecutive delimiters are
+    # adjacent (gap < 2), the last one represents an empty line at EOF.
+    end = len(midx)
+
+    while end > 1 and (midx[end - 1] - midx[end - 2]) < 2:
+        end -= 1
+
+    midx = midx[:end]
+
+    # Free memmap
     mdata._mmap.close()
     del mdata
 
@@ -240,18 +279,17 @@ class _TextMemMapDataset(Dataset):
         if is_distributed and not rank_0_prepare_data():
             torch.distributed.barrier()
 
-        if is_distributed and get_rank_safe() == 0:
+        if is_distributed and get_local_rank_preinit() == 0:
             # If we are in a distributed multi-node set-up and index files are not stored on
             # a shared filesystem, then the index files created on global rank 0 are only
             # accessible to the workers on that node.
             #
             # Two cases may occur here:
             #
-            # 1. case of a shared filesystem, or global_rank==0: the index files are present in
-            #    the locally available filesystem, calling build_index_files() again is a no-op.
-            # 2. case of a non-shared filesystem, and global_rank>0: the index files are not
-            #    present in the locally available filesystem, calling build_index_files() again
-            #    will create them.
+            # 1. shared filesystem, or local rank 0 on the first node: the index files are present
+            #    locally, so calling build_index_files() again is a no-op.
+            # 2. non-shared filesystem, and local rank 0 on another node: the index files are not
+            #    present locally, so calling build_index_files() creates them.
             #
             # Outcome in all cases: all nodes have access to the index files in their filesystem.
             build_index_files(
@@ -373,9 +411,9 @@ class _TextMemMapDataset(Dataset):
             # load index file into memory map
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
-                midx = msc.numpy.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
+                midx = msc.numpy.load(idx_fn + ".npy", allow_pickle=False, mmap_mode="r")
             else:
-                midx = np.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
+                midx = np.load(idx_fn + ".npy", allow_pickle=False, mmap_mode="r")
 
             # test for header
             if len(midx) < self._header_lines:
@@ -385,10 +423,10 @@ class _TextMemMapDataset(Dataset):
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
                 with msc.open(idx_fn + ".info", "rb") as fp:
-                    idx_info_dict = pickle.load(fp)
+                    idx_info_dict = safe_pickle_load(fp)
             else:
                 with open(idx_fn + ".info", "rb") as fp:
-                    idx_info_dict = pickle.load(fp)
+                    idx_info_dict = safe_pickle_load(fp)
 
             # test for mismatch in expected newline_int
             if "newline_int" in idx_info_dict:
@@ -664,6 +702,14 @@ def build_index_files(
         workers=workers,
     )
 
+    # safe_map yields None for a file whose index build raised; summing it masks the real error.
+    failed = [fn for fn, status in zip(dataset_paths, build_status) if status is None]
+    if failed:
+        raise RuntimeError(
+            f"Failed to build memmap index files for {len(failed)} of {len(dataset_paths)} "
+            f"data files: {failed}. See the preceding warnings for the underlying error."
+        )
+
     logger.info(
         f"Time building {sum(build_status)} / {len(build_status)} "
         f"mem-mapped files: {datetime.timedelta(seconds=time.time() - start_time)}"
@@ -798,7 +844,7 @@ def _get_samples_mapping(
             2 if binary_head else 1,
         )
         logger.info(" > done building samples index maping")
-        np.save(indexmap_filename, samples_mapping, allow_pickle=True)
+        np.save(indexmap_filename, samples_mapping, allow_pickle=False)
         logger.info(" > saved the index mapping in {}".format(indexmap_filename))
         # Make sure all the ranks have built the mapping
         logger.info(
@@ -814,7 +860,7 @@ def _get_samples_mapping(
     if samples_mapping is None:
         logger.info(" > loading indexed mapping from {}".format(indexmap_filename))
         start_time = time.time()
-        samples_mapping = np.load(indexmap_filename, allow_pickle=True, mmap_mode="r")
+        samples_mapping = np.load(indexmap_filename, allow_pickle=False, mmap_mode="r")
         logger.info("    loaded indexed file in {:3.3f} seconds".format(time.time() - start_time))
         logger.info("    total number of samples: {}".format(samples_mapping.shape[0]))
 
@@ -872,13 +918,34 @@ def _convert_to_openai_messages(source: dict) -> list[dict]:
         elif source.get("messages"):
             # HuggingFace chat template {"messages": [{"role": "system/user/assistant", "content": ""}]}
             chat = source.get("messages")
+        elif source.get("conversation"):
+            # Processor-ready singular conversation schema.
+            chat = source.get("conversation")
+        else:
+            raise ValueError("Chat rows must contain 'messages', 'conversation', or 'conversations'.")
     else:
         chat = source
 
     return chat
 
 
-def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: Optional[list[Any]] = None) -> dict:
+def _chat_template_input_ids(tokenized_chat: Any) -> list[int]:
+    input_ids = tokenized_chat.get("input_ids") if hasattr(tokenized_chat, "get") else tokenized_chat
+    if isinstance(input_ids, torch.Tensor):
+        input_ids = input_ids.detach().cpu().tolist()
+    if isinstance(input_ids, (list, tuple)) and input_ids and isinstance(input_ids[0], (list, tuple)):
+        if len(input_ids) != 1:
+            raise ValueError("Expected a single tokenized chat sequence from apply_chat_template.")
+        input_ids = input_ids[0]
+    return [int(token_id) for token_id in input_ids]
+
+
+def _chat_preprocess(
+    source: dict,
+    tokenizer: MegatronTokenizer,
+    tool_schemas: dict[str, Any] | list[dict[str, Any]] | None = None,
+    loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
+) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
 
@@ -898,6 +965,7 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
         tokenizer - tokenizer to apply chat templates to
         tool_schemas - Optional tool_schemas to supply to apply_chat_template, these will be superseded
            by tools supplied with the message
+        loss_mode - Assistant-only, final-assistant-turn, or full-sequence loss
 
     Output:
         {
@@ -914,50 +982,40 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     * answer_ids contain tokenized messages with chat template applied for only the assistant's last generated
     output
     """
-    if not hasattr(tokenizer, "_tokenizer") or not hasattr(tokenizer._tokenizer, "apply_chat_template"):
-        raise ValueError(
-            "Cannot apply chat template with tokenizer that is not a HuggingFace AutoTokenizer. "
-            "The tokenizer must have a '_tokenizer' attribute with an 'apply_chat_template' method."
+    from megatron.bridge.data.conversation_processing import tokenize_chat_example
+    from megatron.bridge.data.token_utils import extract_skipped_token_ids
+
+    try:
+        tokenized = tokenize_chat_example(
+            source,
+            tokenizer,
+            tool_schemas=tool_schemas,
+            skipped_tokens=extract_skipped_token_ids(tokenizer),
+            loss_mode=loss_mode,
+            return_final_assistant_start=True,
         )
+    except ValueError as error:
+        if str(error).startswith("Chat preprocessing requires"):
+            raise ValueError(
+                "Cannot apply chat template with tokenizer that is not a HuggingFace AutoTokenizer. "
+                "The tokenizer must expose an 'apply_chat_template' method."
+            ) from error
+        if str(error).startswith("Unable to build assistant loss mask"):
+            raise ValueError(
+                "The tokenizer's chat_template does not contain a {% generation %} block and Bridge could not "
+                "infer assistant boundary markers for an assistant-only loss mask. Add a generation block to the "
+                "chat_template or pass AssistantMaskBoundaryConfig explicitly."
+            ) from error
+        raise
+    input_ids = tokenized.input_ids.tolist()
+    mask = tokenized.assistant_mask.tolist()
 
-    chat = _convert_to_openai_messages(source)
-    tools = None
-    if isinstance(source, dict):
-        tools = source.get("tools") or tool_schemas
-    else:
-        tools = tool_schemas
-
-    if getattr(tokenizer, "legacy", False):
-        tokenizer = tokenizer._tokenizer
-
-    # assistant mask only works if chat template has generation keyword
-    template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
-
-    tokenized_chat = tokenizer.apply_chat_template(
-        chat,
-        tools=tools,
-        tokenize=True,
-        return_dict=True,
-        return_assistant_tokens_mask=template_has_generation_kwd,
-    )
-
-    # Choose the last conversation as answer other history are context by finding the last masked token
-    # which indicates end of context and beginning of answer
-    input_ids = tokenized_chat.get("input_ids")
-    if template_has_generation_kwd:
-        mask = tokenized_chat["assistant_masks"]
-    else:
-        mask = [1] * len(input_ids)
-
-    if tokenizer.eos_id and input_ids[-1] != tokenizer.eos_id:
-        input_ids += [tokenizer.eos_id]
-        mask += [1]
-
-    if 0 in mask:
-        # traverse the list backward for first occurrence of masked token
-        context_end_idx = len(mask) - mask[::-1].index(0)
-    else:
-        context_end_idx = len(mask)
+    # Split generation context from the final assistant response using the
+    # rendered turn boundary, never the selected loss policy. Full loss and
+    # skipped control tokens can change mask values without changing the turn.
+    context_end_idx = tokenized.final_assistant_start
+    if context_end_idx is None:
+        context_end_idx = len(input_ids)
 
     context_ids = input_ids[:context_end_idx]
     answer_ids = input_ids[context_end_idx:]
@@ -1260,9 +1318,9 @@ def _build_memmap_index_files(newline_int, build_index_fn, fn, index_mapping_dir
         logger.info(f"Saving idx file = {idx_fn}.npy")
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
-            msc.numpy.save(idx_fn + ".npy", midx, allow_pickle=True)
+            msc.numpy.save(idx_fn + ".npy", midx, allow_pickle=False)
         else:
-            np.save(idx_fn + ".npy", midx, allow_pickle=True)
+            np.save(idx_fn + ".npy", midx, allow_pickle=False)
         logger.info(f"Saving metadata file = {idx_fn}.info")
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
@@ -1298,6 +1356,8 @@ def _index_fn(fn: str, index_mapping_dir: str) -> str:
                 If None, will write to the same folder as the dataset.
     """
     if index_mapping_dir:
+        # A scheme left inside the composed path reads back as a nested URL.
+        fn = fn.replace("://", "/")
         # Remove leading "/" and "..".
         while fn.startswith(("/", "..")):
             if fn.startswith(".."):

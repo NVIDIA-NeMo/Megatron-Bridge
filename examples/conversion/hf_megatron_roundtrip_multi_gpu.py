@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,15 +28,20 @@ The process is as follows:
     model back into the Hugging Face format. A new directory, named after the
     model, will be created for the converted model files. By default, this
     directory is created in the current working directory, but a different
-    parent directory can be specified via the `--output-dir` argument.
+    parent directory can be specified via the `--output-dir` argument. Multi-GPU
+    exports use distributed saving by default; pass `--no-distributed-save` to
+    select rank-0-only saving explicitly.
 7. Optionally, the `save_megatron_model` method can be used to save the model
     in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
 Usage:
-    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B
+    uv run python -m torch.distributed.run --nproc_per_node=8 \
+      examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+      --hf-model-id meta-llama/Llama-3.2-1B
 
-    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B \
-       --megatron-save-path ./megatron_checkpoint
+    srun --nodes=1 --ntasks-per-node=8 uv run python \
+      examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+      --hf-model-id meta-llama/Llama-3.2-1B --megatron-save-path ./megatron_checkpoint
 
     uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
       --hf-model-id Qwen/Qwen3-30B-A3B --tp 1 --pp 8
@@ -48,11 +53,11 @@ import sys
 
 import torch
 from rich.console import Console
-from rich.table import Table
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
 
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
@@ -60,17 +65,94 @@ console = Console()
 
 # Parameters where Megatron and HF may use different dtypes.
 # These are compared in float32 to avoid false mismatches.
+# TODO(yuya): Make this ignore list (model_type, param_name)
 IGNORE_PRECISION_PARAMS = [
     "e_score_correction_bias",
     "A_log",
     "linear_attn.norm.weight",
+    "dt_bias",
+    "expert_bias",  # MoE gate expert bias: float32 in Megatron, bfloat16 in HF
+    # MiniMax-M2: QK norms stored as bf16 in HF, loaded as fp32 by Megatron config.params_dtype
+    "q_norm.weight",
+    "k_norm.weight",
+    # MoE router gate stored as fp32 in Megatron, may be bf16 in HF
+    "block_sparse_moe.gate.weight",
+    "mlp.gate.weight",
+    "moe.gate.weight",
 ]
+
+# FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
+_FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
+
+
+def _configure_slurm_distributed_environment() -> None:
+    """Translate native Slurm task variables into PyTorch distributed variables."""
+    if os.environ.get("WORLD_SIZE") is not None or os.environ.get("SLURM_NTASKS") is None:
+        return
+    os.environ["RANK"] = os.environ["SLURM_PROCID"]
+    os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
+    os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
+    master_addr = resolve_slurm_master_addr()
+    master_port = resolve_slurm_master_port()
+    if master_addr is not None:
+        os.environ["MASTER_ADDR"] = master_addr
+    if master_port is not None:
+        os.environ["MASTER_PORT"] = str(master_port)
+
+
+def _synchronize_weight_verification(all_match: bool) -> bool:
+    """Return the rank-0 verification result consistently on every rank.
+
+    Args:
+        all_match: Whether the locally verified weights match. Only rank 0's
+            value is authoritative.
+
+    Returns:
+        Whether rank 0 observed any weight mismatch.
+    """
+    mismatch = torch.tensor(not all_match, dtype=torch.int32, device=torch.cuda.current_device())
+    torch.distributed.broadcast(mismatch, src=0)
+    return bool(mismatch.item())
+
+
+def _print_verification_results(
+    verified_count: int,
+    mismatch_count: int,
+    mismatch_samples: list[str],
+    fp8_skip_count: int,
+    fp8_skip_samples: list[str],
+) -> None:
+    """Print a bounded rank-0-only verification summary.
+
+    Args:
+        verified_count: Number of weights compared or skipped as lossy FP8.
+        mismatch_count: Number of weights that did not match.
+        mismatch_samples: Bounded sample of mismatched weight names.
+        fp8_skip_count: Number of lossy FP8 comparisons that were skipped.
+        fp8_skip_samples: Sample names and dtypes for skipped FP8 comparisons.
+    """
+    compared_count = verified_count - fp8_skip_count
+    matched_count = compared_count - mismatch_count
+    color = "green" if mismatch_count == 0 else "red"
+    console.print(f"[{color}]Weight verification: {matched_count}/{compared_count} compared weights matched[/]")
+    if mismatch_count:
+        console.print(f"[red]{mismatch_count} weight mismatches (showing up to 20):[/red]")
+        for entry in mismatch_samples:
+            console.print(f"  [red]{entry}[/red]")
+    if fp8_skip_count > 0:
+        console.print(
+            f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose (dequantisation is lossy):[/yellow]"
+        )
+        for entry in fp8_skip_samples:
+            console.print(f"  [yellow]{entry}[/yellow]")
+        if fp8_skip_count > len(fp8_skip_samples):
+            console.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
 
 
 @torchrun_main
 def main(
     hf_model_id: str = HF_MODEL_ID,
-    output_dir: str = None,
+    output_dir: str | None = None,
     tp: int = 1,
     pp: int = 1,
     ep: int = 1,
@@ -79,11 +161,16 @@ def main(
     megatron_load_path: str | None = None,
     trust_remote_code: bool | None = None,
     strict: bool = False,
+    distributed_save: bool = True,
+    skip_save: bool = False,
+    atol: float = 1e-1,
+    rtol: float = 1e-5,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
+    _configure_slurm_distributed_environment()
     if os.environ.get("WORLD_SIZE") is None:
-        console.print("This script must be launched with torchrun. Please run:")
-        console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
+        console.print("This script must be launched with torch.distributed.run or as native Slurm tasks. Please run:")
+        console.print(f"uv run python -m torch.distributed.run --nproc_per_node=<gpus> {sys.argv[0]}")
         sys.exit(1)
 
     model_name = hf_model_id.split("/")[-1]
@@ -144,61 +231,117 @@ def main(
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0
 
-    # Formatting
-    if is_rank_0:
-        table = Table(title="Hugging Face Weights Verification")
-        table.add_column("Weight Name", style="cyan")
-        table.add_column("Shape")
-        table.add_column("DType")
-        table.add_column("Device")
-        table.add_column("Matches Original", justify="center")
-
     if is_rank_0:
         console.print(f"[yellow]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert parallel size: {model_provider.expert_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
 
+    # Weight comparison handles three situations:
+    #
+    # 1. FP8 params (float8_e4m3fn / float8_e5m2)  →  SKIP allclose.
+    #    Block-wise dequantisation on import is inherently lossy; the
+    #    original fp8 bit-pattern cannot be reconstructed, so comparing
+    #    values is meaningless.  (e.g. MiniMax-M2 expert & attention weights)
+    #
+    # 2. Non-FP8 dtype mismatch or IGNORE_PRECISION_PARAMS  →  CAST to
+    #    float32, then allclose.  Covers norms stored as bf16 in HF but
+    #    fp32 in Megatron (or vice-versa for gates), and params known to
+    #    have precision differences.
+    #
+    # 3. Regular params (same dtype, not in ignore list)  →  direct allclose.
+
     all_match = True
+    verified_count = 0
+    mismatch_count = 0
+    mismatch_samples: list[str] = []
+    fp8_skip_count = 0
+    fp8_skip_samples: list[str] = []
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
             compare_original = original_param
-            # Cast to float32 for params with known dtype mismatches between Megatron and HF
-            # (e.g. Megatron keeps expert_bias in float32 while HF may use bfloat16)
-            if any(p in name for p in IGNORE_PRECISION_PARAMS):
+
+            # --- Case 1: FP8 → skip (lossy dequantisation) ---
+            if original_param.dtype in _FP8_DTYPES or compare_param.dtype in _FP8_DTYPES:
+                fp8_skip_count += 1
+                if len(fp8_skip_samples) < 20:
+                    fp8_skip_samples.append(
+                        f"{name}: exported {compare_param.dtype} vs original {original_param.dtype}"
+                    )
+                match = True
+
+            # --- Case 2: non-FP8 dtype mismatch or known precision param → cast to fp32 ---
+            elif compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
-            match = torch.allclose(
-                compare_param, compare_original.to(compare_param.device), atol=1e-1
-            )  # Increased tolerance for bfloat16
+                match = torch.allclose(
+                    compare_param,
+                    compare_original.to(compare_param.device),
+                    atol=atol,
+                    rtol=rtol,
+                )
+
+            # --- Case 3: regular param → direct allclose ---
+            else:
+                match = torch.allclose(
+                    compare_param,
+                    compare_original.to(compare_param.device),
+                    atol=atol,
+                    rtol=rtol,
+                )
+
             all_match = all_match and match
-            table.add_row(
-                name,
-                str(tuple(param.shape)),
-                str(param.dtype).replace("torch.", ""),
-                str(param.device),
-                "✅" if match else "❌",
-            )
+            verified_count += 1
+            if not match:
+                mismatch_count += 1
+                if len(mismatch_samples) < 20:
+                    mismatch_samples.append(name)
 
-    if is_rank_0:
-        console.print(table)
-        console.print(f"Saving HF-ckpt in {save_path}...")
-
-    bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
-
-    # Save in Megatron format if path is provided
-    if megatron_save_path:
+    verification_failed = _synchronize_weight_verification(all_match)
+    if verification_failed:
         if is_rank_0:
-            console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
-        bridge.save_megatron_model(megatron_model, megatron_save_path)
-
-    if not all_match:
+            _print_verification_results(
+                verified_count,
+                mismatch_count,
+                mismatch_samples,
+                fp8_skip_count,
+                fp8_skip_samples,
+            )
         raise ValueError("Weight mismatch detected")
 
+    if skip_save:
+        if is_rank_0:
+            console.print("[green]--skip-save: skipping HF/Megatron save (verification only)[/green]")
+    else:
+        if is_rank_0:
+            console.print(f"Saving HF-ckpt in {save_path}...")
+        bridge.save_hf_pretrained(
+            megatron_model,
+            save_path,
+            strict=strict,
+            distributed_save=distributed_save,
+        )
 
-if __name__ == "__main__":
+        # Save in Megatron format if path is provided
+        if megatron_save_path:
+            if is_rank_0:
+                console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
+            bridge.save_megatron_model(megatron_model, megatron_save_path)
+
+    if is_rank_0:
+        _print_verification_results(
+            verified_count,
+            mismatch_count,
+            mismatch_samples,
+            fp8_skip_count,
+            fp8_skip_samples,
+        )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the standalone round-trip example argument parser."""
     parser = argparse.ArgumentParser(
         description="Convert between HuggingFace and Megatron-LM model formats on multiple GPUs"
     )
@@ -227,8 +370,30 @@ if __name__ == "__main__":
         help="Path to load the model in Megatron checkpoint format. If provided, model will not start from HF checkpoint.",
     )
     parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
-    parser.add_argument("--not-strict", action="store_true", help="Perform loose validation during weight export")
-    args = parser.parse_args()
+    strictness = parser.add_mutually_exclusive_group()
+    strictness.add_argument(
+        "--strict",
+        action="store_true",
+        help="Require every source checkpoint tensor to be written during weight export",
+    )
+    strictness.add_argument("--not-strict", dest="strict", action="store_false", help=argparse.SUPPRESS)
+    parser.set_defaults(strict=False)
+    parser.add_argument(
+        "--distributed-save",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Let ranks save assigned Hugging Face shards independently (default: enabled)",
+    )
+    parser.add_argument(
+        "--skip-save", action="store_true", help="Skip saving the model after comparison (verification only)"
+    )
+    parser.add_argument("--atol", type=float, default=1e-1, help="Absolute tolerance for tensor comparison")
+    parser.add_argument("--rtol", type=float, default=1e-5, help="Relative tolerance for tensor comparison")
+    return parser
+
+
+if __name__ == "__main__":
+    args = _build_parser().parse_args()
     main(
         args.hf_model_id,
         args.output_dir,
@@ -239,6 +404,11 @@ if __name__ == "__main__":
         args.megatron_save_path,
         args.megatron_load_path,
         args.trust_remote_code,
+        strict=args.strict,
+        distributed_save=args.distributed_save,
+        skip_save=args.skip_save,
+        atol=args.atol,
+        rtol=args.rtol,
     )
 
     if torch.distributed.is_initialized():

@@ -167,7 +167,13 @@ cfg.profiling = ProfilingConfig(
 
 ### Analyze Memory Usage
 
-After the run completes, memory snapshots for each specified rank are saved to the designated path. Load these traces using the PyTorch Memory Viz tool to plot memory usage over time and detect bottlenecks or leaks in your training pipeline.
+After the run completes, memory snapshots for each specified rank are saved to the designated path, with the rank inserted before the extension (for example, `memory_trace_0.pickle`). Load these traces using the PyTorch Memory Viz tool to plot memory usage over time and detect bottlenecks or leaks in your training pipeline.
+
+For comparing two runs, attributing peak memory to specific allocation sites, or drilling into a captured out-of-memory snapshot, see the [Memory Snapshot Analysis skill](../skills/nemo-mbridge-memory-snapshot-analysis/SKILL.md), which bundles scripts for replaying and diffing these files.
+
+```{note}
+`record_memory_history` and `use_pytorch_profiler` are independent settings. `ProfilerStep#N` annotations inside the snapshot come from the PyTorch profiler, so a snapshot captured with `record_memory_history=True` alone contains no step boundaries. Enable both if you want per-step memory analysis.
+```
 
 ## Optimize Profiling Accuracy
 

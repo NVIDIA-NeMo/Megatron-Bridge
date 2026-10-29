@@ -1,0 +1,313 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import pytest
+
+from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
+from megatron.bridge.diffusion.data.wan.wan_mock_datamodule import mock_batch
+from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
+from megatron.bridge.diffusion.recipes.wan.wan import (
+    wan_1_3b_pretrain_config,
+    wan_1_3b_sft_config,
+    wan_1_3b_text2image_pretrain_config,
+    wan_1_3b_text2video_pretrain_config,
+    wan_14b_pretrain_config,
+    wan_14b_sft_config,
+)
+from megatron.bridge.recipes.wan import (
+    wan_1_3b_text2image_pretrain_config as canonical_wan_1_3b_text2image_pretrain_config,
+)
+from megatron.bridge.recipes.wan import (
+    wan_1_3b_text2video_pretrain_config as canonical_wan_1_3b_text2video_pretrain_config,
+)
+from megatron.bridge.training.config import ConfigContainer
+
+
+pytestmark = [pytest.mark.unit]
+
+
+class TestWan1_3BPretrainConfig:
+    """Tests for wan_1_3b_pretrain_config function (no-arg API)."""
+
+    def test_pretrain_config_returns_complete_config(self):
+        config = wan_1_3b_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, WanModelProvider)
+        assert isinstance(config.dataset, WanDatasetConfig)
+        assert config.dataset.path is None  # default: mock/synthetic data
+
+        assert hasattr(config, "train")
+        assert hasattr(config, "optimizer")
+        assert hasattr(config, "scheduler")
+        assert hasattr(config, "ddp")
+        assert hasattr(config, "logger")
+        assert hasattr(config, "checkpoint")
+
+    def test_pretrain_config_directory_structure(self):
+        config = wan_1_3b_pretrain_config()
+
+        assert "default" in config.checkpoint.save
+        assert "default" in config.logger.tensorboard_dir
+        assert config.checkpoint.save.endswith("checkpoints")
+
+    def test_pretrain_config_default_training_parameters(self):
+        config = wan_1_3b_pretrain_config()
+
+        assert config.train.train_iters == 10000
+        assert config.train.global_batch_size == 2
+        assert config.train.micro_batch_size == 1
+
+    def test_pretrain_config_default_model_parameters(self):
+        config = wan_1_3b_pretrain_config()
+
+        assert config.model.num_layers == 30
+        assert config.model.hidden_size == 1536
+        assert config.model.num_attention_heads == 12
+        assert config.model.ffn_hidden_size == 8960
+        assert config.model.crossattn_emb_size == 1536
+        assert config.model.seq_length == 1024
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.context_parallel_size == 8
+
+    def test_pretrain_config_default_dataset_configuration(self):
+        config = wan_1_3b_pretrain_config()
+
+        assert config.dataset.path is None
+        assert config.dataset.F_latents == 24
+        assert config.dataset.H_latents == 104
+        assert config.dataset.W_latents == 60
+
+    def test_pretrain_config_dataset_accepts_path(self):
+        config = wan_1_3b_pretrain_config()
+        assert config.dataset.path is None
+
+        # WanDatasetConfig accepts a path to switch to real data
+        config.dataset.path = "/some/data/path"
+        assert config.dataset.path == "/some/data/path"
+
+    def test_pretrain_config_checkpoint_format(self):
+        config = wan_1_3b_pretrain_config()
+        assert config.checkpoint.ckpt_format == "torch_dist"
+
+    def test_pretrain_config_precision(self):
+        config = wan_1_3b_pretrain_config()
+        assert config.mixed_precision is not None
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
+
+    def test_pretrain_config_ddp_settings(self):
+        config = wan_1_3b_pretrain_config()
+        assert config.ddp.use_distributed_optimizer is True
+        assert config.ddp.check_for_nan_in_grad is True
+
+
+class TestWan14BPretrainConfig:
+    """Tests for wan_14b_pretrain_config function (no-arg API)."""
+
+    def test_pretrain_config_returns_complete_config(self):
+        config = wan_14b_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, WanModelProvider)
+        assert isinstance(config.dataset, WanDatasetConfig)
+        assert config.dataset.path is None
+
+    def test_pretrain_config_default_model_parameters(self):
+        config = wan_14b_pretrain_config()
+
+        assert config.model.num_layers == 40
+        assert config.model.hidden_size == 5120
+        assert config.model.num_attention_heads == 40
+        assert config.model.ffn_hidden_size == 13824
+        assert config.model.tensor_model_parallel_size == 2
+        assert config.model.context_parallel_size == 4
+        assert config.model.sequence_parallel is True
+
+
+class TestWanFinetuneConfigs:
+    """Tests for wan finetune config functions."""
+
+    def test_1_3B_finetune_config_no_checkpoint(self):
+        config = wan_1_3b_sft_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, WanModelProvider)
+        assert config.checkpoint.pretrained_checkpoint is None
+
+    def test_1_3B_finetune_config_with_checkpoint(self):
+        config = wan_1_3b_sft_config(pretrained_checkpoint="/path/to/ckpt")
+
+        assert config.checkpoint.pretrained_checkpoint == "/path/to/ckpt"
+
+    def test_14B_finetune_config_no_checkpoint(self):
+        config = wan_14b_sft_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, WanModelProvider)
+        assert config.checkpoint.pretrained_checkpoint is None
+
+    def test_14B_finetune_config_with_checkpoint(self):
+        config = wan_14b_sft_config(pretrained_checkpoint="/path/to/ckpt")
+
+        assert config.checkpoint.pretrained_checkpoint == "/path/to/ckpt"
+
+
+class TestWan1_3BText2ImageText2VideoConfigs:
+    """Tests for wan_1_3b text2image / text2video pretrain config variants."""
+
+    def test_text2image_overrides(self):
+        config = wan_1_3b_text2image_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert config.model.seq_length == 4096
+        assert config.dataset.seq_length == 4096
+        assert config.model.context_parallel_size == 1
+        assert config.optimizer.lr == 1e-4
+        assert config.optimizer.min_lr == 1e-4
+        assert config.optimizer.weight_decay == 0.001
+
+    def test_text2video_overrides(self):
+        config = wan_1_3b_text2video_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert config.model.seq_length == 43008
+        assert config.dataset.seq_length == 43008
+        assert config.model.context_parallel_size == 4
+        assert config.optimizer.lr == 1e-4
+        assert config.optimizer.min_lr == 1e-4
+        assert config.optimizer.weight_decay == 0.001
+
+    @pytest.mark.parametrize(
+        "recipe_factory",
+        [
+            wan_1_3b_text2image_pretrain_config,
+            canonical_wan_1_3b_text2image_pretrain_config,
+        ],
+    )
+    def test_text2image_mock_uses_single_temporal_latent(self, recipe_factory):
+        config = recipe_factory()
+        batch = mock_batch(
+            F_latents=config.dataset.F_latents,
+            H_latents=4,
+            W_latents=4,
+            patch_temporal=config.dataset.patch_temporal,
+            patch_spatial=config.dataset.patch_spatial,
+            number_packed_samples=1,
+            context_seq_len=2,
+            context_embeddings_dim=4,
+        )
+
+        assert batch["grid_sizes"][0, 0].item() == 1
+        assert canonical_wan_1_3b_text2video_pretrain_config().dataset.F_latents > 1
+
+
+class TestWan14BPerfRecipes:
+    """Tests for Wan 14B GB200, GB300, and H100 performance recipes."""
+
+    def test_gb200_16gpu_perf_recipe_aligned_with_dfm(self):
+        from megatron.bridge.perf_recipes.wan.gb200.wan import wan_14b_pretrain_16gpu_gb200_bf16_config
+
+        cfg = wan_14b_pretrain_16gpu_gb200_bf16_config()
+
+        assert cfg.model.tensor_model_parallel_size == 1
+        assert cfg.model.pipeline_model_parallel_size == 1
+        assert cfg.model.context_parallel_size == 2
+        assert cfg.model.sequence_parallel is False
+        assert cfg.train.global_batch_size == 64
+        assert cfg.train.micro_batch_size == 1
+        assert cfg.dataset.global_batch_size == 64
+        assert cfg.dataset.micro_batch_size == 1
+        assert cfg.model.recompute_granularity == "full"
+        assert cfg.model.recompute_method == "block"
+        assert cfg.model.recompute_num_layers == 1
+        assert cfg.dist.use_megatron_fsdp is True
+        assert cfg.ddp.use_megatron_fsdp is True
+        assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+        assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
+        assert cfg.optimizer.lr == 5e-6
+        assert cfg.optimizer.min_lr == 5e-6
+        assert cfg.optimizer.use_precision_aware_optimizer is False
+        assert cfg.scheduler.lr_decay_style == "constant"
+        assert cfg.scheduler.lr_warmup_iters == 0
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+        assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+        assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_FUSED_ATTN"] == 1
+
+    def test_gb300_16gpu_perf_recipe_aligned_with_dfm(self):
+        from megatron.bridge.perf_recipes.wan.gb300.wan import wan_14b_pretrain_16gpu_gb300_bf16_config
+
+        cfg = wan_14b_pretrain_16gpu_gb300_bf16_config()
+
+        assert cfg.model.tensor_model_parallel_size == 1
+        assert cfg.model.pipeline_model_parallel_size == 1
+        assert cfg.model.context_parallel_size == 2
+        assert cfg.model.sequence_parallel is False
+        assert cfg.train.global_batch_size == 64
+        assert cfg.train.micro_batch_size == 1
+        assert cfg.dataset.global_batch_size == 64
+        assert cfg.dataset.micro_batch_size == 1
+        assert cfg.model.recompute_granularity is None
+        assert cfg.model.recompute_method is None
+        assert cfg.model.recompute_num_layers is None
+        assert cfg.dist.use_megatron_fsdp is False
+        assert cfg.ddp.use_megatron_fsdp is False
+        assert cfg.optimizer.lr == 5e-6
+        assert cfg.optimizer.min_lr == 5e-6
+        assert cfg.optimizer.use_precision_aware_optimizer is False
+        assert cfg.scheduler.lr_decay_style == "constant"
+        assert cfg.scheduler.lr_warmup_iters == 0
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+        assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+        assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_FUSED_ATTN"] == 1
+
+    def test_h100_32gpu_perf_recipe_aligned_with_dfm(self):
+        from megatron.bridge.perf_recipes.wan.h100.wan import wan_14b_pretrain_32gpu_h100_bf16_config
+
+        cfg = wan_14b_pretrain_32gpu_h100_bf16_config()
+
+        assert cfg.model.tensor_model_parallel_size == 2
+        assert cfg.model.pipeline_model_parallel_size == 1
+        assert cfg.model.context_parallel_size == 4
+        assert cfg.model.sequence_parallel is True
+        assert cfg.train.global_batch_size == 64
+        assert cfg.train.micro_batch_size == 1
+        assert cfg.dataset.global_batch_size == 64
+        assert cfg.dataset.micro_batch_size == 1
+        assert cfg.train.empty_unused_memory_level == 0
+        assert cfg.model.recompute_granularity == "full"
+        assert cfg.model.recompute_method == "block"
+        assert cfg.model.recompute_num_layers == 8
+        assert cfg.optimizer.lr == 5e-6
+        assert cfg.optimizer.min_lr == 5e-6
+        assert cfg.optimizer.use_precision_aware_optimizer is False
+        assert cfg.scheduler.lr_decay_style == "constant"
+        assert cfg.scheduler.lr_warmup_iters == 0
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+        assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
+        assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
+        assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+        assert cfg.env_vars["NVTE_FUSED_ATTN"] == 1

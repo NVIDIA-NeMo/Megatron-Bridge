@@ -16,9 +16,12 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import List, Optional
 
+import torch
 import torch.nn.functional as F
 from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig
+
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, set_cuda_graph_modules
 
 
 @dataclass
@@ -26,6 +29,8 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     """Configuration for Qwen3-VL transformer with vision and language components."""
 
     vocab_size: int = 64000
+    make_vocab_size_divisible_by: int = 128
+    should_pad_vocab: bool = False
     language_max_sequence_length: int = 4096
 
     patch_size: int = 16
@@ -38,6 +43,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     apply_rotary_pos_emb_in_fp32: bool = False
     deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     share_embeddings_and_output_weights: bool = False
     rotary_percent: float = 1.0
     rotary_base: float = 10000
@@ -52,6 +58,52 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     hf_text_config: Optional[Qwen3VLTextConfig] = None
     vision_dp_when_cp: bool = False
     use_hf_vision_model: bool = False
+    # Maximum sequence length for vision encoder CUDA graphs.
+    max_vision_cuda_graph_seq_length: Optional[int] = None
+
+
+def _apply_vision_recompute_config(config: Qwen3VLTransformerConfig, megatron_config: TransformerConfig) -> None:
+    """Resolve an explicit vision policy without changing the decoder configuration."""
+    granularity = getattr(megatron_config, "vision_recompute_granularity", "inherit")
+    method = getattr(megatron_config, "vision_recompute_method", None)
+    num_layers = getattr(megatron_config, "vision_recompute_num_layers", None)
+    modules = getattr(megatron_config, "vision_recompute_modules", None)
+
+    if granularity == "inherit":
+        if any(value is not None for value in (method, num_layers, modules)):
+            raise ValueError("Set vision_recompute_granularity explicitly when specifying vision recompute options.")
+        # Preserve the legacy policy, including the vision config's default selective
+        # modules. Decoder-only modules (e.g. GDN and MoE) must not leak into vision.
+        config.recompute_granularity = megatron_config.recompute_granularity
+        config.recompute_method = megatron_config.recompute_method
+        config.recompute_num_layers = megatron_config.recompute_num_layers
+        return
+
+    if granularity is None:
+        if any(value is not None for value in (method, num_layers, modules)):
+            raise ValueError("Disabled vision recomputation cannot specify method, num_layers, or modules.")
+    elif granularity == "full":
+        if method not in ("uniform", "block"):
+            raise ValueError("Full vision recomputation requires vision_recompute_method='uniform' or 'block'.")
+        if type(num_layers) is not int or not 1 <= num_layers <= config.num_layers:
+            raise ValueError("vision_recompute_num_layers must be an integer between 1 and the vision depth.")
+        if modules is not None:
+            raise ValueError("vision_recompute_modules is only supported for selective vision recomputation.")
+    elif granularity == "selective":
+        if method is not None or num_layers is not None:
+            raise ValueError("Selective vision recomputation cannot specify method or num_layers.")
+        # The TE ViT spec fuses layernorm into QKV/FC1, and has no GDN or MoE.
+        if not modules or any(module not in ("core_attn", "mlp") for module in modules):
+            raise ValueError(
+                "vision_recompute_modules must be a non-empty list containing only 'core_attn' and 'mlp'."
+            )
+    else:
+        raise ValueError("vision_recompute_granularity must be 'inherit', None, 'full', or 'selective'.")
+
+    config.recompute_granularity = granularity
+    config.recompute_method = method
+    config.recompute_num_layers = num_layers
+    config.recompute_modules = list(modules) if modules is not None else []
 
 
 def get_vision_model_config(hf_config, megatron_config=None):
@@ -69,17 +121,13 @@ def get_vision_model_config(hf_config, megatron_config=None):
     )
 
     # apply text model config to vision model config
-    config.recompute_granularity = megatron_config.recompute_granularity
-    config.recompute_method = megatron_config.recompute_method
-    config.recompute_num_layers = megatron_config.recompute_num_layers
+    _apply_vision_recompute_config(config, megatron_config)
     config.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size
     config.enable_cuda_graph = megatron_config.enable_cuda_graph
     config.cuda_graph_use_single_mempool = megatron_config.cuda_graph_use_single_mempool
     config.cuda_graph_retain_backward_graph = megatron_config.cuda_graph_retain_backward_graph
     config.cuda_graph_warmup_steps = megatron_config.cuda_graph_warmup_steps
     config.external_cuda_graph = megatron_config.external_cuda_graph
-    config.cuda_graph_impl = megatron_config.cuda_graph_impl
-    config.cuda_graph_scope = megatron_config.cuda_graph_scope
 
     config.num_moe_experts = None
     config.expert_model_parallel_size = 1
@@ -96,7 +144,13 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.spatial_merge_size = hf_config.spatial_merge_size
     config.num_position_embeddings = hf_config.num_position_embeddings
     config.out_hidden_size = hf_config.out_hidden_size
-    config.deepstack_visual_indexes = deepcopy(hf_config.deepstack_visual_indexes)
+    # ``deepstack_visual_indexes`` is a Qwen3-VL-only field. Qwen3.5/3.6-VL HF
+    # configs do not declare it in the schema, so the field is sometimes
+    # absent — e.g. after a YAML round-trip through
+    # ``PretrainedConfig.to_dict()`` / ``from_dict()`` which only persists
+    # declared fields. ``Qwen3VLModel.__init__`` already reads it
+    # defensively with the same default (``modelling_qwen3_vl/model.py:193``).
+    config.deepstack_visual_indexes = deepcopy(getattr(hf_config, "deepstack_visual_indexes", []))
 
     config.apply_rope_fusion = False
     config.gated_linear_unit = False  # no gated
@@ -120,4 +174,37 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.pipeline_model_parallel_layout = None
     config.account_for_embedding_in_pipeline_split = None
     config.account_for_loss_in_pipeline_split = None
+
+    # Vision encoder CUDA graph settings
+    # Check megatron_config (the provider / language config) for vision-specific CUDA graph
+    # settings. The provider stores these as vision_cuda_graph_impl / vision_cuda_graph_scope.
+    # If present, use them; otherwise default to "none" for backward compatibility.
+    if (
+        megatron_config is not None
+        and hasattr(megatron_config, "vision_cuda_graph_impl")
+        and megatron_config.vision_cuda_graph_impl != "none"
+    ):
+        config.cuda_graph_impl = megatron_config.vision_cuda_graph_impl
+        if hasattr(megatron_config, "vision_cuda_graph_scope") and megatron_config.vision_cuda_graph_scope:
+            set_cuda_graph_modules(config, megatron_config.vision_cuda_graph_scope)
+        else:
+            clear_cuda_graph_modules(config)
+    else:
+        config.cuda_graph_impl = "none"
+        clear_cuda_graph_modules(config)
+    if config.recompute_granularity == "full" and config.cuda_graph_impl not in (
+        "none",
+        "full_iteration",
+    ):
+        raise ValueError(
+            "Full vision recomputation is incompatible with per-layer vision CUDA graphs. "
+            "Set vision_cuda_graph_impl='none' to disable vision graph capture."
+        )
+    # Propagate max vision CUDA graph sequence length from provider
+    if megatron_config is not None and hasattr(megatron_config, "max_vision_cuda_graph_seq_length"):
+        config.max_vision_cuda_graph_seq_length = megatron_config.max_vision_cuda_graph_seq_length
+
+    if megatron_config is not None and hasattr(megatron_config, "use_cpu_initialization"):
+        config.use_cpu_initialization = megatron_config.use_cpu_initialization
+
     return config

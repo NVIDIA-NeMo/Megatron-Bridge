@@ -39,7 +39,7 @@ Usage:
     # Launch on Slurm from your local machine (SSHTunnel)
     python launch_with_nemo_run.py \
         --script run_recipe.py \
-        --recipe llama32_1b_finetune_config \
+        --recipe llama32_1b_sft_config \
         --nodes 1 \
         --partition gpu \
         --account my_account \

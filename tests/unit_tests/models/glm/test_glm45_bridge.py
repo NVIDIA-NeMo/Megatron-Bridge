@@ -20,16 +20,29 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig
+from transformers import GenerationConfig, Glm4MoeConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
+    GatedMLPMapping,
+)
 from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 class TestGLM45Bridge:
     """Test cases for GLM45Bridge."""
+
+    @staticmethod
+    def _expert_mappings(registry):
+        return [
+            mapping for mapping in registry.mappings if "mlp.experts" in str(getattr(mapping, "megatron_param", ""))
+        ]
 
     @pytest.fixture
     def glm45_355b_config(self):
@@ -122,6 +135,10 @@ class TestGLM45Bridge:
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
         m.generation_config = Mock(spec=GenerationConfig)
+        m.state = Mock()
+        m.state.source = Mock()
+        m.state.source.get_all_keys.return_value = []
+        m.state.source.has_glob.return_value = False
         return m
 
     @pytest.fixture
@@ -135,6 +152,10 @@ class TestGLM45Bridge:
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
         m.generation_config = Mock(spec=GenerationConfig)
+        m.state = Mock()
+        m.state.source = Mock()
+        m.state.source.get_all_keys.return_value = []
+        m.state.source.has_glob.return_value = False
         return m
 
     def test_registration(self):
@@ -177,6 +198,26 @@ class TestGLM45Bridge:
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
 
+    def test_provider_bridge_reads_partial_rotary_factor_from_hf_config(self, mock_pretrained_355b):
+        """Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters, not as an attribute."""
+        mock_pretrained_355b.config = Glm4MoeConfig(
+            hidden_size=64,
+            intermediate_size=128,
+            moe_intermediate_size=32,
+            num_hidden_layers=2,
+            first_k_dense_replace=1,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=16,
+            n_routed_experts=4,
+            num_experts_per_tok=2,
+            partial_rotary_factor=0.5,
+        )
+
+        provider = GLM45Bridge().provider_bridge(mock_pretrained_355b)
+
+        assert provider.rotary_percent == 0.5
+
     def test_provider_bridge_maps_config_air_106b(self, mock_pretrained_air_106b):
         """Test provider bridge correctly maps config for GLM 4.5 Air 106B."""
         bridge = GLM45Bridge()
@@ -198,9 +239,11 @@ class TestGLM45Bridge:
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
 
-    def test_mapping_registry_exists(self):
+    def test_mapping_registry_exists(self, mock_pretrained_355b):
         """Test that mapping registry is properly defined."""
         bridge = GLM45Bridge()
+        bridge.hf_pretrained = mock_pretrained_355b
+        bridge.hf_config = mock_pretrained_355b.config
         registry = bridge.mapping_registry()
 
         # Verify registry has mappings
@@ -220,6 +263,56 @@ class TestGLM45Bridge:
         # Check LM head mapping
         assert "output_layer.weight" in mapping_dict
         assert mapping_dict["output_layer.weight"] == "lm_head.weight"
+
+    def test_mapping_registry_config_only_uses_unfused_expert_mappings(self, mock_pretrained_355b):
+        """Test config-only bridge builds mappings without HF state and defaults to unfused experts."""
+        bridge = GLM45Bridge()
+        bridge.hf_pretrained = mock_pretrained_355b.config
+        bridge.hf_config = mock_pretrained_355b.config
+        registry = bridge.mapping_registry()
+
+        expert_mappings = self._expert_mappings(registry)
+        assert not any(
+            isinstance(mapping, (FusedGatedExpertMapping, FusedExpertMapping)) for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, GatedMLPMapping)
+            and mapping.hf_param["gate"] == "model.layers.*.mlp.experts.*.gate_proj.weight"
+            and mapping.hf_param["up"] == "model.layers.*.mlp.experts.*.up_proj.weight"
+            for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, AutoMapping) and mapping.hf_param == "model.layers.*.mlp.experts.*.down_proj.weight"
+            for mapping in expert_mappings
+        )
+
+    def test_mapping_registry_uses_fused_expert_mappings_from_state_source(self, mock_pretrained_355b):
+        """Test fused expert layout is detected from HF state source without enumerating all keys."""
+        source = mock_pretrained_355b.state.source
+        source.get_all_keys.side_effect = AssertionError("mapping registry should not enumerate all HF keys")
+        source.has_glob.side_effect = lambda pattern: (
+            pattern
+            in {
+                "*mlp.experts.gate_up_proj*",
+                "*mlp.experts.down_proj*",
+            }
+        )
+
+        bridge = GLM45Bridge()
+        bridge.hf_pretrained = mock_pretrained_355b
+        bridge.hf_config = mock_pretrained_355b.config
+        registry = bridge.mapping_registry()
+
+        expert_mappings = self._expert_mappings(registry)
+        assert any(
+            isinstance(mapping, FusedGatedExpertMapping)
+            and mapping.hf_param == "model.layers.*.mlp.experts.gate_up_proj"
+            for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, FusedExpertMapping) and mapping.hf_param == "model.layers.*.mlp.experts.down_proj"
+            for mapping in expert_mappings
+        )
 
     def test_dtype_mapping_fp16(self, glm45_355b_config):
         """Test dtype mapping for FP16 models."""
@@ -261,3 +354,85 @@ class TestGLM45Bridge:
         assert provider.fp16 is False
         assert provider.bf16 is False
         assert provider.params_dtype == torch.float32
+
+
+class TestGLM45BuilderConfig:
+    """Builder-backed ModelConfig path for GLM-4.5."""
+
+    @staticmethod
+    def _config(**overrides):
+        from transformers import Glm4MoeConfig
+
+        kwargs = dict(
+            hidden_size=64,
+            intermediate_size=128,
+            moe_intermediate_size=32,
+            num_hidden_layers=4,
+            num_attention_heads=8,
+            num_key_value_heads=4,
+            n_routed_experts=8,
+            n_shared_experts=1,
+            num_experts_per_tok=2,
+            first_k_dense_replace=1,
+            max_position_embeddings=4096,
+            vocab_size=128,
+            torch_dtype="bfloat16",
+        )
+        kwargs.update(overrides)
+        config = Glm4MoeConfig(**kwargs)
+        config.architectures = ["Glm4MoeForCausalLM"]
+        config.num_nextn_predict_layers = 1
+        return config
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in GLM45Bridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert GLM45Bridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert GLM45Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        from unittest.mock import patch
+
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        config = self._config()
+        bridge = GLM45Bridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            result = bridge.hf_config_to_model_config(config)
+
+        assert isinstance(result, BridgeGPTModelConfig)
+        # The builder's default MoE spec is the decoder block spec, so none is configured here.
+        assert result.transformer_layer_spec is None
+        assert result.moe_layer_freq == [0, 1, 1, 1]
+        assert result.moe_shared_expert_intermediate_size == config.moe_intermediate_size
+        assert result.moe_router_score_function == "sigmoid"
+        assert result.moe_router_enable_expert_bias is True
+        assert result.mtp_num_layers == 1
+        assert result.mtp_loss_scaling_factor == 0.3
+        assert result.position_embedding_type == "rope"
+
+    def test_model_config_matches_provider_runtime_config(self):
+        from dataclasses import fields
+
+        from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
+        config = self._config()
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = GLM45Bridge()
+
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
+
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        for field_name in sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"}):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+        # The provider keeps its explicit decoder block spec for mixed dense/MoE layers.
+        assert provider.transformer_layer_spec.func is get_gpt_decoder_block_spec
