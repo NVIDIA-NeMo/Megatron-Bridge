@@ -96,6 +96,9 @@ class HFEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
     max_pixels: int | None = None
     trust_remote_code: bool | None = None
     return_padding_mask: bool = False
+    static_vision: Any = None
+    """Static vision layout (``QwenVLStaticVisionSpec``). Set by ``ConfigContainer.validate`` from the model config
+    when ``model.vision_static_shapes`` is on; never set it by hand."""
 
     def validate(self) -> None:
         """Validate generic Hugging Face task-encoder settings."""
@@ -351,6 +354,7 @@ def _build_builtin_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
             enable_in_batch_packing=effective_packing,
             in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
             return_padding_mask=task_config.return_padding_mask,
+            static_vision=task_config.static_vision,
         )
 
     if isinstance(task_config, QwenVLEnergonTaskEncoderConfig):

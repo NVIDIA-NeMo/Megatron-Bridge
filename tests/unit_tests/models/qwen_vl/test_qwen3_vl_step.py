@@ -22,6 +22,7 @@ from megatron.bridge.models.qwen_vl.qwen3_vl_step import (
     forward_step,
     get_batch_from_iterator,
 )
+from megatron.bridge.models.qwen_vl.static_vision import STATIC_VISION_KEYS
 
 
 pytestmark = pytest.mark.unit
@@ -323,3 +324,86 @@ def test_forward_step_scatters_padding_mask_on_later_sequence_parallel_stages(mo
     # The mask is scattered sequence-first, like the activations this stage receives.
     assert len(scattered) == 1 and scattered[0].shape == (16, 2)
     assert torch.equal(model.forward_kwargs["padding_mask"], padding_mask[:, :8])
+
+
+def _static_vision_state(seq_length):
+    # The sequence length lives on the outer model config; the step's model config (from _model_config) has none,
+    # like a builder-backed model's transformer config.
+    state = _state(enable_in_batch_packing=False, seq_length=seq_length)
+    state.cfg.model.vision_static_shapes = True
+    return state
+
+
+def _static_vision_inputs(seq_length):
+    inputs = {key: torch.zeros(1) for key in STATIC_VISION_KEYS}
+    inputs["mrope_position_ids"] = torch.arange(seq_length).expand(3, 1, -1)
+    return inputs
+
+
+def test_get_batch_from_iterator_static_vision_moves_static_keys(monkeypatch):
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3, 0]]),
+        "position_ids": torch.arange(4).unsqueeze(0),
+        "visual_inputs": None,
+        **_static_vision_inputs(4),
+    }
+    moved = []
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: moved.append(self) or self)
+
+    result = get_batch_from_iterator(iter([batch]), is_first_pp_stage=True, is_last_pp_stage=False, static_vision=True)
+
+    for key in STATIC_VISION_KEYS:
+        assert result[key] is batch[key]
+        assert any(tensor is batch[key] for tensor in moved)
+
+
+@pytest.mark.parametrize("bad", ["missing_key", "visual_inputs"])
+def test_get_batch_from_iterator_static_vision_rejects_dynamic_batches(bad):
+    batch = {"input_ids": torch.tensor([[1, 2]]), "visual_inputs": None, **_static_vision_inputs(2)}
+    if bad == "missing_key":
+        del batch["vision_dst_index"]
+    else:
+        batch["visual_inputs"] = object()
+
+    with pytest.raises(ValueError, match="static vision batches"):
+        get_batch_from_iterator(iter([batch]), is_first_pp_stage=True, is_last_pp_stage=True, static_vision=True)
+
+
+def _static_vision_step_batch(length, static_inputs):
+    tokens = torch.arange(1, length + 1).unsqueeze(0)
+    return (
+        tokens,
+        torch.full_like(tokens, -100),
+        torch.ones_like(tokens, dtype=torch.float),
+        None,
+        torch.arange(length).unsqueeze(0),
+        static_inputs,
+        None,
+    )
+
+
+def test_forward_step_static_vision_passes_precomputed_inputs(monkeypatch):
+    model = _RecordingModel()
+    static_inputs = _static_vision_inputs(16)
+    _patch_step_dependencies(monkeypatch, config=_model_config(), batch=_static_vision_step_batch(16, static_inputs))
+
+    forward_step(_static_vision_state(16), iter(()), model)
+
+    # The precomputed 3D MRoPE ids replace get_rope_index; the vision tensors go to Qwen3VLModel.forward_static.
+    assert model.forward_kwargs["position_ids"] is static_inputs["mrope_position_ids"]
+    assert model.forward_kwargs["static_vision_inputs"] == {key: static_inputs[key] for key in STATIC_VISION_KEYS[1:]}
+    assert "pixel_values" not in model.forward_kwargs and "image_grid_thw" not in model.forward_kwargs
+    assert model.forward_kwargs["input_ids"].shape == (1, 16)
+
+
+@pytest.mark.parametrize(
+    ("seq_length", "length", "match"), [(32, 16, "padded to seq_length 32"), (8, 8, "padding unit")]
+)
+def test_forward_step_static_vision_rejects_batches_the_step_would_pad(monkeypatch, seq_length, length, match):
+    """The step must not pad a static batch: the precomputed MRoPE ids and scatter indices would misalign."""
+    _patch_step_dependencies(
+        monkeypatch, config=_model_config(), batch=_static_vision_step_batch(length, _static_vision_inputs(length))
+    )
+
+    with pytest.raises(ValueError, match=match):
+        forward_step(_static_vision_state(seq_length), iter(()), _RecordingModel())

@@ -188,6 +188,66 @@ Larger MoE runs can become memory-gated before graph replay pays off:
 - treat CUDA graphs as a throughput optimization for runs with margin, not as a
   fit-enabling technique
 
+## Full-Iteration Graphs for Qwen3.5-VL With Images
+
+The default Qwen3-VL vision path reads the image sizes on the host inside the
+training step (MRoPE position ids, vision rotary and position-embedding indices,
+vision attention boundaries) and scatters the vision embeddings with a boolean
+mask, so a full-iteration graph cannot capture it. Qwen3.5-VL models have an
+opt-in static vision path for this case: the data pipeline computes all of it
+on the CPU and pads the vision inputs to a fixed patch cap, so every microbatch
+has the same tensor shapes and the training step needs no host synchronization.
+
+Enable it together with the full-iteration graph on top of a Qwen3.5-VL recipe
+(`<recipe>` below):
+
+```bash
+uv run python scripts/training/run_recipe.py --recipe <recipe> \
+  model.cuda_graph_impl=full_iteration "model.cuda_graph_modules=[]" \
+  model.vision_cuda_graph_impl=none "model.vision_cuda_graph_scope=[]" \
+  model.vision_static_shapes=true model.vision_patch_cap=1024 model.vision_max_images=1 \
+  dataset.pad_to_max_length=true dataset.prefetch_factor=16
+```
+
+`model.vision_static_shapes`, `model.vision_patch_cap`, `model.vision_max_images`
+and `model.vision_over_cap_policy` are fields of the Qwen3.5-VL model config that
+the recipes build with `AutoBridge` (`Qwen35VLModelConfig`) and of the Qwen3.5-VL
+model providers.
+
+- `model.vision_patch_cap`: vision patches per microbatch before the spatial
+  merge, a multiple of 4. Every image slot and the trailing padding segment need
+  at least one merge unit, so one image may use up to
+  `(vision_patch_cap - 4) / vision_max_images` patches, rounded down to a
+  multiple of 4. Pick it from the measured patch counts of your data at its
+  `max_pixels` and micro-batch size.
+- `model.vision_max_images`: image slots per microbatch (micro-batch size times
+  images per sample).
+- `model.vision_over_cap_policy`: `downscale` (default) resizes an image that
+  would exceed its patch budget before the processor runs, keeping its aspect
+  ratio; `error` rejects it.
+- `dataset.prefetch_factor`: a full-iteration graph reads all microbatches of an
+  iteration before each replay, so let the loader workers prepare at least that
+  many batches ahead (`prefetch_factor * max(num_workers, 1)`).
+
+Vision attention is per image (THD attention with static segment boundaries)
+and uses the 2D vision rotary embedding, as in the eager path and in Hugging
+Face. The static path requires `pipeline_model_parallel_size=1`,
+`context_parallel_size=1`, `sequence_parallel=False`, no sequence packing,
+`rerun_state_machine.rerun_mode="disabled"`, images only (no video) and a vision
+encoder without deepstack features. It supports the mock VLM SFT dataset and
+the Hugging Face Energon task encoder. With `model.vision_static_shapes=false`
+(the default) nothing changes.
+
+The rest of the iteration must be capture-safe as well; for MoE layers, that
+means a dispatcher without device-to-host synchronization, such as drop-and-pad
+routing (`moe_expert_capacity_factor` with `moe_pad_expert_input_to_capacity`).
+
+Under a full-iteration graph, activation recompute (including the recompute the
+vision encoder inherits from the language model) runs inside the captured
+backward pass, while per-layer Transformer Engine graphs skip recompute in
+their captured modules. If memory allows, `model.recompute_granularity=null`
+removes that work.
+
 ## Optimizer CUDA graph
 
 The `OptimizerCudaGraphWrapper` is an experimental utility that enables CUDA graph capture of the ADAM optimizer step. By encapsulating optimizer updates into a replayable CUDA graph, it can further reduce host launch overhead, especially when optimizer has additional CPU overhead such as additional cast when using low-precision native parameters. This feature can be enabled by passing `optimizer_cuda_graph=True` to `OptimizerConfig`. Avoid using it if your optimizer step is includes conditional logic, or uses operations that are not graph-compatible, as these may cause capture or replay failures.

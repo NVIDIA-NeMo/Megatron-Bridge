@@ -23,6 +23,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
 
+from megatron.bridge.models.qwen_vl.static_vision import STATIC_VISION_KEYS
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -45,6 +46,11 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 logger = logging.getLogger(__name__)
 
 
+def _static_vision_enabled(cfg: Any) -> bool:
+    """Whether the run uses the opt-in static vision path (``model.vision_static_shapes``)."""
+    return bool(getattr(getattr(cfg, "model", None), "vision_static_shapes", False))
+
+
 def get_batch_from_iterator(
     data_iterator: Iterable,
     use_mtp: bool = False,
@@ -52,6 +58,7 @@ def get_batch_from_iterator(
     *,
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
+    static_vision: bool = False,
 ) -> dict[str, Any]:
     """Get a batch of data from the iterator.
 
@@ -59,6 +66,8 @@ def get_batch_from_iterator(
         data_iterator: The data iterator to get the batch from.
         use_mtp: Whether Multi-Token Prediction layers are enabled.
         skip_getting_attention_mask_from_dataset: If set, the dataset will pass a None attention mask.
+        static_vision: ``model.vision_static_shapes``: the batch carries the static vision tensors
+            (``static_vision.STATIC_VISION_KEYS``) instead of ``visual_inputs``.
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
@@ -86,6 +95,15 @@ def get_batch_from_iterator(
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
+
+    if static_vision:
+        missing = [key for key in STATIC_VISION_KEYS if batch.get(key) is None]
+        if missing or batch.get("visual_inputs") is not None:
+            raise ValueError(
+                "model.vision_static_shapes expects static vision batches (no visual_inputs); "
+                f"missing keys {missing}. Is the dataset built with the static vision spec?"
+            )
+        required_device_keys.update(STATIC_VISION_KEYS)
 
     _batch_required_keys = {}
     for key, val in batch.items():
@@ -138,15 +156,20 @@ def get_batch(
     """
     # All PP stages load from iterator to get input_ids and visual grid info
     # This allows each stage to compute MRoPE position_ids locally without broadcasting
+    static_vision = _static_vision_enabled(cfg)
     batch = get_batch_from_iterator(
         data_iterator,
         use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
         is_first_pp_stage=is_first_pp_stage,
         is_last_pp_stage=is_last_pp_stage,
+        static_vision=static_vision,
     )
 
-    if "visual_inputs" in batch and batch.get("visual_inputs") is not None:
+    if static_vision:
+        # Fixed-shape tensors built on the CPU by the data pipeline (static_vision.build_static_vision_batch).
+        multi_modal_inputs = {key: batch[key] for key in STATIC_VISION_KEYS}
+    elif "visual_inputs" in batch and batch.get("visual_inputs") is not None:
         # convert visual_inputs to multi_modal_inputs which is a dict contains "pixel_values" and "image_grid_thw"
         # TODO(jinliangl): add video support
         multi_modal_inputs = batch.get("visual_inputs").normalized_for_model()
@@ -281,6 +304,18 @@ def _forward_step_common(
     # Qwen3-VL keeps sequence preparation in the step because model.forward
     # needs the original input IDs before doing model-specific CP/SP handling.
     enable_in_batch_packing = getattr(state.cfg.dataset, "enable_in_batch_packing", False)
+    # A builder-backed model's config is its transformer config, which has no seq_length.
+    seq_length = state.cfg.model.seq_length
+    static_vision = _static_vision_enabled(state.cfg)
+    if static_vision:
+        # Host shape checks only: the pad below must be a no-op so that the precomputed MRoPE ids and the
+        # vision scatter indices stay aligned with the tokens.
+        if enable_in_batch_packing or return_schedule_plan:
+            raise ValueError("model.vision_static_shapes does not support in-batch packing or schedule plans")
+        if tokens.shape[1] != seq_length:
+            raise ValueError(
+                f"model.vision_static_shapes needs batches padded to seq_length {seq_length}, got {tokens.shape[1]}"
+            )
 
     tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params, padding_mask = (
         _pad_and_pack_qwen3_vl_step(
@@ -292,11 +327,15 @@ def _forward_step_common(
             this_pg_collection,
             use_fp8_padding=True,
             force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
-            # A builder-backed model's config is its transformer config, which has no seq_length.
-            seq_length=state.cfg.model.seq_length,
+            seq_length=seq_length,
             padding_mask=padding_mask,
         )
     )
+    if static_vision and tokens.shape[1] != seq_length:
+        raise ValueError(
+            f"model.vision_static_shapes needs seq_length {seq_length} to be a multiple of the step's padding "
+            f"unit; the batch was padded to {tokens.shape[1]}, which would misalign the precomputed MRoPE ids"
+        )
 
     # Accumulate FLOPS metadata across micro-batches. When in-batch packing is
     # active, ``packed_seq_params.cu_seqlens_q`` describes the real sub-seq
@@ -307,25 +346,28 @@ def _forward_step_common(
     # Qwen vision attention isolates temporal frames. Preserve additive patch
     # statistics for every media/frame boundary instead of collapsing one text
     # pack into a single quadratic attention sequence.
-    vision_config = getattr(getattr(state.cfg, "model", config), "vision_config", None)
-    # Every DP rank using this VLM step must enter the same reduction, including
-    # a rank whose current sample happens to contain no media.
-    vision_patch_stats = (0, 0, 0)
-    spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
-    if isinstance(multi_modal_inputs, dict):
-        for grid in (multi_modal_inputs.get("image_grid_thw"), multi_modal_inputs.get("video_grid_thw")):
-            if grid is not None and grid.numel() > 0:
-                grid_stats = vision_patch_stats_from_grid_thw(grid, spatial_merge_size=spatial_merge_size)
-                vision_patch_stats = tuple(
-                    total + delta for total, delta in zip(vision_patch_stats, grid_stats, strict=True)
-                )
-    accumulate_flops_metadata(
-        state,
-        tokens,
-        vp_stage=get_model_chunk_vp_stage(model),
-        cu_seqlens=getattr(packed_seq_params, "cu_seqlens_q", None) if packed_seq_params is not None else None,
-        vision_patch_stats=vision_patch_stats,
-    )
+    # Static vision: the training loop accumulates the same statistics from host ints popped off the batch
+    # (static_vision.StaticVisionFlopsIterator); this Python would not run on a CUDA graph replay.
+    if not static_vision:
+        vision_config = getattr(getattr(state.cfg, "model", config), "vision_config", None)
+        # Every DP rank using this VLM step must enter the same reduction, including
+        # a rank whose current sample happens to contain no media.
+        vision_patch_stats = (0, 0, 0)
+        spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
+        if isinstance(multi_modal_inputs, dict):
+            for grid in (multi_modal_inputs.get("image_grid_thw"), multi_modal_inputs.get("video_grid_thw")):
+                if grid is not None and grid.numel() > 0:
+                    grid_stats = vision_patch_stats_from_grid_thw(grid, spatial_merge_size=spatial_merge_size)
+                    vision_patch_stats = tuple(
+                        total + delta for total, delta in zip(vision_patch_stats, grid_stats, strict=True)
+                    )
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            vp_stage=get_model_chunk_vp_stage(model),
+            cu_seqlens=getattr(packed_seq_params, "cu_seqlens_q", None) if packed_seq_params is not None else None,
+            vision_patch_stats=vision_patch_stats,
+        )
 
     forward_args = {
         "input_ids": tokens,
@@ -360,6 +402,9 @@ def _forward_step_common(
     forward_args["input_ids"] = original_tokens
     # calculate position_ids in model forward
     forward_args["position_ids"] = None
+    if static_vision:
+        # Precomputed 3D MRoPE ids [3, b, s]: the model skips get_rope_index for them.
+        forward_args["position_ids"] = multi_modal_inputs["mrope_position_ids"]
     if enable_in_batch_packing:
         if forward_args["labels"] is not None:
             # When using pp, labels could be None
@@ -385,6 +430,8 @@ def _forward_step_common(
         forward_args["pixel_values_videos"] = multi_modal_inputs["pixel_values_videos"]
     if "video_grid_thw" in multi_modal_inputs:
         forward_args["video_grid_thw"] = multi_modal_inputs["video_grid_thw"]
+    if static_vision:
+        forward_args["static_vision_inputs"] = {key: multi_modal_inputs[key] for key in STATIC_VISION_KEYS[1:]}
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss

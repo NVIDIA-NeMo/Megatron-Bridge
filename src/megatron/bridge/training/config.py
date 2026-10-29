@@ -1824,6 +1824,15 @@ class ConfigContainer(Container):
             self._validate_full_iteration_result_validation()
         validate_cuda_graph_configuration(self.model)
 
+        # Opt-in static-shape vision path (full-iteration CUDA graphs with images): validate the run and hand the
+        # derived layout to the dataset config.
+        if getattr(self.model, "vision_static_shapes", False):
+            from megatron.bridge.models.qwen_vl.static_vision import configure_static_vision
+
+            configure_static_vision(self)
+        else:
+            _reject_static_vision_layout_without_flag(self)
+
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
             assert not self.model.gradient_accumulation_fusion, (
@@ -2549,4 +2558,27 @@ def _validate_fine_grained_activation_offloading(config: ConfigContainer) -> Non
             raise ValueError(
                 "For fine-grained activation offloading with TE >= 2.10.0, "
                 "NVTE_CPU_OFFLOAD_V1 environment variable should be set to 1 to avoid offloading weights."
+            )
+
+
+def _reject_static_vision_layout_without_flag(config: ConfigContainer) -> None:
+    """Reject a static vision layout on the dataset config when ``model.vision_static_shapes`` is off.
+
+    With the flag on, ``configure_static_vision`` derives the layout from the model config. A layout left on the
+    dataset config with the flag off (for example a saved static-vision config reused with the flag flipped) would
+    make the data pipeline emit static vision batches, which the default vision path does not read: the images would
+    be dropped silently.
+
+    Args:
+        config: The configuration container to validate.
+
+    Raises:
+        ValueError: If ``dataset.static_vision`` or ``dataset.task_encoder.static_vision`` is set.
+    """
+    dataset = config.dataset
+    for name, owner in (("dataset", dataset), ("dataset.task_encoder", getattr(dataset, "task_encoder", None))):
+        if getattr(owner, "static_vision", None) is not None:
+            raise ValueError(
+                f"{name}.static_vision is set but model.vision_static_shapes is off; the static vision layout is "
+                f"derived from the model config. Set model.vision_static_shapes=true or {name}.static_vision=null."
             )

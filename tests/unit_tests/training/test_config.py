@@ -2741,6 +2741,32 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize("dataset_type", ["mock_vlm", "energon"])
+    def test_static_vision_layout_requires_vision_static_shapes(self, dataset_type):
+        """Test that a static vision layout on the dataset config is rejected with model.vision_static_shapes off.
+
+        The default vision path does not read static vision batches, so their images would be dropped silently.
+        """
+        from megatron.bridge.models.qwen_vl.static_vision import QwenVLStaticVisionSpec
+
+        container, og_ws, cfg_mod = create_test_cp_config_container(1, True, False, dataset_type)
+        if dataset_type == "mock_vlm":
+            owner, name = container.dataset, "dataset"
+        else:
+            owner, name = container.dataset.task_encoder, "dataset.task_encoder"
+
+        try:
+            assert not getattr(container.model, "vision_static_shapes", False)
+            container.validate()  # without a layout nothing changes
+
+            # For example a saved static-vision config reused with the flag off.
+            owner.static_vision = QwenVLStaticVisionSpec(patch_cap=1024, max_images=1, seq_length=512)
+            match = rf"{name}\.static_vision is set but model\.vision_static_shapes is off"
+            with pytest.raises(ValueError, match=match):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_cuda_graph_non_full_iteration_allows_check_for_nan(self, monkeypatch):
         """Test that non-full_iteration CUDA graph allows check_for_nan_in_loss=True."""
         gpt_model_cfg = create_test_gpt_config(

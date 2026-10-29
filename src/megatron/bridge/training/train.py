@@ -988,6 +988,16 @@ def train_step(
         else:
             adjust_tensor_shapes_fn = None
 
+        static_vision = getattr(getattr(cfg, "model", None), "vision_static_shapes", False)
+        if static_vision and forward_backward_data_iterator is not None:
+            # Static vision batches carry their FLOP statistics as host ints; add them here, outside any CUDA graph
+            # (the step's Python accumulation does not run on a full-iteration graph replay).
+            from megatron.bridge.models.qwen_vl.static_vision import StaticVisionFlopsIterator
+
+            if isinstance(forward_backward_data_iterator, list):
+                raise ValueError("model.vision_static_shapes does not support virtual pipeline parallelism")
+            forward_backward_data_iterator = StaticVisionFlopsIterator(forward_backward_data_iterator, global_state)
+
         # Forward pass.
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
