@@ -87,7 +87,10 @@ _VRNVL72_NCCLEP_RECIPES = (
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config"),
-    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config"),
+    (
+        "qwen_vl.vrnvl72.qwen35_vl",
+        "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config",  # pragma: allowlist secret
+    ),
 )
 
 # VRNVL72 MoE recipes that stay off NCCL EP: GPT-OSS 20B, Kimi K2, Nemotron 3 Nano, the FP8-CS recipes and
@@ -108,7 +111,10 @@ _VRNVL72_NON_NCCLEP_RECIPES = (
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config"),
-    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config"),
+    (
+        "qwen_vl.vrnvl72.qwen35_vl",
+        "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config",  # pragma: allowlist secret
+    ),
 )
 
 
