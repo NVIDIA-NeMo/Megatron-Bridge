@@ -272,13 +272,12 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigCont
     cfg = qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
     apply_determinism_overrides(cfg)
 
-    # With cross-entropy fusion off, the loss casts the ~248K-vocab logits to FP32 (~7.6 GiB at MBS 2),
-    # which OOMs in the first step on 8x GB200 (175.8 of 184.3 GiB already in use). MBS 1 fits at the same
-    # GBS 128 (gradient accumulation doubles), so global batch membership and the optimizer boundary are unchanged.
+    # TODO: revert once a deterministic fused GDN kernel is available.
+    # MBS 2 OOMs: with cross-entropy fusion off the FP32 logits take ~7.6 GiB. GBS stays 128.
     cfg.train.micro_batch_size = 1
 
-    # Standalone Qwen3.5 override, not part of apply_determinism_overrides: Megatron-Core rejects
-    # deterministic_mode with Gated DeltaNet unless the torch kernel backend is used.
+    # TODO: revert once a deterministic fused GDN kernel is available.
+    # Megatron-Core rejects deterministic_mode with Gated DeltaNet unless the torch backend is used.
     cfg.model.gdn_kernel_backend = "torch"
 
     # Keep the exact process environment visible on the recipe.
