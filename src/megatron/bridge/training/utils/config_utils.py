@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
+import functools
 import logging
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
@@ -23,6 +25,8 @@ from megatron.training.config.container import ConfigContainerBase as _MCoreConf
 from megatron.training.config.utils import (
     _get_init_false_fields,  # noqa: F401
     _resolve_target_class,  # noqa: F401
+    serialize_dataclass,
+    serialize_value,
 )
 from megatron.training.config.utils import (
     sanitize_dataclass_config as _sanitize_dataclass_config,  # noqa: F401
@@ -67,6 +71,67 @@ def _materialize_gtp_weight_shards(value: Any, _memo: dict[int, Any] | None = No
     return result
 
 
+def _prepare_config_for_serialization(value: Any, memo: dict[int, Any] | None = None) -> Any:
+    """Normalize Bridge-specific values without changing the live config.
+
+    Shallow copies keep dataclass identity for Core's field filtering and callable
+    encoding, without rerunning constructors or copying runtime services.
+    """
+    if isinstance(value, type):
+        return value
+    if isinstance(value, PipelineParallelLayerLayout):
+        return _prepare_config_for_serialization(value.input_data, memo)
+    if isinstance(value, functools.partial):
+        return functools.partial(
+            value.func,
+            *(_prepare_config_for_serialization(item, memo) for item in value.args),
+            **{key: _prepare_config_for_serialization(item, memo) for key, item in value.keywords.items()},
+        )
+    if hasattr(value, "to_cfg_dict"):
+        return value
+    if isinstance(value, RecipeConfig):
+        if type(value) is not RecipeConfig:
+            recipe_type = f"{type(value).__module__}.{type(value).__qualname__}"
+            raise TypeError(
+                f"Unsupported quantization recipe type: {recipe_type}. "
+                "RecipeConfig subclasses must implement to_cfg_dict()."
+            )
+        return _ConfigContainerBase._convert_recipe_config_to_dict(value)
+    if isinstance(value, PreTrainedConfig):
+        return _ConfigContainerBase._convert_pretrained_config_to_dict(value, include_target=True)
+    if not (is_dataclass(value) or isinstance(value, (dict, list, tuple))):
+        return value
+    if memo is None:
+        memo = {}
+    if id(value) in memo:
+        return memo[id(value)]
+    if is_dataclass(value):
+        result = copy.copy(value)
+        memo[id(value)] = result
+        for config_field in dataclass_fields(value):
+            if not config_field.name.startswith("_"):
+                object.__setattr__(
+                    result,
+                    config_field.name,
+                    _prepare_config_for_serialization(getattr(value, config_field.name), memo),
+                )
+        return result
+    if isinstance(value, dict):
+        result = {}
+        memo[id(value)] = result
+        result.update({key: _prepare_config_for_serialization(item, memo) for key, item in value.items()})
+        return result
+    result = []
+    memo[id(value)] = result
+    result.extend(_prepare_config_for_serialization(item, memo) for item in value)
+    return result
+
+
+def _serialize_config_value(value: Any) -> Any:
+    """Use Core's serializer after normalizing Bridge-specific constructor inputs."""
+    return _materialize_gtp_weight_shards(serialize_value(_prepare_config_for_serialization(value)))
+
+
 class _ConfigContainerBase(_MCoreConfigContainerBase):
     """Bridge config container that lets composite HF configs construct their children.
 
@@ -75,21 +140,9 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
     ``_target_`` serialization.
     """
 
-    @classmethod
-    def _convert_value_to_dict(cls, value: Any) -> Any:
-        if isinstance(value, PipelineParallelLayerLayout):
-            return cls._convert_value_to_dict(value.input_data)
-        if isinstance(value, RecipeConfig) and not hasattr(value, "to_cfg_dict"):
-            if type(value) is not RecipeConfig:
-                recipe_type = f"{type(value).__module__}.{type(value).__qualname__}"
-                raise TypeError(
-                    f"Unsupported quantization recipe type: {recipe_type}. "
-                    "RecipeConfig subclasses must implement to_cfg_dict()."
-                )
-            return cls._convert_recipe_config_to_dict(value)
-        if isinstance(value, PreTrainedConfig) and not hasattr(value, "to_cfg_dict"):
-            return cls._convert_pretrained_config_to_dict(value, include_target=True)
-        return _materialize_gtp_weight_shards(super()._convert_value_to_dict(value))
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize Bridge constructor inputs through Core's generic serializer."""
+        return _materialize_gtp_weight_shards(serialize_dataclass(_prepare_config_for_serialization(self)))
 
     @classmethod
     def _convert_recipe_config_to_dict(cls, value: RecipeConfig) -> dict[str, Any]:
@@ -101,7 +154,7 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
         return {
             "_target_": f"{RecipeConfig.__module__}.{RecipeConfig.__qualname__}",
             "matchers": serialized_matchers,
-            "config_dict": cls._convert_value_to_dict(value.configs),
+            "config_dict": _serialize_config_value(value.configs),
         }
 
     @classmethod
@@ -114,7 +167,7 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
                 "config_key": matcher.config_key,
             }
 
-        serialized_matcher = super()._convert_value_to_dict(matcher)
+        serialized_matcher = _serialize_config_value(matcher)
         if not isinstance(serialized_matcher, dict) or "_target_" not in serialized_matcher:
             matcher_type = f"{type(matcher).__module__}.{type(matcher).__qualname__}"
             raise TypeError(
@@ -166,7 +219,7 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
             return [cls._convert_pretrained_config_value_to_dict(item) for item in value]
         if isinstance(value, dict):
             return {key: cls._convert_pretrained_config_value_to_dict(item) for key, item in value.items()}
-        return cls._convert_value_to_dict(value)
+        return _serialize_config_value(value)
 
 
 def create_ddp_config(

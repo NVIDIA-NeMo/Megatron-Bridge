@@ -77,6 +77,7 @@ from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispa
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 from megatron.bridge.training.utils.optimizer_utils import (
     normalize_optimizer_config,
     uses_distributed_optimizer,
@@ -324,7 +325,7 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         for config_field in fields(self):
             if config_field.name.startswith("_") or config_field.name == "sequence_length":
                 continue
-            config_dict[config_field.name] = Container._convert_value_to_dict(getattr(self, config_field.name))
+            config_dict[config_field.name] = _serialize_config_value(getattr(self, config_field.name))
         return config_dict
 
     def finalize(self) -> None:

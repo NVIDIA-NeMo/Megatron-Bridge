@@ -20,7 +20,7 @@ from megatron.training.config.instantiate_utils import instantiate
 from megatron.bridge.data import DatasetBuildContext
 from megatron.bridge.data.builders import MockVLMSFTDatasetBuilder, MockVLMSFTDatasetConfig
 from megatron.bridge.data.builders import mock_vlm_sft as builder_module
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 
 
 def _config(**overrides) -> MockVLMSFTDatasetConfig:
@@ -37,7 +37,7 @@ def _config(**overrides) -> MockVLMSFTDatasetConfig:
 def test_mock_config_round_trip_contains_no_runtime_processor():
     config = _config(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
 
-    serialized = ConfigContainer._convert_value_to_dict(config)
+    serialized = _serialize_config_value(config)
     restored = instantiate(serialized)
 
     assert isinstance(restored, MockVLMSFTDatasetConfig)

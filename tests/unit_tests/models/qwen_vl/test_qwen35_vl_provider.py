@@ -418,7 +418,7 @@ def test_vision_recompute_provider_spec(provider_cls, granularity):
 def test_vision_recompute_config_round_trip(provider_cls, granularity, method, num_layers, modules):
     from megatron.training.config.instantiate_utils import instantiate
 
-    from megatron.bridge.training.config import ConfigContainer
+    from megatron.bridge.training.utils.config_utils import _serialize_config_value
 
     provider = provider_cls(num_layers=4, hidden_size=512, num_attention_heads=4)
     assert provider.vision_recompute_granularity == "inherit"
@@ -427,7 +427,7 @@ def test_vision_recompute_config_round_trip(provider_cls, granularity, method, n
     provider.vision_recompute_num_layers = num_layers
     provider.vision_recompute_modules = modules
 
-    restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+    restored = instantiate(_serialize_config_value(provider))
 
     assert isinstance(restored, provider_cls)
     assert restored.vision_recompute_granularity == granularity

@@ -139,7 +139,7 @@ class DistillationProvider(TransformerConfig):
         Returns:
             Dictionary representation of this provider class
         """
-        from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+        from megatron.bridge.training.utils.config_utils import _serialize_config_value
 
         result = {"_target_": f"{self._super_class.__module__}.{self._super_class.__qualname__}"}
         # Use fields from the actual student provider class, not DistillationProvider.
@@ -149,7 +149,7 @@ class DistillationProvider(TransformerConfig):
         for field in fields(self._super_class):
             if field.name.startswith("_"):
                 continue
-            result[field.name] = _ConfigContainerBase._convert_value_to_dict(getattr(self, field.name))
+            result[field.name] = _serialize_config_value(getattr(self, field.name))
         return result
 
     def __setattr__(self, name, value):

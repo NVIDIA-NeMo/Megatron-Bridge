@@ -73,7 +73,7 @@ from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLMo
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
 from megatron.bridge.training import checkpointing
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 
 
 class _DictConfig(SimpleNamespace):
@@ -451,7 +451,7 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.separate_video_embedder is True
     assert provider.temporal_patch_dim == 2
     assert provider.temporal_ckpt_compat is True
-    serialized = ConfigContainer._convert_value_to_dict(provider)
+    serialized = _serialize_config_value(provider)
     assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
     assert serialized["has_sound"] is True
     assert "add_sound_encoder" not in serialized
@@ -1172,7 +1172,7 @@ def test_llava_bridge_retains_legacy_wrapper_namespace():
 
     assert isinstance(provider, NemotronOmniLlavaModelProvider)
     assert provider.nemotron_omni_contract == NEMOTRON_OMNI_LLAVA_CONTRACT
-    serialized = ConfigContainer._convert_value_to_dict(provider)
+    serialized = _serialize_config_value(provider)
     assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_LLAVA_CONTRACT
     assert any(mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
 

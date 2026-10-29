@@ -32,7 +32,7 @@ from megatron.bridge.data.builders.energon import (
     build_energon_task_encoder,
 )
 from megatron.bridge.data.energon import base_energon_datamodule
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.instantiate_utils import target_allowlist
 
@@ -98,7 +98,7 @@ def _qwen_config(**overrides) -> EnergonDatasetConfig:
 def test_config_round_trip_is_declarative_and_cli_overridable():
     config = _qwen_config(dataset_kwargs={"handler": "warn_and_continue"})
 
-    serialized = ConfigContainer._convert_value_to_dict(config)
+    serialized = _serialize_config_value(config)
     restored = instantiate(serialized)
 
     assert isinstance(restored, EnergonDatasetConfig)
@@ -124,7 +124,7 @@ def test_custom_encoder_uses_resolved_config_through_generic_builder(monkeypatch
         packing_buffer_size=32,
         task_encoder=CustomQwenTaskEncoderConfig(hf_processor_path="Qwen/model", max_bin_vision_tokens=128),
     )
-    serialized = ConfigContainer._convert_value_to_dict(config)
+    serialized = _serialize_config_value(config)
     restored = instantiate(serialized)
     assert isinstance(restored.task_encoder, CustomQwenTaskEncoderConfig)
     assert "supports_native_packing" not in serialized["task_encoder"]
@@ -183,7 +183,7 @@ def test_custom_validation_rejects_dataset_combinations_before_construction(over
 
 def test_standalone_encoder_config_needs_no_builtin_processor_fields():
     config = _qwen_config(task_encoder=StandaloneTaskEncoderConfig(token_budget=32))
-    restored = instantiate(ConfigContainer._convert_value_to_dict(config))
+    restored = instantiate(_serialize_config_value(config))
     encoder = build_energon_task_encoder(restored)
     assert isinstance(encoder, CustomTaskEncoder)
     assert encoder.seq_length == 4096
@@ -398,7 +398,7 @@ def test_generic_hf_padding_mask_request_reaches_the_encoder(monkeypatch: pytest
         task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
         pad_to_max_length=True,
     )
-    restored = instantiate(ConfigContainer._convert_value_to_dict(config))
+    restored = instantiate(_serialize_config_value(config))
     process_config_with_overrides(restored, cli_overrides=["task_encoder.return_padding_mask=true"])
     encoder_cls = MagicMock(return_value=object())
     monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", lambda **_: False)

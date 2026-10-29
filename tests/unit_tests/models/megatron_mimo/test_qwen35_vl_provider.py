@@ -16,7 +16,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import Megatron
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 from megatron.bridge.utils.instantiate_utils import instantiate
 from megatron.bridge.utils.yaml_utils import safe_yaml_representers
 
@@ -190,7 +190,7 @@ class TestMegatronMIMOProviderFactory:
         )
 
         _clear_derived_spec_fields(provider)
-        model_dict = ConfigContainer._convert_value_to_dict(provider)
+        model_dict = _serialize_config_value(provider)
         assert model_dict["language_model_spec"] is None
         assert model_dict["modality_submodules_spec"] == {}
         assert model_dict["special_token_ids"] == {}

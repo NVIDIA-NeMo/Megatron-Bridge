@@ -14,7 +14,7 @@ from megatron.bridge.data.builders import (
 )
 from megatron.bridge.data.builders import direct_hf_sft as builder_module
 from megatron.bridge.data.sources import hf as hf_sources
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.config_utils import _serialize_config_value
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
@@ -113,7 +113,7 @@ def test_config_validates_every_blend_source():
 def test_blend_config_round_trip_is_declarative():
     config = _config(_blend(), [1.0, 2.0], blend_seed=7)
 
-    restored = instantiate(ConfigContainer._convert_value_to_dict(config))
+    restored = instantiate(_serialize_config_value(config))
 
     assert isinstance(restored, DirectHFSFTDatasetConfig)
     assert [entry.dataset_name for entry in restored.source] == ["squad", "gsm8k"]
