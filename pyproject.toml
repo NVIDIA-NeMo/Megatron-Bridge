@@ -131,6 +131,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "filelock>=4.2.1",  # CVE-2026-112940; multi-storage-client 0.51 caps filelock below 4
     "wandb>=0.29.0",
     "mlflow>=3.16.0",                                       # CVE-2025-15031, CVE-2026-71211
     # BDSA-2026-31388, CVE-2026-78676, CVE-2026-78677, CVE-2026-114145

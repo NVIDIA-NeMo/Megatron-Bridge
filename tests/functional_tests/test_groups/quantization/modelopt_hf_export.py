@@ -39,6 +39,7 @@ DISABLED = [
 UNQUANTIZED = [
     {"quantizer_name": "*router*", "enable": False},
     {"quantizer_name": "*output_layer*", "enable": False},
+    {"quantizer_name": "*conv1d*", "enable": False},
 ]
 CONFIGS = {
     "nvfp4": [
@@ -57,7 +58,7 @@ CONFIGS = {
         {"quantizer_name": "*self_attention*input_quantizer", "cfg": FP8},
     ],
 }
-KIND_IDS = {"linear_qkv": 1, "linear_proj": 2, "linear_fc1": 3, "linear_fc2": 4}
+KIND_IDS = {"linear_qkv": 1, "linear_proj": 2, "linear_fc1": 3, "linear_fc2": 4, "in_proj": 5, "out_proj": 6}
 
 
 def input_amax(layer: int, kind: str) -> float:
@@ -71,7 +72,7 @@ def _pin_input_ranges(chunk: torch.nn.Module) -> None:
             continue
         layer_prefix = re.match(r"^.*?decoder\.layers\.\d+", name).group(0)
         layer = chunk.get_submodule(layer_prefix).layer_number - 1
-        kind = re.search(r"(linear_\w+)\.input_quantizer", name).group(1)
+        kind = re.search(r"(\w+)\.input_quantizer", name).group(1)
         quantizer.amax = torch.tensor(input_amax(layer, kind), device="cuda")
 
 
