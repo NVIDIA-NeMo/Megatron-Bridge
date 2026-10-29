@@ -1077,7 +1077,7 @@ def test_four_rank_capture_failure_topologies(tmp_path):
 
 
 def test_auto_bridge_can_reuse_a_prepared_plan():
-    task = SimpleNamespace(name="task", global_param_name="model.weight")
+    task = SimpleNamespace(name="task", global_param_name="model.weight", export_hook=None)
     plan = modelopt_utils.ModelOptExportPlan([task], {"quantized_layers": {}}, frozenset(), {})
 
     class FakeBridge:
