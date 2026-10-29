@@ -29,6 +29,26 @@ from megatron.bridge.utils.common_utils import print_rank_0
 PEFT_RECOMPUTE_PATCHED: WeakSet[torch.nn.Module] = WeakSet()
 
 
+def _native_gradient_boundary_supported() -> bool:
+    """Return whether Megatron's checkpointed forward handles frozen-prefix boundaries itself.
+
+    The PEFT input-grad workaround is needed by older Megatron versions whose
+    reentrant checkpoint path has no explicit boundary handling. Newer versions
+    resolve the first trainable layer in ``checkpointed_forward`` and create the
+    grad leaf there instead; forcing the block input to require grad would bypass
+    that inference. Check the recompute module itself: a Megatron tree can carry
+    ``resolve_gradient_boundary`` in its transformer utilities before the blocks
+    and the checkpointed forward use it, and skipping the hook there would leave
+    adapter gradients at zero. Keep this import lazy so Bridge remains compatible
+    with older Megatron trees.
+    """
+    try:
+        from megatron.core import recompute
+    except (ImportError, AttributeError):
+        return False
+    return callable(getattr(recompute, "resolve_gradient_boundary", None))
+
+
 def _iter_unwrapped_models(model) -> Iterable[torch.nn.Module]:
     """Yield unwrapped Megatron modules regardless of list/list-like inputs."""
     unwrapped = unwrap_model(model)
@@ -72,6 +92,12 @@ def maybe_enable_recompute_inputs_grad(
 
     patched_registry = PEFT_RECOMPUTE_PATCHED if peft_recompute_patched is None else peft_recompute_patched
 
+    # Megatron's native frozen-prefix boundary already creates the grad leaf at
+    # the first trainable layer. Applying this legacy input hook would mark the
+    # block input as requiring grad and prevent the boundary from being inferred.
+    if _native_gradient_boundary_supported():
+        return patched_registry
+
     try:
         for unwrapped_model in _iter_unwrapped_models(model):
             cfg = getattr(unwrapped_model, "config", None)
@@ -99,7 +125,12 @@ def maybe_enable_recompute_inputs_grad(
                     original_forward = module.forward
 
                     @wraps(original_forward)
-                    def patched_forward(hidden_states, *args, _original_forward=original_forward, **kwargs):
+                    def patched_forward(
+                        hidden_states,
+                        *args,
+                        _original_forward=original_forward,
+                        **kwargs,
+                    ):
                         # Ensure hidden_states requires grad so checkpoint backward is called
                         if (
                             torch.is_tensor(hidden_states)
