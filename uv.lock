@@ -1201,15 +1201,15 @@ source = { git = "https://github.com/deepseek-ai/FlashMLA?rev=nv_dev#b7643bd5452
 
 [[package]]
 name = "flashinfer-cubin"
-version = "0.6.18.post1"
+version = "0.7.2"
 source = { registry = "https://flashinfer.ai/whl/" }
 wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.18.post1/flashinfer_cubin-0.6.18.post1-py3-none-any.whl", hash = "sha256:bbacb5b8bbf429e43bf2740bb45551d981f41d0462842e36ee6fb3e3452763ab" },
+    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2/flashinfer_cubin-0.7.2-py3-none-any.whl", hash = "sha256:31704fa5b2562d459d34c67cee9e80e0abb96c82f89943d542276d5a92c88079" },
 ]
 
 [[package]]
 name = "flashinfer-python"
-version = "0.6.18.post1"
+version = "0.7.2"
 source = { registry = "https://flashinfer.ai/whl/" }
 dependencies = [
     { name = "apache-tvm-ffi" },
@@ -1217,6 +1217,7 @@ dependencies = [
     { name = "cuda-python" },
     { name = "cuda-tile" },
     { name = "einops" },
+    { name = "nccl-extensions" },
     { name = "nccl4py" },
     { name = "ninja" },
     { name = "numpy" },
@@ -1230,7 +1231,7 @@ dependencies = [
     { name = "tqdm" },
 ]
 wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.18.post1/flashinfer_python-0.6.18.post1-py3-none-any.whl", hash = "sha256:adb6d2952b47131138e108bd2999b1fe18b71f1a4c0b2684f168753db9563991" },
+    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2/flashinfer_python-0.7.2-py3-none-any.whl", hash = "sha256:770550a0aa92b2f10e6c9a1f048dd43713f0f3bb6a12710186fcf8e4e9c99bd8" },
 ]
 
 [[package]]
@@ -2314,8 +2315,8 @@ requires-dist = [
     { name = "einops" },
     { name = "fast-hadamard-transform", specifier = ">=1.1.0" },
     { name = "flash-linear-attention" },
-    { name = "flashinfer-cubin", specifier = "==0.6.18.post1", index = "https://flashinfer.ai/whl/" },
-    { name = "flashinfer-python", specifier = "==0.6.18.post1", index = "https://flashinfer.ai/whl/" },
+    { name = "flashinfer-cubin", specifier = "==0.7.2", index = "https://flashinfer.ai/whl/" },
+    { name = "flashinfer-python", specifier = "==0.7.2", index = "https://flashinfer.ai/whl/" },
     { name = "hydra-core", specifier = ">=1.3.4,<1.4" },
     { name = "librosa", marker = "extra == 'audio'" },
     { name = "mamba-ssm", marker = "extra == 'ssm'", specifier = "==2.3.1" },
@@ -2861,6 +2862,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/67/43/e11d75a7fb635c6f63dd6e176cb3e050ec2fee35f2f2267b332a6ad351ec/narwhals-2.28.0.tar.gz", hash = "sha256:2d9860c80d6610820826e94c6e42ce4b1d92d89cdd479586e652a8d211dab345", size = 754977, upload-time = "2026-10-27T12:19:33.777Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cf/82/8ef9c7e0f50493307a49c09cfa7f00c5a778b6d1921f7b2dabe1d3a5809e/narwhals-2.28.0-py3-none-any.whl", hash = "sha256:1f69d6385ec30e2fa6e1fdeb37c562ecabd0f713f6f3e3b58a668c5c9df9567f", size = 490591, upload-time = "2026-10-27T12:19:31.649Z" },
+]
+
+[[package]]
+name = "nccl-extensions"
+version = "0.2.0.dev20261021"
+source = { registry = "https://pypi.nvidia.com/" }
+dependencies = [
+    { name = "cuda-core" },
+    { name = "cuda-pathfinder" },
+    { name = "nccl4py" },
+    { name = "numpy" },
+    { name = "packaging" },
+]
+wheels = [
+    { url = "https://pypi.nvidia.com/nccl-extensions/nccl_extensions-0.2.0.dev20261021-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4d470e7ad2baaa5c8152b996d89190b03424f619aa4673ce915f7137336acc9d" },
+    { url = "https://pypi.nvidia.com/nccl-extensions/nccl_extensions-0.2.0.dev20261021-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2c2b47ba8fb2f82a7599f08ec55a1456ffb7970bf74cd28dae6fabacecf07731" },
 ]
 
 [[package]]
