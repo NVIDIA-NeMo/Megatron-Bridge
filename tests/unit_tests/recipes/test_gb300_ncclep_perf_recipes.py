@@ -58,11 +58,10 @@ _GB300_NCCLEP_RECIPES = (
 )
 
 # VRNVL72 recipes on NCCL EP: aliases that share the GB300 NCCL EP builder instead of a HybridEP base, and
-# the DeepSeek V3 recipe that mirrors the MLPerf execution settings, with its proxies.
+# the DeepSeek V3 MXFP8 recipe that follows the MLPerf execution settings, with its 64-GPU proxy.
 _VRNVL72_NCCLEP_RECIPES = (
-    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config"),
-    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config"),
-    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config"),
 )
@@ -70,7 +69,6 @@ _VRNVL72_NCCLEP_RECIPES = (
 # VRNVL72 aliases of the same recipes: they reuse the shared HybridEP builders and must not pick up NCCL EP.
 _VRNVL72_ALIASES = (
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config"),
-    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config"),
     ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config"),
     ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config"),
@@ -79,7 +77,6 @@ _VRNVL72_ALIASES = (
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"),
-    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config"),
@@ -167,34 +164,35 @@ def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_override
     assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
 
 
-def test_deepseek_v3_vrnvl72_fp8mx_mlperf_exec_keeps_the_base_training_setup() -> None:
-    module = "deepseek.vrnvl72.deepseek_v3"
-    base = _build(module, "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config")
-    cfg = _build(module, "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config")
+def test_deepseek_v3_vrnvl72_fp8mx_keeps_the_gb300_training_setup() -> None:
+    gb300 = _build("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config")
+    cfg = _build("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config")
 
-    # The A/B changes execution only: data, batch, schedule, routing and router precision match the base.
-    assert type(cfg.dataset) is type(base.dataset)
-    assert cfg.tokenizer.tokenizer_type == base.tokenizer.tokenizer_type
-    assert cfg.model.seq_length == base.model.seq_length
-    assert cfg.train.global_batch_size == base.train.global_batch_size == 4096
-    assert cfg.train.micro_batch_size == base.train.micro_batch_size
-    assert cfg.train.train_iters == base.train.train_iters
-    assert cfg.optimizer.lr == base.optimizer.lr
-    assert cfg.optimizer.min_lr == base.optimizer.min_lr
-    assert cfg.scheduler.lr_warmup_iters == base.scheduler.lr_warmup_iters
-    assert cfg.scheduler.lr_decay_iters == base.scheduler.lr_decay_iters
-    assert cfg.model.moe_router_force_load_balancing is base.model.moe_router_force_load_balancing is True
-    assert cfg.mixed_precision.fp8_recipe == base.mixed_precision.fp8_recipe == "mxfp8"
+    # Both start from the shared MXFP8 base. The VRNVL72 recipe changes execution only, so data, batch,
+    # schedule, routing and router precision match the GB300 recipe.
+    assert type(cfg.dataset) is type(gb300.dataset)
+    assert cfg.tokenizer.tokenizer_type == gb300.tokenizer.tokenizer_type
+    assert cfg.model.seq_length == gb300.model.seq_length
+    assert cfg.train.global_batch_size == gb300.train.global_batch_size == 4096
+    assert cfg.train.micro_batch_size == gb300.train.micro_batch_size
+    assert cfg.train.train_iters == gb300.train.train_iters
+    assert cfg.optimizer.lr == gb300.optimizer.lr
+    assert cfg.optimizer.min_lr == gb300.optimizer.min_lr
+    assert cfg.scheduler.lr_warmup_iters == gb300.scheduler.lr_warmup_iters
+    assert cfg.scheduler.lr_decay_iters == gb300.scheduler.lr_decay_iters
+    assert cfg.model.moe_router_force_load_balancing is gb300.model.moe_router_force_load_balancing is True
+    assert cfg.mixed_precision.fp8_recipe == gb300.mixed_precision.fp8_recipe == "mxfp8"
     # The bridge sets these on real providers; the offline provider used here may not carry them. MXFP8
-    # token dispatch needs Megatron-LM #7992, so dispatch and combine stay as in the base recipe.
+    # token dispatch needs Megatron-LM #7992, so dispatch and combine stay as in the GB300 recipe.
     for name in ("moe_router_dtype", "moe_aux_loss_coeff", "moe_dispatch_fwd_dtype", "moe_combine_bwd_dtype"):
-        assert getattr(cfg.model, name, None) == getattr(base.model, name, None), name
+        assert getattr(cfg.model, name, None) == getattr(gb300.model, name, None), name
 
-    # The same 16-stage layout over PP=4 x VP=4, with EP and TP unchanged.
-    assert cfg.model.pipeline_model_parallel_layout == base.model.pipeline_model_parallel_layout
+    # The same 16-stage layout over PP=4 x VP=4 instead of PP=2 x VP=8, with EP and TP unchanged.
+    assert cfg.model.pipeline_model_parallel_layout == gb300.model.pipeline_model_parallel_layout
+    assert (gb300.model.pipeline_model_parallel_size, gb300.model.virtual_pipeline_model_parallel_size) == (2, 8)
     assert (cfg.model.pipeline_model_parallel_size, cfg.model.virtual_pipeline_model_parallel_size) == (4, 4)
-    assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size == 32
-    assert cfg.model.tensor_model_parallel_size == base.model.tensor_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == gb300.model.expert_model_parallel_size == 32
+    assert cfg.model.tensor_model_parallel_size == gb300.model.tensor_model_parallel_size == 1
 
     # MLPerf execution settings.
     assert cfg.model.moe_flex_dispatcher_num_sms == 64
@@ -210,48 +208,3 @@ def test_deepseek_v3_vrnvl72_fp8mx_mlperf_exec_keeps_the_base_training_setup() -
     assert cfg.optimizer.optimizer_cuda_graph is True
     assert cfg.dist.use_gloo_process_groups is False
     assert cfg.dataset.create_attention_mask is False
-
-
-@pytest.mark.parametrize(
-    ("factory_name", "expert_model_parallel_size", "global_batch_size"),
-    (
-        ("deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config", 32, 4096),
-        ("deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config", 4, 128),
-    ),
-)
-def test_deepseek_v3_vrnvl72_mlperf_exec_proxies_keep_the_parent_execution_settings(
-    factory_name: str, expert_model_parallel_size: int, global_batch_size: int
-) -> None:
-    module = "deepseek.vrnvl72.deepseek_v3"
-    parent = _build(module, "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config")
-    cfg = _build(module, factory_name)
-
-    # A shallower model without pipelining on fewer GPUs.
-    assert cfg.model.num_layers == 13
-    assert (cfg.model.pipeline_model_parallel_size, cfg.model.virtual_pipeline_model_parallel_size) == (1, None)
-    assert cfg.model.expert_model_parallel_size == expert_model_parallel_size
-    assert cfg.train.global_batch_size == global_batch_size
-
-    # The MLPerf execution settings and environment carry over unchanged.
-    assert cfg.env_vars == parent.env_vars
-    for name in (
-        "moe_token_dispatcher_type",
-        "moe_flex_dispatcher_backend",
-        "moe_use_grouped_tensor",
-        "moe_flex_dispatcher_num_sms",
-        "moe_expert_rank_capacity_factor",
-        "moe_paged_stash_buffer_size_factor_cuda",
-        "moe_router_padding_for_quantization",
-        "fused_residual_rmsnorm",
-        "mla_down_proj_fusion",
-        "use_fused_mla_kv_rope_quant",
-        "use_grouped_gemm_for_shared_expert",
-        "moe_shared_expert_glu_interleave_size",
-        "cuda_graph_impl",
-        "cuda_graph_warmup_steps",
-        "fp8_output_proj",
-    ):
-        assert getattr(cfg.model, name) == getattr(parent.model, name), name
-    assert cfg.optimizer.optimizer_cuda_graph is parent.optimizer.optimizer_cuda_graph is True
-    assert cfg.dist.use_gloo_process_groups is parent.dist.use_gloo_process_groups is False
-    assert cfg.dataset.create_attention_mask is parent.dataset.create_attention_mask is False

@@ -56,10 +56,8 @@ from megatron.bridge.perf_recipes.deepseek.h100.deepseek_v3 import (
     deepseek_v3_pretrain_1024gpu_h100_fp8sc_large_scale_config,
 )
 from megatron.bridge.perf_recipes.deepseek.vrnvl72.deepseek_v3 import (
-    deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config,
     deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config,
     deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config,
-    deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config,
     deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config,
     deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config,
     deepseek_v3_pretrain_128gpu_vrnvl72_bf16_config,
@@ -69,7 +67,6 @@ from megatron.bridge.perf_recipes.deepseek.vrnvl72.deepseek_v3 import (
     deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config,
     deepseek_v3_pretrain_256gpu_vrnvl72_fp8cs_config,
     deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config,
-    deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config,
     deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.deepseek.vrnvl72.deepseek_v4 import (

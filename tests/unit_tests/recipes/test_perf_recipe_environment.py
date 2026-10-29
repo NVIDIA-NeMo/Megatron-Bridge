@@ -48,14 +48,11 @@ _DEEPSEEK_NON_BASELINE_ENV_NAMES = {
     "TORCHINDUCTOR_WORKER_START",
 }
 _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
-    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config",
     "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config",
     "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config",
-    "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config",
     "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
     "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
     "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
-    "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config",
     "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config",
     "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config",
     "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config",
@@ -73,9 +70,8 @@ _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
 }
 # Mirror the MLPerf DeepSeek-V3 environment, which differs from the DeepSeek baseline policy.
 _DEEPSEEK_MLPERF_EXEC_RECIPES = {
-    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config",
-    "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_mlperf_exec_proxy_config",
-    "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_mlperf_exec_config",
+    "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
 }
 
 
@@ -238,11 +234,8 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             if function_name.endswith("_deterministic_config"):
                 # Bit-exact recipes pin deterministic TE kernels.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
-            elif function_name in {
-                "deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config",
-                "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
-            }:
-                # Match the kernel policy across systems; fused SwiGLU dprob uses atomic reductions.
+            elif function_name == "deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config":
+                # The fused SwiGLU dprob uses atomic reductions.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
             elif function_name in _DEEPSEEK_MLPERF_EXEC_RECIPES:
                 # MLPerf allows nondeterministic Transformer Engine kernels.
