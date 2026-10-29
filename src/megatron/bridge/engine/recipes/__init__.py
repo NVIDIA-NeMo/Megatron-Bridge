@@ -11,15 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Resolve ``TrainingEngine(model=<HF name>)`` to a default recipe ConfigContainer and apply overrides (phase D)."""
+"""TrainingEngine recipes: model and execution configuration per supported model and hardware."""
 
-from __future__ import annotations
-
-from typing import Any
-
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.engine.recipes.base import TrainingRecipe, check_supported, data_parallel_size, finalize_recipe
+from megatron.bridge.engine.recipes.qwen35 import qwen35_text_35b_a3b_rl_16gpu_gb200_bf16
 
 
-def resolve_recipe(model: str, *, overrides: dict[str, Any] | None) -> ConfigContainer:
-    """Map an HF model name to its default engine recipe and apply dotted-key overrides."""
-    raise NotImplementedError("resolve_recipe is implemented in phase D.")
+__all__ = [
+    "TrainingRecipe",
+    "check_supported",
+    "data_parallel_size",
+    "finalize_recipe",
+    "qwen35_text_35b_a3b_rl_16gpu_gb200_bf16",
+]

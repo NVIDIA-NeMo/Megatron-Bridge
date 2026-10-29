@@ -11,29 +11,31 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Phase A gate: construct TrainingEngines from a Bridge recipe on every rank.
+"""Phase A gate: construct TrainingEngines from an engine recipe on every rank.
 
-Builds a trainable actor and a frozen reference from the same recipe config, prints parallel info,
-parameter counts and memory, closes the actor, and verifies the reference still works. Run under
-torchrun / srun with the recipe's world size, e.g.::
+Builds a trainable actor and a frozen reference from the same recipe, prints parallel info,
+parameter counts and memory, closes the actor, verifies the reference still works and that the
+actor's model was actually released. Run under torchrun / srun with the recipe's world size, e.g.::
 
     python examples/engine/construct_from_recipe.py \
-        --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config \
+        --recipe qwen35_text_35b_a3b_rl_16gpu_gb200_bf16 \
+        --recipe-kwargs '{"hf_path": "/path/to/local/hf_text_model"}' \
         --checkpoint /path/to/megatron_ckpt \
-        mixed_precision.fp8=null model.mtp_num_layers=1 ...   # Hydra-style ConfigContainer overrides
+        [key=value ...]   # optional Hydra-style recipe overrides, e.g. model.context_parallel_size=4
 """
 
 from __future__ import annotations
 
 import argparse
 import gc
+import json
 import logging
 import time
 import weakref
 
 import torch
 
-import megatron.bridge.recipes as recipes
+import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import TrainingEngine
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -44,7 +46,8 @@ logger = logging.getLogger(__name__)
 
 def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--recipe", required=True, help="Recipe function name in megatron.bridge.recipes")
+    parser.add_argument("--recipe", required=True, help="Recipe function name in megatron.bridge.engine.recipes")
+    parser.add_argument("--recipe-kwargs", default="{}", help="JSON dict of keyword arguments for the recipe function")
     parser.add_argument("--checkpoint", default=None, help="Pretrained Megatron/HF checkpoint for both engines")
     parser.add_argument("--skip-reference", action="store_true", help="Only build the trainable actor")
     args, overrides = parser.parse_known_args()
@@ -87,11 +90,12 @@ def main() -> None:
     """Build an actor and a frozen reference engine, close the actor, and verify the reference survives."""
     logging.basicConfig(level=logging.INFO)
     args, overrides = _parse_args()
-    cfg = getattr(recipes, args.recipe)()
-    cfg = process_config_with_overrides(cfg, cli_overrides=overrides or None)
+    recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    if overrides:
+        recipe = process_config_with_overrides(recipe, cli_overrides=overrides)
 
     start = time.time()
-    actor = TrainingEngine.from_config(cfg, checkpoint_path=args.checkpoint, trainable=True)
+    actor = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
     torch.distributed.barrier()
     total, trainable = _count_params(actor.model)
     print_rank_0(f"[actor] built in {time.time() - start:.1f}s; parallel_info={actor.parallel_info}")
@@ -110,7 +114,7 @@ def main() -> None:
         return
 
     start = time.time()
-    reference = TrainingEngine.from_config(cfg, checkpoint_path=args.checkpoint, trainable=False)
+    reference = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=False)
     torch.distributed.barrier()
     total, trainable = _count_params(reference.model)
     print_rank_0(

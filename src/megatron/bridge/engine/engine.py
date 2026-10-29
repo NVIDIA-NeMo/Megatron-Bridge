@@ -11,9 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""TrainingEngine: an in-process, every-rank training object built from a Bridge ``ConfigContainer``.
+"""TrainingEngine: an in-process, every-rank training object built from a ``TrainingRecipe``.
 
-Phase A implements construction (``from_config``), shared-runtime ownership, ``parallel_info``,
+Phase A implements construction (``from_recipe``), shared-runtime ownership, ``parallel_info``,
 engine-local ``close()`` and named-loss dispatch. Compute, state and placement APIs raise
 ``NotImplementedError`` until their phase lands.
 """
@@ -30,10 +30,13 @@ from typing import Any
 import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel
+from megatron.core.num_microbatches_calculator import init_num_microbatches_calculator
+from megatron.core.optimizer import get_megatron_optimizer, get_standard_config_overrides
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.engine.checkpoint import load_pretrained_weights
 from megatron.bridge.engine.datum import (
     AdamParams,
     CheckpointHandle,
@@ -43,25 +46,17 @@ from megatron.bridge.engine.datum import (
     NormalizationPolicy,
     validate_datums,
 )
+from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.training.checkpointing import CheckpointLoadContext, create_checkpoint_manager
-from megatron.bridge.training.config import ConfigContainer, runtime_config_update
-from megatron.bridge.training.initialize import initialize_megatron
-from megatron.bridge.training.optim import (
-    memory_efficient_fp32_optimizer_state_loading,
-    setup_optimizer,
-    sync_hybrid_device_optimizer_fp32_master_copies,
-)
+from megatron.bridge.training.config import RerunStateMachineConfig
+from megatron.bridge.training.initialize import init_rerun_state, torch_dist_init
 from megatron.bridge.training.setup import (
     _build_distributed_model,
     _register_pre_wrap_hook,
     _resolve_embedding_ranks_fn,
     _update_model_config_funcs,
-    _validate_and_set_vocab_size,
 )
-from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
 
 
 logger = logging.getLogger(__name__)
@@ -72,7 +67,7 @@ LossMethod = Callable[..., tuple[torch.Tensor, dict[str, float]]]
 # Public engine attributes that can never be used as a loss method name.
 _RESERVED_METHODS = frozenset(
     {
-        "from_config",
+        "from_recipe",
         "forward_only",
         "forward_backward",
         "optim_step",
@@ -86,7 +81,7 @@ _RESERVED_METHODS = frozenset(
         "cuda",
         "cpu",
         "close",
-        "config",
+        "recipe",
         "parallel_info",
         "normalization",
     }
@@ -107,9 +102,9 @@ class Topology:
     decentralized_pg: bool
 
 
-def topology_from_config(cfg: ConfigContainer) -> Topology:
-    """Read the parallel topology a config asks for."""
-    model = cfg.model
+def topology_from_recipe(recipe: TrainingRecipe) -> Topology:
+    """Read the parallel topology a recipe asks for."""
+    model = recipe.model
     return Topology(
         world_size=get_world_size_safe(),
         tp=model.tensor_model_parallel_size,
@@ -118,34 +113,8 @@ def topology_from_config(cfg: ConfigContainer) -> Topology:
         cp=model.context_parallel_size or 1,
         ep=getattr(model, "expert_model_parallel_size", 1) or 1,
         etp=getattr(model, "expert_tensor_parallel_size", None),
-        decentralized_pg=bool(cfg.dist.use_decentralized_pg),
+        decentralized_pg=bool(recipe.dist.use_decentralized_pg),
     )
-
-
-def enforce_engine_conventions(cfg: ConfigContainer) -> None:
-    """Raise if a recipe contradicts the conventions the engine relies on.
-
-    The engine defers gradient finalization to ``optim_step`` and owns checkpoint loading and the
-    learning-rate schedule, so the config must use per-token loss sums, no DP averaging in the
-    collective, one packed microbatch per step, and no recipe-driven resume path.
-    """
-    problems: list[str] = []
-    if not getattr(cfg.model, "calculate_per_token_loss", False):
-        problems.append("model.calculate_per_token_loss must be True")
-    if getattr(cfg.ddp, "average_in_collective", False):
-        problems.append("ddp.average_in_collective must be False")
-    if cfg.train.micro_batch_size != 1:
-        problems.append("train.micro_batch_size must be 1 (one packed sequence per microbatch)")
-    if cfg.checkpoint.load is not None:
-        problems.append("checkpoint.load must be None; pass checkpoint_path to the engine instead")
-    if getattr(cfg.dist, "lazy_mpu_init", False):
-        problems.append("dist.lazy_mpu_init is not supported")
-    if getattr(cfg.dist, "use_megatron_fsdp", False) or getattr(cfg.dist, "use_torch_fsdp2", False):
-        problems.append("FSDP wrappers are not supported; use DDP with the distributed optimizer")
-    if cfg.peft is not None:
-        problems.append("cfg.peft must be None; LoRA is configured through the engine (phase C3)")
-    if problems:
-        raise ValueError("Config violates TrainingEngine conventions:\n  - " + "\n  - ".join(problems))
 
 
 @dataclass
@@ -181,15 +150,29 @@ class _SharedRuntime:
 _RUNTIME: _SharedRuntime | None = None
 
 
-def _acquire_runtime(cfg: ConfigContainer) -> _SharedRuntime:
+def _acquire_runtime(recipe: TrainingRecipe) -> _SharedRuntime:
     """Initialize Megatron once per process, or attach to the existing runtime if the topology matches."""
     global _RUNTIME
-    topology = topology_from_config(cfg)
+    topology = topology_from_recipe(recipe)
     if _RUNTIME is None:
-        set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
-        pg_collection = initialize_megatron(cfg=cfg, get_embedding_ranks=_resolve_embedding_ranks_fn(cfg.model, None))
+        set_experimental_flag(recipe.dist.enable_megatron_core_experimental)
+        # MCore globals the schedules and losses consult; the engine always runs one packed
+        # sequence per microbatch and passes num_microbatches explicitly.
+        dp_size = data_parallel_size(recipe)
+        init_num_microbatches_calculator(get_rank_safe(), None, dp_size, 1, dp_size, False)
+        init_rerun_state(RerunStateMachineConfig())
+        pg_collection = torch_dist_init(
+            model_config=recipe.model,
+            dist_config=recipe.dist,
+            rng_config=recipe.rng,
+            micro_batch_size=1,
+            num_distributed_optimizer_instances=recipe.ddp.num_distributed_optimizer_instances,
+            get_embedding_ranks=_resolve_embedding_ranks_fn(recipe.model, None),
+            get_position_embedding_ranks=None,
+            skip_mpu_initialization=False,
+        )
         if not isinstance(pg_collection, ProcessGroupCollection):
-            raise RuntimeError("initialize_megatron did not return process groups (lazy MPU init is unsupported).")
+            raise RuntimeError("torch_dist_init did not return process groups (lazy MPU init is unsupported).")
         _RUNTIME = _SharedRuntime(topology, pg_collection)
         print_rank_0(f"TrainingEngine runtime initialized: {topology}")
     elif _RUNTIME.topology != topology:
@@ -206,7 +189,7 @@ def active_runtime() -> _SharedRuntime | None:
 
 
 class TrainingEngine:
-    """Tinker-like training engine over a Megatron-Bridge recipe.
+    """Tinker-like training engine over a Megatron-Bridge TrainingRecipe.
 
     Every rank constructs the engine and enters every distributed call. The engine owns its model,
     optimizer and accumulation state; the distributed runtime is shared with other compatible engines
@@ -227,15 +210,15 @@ class TrainingEngine:
         overrides: dict[str, Any] | None = None,
     ) -> None:
         raise NotImplementedError(
-            "Construction by model name (recipes.py) is phase D; use TrainingEngine.from_config(cfg)."
+            "Construction by model name (recipe lookup) is phase D; use TrainingEngine.from_recipe(recipe)."
         )
 
     # ---- construction -------------------------------------------------------------------------
 
     @classmethod
-    def from_config(
+    def from_recipe(
         cls,
-        cfg: ConfigContainer,
+        recipe: TrainingRecipe,
         *,
         checkpoint_path: str | None = None,
         output_head: str = "lm",
@@ -243,14 +226,12 @@ class TrainingEngine:
         lora: LoraConfig | None = None,
         hooks: list[PreWrapHook] | None = None,
     ) -> TrainingEngine:
-        """Build an engine from a recipe ``ConfigContainer``.
+        """Build an engine from a ``TrainingRecipe``.
 
-        The config is deep-copied so several engines can be built from one recipe object. Its dataset,
-        scheduler and logging sections are ignored: the caller feeds Datums and owns the learning-rate
-        schedule.
+        The recipe is deep-copied so several engines can be built from one recipe object.
 
         Args:
-            cfg: Recipe configuration (model, optimizer, ddp, dist, mixed precision, tokenizer).
+            recipe: Model and execution configuration.
             checkpoint_path: Megatron or HF checkpoint whose weights initialize the model, or ``None``
                 for the provider's initialization.
             output_head: ``"lm"`` only for now; ``"value"`` arrives with the critic (phase D).
@@ -265,53 +246,47 @@ class TrainingEngine:
             raise NotImplementedError(f"output_head={output_head!r} is not supported yet (value head: phase D).")
         if lora is not None:
             raise NotImplementedError("LoRA engines are phase C3.")
-        cfg = copy.deepcopy(cfg)
-        cfg.checkpoint.pretrained_checkpoint = checkpoint_path
-        cfg.checkpoint.load = None
-        runtime_config_update(cfg)
-        enforce_engine_conventions(cfg)
-        runtime = _acquire_runtime(cfg)
+        recipe = copy.deepcopy(recipe)
+        finalize_recipe(recipe)
+        runtime = _acquire_runtime(recipe)
         engine = cls.__new__(cls)
-        engine._build(cfg, runtime, trainable=trainable, hooks=hooks or [])
+        engine._build(recipe, runtime, checkpoint_path=checkpoint_path, trainable=trainable, hooks=hooks or [])
         return engine
 
     def _build(
-        self, cfg: ConfigContainer, runtime: _SharedRuntime, *, trainable: bool, hooks: list[PreWrapHook]
+        self,
+        recipe: TrainingRecipe,
+        runtime: _SharedRuntime,
+        *,
+        checkpoint_path: str | None,
+        trainable: bool,
+        hooks: list[PreWrapHook],
     ) -> None:
-        self._cfg = cfg
+        self._recipe = recipe
         self._runtime = runtime
         self._trainable = trainable
         self._closed = False
         self._step = 0
-        self._state = GlobalState()
-        self._state.cfg = cfg
         pg_collection = runtime.pg_collection
 
-        tokenizer = build_tokenizer(cfg.tokenizer)
-        cfg.model.vocab_size, cfg.model.should_pad_vocab = _validate_and_set_vocab_size(
-            model_vocab_size=cfg.model.vocab_size,
-            tokenizer_vocab_size=tokenizer.vocab_size,
-            use_tokenizer_vocab_size=getattr(cfg.tokenizer, "use_tokenizer_vocab_size", False),
-        )
         for hook in hooks:
-            _register_pre_wrap_hook(cfg.model, hook)
+            _register_pre_wrap_hook(recipe.model, hook)
 
         self._optimizer = None
         if trainable:
-            self._model = _build_distributed_model(cfg, pg_collection)
-            self._optimizer, _unused_scheduler = setup_optimizer(
-                optimizer_config=cfg.optimizer,
-                scheduler_config=cfg.scheduler,
-                model=self._model,
-                use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
-                pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
-                optimizer_config_override_provider=cfg.optimizer_config_override_provider,
+            self._model = _build_distributed_model(recipe, pg_collection)
+            self._optimizer = get_megatron_optimizer(
+                config=recipe.optimizer,
+                model_chunks=self._model,
+                config_overrides=get_standard_config_overrides(config=recipe.optimizer) or None,
+                use_gloo_process_groups=recipe.dist.use_gloo_process_groups,
+                pg_collection=pg_collection if recipe.dist.use_decentralized_pg else None,
             )
         else:
-            self._model = _build_frozen_model(cfg, pg_collection)
+            self._model = _build_frozen_model(recipe, pg_collection)
 
-        if cfg.checkpoint.pretrained_checkpoint is not None:
-            self._load_pretrained()
+        if checkpoint_path is not None:
+            load_pretrained_weights(recipe, self._model, self._optimizer, checkpoint_path)
 
         self._grad_hooks: _GradHooks | None = None
         if trainable:
@@ -319,9 +294,9 @@ class TrainingEngine:
             _update_model_config_funcs(
                 self._model,
                 model_config,
-                cfg.ddp,
+                recipe.ddp,
                 self._optimizer,
-                align_grad_reduce=cfg.dist.align_grad_reduce,
+                align_grad_reduce=recipe.dist.align_grad_reduce,
                 pg_collection=pg_collection,
                 peft_enabled=False,
             )
@@ -332,21 +307,6 @@ class TrainingEngine:
                 grad_scale_func=model_config.grad_scale_func,
             )
         runtime.attach(self)
-
-    def _load_pretrained(self) -> None:
-        cfg = self._cfg
-        manager = create_checkpoint_manager(cfg.checkpoint)
-        checkpoint_optimizer = self._optimizer if cfg.checkpoint.load_optim and not cfg.checkpoint.finetune else None
-        with memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
-            manager.load(
-                CheckpointLoadContext(
-                    state=self._state,
-                    model=self._model,
-                    optimizer=checkpoint_optimizer,
-                    opt_param_scheduler=None,
-                )
-            )
-        sync_hybrid_device_optimizer_fp32_master_copies(self._optimizer)
 
     # ---- compute ------------------------------------------------------------------------------
 
@@ -461,9 +421,9 @@ class TrainingEngine:
     # ---- introspection ------------------------------------------------------------------------
 
     @property
-    def config(self) -> ConfigContainer:
-        """The engine's private, resolved configuration."""
-        return self._cfg
+    def recipe(self) -> TrainingRecipe:
+        """The engine's private, finalized recipe."""
+        return self._recipe
 
     @property
     def trainable(self) -> bool:
@@ -512,7 +472,7 @@ class TrainingEngine:
         for chunk in self._model:
             _release_ddp_autograd_refs(chunk)
         if self._model:
-            # The model config is the provider held by self._cfg; Bridge installed optimizer-bound
+            # The model config is the provider held by self._recipe; Bridge installed optimizer-bound
             # callables on it, which would otherwise keep optimizer -> model_chunks -> model alive.
             model_config = get_model_config(self._model[0])
             hook_names = (
@@ -558,16 +518,15 @@ def _release_ddp_autograd_refs(chunk: MegatronModule) -> None:
     chunk.grad_accs.clear()
 
 
-def _build_frozen_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
+def _build_frozen_model(recipe: TrainingRecipe, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
     """Build a model without DDP or gradient buffers and freeze its parameters."""
-    provider = cfg.model
+    provider = recipe.model
     if not isinstance(provider, ModelProviderMixin):
         raise NotImplementedError("trainable=False currently requires a ModelProviderMixin model config.")
-    provider.finalize()
     model = provider.provide_distributed_model(
         ddp_config=None,
         wrap_with_ddp=False,
-        data_parallel_random_init=cfg.rng.data_parallel_random_init,
+        data_parallel_random_init=recipe.rng.data_parallel_random_init,
         pg_collection=pg_collection,
     )
     for chunk in model:

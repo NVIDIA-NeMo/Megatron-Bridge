@@ -22,7 +22,8 @@ from megatron.bridge.engine.datum import (
     NormalizationPolicy,
     validate_datums,
 )
-from megatron.bridge.engine.engine import Topology, TrainingEngine, enforce_engine_conventions, topology_from_config
+from megatron.bridge.engine.engine import Topology, TrainingEngine, topology_from_recipe
+from megatron.bridge.engine.recipes import TrainingRecipe
 
 
 __all__ = [
@@ -34,7 +35,7 @@ __all__ = [
     "NormalizationPolicy",
     "Topology",
     "TrainingEngine",
-    "enforce_engine_conventions",
-    "topology_from_config",
+    "TrainingRecipe",
+    "topology_from_recipe",
     "validate_datums",
 ]

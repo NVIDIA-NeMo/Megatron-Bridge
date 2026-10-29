@@ -3,28 +3,27 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from megatron.bridge.engine import Datum, TrainingEngine, enforce_engine_conventions, topology_from_config
+from megatron.bridge.engine import Datum, TrainingEngine, topology_from_recipe
 from megatron.bridge.engine.engine import Topology, _SharedRuntime
+from megatron.bridge.engine.recipes import check_supported, data_parallel_size
 
 
-def _good_cfg() -> SimpleNamespace:
+def _recipe_like() -> SimpleNamespace:
     return SimpleNamespace(
         model=SimpleNamespace(
-            calculate_per_token_loss=True,
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
             virtual_pipeline_model_parallel_size=None,
             context_parallel_size=8,
             expert_model_parallel_size=16,
             expert_tensor_parallel_size=1,
+            vocab_size=248320,
+            seq_length=131072,
         ),
-        ddp=SimpleNamespace(average_in_collective=False),
-        train=SimpleNamespace(micro_batch_size=1),
-        checkpoint=SimpleNamespace(load=None),
+        ddp=SimpleNamespace(use_megatron_fsdp=False),
         dist=SimpleNamespace(
             lazy_mpu_init=False, use_megatron_fsdp=False, use_torch_fsdp2=False, use_decentralized_pg=False
         ),
-        peft=None,
     )
 
 
@@ -35,50 +34,41 @@ def _unbuilt_engine(trainable: bool = True, closed: bool = False) -> TrainingEng
     return engine
 
 
-def test_conventions_accept_baseline_shape():
-    enforce_engine_conventions(_good_cfg())
+def test_check_supported_accepts_baseline_shape():
+    check_supported(_recipe_like())
 
 
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
-        (lambda c: setattr(c.model, "calculate_per_token_loss", False), "calculate_per_token_loss"),
-        (lambda c: setattr(c.ddp, "average_in_collective", True), "average_in_collective"),
-        (lambda c: setattr(c.train, "micro_batch_size", 2), "micro_batch_size"),
-        (lambda c: setattr(c.checkpoint, "load", "/some/ckpt"), "checkpoint.load"),
-        (lambda c: setattr(c.dist, "lazy_mpu_init", True), "lazy_mpu_init"),
-        (lambda c: setattr(c.dist, "use_torch_fsdp2", True), "FSDP"),
-        (lambda c: setattr(c, "peft", object()), "peft"),
+        (lambda r: setattr(r.dist, "lazy_mpu_init", True), "lazy_mpu_init"),
+        (lambda r: setattr(r.dist, "use_torch_fsdp2", True), "FSDP"),
+        (lambda r: setattr(r.ddp, "use_megatron_fsdp", True), "FSDP"),
+        (lambda r: setattr(r.model, "vocab_size", None), "vocab_size"),
+        (lambda r: setattr(r.model, "seq_length", None), "seq_length"),
     ],
 )
-def test_conventions_reject_each_violation(mutate, message):
-    cfg = _good_cfg()
-    mutate(cfg)
+def test_check_supported_rejects_each_violation(mutate, message):
+    recipe = _recipe_like()
+    mutate(recipe)
     with pytest.raises(ValueError, match=message):
-        enforce_engine_conventions(cfg)
+        check_supported(recipe)
 
 
-def test_conventions_report_all_violations_at_once():
-    cfg = _good_cfg()
-    cfg.model.calculate_per_token_loss = False
-    cfg.train.micro_batch_size = 4
-    with pytest.raises(ValueError) as excinfo:
-        enforce_engine_conventions(cfg)
-    assert "calculate_per_token_loss" in str(excinfo.value) and "micro_batch_size" in str(excinfo.value)
-
-
-def test_topology_from_config_and_equality(monkeypatch):
+def test_data_parallel_size_and_topology(monkeypatch):
     monkeypatch.setenv("WORLD_SIZE", "16")
-    a = topology_from_config(_good_cfg())
-    b = topology_from_config(_good_cfg())
-    assert a == b == Topology(16, 1, 1, None, 8, 16, 1, False)
-    cfg = _good_cfg()
-    cfg.model.context_parallel_size = 4
-    assert topology_from_config(cfg) != a
+    recipe = _recipe_like()
+    assert data_parallel_size(recipe) == 2
+    assert topology_from_recipe(recipe) == Topology(16, 1, 1, None, 8, 16, 1, False)
+    recipe.model.context_parallel_size = 4
+    assert topology_from_recipe(recipe) != topology_from_recipe(_recipe_like())
+    recipe.model.context_parallel_size = 3
+    with pytest.raises(ValueError, match="not divisible"):
+        data_parallel_size(recipe)
 
 
 def test_constructor_by_name_is_not_implemented():
-    with pytest.raises(NotImplementedError, match="from_config"):
+    with pytest.raises(NotImplementedError, match="from_recipe"):
         TrainingEngine("Qwen/Qwen3.5-35B-A3B")
 
 
@@ -93,7 +83,7 @@ def test_loss_dispatch_resolves_predefined_and_subclass_methods():
     assert engine.resolve_loss_method("my_loss")([], None)[0].item() == 0.0
 
 
-@pytest.mark.parametrize("name", ["optim_step", "close", "config", "_build", "", "does_not_exist", "normalization"])
+@pytest.mark.parametrize("name", ["optim_step", "close", "recipe", "_build", "", "does_not_exist", "normalization"])
 def test_loss_dispatch_rejects_reserved_private_and_unknown_names(name):
     engine = _unbuilt_engine()
     with pytest.raises(ValueError):
