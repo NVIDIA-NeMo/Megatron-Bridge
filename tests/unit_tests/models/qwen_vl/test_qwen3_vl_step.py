@@ -225,6 +225,38 @@ def test_pad_and_pack_marks_added_positions_as_padding():
     assert torch.equal(outputs[-1], expected)
 
 
+@pytest.mark.parametrize(("force_to_pad_to_seq_len", "expected_len"), [(True, 8), (False, 16)])
+def test_pad_and_pack_max_seqlen_is_a_host_int_without_item(monkeypatch, force_to_pad_to_seq_len, expected_len):
+    """max_seqlen is the padded length as a Python int, computed without Tensor.item().
+
+    A device-to-host read such as .item() is not allowed while a full-iteration CUDA graph is captured.
+    """
+
+    def _no_item(self):
+        raise AssertionError("Tensor.item() called while packing the Qwen3-VL step batch")
+
+    tokens = torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]])
+    monkeypatch.setattr(torch.Tensor, "item", _no_item)
+
+    outputs = _pad_and_pack_qwen3_vl_step(
+        tokens,
+        torch.full_like(tokens, -100),
+        torch.zeros_like(tokens, dtype=torch.float),
+        None,
+        torch.arange(4).expand(2, -1),
+        _pg_collection(),
+        use_fp8_padding=True,
+        force_to_pad_to_seq_len=force_to_pad_to_seq_len,
+        seq_length=8,
+    )
+
+    packed_seq_params = outputs[5]
+    assert outputs[0].shape == (2, expected_len)
+    assert type(packed_seq_params.max_seqlen_q) is int and type(packed_seq_params.max_seqlen_kv) is int
+    assert packed_seq_params.max_seqlen_q == packed_seq_params.max_seqlen_kv == expected_len
+    assert torch.equal(packed_seq_params.cu_seqlens_q, torch.tensor([0, expected_len, 2 * expected_len]))
+
+
 @pytest.mark.parametrize("enable_in_batch_packing", [False, True])
 def test_forward_step_passes_padding_mask_for_padded_batches_only(monkeypatch, enable_in_batch_packing):
     config = _model_config()

@@ -219,7 +219,9 @@ def _pad_and_pack_qwen3_vl_step(
     cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
     cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
     cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
-    max_seqlen_in_batch = seqlens_in_batch.max().item()
+    # Every row has length target_len, so this is the max without a device-to-host .item() sync,
+    # which a full-iteration CUDA graph capture does not allow.
+    max_seqlen_in_batch = target_len
 
     packed_seq_params = PackedSeqParams(
         qkv_format="thd",
