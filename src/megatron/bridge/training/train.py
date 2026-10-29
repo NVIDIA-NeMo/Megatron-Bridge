@@ -815,7 +815,7 @@ def train(
                 callback_manager=callback_manager,
             )
 
-    _delete_cuda_graphs(cuda_graph_helper, model)
+    _delete_cuda_graphs(cuda_graph_helper, model, optimizer=optimizer)
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -1775,7 +1775,39 @@ def _delete_local_cuda_graph_runners(model: list[MegatronModule]) -> None:
                 module.custom_cudagraphs_lookup_table.clear()
 
 
-def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None, model: list[MegatronModule] | None = None):
+def _release_full_iteration_grad_copies(optimizer: MegatronOptimizer | None) -> None:
+    """Reset the optimizers' full-iteration gradient-conversion graphs to their initial state.
+
+    With ``cuda_graph_impl="full_iteration"`` and an eager optimizer step, Megatron Core's distributed optimizer and
+    its layer-wise mixed-precision optimizer replay their gradient conversion as a CUDA graph in the training graph's
+    memory pool (``_cudagraphed_grad_copy``, a ``FullIterationGradCopy``). That object also holds the training graph,
+    so clearing ``FullCudaGraphWrapper.cuda_graph`` alone leaves the training graph and its captured NCCL work alive.
+    Megatron Core resets this state the same way when the training graph changes; a later capture rebuilds it.
+
+    Args:
+        optimizer: The training optimizer, possibly a chain of optimizers (layer-wise ones are chained one level
+            deeper).
+    """
+    pending = [] if optimizer is None else [optimizer]
+    while pending:
+        child = pending.pop()
+        chained = getattr(child, "chained_optimizers", None)
+        if isinstance(chained, (list, tuple)):
+            pending.extend(chained)
+        grad_copy = getattr(child, "_cudagraphed_grad_copy", None)
+        if grad_copy is None:
+            continue
+        grad_copy.graph = None
+        grad_copy.forward_backward_graph = None
+        grad_copy.outputs = []
+        grad_copy.source_signature = None
+
+
+def _delete_cuda_graphs(
+    cuda_graph_helper: TECudaGraphHelper | None,
+    model: list[MegatronModule] | None = None,
+    optimizer: MegatronOptimizer | None = None,
+):
     """
     Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
     process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
@@ -1785,6 +1817,8 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None, model: list
     Args:
         cuda_graph_helper: The TECudaGraphHelper object.
         model: The list of model chunks (MegatronModule instances).
+        optimizer: The training optimizer, whose full-iteration gradient-conversion graphs also hold the training
+            graph.
     """
 
     print_rank_0("Deleting CUDA graphs")
@@ -1797,6 +1831,8 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None, model: list
         FullCudaGraphWrapper.cuda_graph[stage] = None
         FullCudaGraphWrapper.result[stage] = None
         FullCudaGraphWrapper.curr_iteration[stage] = 0
+    # The optimizers' gradient-conversion graphs reference the training graph: release them too.
+    _release_full_iteration_grad_copies(optimizer)
 
     # Explicitly delete optimizer CUDA graph
     if HAS_OPTIMIZER_CUDA_GRAPH:
