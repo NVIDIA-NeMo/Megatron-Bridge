@@ -376,6 +376,12 @@ def build_direct_hf_sft_split(
                 loss_mode=config.preprocessing.loss_mode,
             )
         else:
+            # The remaining model-owned collators (Nemotron Omni) build assistant-only loss masks.
+            if config.preprocessing.loss_mode != "assistant":
+                raise ValueError(
+                    f"Processor type '{type(processor).__name__}' supports only assistant chat loss through its "
+                    "model-owned collator."
+                )
             selected_collate = None
     else:
         selected_collate = select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl)

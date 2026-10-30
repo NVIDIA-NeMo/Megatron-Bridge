@@ -325,9 +325,17 @@ class Gemma4Bridge(MegatronModelBridge):
         """Build the dense or MoE Gemma 4 builder config from a Gemma 4 text config."""
         if self.MODEL_CONFIG_CLASS is None:
             return super().hf_config_to_model_config(hf_config)
+        config_class = Gemma4ModelConfig if getattr(hf_config, "enable_moe_block", False) else Gemma4DenseModelConfig
+        return self._build_model_config(config_class, self._text_model_config_kwargs(hf_config))
+
+    def _text_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Flat builder config kwargs for a Gemma 4 text config, dense or MoE.
+
+        The vision-language bridge reuses them for its language model. They omit the MoE layer
+        spec, which ``_build_model_config()`` adds for builder configs only.
+        """
         if not getattr(hf_config, "enable_moe_block", False):
             self._is_dense = True
-            config_class = Gemma4DenseModelConfig
             config_kwargs = {**_GPT_PROVIDER_PARITY_DEFAULTS, **self._dense_config_kwargs(hf_config)}
             # MegatronModelBridge.hf_config_to_model_config_kwargs() adds these builder defaults on
             # the MoE path; the dense path maps its fields by hand, so add them here.
@@ -337,14 +345,22 @@ class Gemma4Bridge(MegatronModelBridge):
                 deallocate_pipeline_outputs=True,
                 gradient_accumulation_fusion=fusions.can_enable_gradient_accumulation_fusion(),
             )
-        else:
-            self._is_dense = False
-            config_class = Gemma4ModelConfig
-            config_kwargs = self._moe_config_kwargs(super().hf_config_to_model_config_kwargs(hf_config), hf_config)
-            for name, value in _GPT_PROVIDER_PARITY_DEFAULTS.items():
-                config_kwargs.setdefault(name, value)
-            config_kwargs["transformer_layer_spec"] = gemma4_moe_layer_spec
+            return config_kwargs
 
+        self._is_dense = False
+        config_kwargs = self._moe_config_kwargs(super().hf_config_to_model_config_kwargs(hf_config), hf_config)
+        for name, value in _GPT_PROVIDER_PARITY_DEFAULTS.items():
+            config_kwargs.setdefault(name, value)
+        return config_kwargs
+
+    def _build_model_config(
+        self,
+        config_class: type[Gemma4ModelConfig] | type[Gemma4DenseModelConfig],
+        config_kwargs: dict[str, Any],
+    ) -> Gemma4ModelConfig | Gemma4DenseModelConfig:
+        """Construct a Gemma 4 builder config, or a subclass of one, from flat kwargs."""
+        if issubclass(config_class, Gemma4ModelConfig):
+            config_kwargs = {**config_kwargs, "transformer_layer_spec": gemma4_moe_layer_spec}
         transformer_config_class = config_class.transformer_config_class
         model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(
             config_kwargs, config_class, transformer_config_class
@@ -421,7 +437,11 @@ class Gemma4Bridge(MegatronModelBridge):
 
     def _build_moe_provider(self, hf_config) -> Gemma4ModelProvider:
         """Build a Gemma4ModelProvider from HF config (MoE path)."""
-        return Gemma4ModelProvider(**self._moe_config_kwargs(self.hf_config_to_provider_kwargs(hf_config), hf_config))
+        # Map this text config directly: the vision-language subclass maps its top-level config in
+        # hf_config_to_provider_kwargs().
+        return Gemma4ModelProvider(
+            **self._moe_config_kwargs(super().hf_config_to_provider_kwargs(hf_config), hf_config)
+        )
 
     def _moe_config_kwargs(self, base_kwargs: dict[str, Any], hf_config) -> dict[str, Any]:
         """Add Gemma 4 MoE settings to kwargs mapped from ``CONFIG_MAPPING``.

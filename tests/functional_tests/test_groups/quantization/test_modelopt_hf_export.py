@@ -26,7 +26,14 @@ from pathlib import Path
 import pytest
 import torch
 from safetensors import safe_open
-from transformers import Qwen3Config, Qwen3ForCausalLM, Qwen3MoeConfig, Qwen3MoeForCausalLM
+from transformers import (
+    Qwen3_5ForCausalLM,
+    Qwen3_5TextConfig,
+    Qwen3Config,
+    Qwen3ForCausalLM,
+    Qwen3MoeConfig,
+    Qwen3MoeForCausalLM,
+)
 
 
 REPO_ROOT = Path(__file__).parents[4]
@@ -53,6 +60,19 @@ def toy_models(tmp_path_factory) -> dict[str, Path]:
             "qwen3_moe",
             Qwen3MoeForCausalLM(
                 Qwen3MoeConfig(moe_intermediate_size=64, num_experts=4, num_experts_per_tok=2, **TOY_CONFIG)
+            ),
+        ),
+        (
+            "qwen3_5",
+            Qwen3_5ForCausalLM(
+                Qwen3_5TextConfig(
+                    layer_types=["linear_attention", "full_attention"],
+                    linear_num_key_heads=2,
+                    linear_num_value_heads=4,
+                    linear_key_head_dim=32,
+                    linear_value_head_dim=32,
+                    **TOY_CONFIG,
+                )
             ),
         ),
     ):
@@ -93,6 +113,7 @@ def _bits(tensor: torch.Tensor) -> torch.Tensor:
         ("qwen3", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
         ("qwen3", "fp8", [("--tp", "2")]),
         ("qwen3_moe", "mixed", [("--ep", "2"), ("--etp", "2"), ("--pp", "2")]),
+        ("qwen3_5", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
     ],
 )
 def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, model, config, parallelisms):
@@ -103,10 +124,17 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
     quantization = hf_config["quantization_config"]
     assert quantization["quant_method"] == "modelopt"
     assert quantization["quant_algo"] == {"nvfp4": "NVFP4", "fp8": "FP8", "mixed": "MIXED_PRECISION"}[config]
-    # Only unquantized linear layers are excluded: the embedding, LM head and MoE routers, never norms.
-    routers = {f"model.layers.{layer}.mlp.gate" for layer in range(2)} if model == "qwen3_moe" else set()
-    assert set(quantization["ignore"]) == {"lm_head", "model.embed_tokens", *routers}
-    projection = "model.layers.0.mlp.experts.0.down_proj" if model == "qwen3_moe" else "model.layers.0.mlp.down_proj"
+    # Only unquantized linear layers are excluded: the embedding, LM head, MoE routers and, in GatedDeltaNet,
+    # the conv1d and the beta / alpha gates fused into the quantized in_proj; never norms.
+    unquantized = {
+        "qwen3_moe": {f"model.layers.{layer}.mlp.gate" for layer in range(2)},
+        "qwen3_5": {f"model.layers.0.linear_attn.{name}" for name in ("conv1d", "in_proj_b", "in_proj_a")},
+    }.get(model, set())
+    assert set(quantization["ignore"]) == {"lm_head", "model.embed_tokens", *unquantized}
+    projection = {
+        "qwen3_moe": "model.layers.0.mlp.experts.0.down_proj",
+        "qwen3_5": "model.layers.0.linear_attn.in_proj_qkv",
+    }.get(model, "model.layers.0.mlp.down_proj")
     packed_dtype = torch.float8_e4m3fn if config == "fp8" else torch.uint8
     assert weights[f"{projection}.weight"].dtype == packed_dtype
     assert {f"{projection}.weight_scale", f"{projection}.input_scale"} <= weights.keys()
