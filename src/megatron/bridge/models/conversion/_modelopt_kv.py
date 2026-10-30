@@ -108,7 +108,7 @@ class _KVExportHook:
                 if state is None:
                     raise ValueError("KV quantizers were disabled after export planning")
                 q_scale = torch.ones_like(state.k_scale)
-                if self.spec[1]:
+                if self.spec[1] and not self.attention.q_bmm_quantizer._use_constant_amax:
                     from modelopt.torch.export.quant_utils import get_scaling_factor
 
                     q_scale = get_scaling_factor(self.attention.q_bmm_quantizer)

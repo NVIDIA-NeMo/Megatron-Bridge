@@ -124,14 +124,16 @@ def test_kv_only_plan_captures_fresh_unclamped_scales_exactly_once(kv_format, qu
 
 @pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
 @pytest.mark.parametrize("calibrated_kv", [False, True])
+@pytest.mark.parametrize("keep_amax", [False, True])
 @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.run_only_on("gpu"))])
-def test_kv_export_supports_stateless_constant_scales(kv_format, calibrated_kv, device):
+def test_kv_export_supports_constant_scales(kv_format, calibrated_kv, keep_amax, device):
     model, attention, task = _model_and_task(kv_format, query=True)
     constant_axes = ("q",) if calibrated_kv else ("q", "k", "v")
     for axis in constant_axes:
         quantizer = getattr(attention, f"{axis}_bmm_quantizer")
         quantizer.set_from_attribute_config({"use_constant_amax": True})
-        del quantizer._amax
+        if not keep_amax:
+            del quantizer._amax
     model.to(device)
     task = replace(task, param_weight=model.self_attention.linear_qkv.weight)
 
@@ -142,7 +144,7 @@ def test_kv_export_supports_stateless_constant_scales(kv_format, calibrated_kv, 
         scale = exported[f"model.layers.0.self_attn.{axis}_scale"]
         assert scale.device == task.param_weight.device
         assert scale.item() == expected
-    assert all(not hasattr(getattr(attention, f"{axis}_bmm_quantizer"), "_amax") for axis in constant_axes)
+    assert all(hasattr(getattr(attention, f"{axis}_bmm_quantizer"), "_amax") == keep_amax for axis in constant_axes)
 
 
 def test_kv_plan_rejects_structural_change_before_streaming():
