@@ -30,6 +30,7 @@ from megatron.bridge.training.megatron_mimo_parallel_utils import (
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
+from megatron.bridge.training.utils.optimizer_utils import uses_layer_wise_optimizer
 
 
 if TYPE_CHECKING:
@@ -137,6 +138,8 @@ def _update_megatron_mimo_model_config_funcs(
 def setup_megatron_mimo(
     state: GlobalState,
     build_data_iterators_fn: Optional[Callable] = None,
+    *,
+    use_layer_wise_param_layout: Optional[bool] = None,
 ) -> MegatronMIMOSetupOutput:
     """MegatronMIMO-specific setup helper.
 
@@ -155,6 +158,8 @@ def setup_megatron_mimo(
             create the optimizer.
         build_data_iterators_fn: Optional function to build data iterators.
             Should have signature: (cfg, megatron_mimo_infra) -> (train_iter, valid_iter)
+        use_layer_wise_param_layout: Override the optimizer config's LayerWise layout choice.
+            False retains compact DDP buffers and variable-size parameter synchronization.
 
     Returns:
         MegatronMIMOSetupOutput containing all components for training.
@@ -186,12 +191,16 @@ def setup_megatron_mimo(
     from megatron.bridge.models.megatron_mimo import build_megatron_mimo_model
 
     megatron_mimo_provider = cfg.model
+    if use_layer_wise_param_layout is None:
+        use_layer_wise_param_layout = getattr(cfg.optimizer, "use_layer_wise_param_layout", False)
     model, megatron_mimo_infra = build_megatron_mimo_model(
         megatron_mimo_provider,
         ddp_config=cfg.ddp,
+        use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
         fp16=getattr(cfg.model, "fp16", False),
         bf16=getattr(cfg.model, "bf16", True),
         seed=cfg.rng.seed,
+        use_layer_wise_param_layout=use_layer_wise_param_layout,
     )
 
     logger.info(f"Rank {dist.get_rank()}: Creating multimodule communicator")

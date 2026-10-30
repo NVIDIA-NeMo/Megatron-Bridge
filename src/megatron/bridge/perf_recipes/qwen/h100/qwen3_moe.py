@@ -88,7 +88,6 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_a2a_overlap = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -156,7 +155,6 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_a2a_overlap = True
     cfg.model.moe_shared_expert_overlap = False
 
     cfg.comm_overlap = CommOverlapConfig(
@@ -208,7 +206,6 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_a2a_overlap = True
     cfg.model.moe_shared_expert_overlap = False
 
     cfg.comm_overlap = CommOverlapConfig(

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import json
 import logging
 import os
 from collections.abc import Callable, Mapping
@@ -59,7 +60,12 @@ from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, _existing_safetensors_files
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
-from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
+from megatron.bridge.models.model_provider import (
+    GetModelKwargs,
+    ModelParallelKwargs,
+    ModelProviderMixin,
+    build_distributed_models,
+)
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
 
@@ -1230,59 +1236,89 @@ class AutoBridge(Generic[MegatronModelT]):
         if dist.is_initialized():
             dist.barrier()
 
-        raw_adapter_weights = [
-            HFWeightTuple(exported_weight.param_name, exported_weight.weight.detach().clone())
-            for exported_weight in self.export_adapter_weights(
-                model,
-                cpu=True,
-                show_progress=show_progress,
-                exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
-                expand_shared_outer=expand_shared_outer,
-            )
-        ]
-        if not raw_adapter_weights:
+        is_rank0 = not dist.is_initialized() or dist.get_rank() == 0
+
+        # Every rank drives the export generator, because gathering the sharded
+        # adapter tensors is collective; only rank 0 writes the adapter, so only
+        # rank 0 keeps the gathered weights. Keeping them on every rank made the
+        # host memory of an export scale with the number of ranks per node
+        # (one full copy of the adapter per rank), which exhausts host memory for
+        # large per-expert MoE adapters.
+        raw_adapter_weights: list[HFWeightTuple] = []
+        exported_count = 0
+        for exported_weight in self.export_adapter_weights(
+            model,
+            cpu=True,
+            show_progress=show_progress,
+            exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+            expand_shared_outer=expand_shared_outer,
+        ):
+            exported_count += 1
+            if is_rank0:
+                raw_adapter_weights.append(
+                    HFWeightTuple(exported_weight.param_name, exported_weight.weight.detach().clone())
+                )
+            del exported_weight
+        if exported_count == 0:
             raise RuntimeError(
                 "No adapter weights were found on the model. "
                 "Ensure the model has PEFT adapters applied before calling save_hf_adapter()."
             )
-        adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
-            raw_adapter_weights,
-            allow_serving_layout=allow_serving_layout,
-        )
-        rank_pattern = infer_rank_pattern_from_adapter_weights(
-            raw_adapter_weights,
-            default_rank=getattr(peft_config, "dim", 32),
-        )
 
-        is_rank0 = not dist.is_initialized() or dist.get_rank() == 0
+        # Rank 0 converts and writes alone, so a failure there has to reach every
+        # rank: the others would otherwise wait forever at the final collective.
+        # As in prepare_hf_dataset_sources, rank 0 broadcasts a status string,
+        # re-raises its own exception, and the other ranks raise a RuntimeError
+        # that names it.
+        write_error: Exception | None = None
         if is_rank0:
-            save_dir = Path(path)
-            save_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
+                    raw_adapter_weights,
+                    allow_serving_layout=allow_serving_layout,
+                )
+                rank_pattern = infer_rank_pattern_from_adapter_weights(
+                    raw_adapter_weights,
+                    default_rank=getattr(peft_config, "dim", 32),
+                )
+                del raw_adapter_weights
 
-            if base_model_name_or_path is None:
-                base_model_name_or_path = str(
-                    getattr(self.hf_pretrained, "model_name_or_path", "")
-                    or getattr(self.hf_pretrained, "name_or_path", "")
+                save_dir = Path(path)
+                save_dir.mkdir(parents=True, exist_ok=True)
+
+                if base_model_name_or_path is None:
+                    base_model_name_or_path = str(
+                        getattr(self.hf_pretrained, "model_name_or_path", "")
+                        or getattr(self.hf_pretrained, "name_or_path", "")
+                    )
+
+                target_modules = self._model_bridge._adapter_target_modules(module_adapter_keys)
+                adapter_config = build_adapter_config_dict(
+                    peft_config,
+                    target_modules=target_modules,
+                    target_parameters=target_parameters,
+                    base_model_name_or_path=base_model_name_or_path,
+                    rank_pattern=rank_pattern,
                 )
 
-            target_modules = self._model_bridge._adapter_target_modules(module_adapter_keys)
-            adapter_config = build_adapter_config_dict(
-                peft_config,
-                target_modules=target_modules,
-                target_parameters=target_parameters,
-                base_model_name_or_path=base_model_name_or_path,
-                rank_pattern=rank_pattern,
-            )
+                config_path = save_dir / "adapter_config.json"
+                with open(config_path, "w") as f:
+                    json.dump(adapter_config, f, indent=2)
 
-            config_path = save_dir / "adapter_config.json"
-            with open(config_path, "w") as f:
-                json.dump(adapter_config, f, indent=2)
-
-            weights_path = save_dir / "adapter_model.safetensors"
-            save_file(adapter_state, str(weights_path))
+                weights_path = save_dir / "adapter_model.safetensors"
+                save_file(adapter_state, str(weights_path))
+            except Exception as error:
+                write_error = error
 
         if dist.is_initialized():
-            dist.barrier()
+            status = [None if write_error is None else f"{type(write_error).__name__}: {write_error}"]
+            dist.broadcast_object_list(status, src=0)
+            if status[0] is not None:
+                if write_error is not None:
+                    raise write_error
+                raise RuntimeError(f"Rank zero failed to write the HF adapter: {status[0]}")
+        elif write_error is not None:
+            raise write_error
 
     def save_hf_pretrained(
         self,
@@ -1345,6 +1381,132 @@ class AutoBridge(Generic[MegatronModelT]):
             This method is collective - all ranks must call it. Only rank 0
             saves the configuration files, while weight saving is coordinated
             across all ranks.
+        """
+        model_bridge = self._save_hf_artifacts(path, source_path)
+
+        self.save_hf_weights(
+            model,
+            path,
+            show_progress,
+            strict,
+            merge_adapter_weights=merge_adapter_weights,
+            distributed_save=distributed_save,
+            save_every_n_ranks=save_every_n_ranks,
+            weight_dtype=weight_dtype,
+        )
+        if model_bridge is not None and (not dist.is_initialized() or dist.get_rank() == 0):
+            weight_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_weights", None)
+            if weight_postprocessor is not None:
+                weight_postprocessor(model_bridge, Path(path))
+
+    def save_hf_pretrained_modelopt(
+        self,
+        model: list[MegatronModelT],
+        path: str | Path,
+        *,
+        export_plan: Optional["ModelOptExportPlan"] = None,
+        show_progress: bool = True,
+        source_path: Optional[Union[str, Path]] = None,
+        max_shard_size: int = 5 * 1024**3,
+    ) -> None:
+        """Save a ModelOpt-quantized Megatron model as a quantized HuggingFace checkpoint.
+
+        Quantized weights are packed with their scales (e.g. NVFP4 ``weight``, ``weight_scale``,
+        ``weight_scale_2`` and ``input_scale``), and ``config.json`` carries the
+        ``quantization_config`` that vLLM, SGLang and TensorRT-LLM read. Any quantization config
+        of the source checkpoint is replaced. Unlike :meth:`save_hf_pretrained`, which exports
+        fake-quantized BF16 weights with quantizer sidecars, this writes the deployment format.
+
+        Args:
+            model: Megatron model instance or list of instances.
+            path: Directory to save the checkpoint to.
+            export_plan: Plan built by :meth:`build_hf_modelopt_export_plan`; built when omitted.
+            show_progress: Display progress bar during weight export.
+            source_path: Directory with custom modeling files to preserve, as in
+                :meth:`save_hf_pretrained`.
+            max_shard_size: Maximum size in bytes of each safetensors shard.
+
+        Raises:
+            NotImplementedError: If the bridge post-processes exported weights.
+            RuntimeError: If an enabled quantizer has no exported tensors (e.g. KV-cache quantizers).
+            ValueError: If projections that deployments fuse (e.g. ``q_proj`` / ``k_proj`` /
+                ``v_proj``) carry different per-tensor scales.
+
+        Note:
+            This method is collective - all ranks must call it. Rank 0 writes the files.
+        """
+        # TODO: Consider unifying with save_hf_pretrained, choosing the format from the quantizer
+        # state: enabled weight quantizers -> this quantized checkpoint, folded weights -> BF16 with
+        # quantizer sidecars.
+        from megatron.bridge.models.conversion.modelopt_utils import (
+            _raise_distributed_errors,
+            _world_group,
+            check_exportable_quantizers,
+            check_fused_sibling_scales,
+            save_safetensors_shards,
+        )
+
+        if not isinstance(model, list):
+            model = [model]
+        if (
+            type(self._model_bridge).postprocess_hf_export_weights
+            is not MegatronModelBridge.postprocess_hf_export_weights
+        ):
+            raise NotImplementedError(
+                f"{type(self._model_bridge).__name__} post-processes exported weights, which a quantized export cannot"
+            )
+        check_exportable_quantizers(model)
+        if export_plan is None:
+            export_plan = self.build_hf_modelopt_export_plan(model)
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        output_path = Path(path).resolve()
+        # Rank 0 saves the artifacts; fail the other ranks too before the export collectives.
+        error = None
+        try:
+            self._save_hf_artifacts(path, source_path)
+        except Exception as exception:
+            error = f"{type(exception).__name__}: {exception}"
+        _raise_distributed_errors(error, _world_group(), f"ModelOpt HF export to {output_path} failed")
+        tensors = self.export_hf_weights_modelopt(
+            model, cpu=True, show_progress=show_progress, export_plan=export_plan
+        )
+        scales = {}
+
+        def _keep_scales(tensors):
+            for name, tensor in tensors:
+                if name.endswith(("weight_scale_2", "input_scale")):
+                    scales[name] = tensor
+                yield name, tensor
+
+        try:
+            if rank == 0:
+                previous_weight_files = _existing_safetensors_files(output_path)
+                saved = save_safetensors_shards(_keep_scales(tensors), output_path, max_shard_size=max_shard_size)
+                check_fused_sibling_scales(scales)
+                for filename in previous_weight_files - saved:
+                    (output_path / filename).unlink(missing_ok=True)
+                # Quantizer sidecars or a separate config would describe other weights.
+                for stale in ("hf_quant_config.json", MODELOPT_QUANTIZER_STATE_FILE, MODELOPT_QUANTIZER_RECIPE_FILE):
+                    (output_path / stale).unlink(missing_ok=True)
+                config_file = output_path / "config.json"
+                config = json.loads(config_file.read_text())
+                config["quantization_config"] = export_plan.quantization_config
+                config_file.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+            else:
+                for _ in tensors:
+                    pass
+        except Exception as exception:  # Drain so the other ranks finish the export collectives.
+            error = f"{type(exception).__name__}: {exception}"
+            for _ in tensors:
+                pass
+
+        _raise_distributed_errors(error, _world_group(), f"ModelOpt HF export to {output_path} failed")
+
+    def _save_hf_artifacts(self, path: str | Path, source_path: Optional[Union[str, Path]]) -> Any:
+        """Check the bridge supports HF export and save the config and tokenizer artifacts on rank 0.
+
+        Returns:
+            The resolved model bridge, or ``None`` for a config-only save without one.
         """
         # Some bridges (e.g. the language-model-only bridge of a multimodal model) cannot
         # produce a valid standalone Hugging Face checkpoint; gate the export on the
@@ -1423,26 +1585,9 @@ class AutoBridge(Generic[MegatronModelT]):
                 if artifact_postprocessor is not None:
                     artifact_postprocessor(model_bridge, Path(path))
 
-        if dist.is_initialized():
-            if dist.get_rank() == 0:
-                _save_artifacts()
-        else:
+        if not dist.is_initialized() or dist.get_rank() == 0:
             _save_artifacts()
-
-        self.save_hf_weights(
-            model,
-            path,
-            show_progress,
-            strict,
-            merge_adapter_weights=merge_adapter_weights,
-            distributed_save=distributed_save,
-            save_every_n_ranks=save_every_n_ranks,
-            weight_dtype=weight_dtype,
-        )
-        if model_bridge is not None and (not dist.is_initialized() or dist.get_rank() == 0):
-            weight_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_weights", None)
-            if weight_postprocessor is not None:
-                weight_postprocessor(model_bridge, Path(path))
+        return model_bridge
 
     def save_hf_weights(
         self,
@@ -2169,6 +2314,10 @@ class AutoBridge(Generic[MegatronModelT]):
             pg_collection: Existing process groups. Standalone single-process
                 groups are initialized when omitted.
             **kwargs: Arguments for ``ModelBuilder.build_distributed_models``.
+                Its ``mixed_precision_wrapper`` (``Float16Module`` when omitted,
+                ``None`` to skip wrapping) keeps router expert biases and
+                parameters named in ``_keep_in_float32_parameter_names`` in FP32,
+                as :meth:`to_megatron_model` does.
 
         Returns:
             Distributed model stages created by the configured builder.
@@ -2221,11 +2370,10 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.gtp import classify_gtp_remat_chains, configure_gtp_remat
 
             configure_gtp_remat(model_config)
-            builder = model_config.get_builder_cls()(model_config)
             if pg_collection is None:
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
             kwargs.setdefault("data_parallel_random_init", False)
-            models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            models = build_distributed_models(model_config, pg_collection, **kwargs)
             classify_gtp_remat_chains(models, model_config)
             for model in models:
                 model.model_config = model_config

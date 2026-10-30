@@ -116,7 +116,9 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
         straggler=None,
         ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
         optimizer=SimpleNamespace(
+            optimizer="adam",
             use_distributed_optimizer=False,
+            use_layer_wise_distributed_optimizer=False,
             optimizer_cuda_graph=False,
         ),
         model=SimpleNamespace(
@@ -164,7 +166,7 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
     monkeypatch.setattr(train_module, "is_full_iteration_cuda_graph", lambda _config: False)
     monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
     monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
-    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
+    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
     monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)
     monkeypatch.setattr(train_module, "should_fire", lambda *args: False)
@@ -224,7 +226,9 @@ def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
         straggler=None,
         ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
         optimizer=SimpleNamespace(
+            optimizer="adam",
             use_distributed_optimizer=False,
+            use_layer_wise_distributed_optimizer=False,
             optimizer_cuda_graph=False,
         ),
         model=SimpleNamespace(
@@ -276,7 +280,7 @@ def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
     monkeypatch.setattr(train_module, "is_full_iteration_cuda_graph", lambda _config: False)
     monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
     monkeypatch.setattr(train_module, "train_step", lambda *args: ({}, True, False, True, 16, None, None, None))
-    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
+    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
     monkeypatch.setattr(train_module, "tensor_inspect_step_if_enabled", lambda _config: None)
     monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)
@@ -421,7 +425,7 @@ def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch
     monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
     monkeypatch.setattr(train_module, "train_step", lambda *args: ({}, 0, False, False, 0, None, None, None))
     monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
-    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
+    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
     monkeypatch.setattr(train_module, "tensor_inspect_step_if_enabled", lambda _config: None)
     monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)

@@ -141,4 +141,10 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
     if config.chat_template_path is not None:
         config = dataclasses.replace(config, chat_template=_resolve_chat_template(config), chat_template_path=None)
 
+    prompt_format = getattr(config, "tokenizer_prompt_format", None)
+    if prompt_format is not None and getattr(config, "sft_tokenizer_prompt_format", None) != prompt_format:
+        # Overrides applied after construction may change Bridge's canonical prompt format.
+        config = copy(config)
+        config.sft_tokenizer_prompt_format = prompt_format
+
     return build_mcore_tokenizer(_resolve_hf_tokenizer_revision(config), **kwargs)
