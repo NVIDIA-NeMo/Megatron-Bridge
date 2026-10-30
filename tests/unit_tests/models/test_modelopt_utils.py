@@ -39,6 +39,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     GDNLinearMappingSeparate,
     QKVMapping,
+    RowParallelMapping,
     _fuse_gdn_separate_to_grouped,
     merge_gdn_linear_weights,
 )
@@ -763,6 +764,33 @@ def test_quantized_expert_is_packed_before_ep_gather():
         "model.layers.0.mlp.experts.0.up_proj.weight",
         "model.layers.0.mlp.experts.0.up_proj.weight_scale",
     }.issubset(exported)
+
+
+@pytest.mark.parametrize("mapping_type", [ColumnParallelMapping, RowParallelMapping])
+def test_parallel_expert_mapping_is_packed_before_ep_gather(mapping_type):
+    module = _fp8_linear()
+    mapping = mapping_type(
+        "decoder.layers.0.mlp.experts.local_experts.0.linear_fc2.weight",
+        "model.layers.0.mlp.experts.0.down_proj.weight",
+    )
+    task = _task(mapping, module, global_name=mapping.megatron_param)
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    mapped = export_task.mapping.megatron_to_hf(module.weight, module)
+    exported = {
+        name: value for hf_name, weight in mapped.items() for name, value in export_task.export_hook(hf_name, weight)
+    }
+
+    assert isinstance(export_task.mapping, mapping_type) and not export_task.mapping.is_expert
+    assert export_task.mapping.tp_group is export_task.mapping._etp_group
+    expected = weight_export.export_quantized_weight_tensors(
+        module.weight, weight_export.capture_quantized_weight_export_state(module), module.weight.dtype
+    )
+    prefix = "model.layers.0.mlp.experts.0.down_proj"
+    assert exported.keys() == {f"{prefix}.{suffix}" for suffix in expected}
+    for suffix, value in expected.items():
+        torch.testing.assert_close(exported[f"{prefix}.{suffix}"].float(), value.float())
 
 
 @pytest.mark.parametrize("transpose_on_export", [False, True])
