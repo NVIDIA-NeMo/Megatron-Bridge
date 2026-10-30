@@ -34,9 +34,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    GDNLinearMappingSeparate,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
+    _split_gdn_grouped_to_separate,
+    split_gdn_linear_weights,
     split_qkv_weights,
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
@@ -61,6 +64,12 @@ class _SourceState:
     parallelism: str | None = None
     qkv_layout: tuple[int, int, int, int, bool] | None = None
     weight_dtype: torch.dtype | None = None
+    gdn_layout: tuple[int, int, int, int] | None = None
+
+
+# Recipes keep GatedDeltaNet's beta / alpha gates in BF16, but Megatron fuses them into the
+# quantized in_proj, so a quantizer pattern can't exclude them; they're exported unquantized.
+_GDN_UNQUANTIZED_OUTPUTS = ("b", "a")
 
 
 def _same_storage(left: object, right: object) -> bool:
@@ -90,7 +99,7 @@ def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
         raise NotImplementedError("ModelOpt real-quant export does not yet support grouped HF expert weights")
     if isinstance(mapping, GatedMLPMapping):
         return "gated"
-    if isinstance(mapping, QKVMapping):
+    if isinstance(mapping, (QKVMapping, GDNLinearMappingSeparate)):
         return mapping._tp_mapping._detect_parallelism_type(module)
     if isinstance(mapping, AutoMapping):
         return mapping._detect_parallelism_type(module)
@@ -114,6 +123,38 @@ def _qkv_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, i
         int(config.hidden_size),
         bool(getattr(config, "attention_output_gate", False)),
     )
+
+
+def _gdn_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, int] | None:
+    if not isinstance(mapping, GDNLinearMappingSeparate):
+        return None
+    config = mapping._get_config(module)
+    return (
+        int(config.linear_num_key_heads),
+        int(config.linear_num_value_heads),
+        int(config.linear_key_head_dim),
+        int(config.linear_value_head_dim),
+    )
+
+
+def _gdn_row_indices(layout: tuple[int, int, int, int], rows: int, tp_size: int) -> dict[str, torch.Tensor]:
+    """Rows of the gathered in_proj that land in each HF projection, from the mapping's own split."""
+    num_key_heads, num_value_heads, key_head_dim, value_head_dim = layout
+    config = SimpleNamespace(
+        linear_num_key_heads=num_key_heads,
+        linear_num_value_heads=num_value_heads,
+        linear_key_head_dim=key_head_dim,
+        linear_value_head_dim=value_head_dim,
+    )
+    qkvz, ba = split_gdn_linear_weights(config, torch.arange(rows).unsqueeze(1), tp_size=tp_size, feature_dim=1)
+    indices = _split_gdn_grouped_to_separate(config, qkvz, ba, feature_dim=1)
+    return {name: index.squeeze(1) for name, index in zip(("qkv", "z", "b", "a"), indices, strict=True)}
+
+
+def _unquantized_outputs(mapping: Any) -> set[str]:
+    if isinstance(mapping, GDNLinearMappingSeparate):
+        return {mapping.hf_param[key] for key in _GDN_UNQUANTIZED_OUTPUTS}
+    return set()
 
 
 def _validate_quantized_task(task: WeightConversionTask) -> None:
@@ -152,6 +193,7 @@ def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
         _mapping_parallelism(task.mapping, task.megatron_module),
         _qkv_layout(task.mapping, task.megatron_module),
         task.param_weight.dtype,
+        _gdn_layout(task.mapping, task.megatron_module),
     )
 
 
@@ -176,6 +218,7 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
         _mapping_parallelism(task.mapping, task.megatron_module) if spec is not None else None,
         _qkv_layout(task.mapping, task.megatron_module) if spec is not None else None,
         task.param_weight.dtype,
+        _gdn_layout(task.mapping, task.megatron_module) if spec is not None else None,
     )
 
 
@@ -240,7 +283,8 @@ def _transform_source_spec(
     reference = shards[0].state
     if any(shard.state != reference for shard in shards[1:]):
         raise RuntimeError(f"Inconsistent ModelOpt export format across TP for {task.global_param_name}")
-    return {name: reference for name in names.values() if name.endswith(".weight")}
+    unquantized = _unquantized_outputs(task.mapping)
+    return {name: None if name in unquantized else reference for name in names.values() if name.endswith(".weight")}
 
 
 def _mapping_names(mapping: Any) -> dict[str, str]:
@@ -393,6 +437,16 @@ def _transform_source_state(
                 names["q"]: _select_state(transformed_state, 0, q_indices),
                 names["k"]: _select_state(transformed_state, 0, k_indices),
                 names["v"]: _select_state(transformed_state, 0, v_indices),
+            }
+        elif isinstance(task.mapping, GDNLinearMappingSeparate):
+            if source.gdn_layout is None:
+                raise RuntimeError(f"Missing GatedDeltaNet layout for {task.global_param_name}")
+            row_indices = _gdn_row_indices(source.gdn_layout, full_shape[0], task.mapping.tp_size)
+            transformed = {
+                names[key]: None
+                if key in _GDN_UNQUANTIZED_OUTPUTS
+                else _select_state(transformed_state, 0, row_indices[key])
+                for key in names
             }
         else:
             if len(names) != 1:
@@ -610,17 +664,20 @@ def _make_export_hook(task: WeightConversionTask) -> HFExportHook:
             transformed_states = _transform_source_state(task, source, capture_error)
             remaining_names = set(expected_names)
 
-        state = transformed_states.get(hf_name)
-        if state is None:
+        if hf_name not in transformed_states:
             raise RuntimeError(f"Missing ModelOpt export state for {hf_name}")
+        state = transformed_states[hf_name]
+        remaining_names.discard(hf_name)
+        if not remaining_names:
+            transformed_states = None
+        if state is None:
+            yield HFWeightTuple(hf_name, tensor)
+            return
         prefix = hf_name.removesuffix(".weight")
         # TODO: Drop the float32 cast once nvidia-modelopt includes NVIDIA/Model-Optimizer#3005: earlier
         # versions round a per-tensor FP8 weight in its own dtype, unlike fake quantization.
         dtype = torch.float32 if getattr(state, "quantization_format", None) == "fp8" else tensor.dtype
         exported = export_quantized_weight_tensors(tensor, state, dtype)
-        remaining_names.discard(hf_name)
-        if not remaining_names:
-            transformed_states = None
 
         for relative_name, exported_tensor in exported.items():
             exported_name = hf_name if relative_name == "weight" else f"{prefix}.{relative_name}"

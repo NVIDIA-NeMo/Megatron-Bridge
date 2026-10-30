@@ -192,7 +192,8 @@ def _assert_basic_config(cfg):
 @pytest.mark.parametrize("recipe_func", _ALL_LLAMA_RECIPE_FUNCS)
 def test_each_llama_recipe_uses_strict_builder_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every Llama recipe should configure a ModelConfig without provider fallback."""
-    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _BuilderOnlyBridge)
+    # Include exported base recipes, since platform recipes can delegate to them.
+    patch_recipe_module_global(monkeypatch, _llama_module, "AutoBridge", _BuilderOnlyBridge)
 
     if "peft" in recipe_func.__name__.lower():
         cfg = recipe_func(peft_scheme="lora")
