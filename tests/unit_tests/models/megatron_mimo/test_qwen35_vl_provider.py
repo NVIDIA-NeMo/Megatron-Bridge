@@ -13,7 +13,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     ModuleParallelismConfig,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import Qwen35VLHybridLanguageModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
 from megatron.bridge.training.config import ConfigContainer
@@ -59,7 +59,7 @@ class TestQwen35VLProviderMIMOAPI:
         spec = provider.build_language_model_spec()
 
         assert isinstance(spec, ModuleSpec)
-        assert spec.module is Qwen3VLGPTModel
+        assert spec.module is Qwen35VLHybridLanguageModel
 
         params = spec.params
         assert params is not None
