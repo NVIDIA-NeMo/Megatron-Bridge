@@ -1,0 +1,172 @@
+title: qwen3_5_35b_a3b
+summary: >
+  Qwen3.5-35B-A3B HybridModel migration is under validation. Canonical GB300
+  performance recipes exist for BF16 and MXFP8, but no HybridModel performance
+  result is verified yet; pretrain_performance.GB300 remains unverified.
+  Synthetic inputs, random weights, and forced router
+  balancing measure benchmark throughput only; they do not establish pretrained
+  model quality, training convergence, or checkpoint compatibility.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    GB300:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    GB300: unverified
+model:
+  hf_id: Qwen/Qwen3.5-35B-A3B
+  hf_revision: 59d61f3ce65a6d9863b86d2e96597125219dc754  # pragma: allowlist secret
+  architecture: Qwen3_5MoeForConditionalGeneration
+  min_transformers_version: "5.2.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.09-py3
+  bridge_commit: e301c817218e4e626c8c264aee9935514559a04b  # pragma: allowlist secret
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: Full-checkpoint CPU import has not been revalidated for the split Hybrid layers.
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: Full-checkpoint GPU import has not been revalidated for the split Hybrid layers.
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: Full-checkpoint CPU export and reload have not been revalidated for HybridModel.
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: Full-checkpoint GPU export and reload have not been revalidated for HybridModel.
+  manual_forward_pass:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: Published-weight HF and HybridModel logits have not been compared.
+  inference:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: Published-weight deterministic multimodal inference remains unverified.
+  pretrain:
+    GB300:
+      status: unverified
+      precision: null
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      enabled_features: {}
+      expected_result: Benchmark-only synthetic inputs do not verify real-data pretraining.
+  sft:
+    GB300:
+      status: unverified
+      precision: null
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      enabled_features: {}
+      expected_result: Full-model SFT with the Hybrid decoder remains unverified.
+  sft_export_inference:
+    GB300:
+      status: unverified
+      precision: null
+      commands: null
+      last_verified: null
+      depends_on: sft
+      expected_result: SFT checkpoint export and deterministic HF inference remain unverified.
+  sft_long_context:
+    GB300:
+      status: unverified
+      precision: null
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      enabled_features: {}
+      expected_result: Long-context SFT with the Hybrid decoder remains unverified.
+  peft:
+    GB300:
+      status: unverified
+      precision: null
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      enabled_features: {}
+      expected_result: Adapter training with split Hybrid layers remains unverified.
+  checkpoint_resume:
+    GB300:
+      status: unverified
+      precision: null
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      depends_on: pretrain
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: []
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: Checkpoint saving and resume are outside the synthetic performance validation.
+  pretrain_performance:
+    GB300:
+      status: unverified
+      precision: null
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+        --recipe qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config
+        --mode pretrain --max_steps 50
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Pending a 50-step run with random weights and mock multimodal inputs on
+        eight GB300 GPUs. The recipe owns sequence length 4096, MBS 4, GBS 512,
+        TP/PP/CP/ETP 1, EP 8, NCCL EP, and attn/moe_router/moe_preprocess CUDA
+        graphs. Record finite losses and the final ten optimizer-step metrics;
+        this workload does not save model weights or establish convergence.
