@@ -1,5 +1,6 @@
 """Online KV companions share the weight task's ownership and stream lifecycle."""
 
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
@@ -24,6 +25,21 @@ from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion._modelopt_kv import _KVExportHook
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import QKVMapping
+
+
+@pytest.fixture
+def identity_quant_backend() -> Iterator[str]:
+    from modelopt.torch.quantization.nn.modules.tensor_quantizer import (
+        register_quant_backend,
+        unregister_quant_backend,
+    )
+
+    name = "bridge_kv_identity_test"
+    register_quant_backend(name, lambda inputs, _quantizer: inputs)
+    try:
+        yield name
+    finally:
+        unregister_quant_backend(name)
 
 
 def _model_and_task(kv_format="FP8", query=False):
@@ -137,6 +153,102 @@ def test_kv_plan_rejects_newly_enabled_quantizers():
     attention.v_bmm_quantizer.enable()
     with pytest.raises(RuntimeError, match="export plan validation failed"):
         modelopt_utils.prepare_modelopt_export_tasks(plan)
+
+
+@pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
+@pytest.mark.parametrize("axis", ["q", "k", "v"])
+@pytest.mark.parametrize("transform", ["rotation", "pre-quant scaling"])
+@pytest.mark.parametrize("disabled", [False, True])
+@pytest.mark.parametrize("reuse_plan", [False, True])
+def test_kv_export_rejects_unrepresented_transforms(kv_format, axis, transform, disabled, reuse_plan):
+    model, attention, task = _model_and_task(kv_format, query=True)
+    if disabled:
+        for name in ("q", "k", "v"):
+            getattr(attention, f"{name}_bmm_quantizer").disable()
+        # Keep weight-only export eligible when all attention quantizers are disabled.
+        mtq.quantize(
+            model.self_attention.linear_qkv,
+            deepcopy(mtq.FP8_DEFAULT_CFG),
+            lambda candidate: candidate(torch.ones(2, 4)),
+        )
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[model]) if reuse_plan else None
+    quantizer = getattr(attention, f"{axis}_bmm_quantizer")
+    if transform == "rotation":
+        quantizer.set_from_attribute_config({"rotate": True})
+    else:
+        quantizer.pre_quant_scale = torch.tensor(0.5)
+    assert quantizer.is_enabled != disabled
+    with pytest.raises(RuntimeError, match=f"{axis.upper()} export does not support {transform}"):
+        if reuse_plan:
+            modelopt_utils.prepare_modelopt_export_tasks(plan)
+        else:
+            modelopt_utils.build_modelopt_export_plan([task], model=[model])
+
+
+@pytest.mark.parametrize("reuse_plan", [False, True])
+def test_rotated_nvfp4_kv_recipe_is_rejected(reuse_plan):
+    model, attention, task = _model_and_task("NVFP4")
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[model]) if reuse_plan else None
+    mtq.set_quantizer_by_cfg(model, deepcopy(mtq.NVFP4_KV_ROTATE_CFG["quant_cfg"]))
+    assert not attention.q_bmm_quantizer.is_enabled
+    assert attention.q_bmm_quantizer.rotate_is_enabled
+    assert attention.k_bmm_quantizer.rotate_is_enabled
+    with pytest.raises(RuntimeError, match="Q export does not support rotation"):
+        if reuse_plan:
+            modelopt_utils.prepare_modelopt_export_tasks(plan)
+        else:
+            modelopt_utils.build_modelopt_export_plan([task], model=[model])
+
+
+@pytest.mark.parametrize("axis", ["k", "v"])
+@pytest.mark.parametrize("reuse_plan", [False, True])
+@pytest.mark.parametrize(
+    ("kv_format", "attributes"),
+    [
+        ("FP8", {"axis": -1}),
+        ("FP8", {"type": "dynamic"}),
+        ("FP8", {"block_sizes": {-1: 16, "type": "dynamic"}}),
+        ("NVFP4", {"type": "dynamic"}),
+        ("NVFP4", {"block_sizes": {-1: 32, "type": "dynamic", "scale_bits": (4, 3)}}),
+        ("NVFP4", {"block_sizes": {-1: 16, "type": "static", "scale_bits": (4, 3)}}),
+        ("NVFP4", {"block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (8, 0)}}),
+        ("NVFP4", {"block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3), "four_over_six": True}}),
+    ],
+)
+def test_kv_export_rejects_unrepresented_layouts(kv_format, attributes, axis, reuse_plan):
+    model, attention, task = _model_and_task(kv_format)
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[model]) if reuse_plan else None
+    getattr(attention, f"{axis}_bmm_quantizer").set_from_attribute_config(deepcopy(attributes))
+    with pytest.raises(RuntimeError, match=f"{axis.upper()} export requires static symmetric"):
+        if reuse_plan:
+            modelopt_utils.prepare_modelopt_export_tasks(plan)
+        else:
+            modelopt_utils.build_modelopt_export_plan([task], model=[model])
+
+
+@pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
+@pytest.mark.parametrize("axis", ["q", "k", "v"])
+@pytest.mark.parametrize("reuse_plan", [False, True])
+def test_kv_export_rejects_unrepresented_backend(kv_format, axis, reuse_plan, identity_quant_backend):
+    model, attention, task = _model_and_task(kv_format, query=True)
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[model]) if reuse_plan else None
+    quantizer = getattr(attention, f"{axis}_bmm_quantizer")
+    quantizer.set_from_attribute_config({"backend": identity_quant_backend})
+    inputs = torch.tensor([1.1, 2.3, 3.7, 4.9])
+    torch.testing.assert_close(quantizer(inputs), inputs, rtol=0, atol=0)
+    with pytest.raises(RuntimeError, match=f"{axis.upper()} export does not support custom quantization backends"):
+        if reuse_plan:
+            modelopt_utils.prepare_modelopt_export_tasks(plan)
+        else:
+            modelopt_utils.build_modelopt_export_plan([task], model=[model])
+
+
+@pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
+def test_disabled_query_backend_remains_compatible(kv_format, identity_quant_backend):
+    model, attention, task = _model_and_task(kv_format)
+    attention.q_bmm_quantizer.set_from_attribute_config({"backend": identity_quant_backend})
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[model])
+    modelopt_utils.prepare_modelopt_export_tasks(plan)
 
 
 @pytest.mark.parametrize("bad_scale", [0.0, float("nan"), float("inf")])

@@ -213,8 +213,14 @@ QKV-mapped attention layers. It supports both KV-only models with unquantized we
 and combined weight/KV quantization. Build the plan after calibration and pass its
 `quantization_config` to the inference engine, as in the examples above.
 
+FP8 requires static per-tensor E4M3 quantization. NVFP4 requires block-16 E2M1
+quantization with dynamic E4M3 block scales and a static global scale. Enabled
+query quantizers must use the FP8 layout. Rotation and pre-quant scaling are rejected
+even on disabled quantizers; enabled custom quantization backends are also unsupported.
+The same checks run when a plan is reused.
+
 Each stream emits current `q_scale`, `k_scale`, and `v_scale` tensors under the
-attention's Hugging Face prefix, once per QKV conversion group. An absent query
+attention's Hugging Face prefix, once per QKV conversion group. An absent or disabled query
 quantizer exports a Q scale of one. FP8 scales are not clamped to one in this online
 path. The consumer remains responsible for native cache allocation and for refreshing
 any captured attention coefficients when scales change.

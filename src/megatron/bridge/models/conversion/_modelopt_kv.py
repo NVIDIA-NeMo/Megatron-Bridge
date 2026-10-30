@@ -29,6 +29,15 @@ from megatron.bridge.models.conversion.utils import get_module_and_param_from_na
 
 def _kv_spec(attention: torch.nn.Module) -> tuple[str, bool] | None:
     quantizers = [getattr(attention, f"{name}_bmm_quantizer", None) for name in ("q", "k", "v")]
+    # ModelOpt applies these transforms even when quantization is disabled.
+    # Scalar scale companions cannot describe or compensate for either one.
+    for name, quantizer in zip(("Q", "K", "V"), quantizers, strict=True):
+        if quantizer is None:
+            continue
+        if getattr(quantizer, "rotate_is_enabled", False):
+            raise NotImplementedError(f"ModelOpt {name} export does not support rotation")
+        if getattr(quantizer, "pre_quant_scale", None) is not None:
+            raise NotImplementedError(f"ModelOpt {name} export does not support pre-quant scaling")
     enabled = [quantizer is not None and quantizer.is_enabled for quantizer in quantizers]
     if not any(enabled):
         return None
@@ -39,17 +48,23 @@ def _kv_spec(attention: torch.nn.Module) -> tuple[str, bool] | None:
     spec = get_kv_cache_export_spec(attention)
     if spec not in ("FP8", "NVFP4"):
         raise NotImplementedError(f"ModelOpt export requires symmetric FP8 or NVFP4 KV caches, got {spec!r}")
-    if enabled[0]:
-        query: Any = quantizers[0]
+    for name, quantizer, is_enabled in zip(("Q", "K", "V"), quantizers, enabled, strict=True):
+        if quantizer is None or not is_enabled:
+            continue
+        if getattr(quantizer, "backend", None) is not None:
+            raise NotImplementedError(f"ModelOpt {name} export does not support custom quantization backends")
+        fp8 = name == "Q" or spec == "FP8"
+        block_sizes = None if fp8 else {-1: 16, "type": "dynamic", "scale_bits": (4, 3)}
         if (
-            query.num_bits != (4, 3)
-            or query.axis is not None
-            or query.block_sizes
-            or query._dynamic
-            or getattr(query, "bias", None) is not None
-            or getattr(query, "bias_value", None) is not None
+            quantizer.num_bits != ((4, 3) if fp8 else (2, 1))
+            or quantizer.axis is not None
+            or quantizer.block_sizes != block_sizes
+            or quantizer._dynamic
+            or getattr(quantizer, "bias", None) is not None
+            or getattr(quantizer, "bias_value", None) is not None
         ):
-            raise NotImplementedError("ModelOpt query export requires static symmetric per-tensor E4M3 quantization")
+            layout = "per-tensor E4M3" if fp8 else "block-16 E2M1 with dynamic E4M3 block scales"
+            raise NotImplementedError(f"ModelOpt {name} export requires static symmetric {layout} quantization")
     return spec, enabled[0]
 
 
