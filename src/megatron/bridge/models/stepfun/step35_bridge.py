@@ -139,6 +139,18 @@ class _MTPDenseLayerSpecsList(list):
         return super().__getitem__(idx)
 
 
+def _model_config_rope_settings(model_config: MCoreGPTModelConfig) -> dict[str, Any]:
+    """Return the outer GPT-config RoPE settings that per-layer rotary embeddings read from the layer config."""
+    return {
+        "position_embedding_type": model_config.position_embedding_type,
+        "rope_scaling": model_config.rope_scaling,
+        "rope_scaling_factor": model_config.rope_scaling_factor,
+        # Megatron Core passes rotary_scaling_factor to the per-layer embedding as its
+        # sequence-length interpolation factor, which the GPT config names seq_len_interpolation_factor.
+        "rotary_scaling_factor": model_config.seq_len_interpolation_factor,
+    }
+
+
 def build_step35_layer_spec(cfg, **kw):
     """Per-layer spec for Step3.5: dense for layers 0-2 and 45-47, MoE for 3-44.
 
@@ -152,9 +164,12 @@ def build_step35_layer_spec(cfg, **kw):
     a dense ModuleSpec (via layer_specs[-1]) for the MTP transformer sub-layers.
 
     Accepts the legacy provider or a builder-backed GPT model config, whose
-    transformer fields live on ``cfg.transformer``.
+    transformer fields live on ``cfg.transformer``. For a builder config, each
+    ``Step35DecoderLayer`` also receives the model-level RoPE settings that a
+    provider carries on its transformer config.
     """
     is_model_config = isinstance(cfg, MCoreGPTModelConfig)
+    rope_settings = _model_config_rope_settings(cfg) if is_model_config else None
     cfg = cfg.transformer if is_model_config else cfg
     block_submodules = get_gpt_decoder_block_spec(cfg, use_transformer_engine=True, normalization="RMSNorm", **kw)
     # Swap the layer module class on every main-decoder spec. The dense MTP
@@ -163,6 +178,8 @@ def build_step35_layer_spec(cfg, **kw):
     # when the last main decoder layer is MoE.
     for spec in block_submodules.layer_specs:
         spec.module = Step35DecoderLayer
+        if rope_settings is not None:
+            spec.params = {**spec.params, "rope_settings": rope_settings}
         # Re-bind the shared-expert builder on MoE layers so the shared expert
         # honors ``activation_func_clamp_value_shared_expert``. Dense layers
         # have a plain MLP submodule (no ``shared_experts`` attribute) and are
@@ -178,6 +195,7 @@ def build_step35_layer_spec(cfg, **kw):
     )
     dense_mtp_spec.module = Step35DecoderLayer
     if is_model_config:
+        dense_mtp_spec.params = {**dense_mtp_spec.params, "rope_settings": rope_settings}
         # The GPT builder passes layer_specs[-1] on to get_gpt_mtp_block_spec, which accepts a
         # bare layer spec only when its module is TransformerLayer itself. A one-layer block
         # spec keeps Step35DecoderLayer for the MTP sub-layers.
