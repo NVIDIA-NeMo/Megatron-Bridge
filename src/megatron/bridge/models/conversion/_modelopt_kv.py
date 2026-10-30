@@ -74,6 +74,7 @@ class _KVExportHook:
     attention: torch.nn.Module | None
     hf_parent: str
     spec: tuple[str, bool] | None
+    values: torch.Tensor | None = None
 
     def validate(self) -> None:
         if self.attention is not None and _kv_spec(self.attention) != self.spec:
@@ -81,60 +82,44 @@ class _KVExportHook:
 
     def __call__(self, hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
         yield HFWeightTuple(hf_name, tensor)
-        # One existing QKV conversion group owns all three attention scales,
-        # even if its QKV weight itself is not quantized. No per-stream state
-        # or separate amax task can duplicate emission on k_proj/v_proj.
-        if self.spec is None or hf_name != f"{self.hf_parent}.q_proj.weight":
+        if self.spec is None:
             return
         yield from self.scales()
+
+    def capture(self) -> torch.Tensor | None:
+        self.validate()
+        if self.spec is None or self.attention is None:
+            return None
+        from modelopt.torch.export.quantized_weight_export import capture_kv_cache_export_state
+
+        state = capture_kv_cache_export_state(self.attention, clamp_fp8_scales=False, cpu=False)
+        if state is None:
+            raise ValueError("KV quantizers were disabled after export planning")
+        q_scale = torch.ones_like(state.k_scale)
+        if self.spec[1] and not self.attention.q_bmm_quantizer._use_constant_amax:
+            from modelopt.torch.export.quant_utils import get_scaling_factor
+
+            q_scale = get_scaling_factor(self.attention.q_bmm_quantizer)
+            if q_scale is None:
+                raise ValueError("Missing calibrated query scale")
+        scalars = (q_scale, state.k_scale, state.v_scale)
+        if any(value.numel() != 1 for value in scalars):
+            raise ValueError("ModelOpt attention export requires scalar Q/K/V scales")
+        return torch.stack(
+            [
+                value.detach().to(device=self.task.param_weight.device, dtype=torch.float32).reshape(())
+                for value in scalars
+            ]
+        )
 
     def scales(self) -> Iterable[HFWeightTuple]:
         if self.spec is None:
             return
-        from modelopt.torch.export.quantized_weight_export import capture_kv_cache_export_state
-
         # Imported here to avoid a cycle: the shared exporter constructs these hooks.
-        from megatron.bridge.models.conversion.modelopt_utils import (
-            _all_gather_objects,
-            _stage_tensor_for_collective,
-        )
+        from megatron.bridge.models.conversion.modelopt_utils import _stage_tensor_for_collective
 
-        values = None
-        error = None
-        try:
-            if self.attention is not None:
-                self.validate()
-                state = capture_kv_cache_export_state(self.attention, clamp_fp8_scales=False, cpu=False)
-                if state is None:
-                    raise ValueError("KV quantizers were disabled after export planning")
-                q_scale = torch.ones_like(state.k_scale)
-                if self.spec[1] and not self.attention.q_bmm_quantizer._use_constant_amax:
-                    from modelopt.torch.export.quant_utils import get_scaling_factor
-
-                    q_scale = get_scaling_factor(self.attention.q_bmm_quantizer)
-                    if q_scale is None:
-                        raise ValueError("Missing calibrated query scale")
-                scalars = (q_scale, state.k_scale, state.v_scale)
-                if any(value.numel() != 1 for value in scalars):
-                    raise ValueError("ModelOpt attention export requires scalar Q/K/V scales")
-                # Stateless constant-amax quantizers export CPU scalars even
-                # when the owning QKV weight and calibrated scales are on GPU.
-                values = torch.stack(
-                    [
-                        value.detach().to(device=self.task.param_weight.device, dtype=torch.float32).reshape(())
-                        for value in scalars
-                    ]
-                )
-                if not bool(torch.all(torch.isfinite(values) & (values > 0))):
-                    raise ValueError("ModelOpt attention scales must be finite and positive")
-        except Exception as exception:
-            error = f"{type(exception).__name__}: {exception}"
-
+        values = self.values
         mapping = self.task.mapping
-        (error,) = mapping.broadcast_obj_from_pp_rank((error,) if self.attention is not None else None)
-        errors = [item for item in _all_gather_objects(error, mapping.tp_group) if item is not None]
-        if errors:
-            raise RuntimeError("ModelOpt attention scale capture failed: " + "; ".join(dict.fromkeys(errors)))
         if values is not None:
             values = _stage_tensor_for_collective(values, mapping.pp_group)
         values = mapping.broadcast_from_pp_rank(values, cache_key=f"modelopt:kv:{self.task.global_param_name}")
@@ -142,9 +127,11 @@ class _KVExportHook:
             raise RuntimeError(f"Missing ModelOpt attention scales for {self.task.global_param_name}")
         values = _stage_tensor_for_collective(values, mapping.tp_group)
         shards = mapping.gather_from_tp_ranks(values)
-        if any(not torch.equal(shard, shards[0]) for shard in shards[1:]):
-            raise ValueError(f"Inconsistent ModelOpt Q/K/V scales across TP for {self.task.global_param_name}")
-        for name, value in zip(("q", "k", "v"), values.unbind(), strict=True):
+        if any(not torch.equal(shard[1:], shards[0][1:]) for shard in shards[1:]):
+            raise ValueError(f"Inconsistent ModelOpt K/V scales across TP for {self.task.global_param_name}")
+        # Q calibration is local to each TP rank's heads; deployment needs one range.
+        q_scale = shards[0][0] if len(shards) == 1 else torch.stack([shard[0] for shard in shards]).amax()
+        for name, value in zip(("q", "k", "v"), (q_scale, values[1], values[2]), strict=True):
             yield HFWeightTuple(f"{self.hf_parent}.{name}_scale", value.clone())
 
 
