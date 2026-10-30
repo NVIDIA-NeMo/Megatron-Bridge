@@ -254,9 +254,10 @@ directory provides the configuration, tokenizer, and other export artifacts.
 The pretrained wrapper loads these artifacts lazily; exporting Megatron weights
 does not require materializing the reference Hugging Face model weights.
 The export copies the source's tokenizer and processor files (such as
-`tokenizer.json`, `vocab.json` and `preprocessor_config.json`) unchanged; a
-tokenizer or processor you assign to the wrapper is saved with `save_pretrained()`
-instead.
+`tokenizer.json`, `vocab.json` and `preprocessor_config.json`) unchanged. A
+tokenizer or processor that you assign to the wrapper or edit after loading,
+e.g. with `add_special_tokens()` or a new `chat_template`, is saved with
+`save_pretrained()` instead.
 
 ```python
 from megatron.bridge import AutoBridge

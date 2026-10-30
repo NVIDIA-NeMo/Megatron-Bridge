@@ -90,24 +90,22 @@ class PreTrainedTokenClassification(
     def processor(self) -> ProcessorMixin | None:
         """Lazy-load and return the optional multimodal processor."""
         if not hasattr(self, "_processor"):
-            self._processor = self._load_processor()
+            self._processor = self._load_artifact("processor")
         return self._processor
 
     @processor.setter
     def processor(self, value: ProcessorMixin | None) -> None:
         """Set the multimodal processor manually."""
         self._processor = value
-        self._mark_artifact_replaced("processor")
 
     @property
     def image_processor(self) -> BaseImageProcessor | None:
         """Lazy-load and return the optional image processor."""
         if not hasattr(self, "_image_processor"):
-            self._image_processor = self._load_image_processor()
+            self._image_processor = self._load_artifact("image_processor")
         return self._image_processor
 
     @image_processor.setter
     def image_processor(self, value: BaseImageProcessor | None) -> None:
         """Set the image processor manually."""
         self._image_processor = value
-        self._mark_artifact_replaced("image_processor")

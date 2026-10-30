@@ -166,14 +166,13 @@ class PreTrainedMaskedLM(PreTrainedBase, Generic[MaskedLMType]):
     def tokenizer(self) -> PreTrainedTokenizer:
         """Lazy load and return the tokenizer."""
         if not hasattr(self, "_tokenizer"):
-            self._tokenizer = self._load_tokenizer()
+            self._tokenizer = self._load_artifact("tokenizer")
         return self._tokenizer
 
     @tokenizer.setter
     def tokenizer(self, value: PreTrainedTokenizer):
         """Set the tokenizer manually."""
         self._tokenizer = value
-        self._mark_artifact_replaced("tokenizer")
 
     @property
     def model_name_or_path(self) -> Optional[Union[str, Path]]:

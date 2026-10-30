@@ -16,17 +16,54 @@
 import fnmatch
 import logging
 import shutil
+import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Union
+from typing import Any, ClassVar, Dict, List, Optional, Union
 
 import torch
-from transformers import AutoConfig, PreTrainedModel
+from transformers import AutoConfig, PreTrainedModel, PreTrainedTokenizerBase, ProcessorMixin
 
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict, StateSource
 
 
 logger = logging.getLogger(__name__)
+
+
+def _artifact_fingerprint(artifact: Any) -> str | None:
+    """Summarize the state ``save_pretrained`` writes for an artifact, to detect edits made after loading.
+
+    Returns None when the artifact cannot be summarized; saving then re-serializes it.
+    """
+    try:
+        if isinstance(artifact, PreTrainedTokenizerBase):
+            state = (
+                len(artifact),
+                str(artifact.added_tokens_decoder),
+                artifact.special_tokens_map,
+                getattr(artifact, "chat_template", None),
+                artifact.padding_side,
+                artifact.truncation_side,
+                artifact.model_max_length,
+            )
+        elif isinstance(artifact, ProcessorMixin):
+            # ``to_json_string`` leaves out the processor's tokenizer and chat template.
+            state = (
+                artifact.to_json_string(),
+                getattr(artifact, "chat_template", None),
+                _artifact_fingerprint(getattr(artifact, "tokenizer", None)),
+            )
+        elif hasattr(artifact, "to_json_string"):
+            state = artifact.to_json_string()
+        else:
+            return None
+    except Exception:  # e.g. a stand-in object without the full tokenizer API
+        return None
+    return repr(state)
+
+
+def _file_mtimes(path: Path) -> Dict[str, int]:
+    return {file.name: file.stat().st_mtime_ns for file in path.iterdir() if file.is_file()}
 
 
 class PreTrainedBase(ABC):
@@ -55,7 +92,7 @@ class PreTrainedBase(ABC):
     model_name_or_path: Union[str, Path]
     ARTIFACTS: ClassVar[List[str]] = []
     OPTIONAL_ARTIFACTS: ClassVar[List[str]] = []
-    # Source files of each artifact, copied verbatim on save when the artifact was loaded from the source.
+    # Source files of each artifact, copied verbatim on save when the artifact is unchanged since it was loaded.
     SOURCE_ARTIFACT_FILES: ClassVar[Dict[str, List[str]]] = {
         "tokenizer": [
             "tokenizer.json",
@@ -83,6 +120,8 @@ class PreTrainedBase(ABC):
     def __init__(self, **kwargs):
         self._state_dict_accessor: Optional[StateDict] = None
         self.init_kwargs = kwargs
+        # Artifacts loaded from the source with their fingerprints, to tell on save whether they changed.
+        self._loaded_artifacts: Dict[str, tuple[Any, str | None]] = {}
 
         # File patterns used to copy files used for custom modeling, e.g.
         # modeling_*.py, configuration_*.py, tokenization_*.py,
@@ -255,48 +294,56 @@ class PreTrainedBase(ABC):
 
         return copied_files
 
-    def _mark_artifact_replaced(self, name: str) -> None:
-        """Record that the user set artifact ``name``, so saving serializes it instead of copying source files."""
-        if not hasattr(self, "_replaced_artifacts"):
-            self._replaced_artifacts: set[str] = set()
-        self._replaced_artifacts.add(name)
+    def _load_artifact(self, name: str) -> Any:
+        """Load artifact ``name`` with ``_load_<name>`` and record it, so saving can copy its source files."""
+        artifact = getattr(self, f"_load_{name}")()
+        self._loaded_artifacts[name] = (artifact, _artifact_fingerprint(artifact))
+        return artifact
 
-    def _copy_source_artifact_files(self, save_path: Path, *, revision: str | None) -> None:
-        """Replace the saved tokenizer and processor files with the source checkpoint's own files.
+    def _copies_source_files(self, name: str, artifact: Any) -> bool:
+        """Whether saving copies ``artifact``'s source files: it was loaded from the source and is unchanged."""
+        loaded = self._loaded_artifacts.get(name)
+        return (
+            name in self.SOURCE_ARTIFACT_FILES
+            and getattr(self, "model_name_or_path", None) is not None
+            and not self.init_kwargs.get("subfolder")
+            and loaded is not None
+            and loaded[0] is artifact
+            and loaded[1] is not None
+            and loaded[1] == _artifact_fingerprint(artifact)
+        )
 
-        ``save_pretrained`` re-serializes these artifacts, which can change them, e.g. drop ``vocab.json`` /
-        ``merges.txt`` or switch a fast image processor to the slow one. For each artifact loaded from the
-        source, copy its source files and remove the files saved for it that the source does not have. An
-        artifact without source files keeps its ``save_pretrained`` output.
+    def _copy_source_artifact_files(
+        self, save_path: Path, artifacts: Dict[str, Any], mtimes: Dict[str, int], *, revision: str | None
+    ) -> None:
+        """Copy the source files of unchanged ``artifacts`` instead of re-serializing them.
+
+        ``save_pretrained`` can change these artifacts, e.g. drop ``vocab.json`` / ``merges.txt`` or switch a fast
+        image processor to the slow one. An artifact the source has no files for is saved with ``save_pretrained``.
+        Files written since ``mtimes`` by another artifact's ``save_pretrained`` are kept, so edits are not lost.
         """
-        source_path = getattr(self, "model_name_or_path", None)
-        if source_path is None or self.init_kwargs.get("subfolder"):
+        if not artifacts:
             return
-        replaced = getattr(self, "_replaced_artifacts", set())
-        names = [
-            name
-            for name in (*self.ARTIFACTS, *self.OPTIONAL_ARTIFACTS)
-            if name in self.SOURCE_ARTIFACT_FILES
-            and name not in replaced
-            and getattr(self, f"_{name}", None) is not None
-        ]
-        patterns = list(dict.fromkeys(pattern for name in names for pattern in self.SOURCE_ARTIFACT_FILES[name]))
-        if not patterns:
-            return
-        copied = {
-            Path(file).name
-            for file in self._copy_custom_modeling_files(
-                source_path, save_path, file_patterns=patterns, revision=revision
+        patterns = {}
+        for name, artifact in artifacts.items():
+            # A tokenizer's own vocabulary files, e.g. a SentencePiece model SOURCE_ARTIFACT_FILES lacks.
+            vocab_files = getattr(artifact, "vocab_files_names", None)
+            vocab_files = list(vocab_files.values()) if isinstance(vocab_files, dict) else []
+            patterns[name] = [*self.SOURCE_ARTIFACT_FILES[name], *vocab_files]
+        with tempfile.TemporaryDirectory() as source_files:
+            copied = self._copy_custom_modeling_files(
+                self.model_name_or_path,
+                source_files,
+                file_patterns=list(dict.fromkeys(pattern for names in patterns.values() for pattern in names)),
+                revision=revision,
             )
-        }
-        for name in names:
-            name_patterns = self.SOURCE_ARTIFACT_FILES[name]
-            if not any(fnmatch.fnmatch(file, pattern) for file in copied for pattern in name_patterns):
-                continue
-            for pattern in name_patterns:
-                for path in save_path.glob(pattern):
-                    if path.name not in copied:
-                        path.unlink()
+            for name, artifact in artifacts.items():
+                if not any(fnmatch.fnmatch(file, pattern) for file in copied for pattern in patterns[name]):
+                    artifact.save_pretrained(save_path)
+            written = {file for file, mtime in _file_mtimes(save_path).items() if mtimes.get(file) != mtime}
+            for file in copied:
+                if Path(file).name not in written:
+                    shutil.copy2(Path(source_files) / file, save_path / Path(file).name)
 
     def save_artifacts(
         self,
@@ -340,6 +387,10 @@ class PreTrainedBase(ABC):
                 if strip_auto_map:
                     self._config.auto_map = auto_map
 
+        # Unchanged artifacts loaded from the source get its files instead, copied after the others are saved.
+        source_artifacts = {}
+        mtimes = _file_mtimes(save_path)
+
         # Iterate over required artifacts to save them in a predictable order
         for name in self.ARTIFACTS:
             # Access the public property to trigger lazy loading if needed
@@ -347,12 +398,18 @@ class PreTrainedBase(ABC):
             attr_name = f"_{name}"
             if hasattr(self, attr_name):
                 if artifact is not None and hasattr(artifact, "save_pretrained"):
-                    artifact.save_pretrained(save_path)
+                    if self._copies_source_files(name, artifact):
+                        source_artifacts[name] = artifact
+                    else:
+                        artifact.save_pretrained(save_path)
 
         # Iterate over optional artifacts - only save if they exist and have save_pretrained
         for name in self.OPTIONAL_ARTIFACTS:
             artifact = getattr(self, name, None)
             if artifact is not None and hasattr(artifact, "save_pretrained"):
+                if self._copies_source_files(name, artifact):
+                    source_artifacts[name] = artifact
+                    continue
                 try:
                     artifact.save_pretrained(save_path)
                 except ValueError:
@@ -377,7 +434,7 @@ class PreTrainedBase(ABC):
                         "preserved the original generation_config.json instead."
                     )
 
-        self._copy_source_artifact_files(save_path, revision=revision)
+        self._copy_source_artifact_files(save_path, source_artifacts, mtimes, revision=revision)
 
         # Download/copy additional files if specified
         if additional_files:

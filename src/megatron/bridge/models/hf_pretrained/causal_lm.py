@@ -291,40 +291,37 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
     def tokenizer(self) -> PreTrainedTokenizer:
         """Lazy load and return the tokenizer."""
         if not hasattr(self, "_tokenizer"):
-            self._tokenizer = self._load_tokenizer()
+            self._tokenizer = self._load_artifact("tokenizer")
         return self._tokenizer
 
     @tokenizer.setter
     def tokenizer(self, value: PreTrainedTokenizer):
         """Set the tokenizer manually."""
         self._tokenizer = value
-        self._mark_artifact_replaced("tokenizer")
 
     @property
     def processor(self) -> ProcessorMixin:
         """Lazy load and return the processor."""
         if not hasattr(self, "_processor"):
-            self._processor = self._load_processor()
+            self._processor = self._load_artifact("processor")
         return self._processor
 
     @processor.setter
     def processor(self, value: ProcessorMixin):
         """Set the processor manually."""
         self._processor = value
-        self._mark_artifact_replaced("processor")
 
     @property
     def image_processor(self) -> Optional[Any]:
         """Lazy load and return the image processor."""
         if not hasattr(self, "_image_processor"):
-            self._image_processor = self._load_image_processor()
+            self._image_processor = self._load_artifact("image_processor")
         return self._image_processor
 
     @image_processor.setter
     def image_processor(self, value: Any):
         """Set the image processor manually."""
         self._image_processor = value
-        self._mark_artifact_replaced("image_processor")
 
     @property
     def model_name_or_path(self) -> Optional[Union[str, Path]]:
