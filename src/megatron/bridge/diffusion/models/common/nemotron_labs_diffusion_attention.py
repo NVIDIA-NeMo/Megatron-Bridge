@@ -15,6 +15,7 @@
 """NemotronLabsDiffusionAttention for sbd_block_diff diffusion LM training with YARN RoPE."""
 
 import math
+from dataclasses import dataclass
 from typing import Optional
 
 import torch
@@ -28,10 +29,10 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import divide
 from torch import Tensor
-from torch.nn.attention.flex_attention import flex_attention
+from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
 from transformers import ROPE_INIT_FUNCTIONS
 
-from megatron.bridge.diffusion.common.dllm import compute_block_mask
+from megatron.bridge.diffusion.common.dllm import asymmetric_semi_ar_mask_mod, compute_block_mask
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,26 @@ class Ministral3RotaryEmbedding(nn.Module):
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class AsymmetricARMetadata:
+    """Per-microbatch layout shared by all attention layers.
+
+    Call ``build_asymmetric_ar_metadata`` for validation. Treat input tensors as
+    immutable until every forward and recomputed backward using them completes.
+    ``block_mask`` is built lazily once, then reused across layers.
+    """
+
+    noisy_length: int
+    clean_length: int
+    noisy_response_offset: int
+    prompt_lengths: Tensor
+    response_lengths: Tensor
+    noisy_valid_lengths: Tensor
+    clean_lengths: Tensor
+    block_size: int
+    block_mask: BlockMask | None = None
+
+
 class NemotronLabsDiffusionAttention(MegatronModule):
     """NemotronLabsDiffusionAttention for semi-block-diffusion (sbd_block_diff) training.
 
@@ -209,6 +230,9 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             ):
                 hf_text_config.rope_parameters["factor"] = config.yarn_rotary_scaling_factor
 
+        self.block_size = getattr(config, "block_size", 16)
+        self._asymmetric_ar_metadata: AsymmetricARMetadata | None = None
+
         # Pre-compute the sbd_block_diff block mask
         self.mask = compute_block_mask(
             block_size=getattr(config, "block_size", 16),
@@ -226,6 +250,118 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         self._kv_cache_k = None
         self._kv_cache_v = None
         self._kv_cache_seq_len = 0
+
+    def build_asymmetric_ar_metadata(
+        self,
+        *,
+        noisy_length: int,
+        clean_length: int,
+        noisy_response_offset: int,
+        prompt_lengths: Tensor,
+        response_lengths: Tensor,
+        noisy_valid_lengths: Tensor,
+        clean_lengths: Tensor,
+    ) -> AsymmetricARMetadata:
+        """Validate a compact ``[noisy response | clean prompt + response]`` layout.
+
+        The noisy block grid starts at ``noisy_response_offset``; its logical
+        positions start at each sample's ``prompt_lengths``. ``response_lengths``
+        excludes the masked tail of the final block, while ``noisy_valid_lengths``
+        includes it. Clean lengths exclude right padding. This path supports
+        unpacked CP=1 sequences, like the existing symmetric attention path.
+        """
+        tensors = (prompt_lengths, response_lengths, noisy_valid_lengths, clean_lengths)
+        if any(t.ndim != 1 or t.shape != prompt_lengths.shape for t in tensors):
+            raise ValueError("Asymmetric metadata must contain matching 1D tensors")
+        if any(t.dtype != torch.long or t.device != prompt_lengths.device for t in tensors):
+            raise ValueError("Asymmetric metadata must use int64 tensors on one device")
+        if noisy_length <= 0 or clean_length <= 0 or not 0 <= noisy_response_offset < noisy_length:
+            raise ValueError("Invalid asymmetric sequence lengths or noisy response offset")
+        if self.block_size <= 0:
+            raise ValueError("block_size must be positive")
+        if any(bool((t < 0).any()) for t in tensors):
+            raise ValueError("Asymmetric lengths must be nonnegative")
+        if bool((clean_lengths > clean_length).any()) or bool(
+            (prompt_lengths + response_lengths > clean_lengths).any()
+        ):
+            raise ValueError("Prompt and response must fit the valid clean sequence")
+        expected = (response_lengths + self.block_size - 1) // self.block_size * self.block_size
+        if not torch.equal(noisy_valid_lengths, expected):
+            raise ValueError("noisy_valid_lengths must round responses up to complete blocks")
+        if bool((noisy_response_offset + noisy_valid_lengths > noisy_length).any()):
+            raise ValueError("Noisy response canvas exceeds noisy_length")
+        return AsymmetricARMetadata(
+            noisy_length,
+            clean_length,
+            noisy_response_offset,
+            prompt_lengths,
+            response_lengths,
+            noisy_valid_lengths,
+            clean_lengths,
+            self.block_size,
+        )
+
+    def set_asymmetric_ar_metadata(self, metadata: AsymmetricARMetadata) -> None:
+        """Enable response-relative attention for the next microbatch.
+
+        Share the object returned by ``build_asymmetric_ar_metadata`` across all
+        layers. Replace it for every microbatch; clear it before symmetric SFT.
+        """
+        if metadata.block_size != self.block_size:
+            raise ValueError("Asymmetric metadata block size must match the model")
+        self._asymmetric_ar_metadata = metadata
+
+    def clear_asymmetric_ar_metadata(self) -> None:
+        """Restore the default symmetric diffusion training layout."""
+        self._asymmetric_ar_metadata = None
+
+    def _asymmetric_semi_ar_forward(self, query: Tensor, key: Tensor, value: Tensor) -> Tensor:
+        metadata = self._asymmetric_ar_metadata
+        if metadata is None:
+            raise RuntimeError("Asymmetric metadata has not been set")
+        n, c = metadata.noisy_length, metadata.clean_length
+        if query.shape[:2] != (n + c, metadata.prompt_lengths.numel()):
+            raise ValueError("Query sequence and batch dimensions must match asymmetric metadata")
+        if query.device != metadata.prompt_lengths.device:
+            raise ValueError("Asymmetric metadata must be on the query device")
+        query, key, value = (t.permute(1, 2, 0, 3) for t in (query, key, value))
+        relative = torch.arange(n, device=query.device)[None] - metadata.noisy_response_offset
+        valid = (relative >= 0) & (relative < metadata.noisy_valid_lengths[:, None])
+        noisy_positions = torch.where(valid, metadata.prompt_lengths[:, None] + relative, 0)
+        clean_positions = torch.arange(c, device=query.device)[None].expand(query.shape[0], -1)
+        positions = torch.cat((noisy_positions, clean_positions), dim=1)
+        cos, sin = self.rope_embedding_module(query, positions)
+        query, key = apply_rotary_pos_emb(query, key, cos, sin)
+        if self.beta is not None:
+            scale = _get_llama_4_attn_scale(positions, self.beta, self.max_position_embeddings)
+            query = query * scale.to(query.dtype).unsqueeze(1)
+        n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition
+        key, value = repeat_kv(key, n_rep), repeat_kv(value, n_rep)
+        if metadata.block_mask is None:
+            mask_mod = asymmetric_semi_ar_mask_mod(
+                block_size=self.block_size,
+                noisy_length=n,
+                noisy_response_offset=metadata.noisy_response_offset,
+                prompt_lengths=metadata.prompt_lengths,
+                noisy_valid_lengths=metadata.noisy_valid_lengths,
+                clean_lengths=metadata.clean_lengths,
+            )
+            metadata.block_mask = create_block_mask(
+                mask_mod,
+                B=query.shape[0],
+                H=None,
+                Q_LEN=n + c,
+                KV_LEN=n + c,
+                device=query.device,
+                _compile=True,
+            )
+        context = fused_flex_attention(query, key, value, block_mask=metadata.block_mask)
+        if not self.config.sequence_parallel:
+            with tensor_parallel.get_cuda_rng_tracker().fork():
+                context = self.attention_dropout(context)
+        else:
+            context = self.attention_dropout(context)
+        return context.permute(2, 0, 1, 3).contiguous().view(n + c, query.shape[0], self.hidden_size_per_partition)
 
     def set_inference_mode(self, enabled: bool):
         """Enable or disable inference mode. Clears cache on disable."""
@@ -256,6 +392,9 @@ class NemotronLabsDiffusionAttention(MegatronModule):
 
         if self._inference_mode:
             return self._inference_forward(query, key, value)
+
+        if self._asymmetric_ar_metadata is not None:
+            return self._asymmetric_semi_ar_forward(query, key, value)
 
         # Position ids for each half of the doubled sequence
         half_seq_len = query.shape[0] // 2
