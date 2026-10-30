@@ -14,10 +14,10 @@
 
 """Unit tests for the builder-backed Sarvam MoE model config."""
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import torch
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.sarvam.sarvam_config import SarvamMoEModelConfig, _get_sarvam_moe_pipeline_layout
@@ -141,8 +141,8 @@ class TestSarvamMoEModelConfigCheckpoint:
         loaded, _ = load_model_config(str(tmp_path))
         assert loaded.transformer.use_cpu_initialization is saved_cpu_init
 
-        # Model chunks accept attributes: build_and_load_model attaches the outer config to each one.
-        model = [SimpleNamespace()]
+        # Built chunks are modules: the loader keeps the outer config on each one for later saves.
+        model = [torch.nn.Module()]
         cpu_init_at_build = []
 
         def build_distributed_models(*args, **kwargs):
@@ -159,5 +159,5 @@ class TestSarvamMoEModelConfigCheckpoint:
             )
 
         assert result is model
-        assert result[0].model_config is loaded
         assert cpu_init_at_build == [use_cpu_init]
+        assert result[0].model_config is loaded

@@ -382,8 +382,8 @@ class TestLLaDA15BuilderConfig:
         loaded, _ = load_model_config(str(tmp_path))
         assert loaded.transformer.use_cpu_initialization is saved_cpu_init
 
-        # Model chunks accept attributes: build_and_load_model attaches the outer config to each one.
-        model = [types.SimpleNamespace()]
+        # Built chunks are modules: the loader keeps the outer config on each one for later saves.
+        model = [torch.nn.Module()]
         cpu_init_at_build = []
 
         def build_distributed_models(*args, **kwargs):
@@ -400,8 +400,8 @@ class TestLLaDA15BuilderConfig:
             )
 
         assert result is model
-        assert result[0].model_config is loaded
         assert cpu_init_at_build == [use_cpu_init]
+        assert result[0].model_config is loaded
 
     def test_legacy_private_layer_spec_target_resolves(self):
         """Provider checkpoints saved before the rename name the spec by its private alias."""
