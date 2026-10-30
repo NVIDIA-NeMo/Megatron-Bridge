@@ -16,7 +16,10 @@
 
 GLM-5.3-Flash is a VLM: a hybrid KDA/DSA + MoE + mHC language model paired with a
 replicated HF vision tower. This bridge handles both the text and vision paths in a
-single registered bridge + provider + model — there is no separate "VL" split.
+single registered bridge and model — there is no separate "VL" split.
+``AutoBridge.get_model_config()`` returns ``GLM53FlashModelConfig``, which
+``GLM53FlashModelBuilder`` builds; ``GLM53FlashModelProvider`` is the deprecated
+provider counterpart built from the same kwargs.
 
 Each HF decoder layer maps to two physical layers: attention at 2N and FFN at 2N+1.
 Checkpoint keys use ``model.language_model``; mixed FP8 weights are dequantized on
@@ -28,7 +31,7 @@ import types
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import torch
 from megatron.core import parallel_state
@@ -42,6 +45,7 @@ from megatron.core.pipeline_parallel.utils import (
 from megatron.core.ssm.kda_layer_config import KDALayerConfig
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor, nn
 from torch.distributed._tensor import DTensor
@@ -61,7 +65,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     _module_uses_fsdp,
 )
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.glm5next.glm53flash_config import GLM53FlashModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import get_default_hybrid_stack_spec
 from megatron.bridge.models.hybrid_mla_provider import HybridMLAModelProvider
 from megatron.bridge.training.utils.packed_seq_utils import (
@@ -79,6 +83,7 @@ except ImportError:  # pragma: no cover
 
 if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
+    from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +123,28 @@ def _glm5next_mlp_layer_types(hf_config) -> list[str]:
         first_k_dense = getattr(text_config, "first_k_dense_replace", min(3, text_config.num_hidden_layers))
         mlp_types = ["dense"] * first_k_dense + ["sparse"] * (text_config.num_hidden_layers - first_k_dense)
     return list(mlp_types)
+
+
+def _glm5next_hybrid_layout(hf_config) -> tuple[str, list[int]]:
+    """Return the Hybrid layer pattern and MoE schedule of the main decoder.
+
+    Each HF block becomes an attention layer (KDA or DSA) followed by an FFN layer (dense MLP or
+    MoE). ``moe_layer_freq`` indexes those physical layers, as router replay does.
+    """
+    attn_sym = {"linear_attention": Symbols.KDA, "deepseek_sparse_attention": Symbols.DS_ATTENTION}
+    ffn_sym = {"dense": Symbols.MLP, "sparse": Symbols.MOE}
+    pattern_chars = []
+    moe_layer_freq = []
+    for attn_type, mlp_type in zip(
+        _glm5next_layer_types(hf_config), _glm5next_mlp_layer_types(hf_config), strict=True
+    ):
+        if attn_type not in attn_sym:
+            raise ValueError(f"Unsupported GLM-5.3-Flash attention layer type: {attn_type!r}")
+        if mlp_type not in ffn_sym:
+            raise ValueError(f"Unsupported GLM-5.3-Flash MLP layer type: {mlp_type!r}")
+        pattern_chars.append(attn_sym[attn_type] + ffn_sym[mlp_type])
+        moe_layer_freq.extend((0, 1 if mlp_type == "sparse" else 0))
+    return "".join(pattern_chars), moe_layer_freq
 
 
 # ---------------------------------------------------------------------------
@@ -379,12 +406,32 @@ class GLM53FlashModelProvider(HybridMLAModelProvider, KDALayerConfig):
 
 
 class GLM53FlashModel(MegatronModule):
-    """Inject HF image/video features into the hybrid language model's embeddings."""
+    """Inject HF image/video features into the hybrid language model's embeddings.
+
+    Args:
+        config: The provider, or the transformer config of a builder-backed model config.
+            Either one carries the Hugging Face vision config and the multimodal token IDs.
+        pre_process: Whether to build the vision tower and the embeddings.
+        post_process: Whether to build the language-model output layer.
+        vp_stage: Virtual pipeline stage.
+        build_language_model: Builds the language model from ``pre_process``, ``post_process``
+            and ``vp_stage``. Defaults to the provider's ``provide_language_model()``.
+        pg_collection: Process groups a builder passes. Defaults to the provider's.
+    """
 
     def __init__(
-        self, config, pre_process: bool = True, post_process: bool = True, vp_stage: Optional[int] = None
+        self,
+        config,
+        pre_process: bool = True,
+        post_process: bool = True,
+        vp_stage: Optional[int] = None,
+        *,
+        build_language_model: Optional[Callable[..., MegatronModule]] = None,
+        pg_collection: Optional["ProcessGroupCollection"] = None,
     ) -> None:
         super().__init__(config=config)
+        if pg_collection is not None:
+            self.pg_collection = pg_collection
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -397,6 +444,10 @@ class GLM53FlashModel(MegatronModule):
             )
 
             self.visual = Glm5NextVisionModel._from_config(config.vision_config)
+            # A builder-built model has no Float16Module during conversion; match the language model.
+            params_dtype = getattr(config, "params_dtype", None)
+            if params_dtype is not None:
+                self.visual.to(dtype=params_dtype)
             hook_hf_module_setattr_for_tp_grad_sync(self.visual)
 
             # Only the stage that owns the vision tower extracts and inserts its features.
@@ -404,14 +455,23 @@ class GLM53FlashModel(MegatronModule):
             self.get_video_features = types.MethodType(Glm5NextModel.get_video_features, self)
             self.get_placeholder_mask = types.MethodType(Glm5NextModel.get_placeholder_mask, self)
 
-        self.language_model = self.config.provide_language_model(
+        if build_language_model is None:
+            build_language_model = self.config.provide_language_model
+        self.language_model = build_language_model(
             pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
         )
 
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
         self.config.spatial_merge_size = getattr(self.config.vision_config, "spatial_merge_size", 2)
+
+    def _process_groups(self) -> Optional["ProcessGroupCollection"]:
+        """Return the process groups a builder passed, or the ones the provider carries."""
+        pg_collection = getattr(self, "pg_collection", None)
+        if pg_collection is not None:
+            return pg_collection
+        return getattr(self.config, "_pg_collection", None)
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -517,7 +577,7 @@ class GLM53FlashModel(MegatronModule):
             # Megatron expects [seq, batch, hidden]; THD uses batch 1.
             decoder_input = decoder_input.transpose(0, 1).contiguous()
             if self.config.sequence_parallel:
-                pg_collection = self.config._pg_collection
+                pg_collection = self._process_groups()
                 tp_group = pg_collection.tp if pg_collection is not None else None
                 decoder_input = scatter_to_sequence_parallel_region(decoder_input, group=tp_group)
 
@@ -572,13 +632,13 @@ class GLM53FlashModel(MegatronModule):
         return preprocess_packed_seqs(
             tensor,
             keep_mask,
-            pg_collection=self.config._pg_collection,
+            pg_collection=self._process_groups(),
             use_fp8_padding=self.config.fp8 in ("e4m3", "hybrid"),
         )
 
     def _packed_cp_index(self, packed_seq_params: "PackedSeqParams", input_ids: Tensor) -> Optional[Tensor]:
         """Return this CP rank's token indices into a packed stream, or None without CP."""
-        pg_collection = self.config._pg_collection
+        pg_collection = self._process_groups()
         cp_group = pg_collection.cp if pg_collection is not None else parallel_state.get_context_parallel_group()
         cp_size = cp_group.size()
         if cp_size == 1:
@@ -629,178 +689,154 @@ class GLM53FlashModel(MegatronModule):
 class GLM53FlashBridge(MegatronModelBridge):
     """Unified bridge for GLM-5.3-Flash: hybrid language model + replicated vision tower."""
 
-    _provider_cls = GLM53FlashModelProvider
+    MODEL_CONFIG_CLASS = GLM53FlashModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     # FP8 source weights are dequantized on import and exported as plain weights; saved
     # artifacts drop quantization_config, so their inverse scales are not written back.
     DEQUANTIZED_SOURCE_KEY_SUFFIXES = ("_scale_inv",)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM):
-        hf_config = hf_pretrained.config
+    def hf_config_to_model_config_kwargs(self, hf_config) -> dict[str, Any]:
+        """Convert the Hugging Face GLM-5.3-Flash config to builder config kwargs.
+
+        The language-model fields come from the nested ``text_config``; the vision config, the
+        multimodal token IDs and ``tie_word_embeddings`` come from the top-level config.
+        """
         text_config = _glm5next_text_config(hf_config)
+        config_kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        # GLM-5.3-Flash applies no rotary embedding; its MLA rope settings are set below.
+        config_kwargs.pop("_mla_rope_params", None)
 
-        # Build base provider kwargs from the nested text_config (the VLM top-level
-        # config lacks hidden_size/num_layers/etc. that the text sub-model owns).
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        provider_kwargs.pop("_mla_rope_params", None)
-        valid_fields = self._provider_cls.__dataclass_fields__
-        provider = self._provider_cls(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
-
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.share_embeddings_and_output_weights = bool(getattr(hf_config, "tie_word_embeddings", False))
-        provider.qk_layernorm = True
-        provider.multi_latent_attention = True
-        provider.sequence_parallel = True
-
-        # ---- MoE ----
-        provider.moe_grouped_gemm = True
-        provider.moe_router_pre_softmax = True
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_flex_dispatcher_backend = "hybridep"
-        provider.moe_flex_dispatcher_num_sms = 16
-        provider.moe_router_load_balancing_type = "seq_aux_loss"
-        provider.moe_shared_expert_overlap = False
-        provider.moe_router_score_function = text_config.scoring_func  # "sigmoid"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_dtype = "fp32"
-        provider.moe_permute_fusion = True
-        provider.moe_router_topk = text_config.num_experts_per_tok  # 8
-        provider.moe_router_topk_scaling_factor = getattr(text_config, "routed_scaling_factor", 1.0)  # 2.5
-        provider.norm_topk_prob = text_config.norm_topk_prob
-        provider.moe_aux_loss_coeff = getattr(text_config, "router_aux_loss_coef", 0.001)
-        provider.activation_func_clamp_value = getattr(text_config, "swiglu_limit", 0.0)  # 10.0
-        provider.moe_shared_expert_intermediate_size = text_config.moe_intermediate_size * text_config.n_shared_experts
-        # GLM-5.3-Flash's shared expert is always-on (no per-token gate scalar in the
-        # checkpoint), so disable MCore's optional shared-expert gate.
-        provider.moe_shared_expert_gate = False
-
-        provider.hidden_dropout = 0.0
-        provider.attention_softmax_in_fp32 = False
-        provider.make_vocab_size_divisible_by = 1280
-        provider.actual_vocab_size = text_config.vocab_size
-
-        # ---- Hybrid layer pattern ----
-        attn_types = _glm5next_layer_types(hf_config)
-        mlp_types = _glm5next_mlp_layer_types(hf_config)
-        attn_sym = {
-            "linear_attention": Symbols.KDA,
-            "deepseek_sparse_attention": Symbols.DS_ATTENTION,
-        }
-        ffn_sym = {"dense": Symbols.MLP, "sparse": Symbols.MOE}
-        pattern_chars = []
-        # Router replay indexes physical modules: each HF block becomes attention + FFN.
-        moe_layer_freq = []
-        for at, mt in zip(attn_types, mlp_types, strict=True):
-            if at not in attn_sym:
-                raise ValueError(f"Unsupported GLM-5.3-Flash attention layer type: {at!r}")
-            if mt not in ffn_sym:
-                raise ValueError(f"Unsupported GLM-5.3-Flash MLP layer type: {mt!r}")
-            pattern_chars.append(attn_sym[at] + ffn_sym[mt])
-            moe_layer_freq.append(0)  # attention module is never MoE
-            moe_layer_freq.append(1 if mt == "sparse" else 0)  # FFN module
-        main_pattern = "".join(pattern_chars)
-        provider.hybrid_layer_pattern = main_pattern
-        provider.num_layers = len(main_pattern)
-        provider.hybrid_stack_spec = glm5next_hybrid_stack_spec
-        provider.moe_layer_freq = moe_layer_freq
-
-        # ---- MLA geometry (NoPE) ----
-        # GLM-5.3-Flash: mla_use_nope=True -> qk_rope_head_dim=0, qk_nope_head_dim=256, qk_head_dim=256.
-        provider.qk_pos_emb_head_dim = text_config.qk_head_dim - text_config.qk_nope_head_dim  # 0
-        provider.q_lora_rank = text_config.q_lora_rank  # 1536
-        provider.kv_lora_rank = text_config.kv_lora_rank  # 512
-        provider.v_head_dim = text_config.v_head_dim  # 256
-        provider.qk_head_dim = text_config.qk_head_dim  # 256
-        provider.num_attention_heads = text_config.num_attention_heads  # 64
-        provider.num_key_value_heads = text_config.num_key_value_heads  # 64
-        provider.mla_proj_use_quantization = False
-        # HF head_dim=0 is a NoPE sentinel, not a valid attention channel width.
-        provider.kv_channels = text_config.v_head_dim  # 256
-        provider.rope_type = "yarn"
-        provider.rotary_base = 10000.0
-        provider.rotary_scaling_factor = 1.0
-        provider.mscale = 1.0
-        provider.mscale_all_dim = 1.0
-        provider.apply_rope_fusion = False
-        provider.rotary_interleaved = False
-        provider.dsa_indexer_rope_interleaved = getattr(text_config, "indexer_rope_interleave", True)
-        provider.cp_comm_type = "allgather"
-
-        # ---- DSA indexer (kpool) ----
-        provider.experimental_attention_variant = "dsa"
-        provider.dsa_indexer_head_dim = text_config.index_head_dim  # 128
-        provider.dsa_indexer_n_heads = text_config.index_n_heads  # 32
-        provider.dsa_indexer_topk = text_config.index_topk  # 2048
-        provider.dsa_indexer_loss_coeff = 0.0
-        provider.dsa_indexer_use_sparse_loss = False
-        provider.dsa_indexer_rotate_activation = False
-        provider.dsa_indexer_qk_proj_use_quantization = False
-        provider.dsa_indexer_kpool_use_quantization = True
-        provider.dsa_indexer_k_norm_fp32 = True
-        # vLLM computes this projection in FP32 because BF16 rounding can change
-        # near-tie KPool rankings on long-context inputs.
-        provider.dsa_indexer_weights_proj_use_quantization = False
-        provider.dsa_indexer_weights_proj_output_dtype = "fp32"
-        provider.dsa_indexer_k_norm_epsilon = 1e-6
-        provider.dsa_indexer_kpool = int(getattr(text_config, "index_kpool", 1))  # 4
-        provider.dsa_indexer_kpool_always_select_tail = bool(
-            getattr(text_config, "index_kpool_always_select_tail", True)
-        )
-        provider.dsa_indexer_topk_freq = 1
-        provider.dsa_indexer_skip_topk_offset = 0
-
-        # ---- KDA two-stage gates ----
-        provider.kda_disable_fp8 = True
-        provider.kda_two_stage_gates = True
-        provider.kda_safe_gate = True
-        provider.kda_lower_bound = float(text_config.linear_attn_config.get("gate_lower_bound", -5.0))
-        provider.gdn_pre_gated_delta_rule_fusion = False
-        provider.gdn_conv_pad_alignment = None
+        main_pattern, moe_layer_freq = _glm5next_hybrid_layout(hf_config)
         lin = text_config.linear_attn_config
-        # KDA uses equal query/key/value head geometry.
-        provider.linear_num_key_heads = int(lin["num_heads"])  # 64
-        provider.linear_num_value_heads = int(lin["num_heads"])  # 64 (qkv equal)
-        provider.linear_key_head_dim = int(lin["head_dim"])  # 128
-        provider.linear_value_head_dim = int(lin["head_dim"])  # 128
-        provider.linear_conv_kernel_dim = int(lin["short_conv_kernel_size"])  # 4
-
-        # ---- mHC (multi-stream Hyper-Connections) ----
-        provider.enable_mhc_connections = True
-        provider.mhc_num_residual_streams = int(getattr(text_config, "hc_mult", 4))
-        provider.mhc_sinkhorn_iterations = int(getattr(text_config, "hc_sinkhorn_iters", 20))
-        provider.mhc_learned_output_contract = False
-        provider.mhc_norm_eps_inside_sqrt = True
-        provider.mhc_keep_mappings_in_fp32 = True
-
-        # ---- MTP (1 layer, DSA + MoE) ----
-        # MTP has its own pattern and is excluded from num_layers/moe_layer_freq.
-        # A source without MTP gets no MTP pattern: finalize() would otherwise append
-        # one repeated depth and infer mtp_num_layers=1.
         num_mtp = int(getattr(text_config, "num_nextn_predict_layers", 0) or 0)
-        provider.mtp_num_layers = num_mtp
-        provider.mtp_hybrid_override_pattern = "DE" if num_mtp else None
-        provider.mtp_use_repeated_layer = bool(num_mtp)
-        provider.keep_mtp_spec_in_bf16 = True
+        vision_config = getattr(hf_config, "vision_config", None)
+
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=bool(getattr(hf_config, "tie_word_embeddings", False)),
+            qk_layernorm=True,
+            multi_latent_attention=True,
+            sequence_parallel=True,
+            # HybridModelProvider defaults that differ from the builder config's.
+            position_embedding_type="none",
+            attention_backend=AttnBackend.flash,
+            # ---- MoE ----
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_flex_dispatcher_num_sms=16,
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_shared_expert_overlap=False,
+            moe_router_score_function=text_config.scoring_func,  # "sigmoid"
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            moe_router_topk=text_config.num_experts_per_tok,  # 8
+            moe_router_topk_scaling_factor=getattr(text_config, "routed_scaling_factor", 1.0),  # 2.5
+            moe_aux_loss_coeff=getattr(text_config, "router_aux_loss_coef", 0.001),
+            activation_func_clamp_value=getattr(text_config, "swiglu_limit", 0.0),  # 10.0
+            moe_shared_expert_intermediate_size=text_config.moe_intermediate_size * text_config.n_shared_experts,
+            # The shared expert is always on: the checkpoint has no per-token gate scalar.
+            moe_shared_expert_gate=False,
+            hidden_dropout=0.0,
+            attention_softmax_in_fp32=False,
+            make_vocab_size_divisible_by=1280,
+            # ---- Hybrid layer pattern: each HF block is an attention and an FFN layer ----
+            hybrid_layer_pattern=main_pattern,
+            num_layers=len(main_pattern),
+            hybrid_stack_spec=glm5next_hybrid_stack_spec,
+            moe_layer_freq=moe_layer_freq,
+            # ---- MLA geometry (NoPE): qk_rope_head_dim=0, qk_nope_head_dim=qk_head_dim ----
+            qk_pos_emb_head_dim=text_config.qk_head_dim - text_config.qk_nope_head_dim,  # 0
+            q_lora_rank=text_config.q_lora_rank,  # 1536
+            kv_lora_rank=text_config.kv_lora_rank,  # 512
+            v_head_dim=text_config.v_head_dim,  # 256
+            qk_head_dim=text_config.qk_head_dim,  # 256
+            num_attention_heads=text_config.num_attention_heads,  # 64
+            mla_proj_use_quantization=False,
+            # HF head_dim=0 is a NoPE sentinel, not a valid attention channel width.
+            kv_channels=text_config.v_head_dim,  # 256
+            rope_type="yarn",
+            rotary_base=10000.0,
+            rotary_scaling_factor=1.0,
+            mscale=1.0,
+            mscale_all_dim=1.0,
+            apply_rope_fusion=False,
+            rotary_interleaved=False,
+            dsa_indexer_rope_interleaved=getattr(text_config, "indexer_rope_interleave", True),
+            cp_comm_type="allgather",
+            # ---- DSA indexer (kpool) ----
+            experimental_attention_variant="dsa",
+            dsa_indexer_head_dim=text_config.index_head_dim,  # 128
+            dsa_indexer_n_heads=text_config.index_n_heads,  # 32
+            dsa_indexer_topk=text_config.index_topk,  # 2048
+            dsa_indexer_loss_coeff=0.0,
+            dsa_indexer_use_sparse_loss=False,
+            dsa_indexer_rotate_activation=False,
+            dsa_indexer_qk_proj_use_quantization=False,
+            dsa_indexer_kpool_use_quantization=True,
+            dsa_indexer_k_norm_fp32=True,
+            # vLLM computes this projection in FP32 because BF16 rounding can change
+            # near-tie KPool rankings on long-context inputs.
+            dsa_indexer_weights_proj_use_quantization=False,
+            dsa_indexer_weights_proj_output_dtype="fp32",
+            dsa_indexer_k_norm_epsilon=1e-6,
+            dsa_indexer_kpool=int(getattr(text_config, "index_kpool", 1)),  # 4
+            dsa_indexer_kpool_always_select_tail=bool(getattr(text_config, "index_kpool_always_select_tail", True)),
+            dsa_indexer_topk_freq=1,
+            dsa_indexer_skip_topk_offset=0,
+            # ---- KDA two-stage gates; query, key and value share one head geometry ----
+            kda_disable_fp8=True,
+            kda_two_stage_gates=True,
+            kda_safe_gate=True,
+            kda_lower_bound=float(lin.get("gate_lower_bound", -5.0)),
+            gdn_pre_gated_delta_rule_fusion=False,
+            gdn_conv_pad_alignment=None,
+            linear_num_key_heads=int(lin["num_heads"]),  # 64
+            linear_num_value_heads=int(lin["num_heads"]),  # 64
+            linear_key_head_dim=int(lin["head_dim"]),  # 128
+            linear_value_head_dim=int(lin["head_dim"]),  # 128
+            linear_conv_kernel_dim=int(lin["short_conv_kernel_size"]),  # 4
+            # ---- mHC (multi-stream hyper-connections) ----
+            enable_mhc_connections=True,
+            mhc_num_residual_streams=int(getattr(text_config, "hc_mult", 4)),
+            mhc_sinkhorn_iterations=int(getattr(text_config, "hc_sinkhorn_iters", 20)),
+            mhc_learned_output_contract=False,
+            mhc_norm_eps_inside_sqrt=True,
+            mhc_keep_mappings_in_fp32=True,
+            # ---- MTP: one repeated DSA + MoE layer, excluded from num_layers and moe_layer_freq ----
+            # A source without MTP gets no MTP pattern: finalize() would otherwise append one
+            # repeated depth and infer mtp_num_layers=1.
+            mtp_num_layers=num_mtp,
+            mtp_hybrid_override_pattern="DE" if num_mtp else None,
+            mtp_use_repeated_layer=bool(num_mtp),
+            persist_layer_norm=True,
+            gradient_accumulation_fusion=True,
+            bias_dropout_fusion=True,
+            # ---- Vision tower (replicated HF Glm5NextVisionModel) ----
+            vision_config=vision_config,
+            image_token_id=getattr(hf_config, "image_token_id", 154854),
+            video_token_id=getattr(hf_config, "video_token_id", 154855),
+            image_start_token_id=getattr(hf_config, "image_start_token_id", 154830),
+            image_end_token_id=getattr(hf_config, "image_end_token_id", 154831),
+            video_start_token_id=getattr(hf_config, "video_start_token_id", 154832),
+            video_end_token_id=getattr(hf_config, "video_end_token_id", 154833),
+            spatial_merge_size=getattr(vision_config, "spatial_merge_size", 2),
+        )
         if num_mtp:
-            provider.mtp_loss_scaling_factor = 0.1
+            config_kwargs["mtp_loss_scaling_factor"] = 0.1
+        return config_kwargs
 
-        provider.persist_layer_norm = True
-        provider.gradient_accumulation_fusion = True
-        provider.bias_dropout_fusion = True
-
-        # ---- Vision tower (replicated HF Glm5NextVisionModel) ----
-        provider.vision_config = getattr(hf_config, "vision_config", None)
-        provider.image_token_id = getattr(hf_config, "image_token_id", 154854)
-        provider.video_token_id = getattr(hf_config, "video_token_id", 154855)
-        provider.image_start_token_id = getattr(hf_config, "image_start_token_id", 154830)
-        provider.image_end_token_id = getattr(hf_config, "image_end_token_id", 154831)
-        provider.video_start_token_id = getattr(hf_config, "video_start_token_id", 154832)
-        provider.video_end_token_id = getattr(hf_config, "video_end_token_id", 154833)
-        provider.spatial_merge_size = getattr(provider.vision_config, "spatial_merge_size", 2)
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config) -> dict[str, Any]:
+        """Adapt the builder kwargs to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        # Provider-only flag that nothing reads; kept so the deprecated provider is unchanged.
+        provider_kwargs["keep_mtp_spec_in_bf16"] = True
+        return provider_kwargs
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:

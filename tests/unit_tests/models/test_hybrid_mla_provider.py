@@ -73,10 +73,12 @@ def test_single_segment_and_mtp_suffix_are_preserved():
     assert _segment(PATTERN + Symbols.MTP_SEPARATOR + "DE", 2, topk_freq=1).endswith(Symbols.MTP_SEPARATOR + "DE")
 
 
+@pytest.mark.parametrize("path", ["model_config", "provider"])
 @pytest.mark.parametrize(("pp_size", "vp_size", "expected_segments"), [(2, None, 2), (2, 2, 4), (1, None, 1)])
-def test_finalize_counts_virtual_pipeline_chunks(pp_size, vp_size, expected_segments):
+def test_finalize_counts_virtual_pipeline_chunks(pp_size, vp_size, expected_segments, path):
     config_module = pytest.importorskip("transformers.models.glm5_next.configuration_glm5_next")
     from megatron.bridge.models.glm5next.glm53flash_bridge import GLM53FlashBridge
+    from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 
     config = config_module.Glm5NextConfig(
         text_config={
@@ -84,11 +86,16 @@ def test_finalize_counts_virtual_pipeline_chunks(pp_size, vp_size, expected_segm
             "linear_attn_config": {"num_heads": 64, "head_dim": 128, "short_conv_kernel_size": 4},
         }
     )
-    provider = GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
-    provider.pipeline_model_parallel_size = pp_size
-    provider.virtual_pipeline_model_parallel_size = vp_size
-    with patch.object(HybridModelProvider, "finalize"):
-        provider.finalize()
+    if path == "model_config":
+        language_config = GLM53FlashBridge().hf_config_to_model_config(config)
+        parent = BridgeHybridModelConfig
+    else:
+        language_config = GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
+        parent = HybridModelProvider
+    language_config.pipeline_model_parallel_size = pp_size
+    language_config.virtual_pipeline_model_parallel_size = vp_size
+    with patch.object(parent, "finalize"):
+        language_config.finalize()
 
-    main_pattern = provider.hybrid_layer_pattern.split(Symbols.MTP_SEPARATOR)[0]
+    main_pattern = language_config.hybrid_layer_pattern.split(Symbols.MTP_SEPARATOR)[0]
     assert main_pattern.count(Symbols.PIPE) + 1 == expected_segments

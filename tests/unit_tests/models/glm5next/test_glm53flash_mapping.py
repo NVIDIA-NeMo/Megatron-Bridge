@@ -87,9 +87,10 @@ def test_mtp_final_layernorm_round_trips_through_the_mtp_shared_head_norm():
     assert exported.megatron_param == megatron_name
 
 
+@pytest.mark.parametrize("path", ["model_config", "provider"])
 @pytest.mark.parametrize("gate_lower_bound", [-5.0, -1.0])
 @pytest.mark.parametrize("kda_disable_fp8", [False, True])
-def test_glm5next_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
+def test_glm5next_provider_precision_contract(gate_lower_bound, kda_disable_fp8, path):
     config_module = pytest.importorskip("transformers.models.glm5_next.configuration_glm5_next")
     config = config_module.Glm5NextConfig(
         text_config={
@@ -103,7 +104,12 @@ def test_glm5next_provider_precision_contract(gate_lower_bound, kda_disable_fp8)
             },
         }
     )
-    provider = GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
+    if path == "model_config":
+        provider = GLM53FlashBridge().hf_config_to_model_config(config)
+        layer_config_source = provider.transformer
+    else:
+        provider = GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
+        layer_config_source = provider
     assert provider.layernorm_epsilon == 1e-5
     assert not provider.mla_proj_use_quantization
     assert provider.dsa_indexer_k_norm_epsilon == 1e-6
@@ -111,7 +117,7 @@ def test_glm5next_provider_precision_contract(gate_lower_bound, kda_disable_fp8)
     assert provider.dsa_indexer_kpool_use_quantization
     assert not provider.dsa_indexer_weights_proj_use_quantization
     assert provider.dsa_indexer_weights_proj_output_dtype == "fp32"
-    assert create_layer_config(provider, "D").dsa_indexer_kpool_use_quantization
+    assert create_layer_config(layer_config_source, "D").dsa_indexer_kpool_use_quantization
     assert provider.dsa_indexer_kpool_always_select_tail
     assert provider.mhc_norm_eps_inside_sqrt
     assert provider.mhc_keep_mappings_in_fp32
@@ -119,8 +125,9 @@ def test_glm5next_provider_precision_contract(gate_lower_bound, kda_disable_fp8)
     assert provider.kda_two_stage_gates
     assert provider.kda_disable_fp8
     assert provider.kda_lower_bound == gate_lower_bound
-    provider.apply_overrides_and_finalize(overrides={"kda_disable_fp8": kda_disable_fp8})
-    kda_config = create_layer_config(provider, "K")
+    provider.kda_disable_fp8 = kda_disable_fp8
+    provider.finalize()
+    kda_config = create_layer_config(layer_config_source, "K")
     assert kda_config.kda_disable_fp8 is kda_disable_fp8
     assert kda_config.kda_two_stage_gates
     assert kda_config.kda_safe_gate

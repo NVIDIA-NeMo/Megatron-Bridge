@@ -15,6 +15,7 @@
 """Hybrid model provider for Multi-Latent Attention."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 from megatron.core.transformer.experimental_attention_variant.dsa import (
@@ -120,35 +121,49 @@ def _add_dsa_pipeline_separators(
     return segmented_pattern + (separator + mtp_pattern if separator else "")
 
 
+def apply_dsa_pipeline_separators(config: Any) -> None:
+    """Place DSA-safe pipeline separators in a Hybrid MLA layer pattern.
+
+    Works on a ``HybridMLAModelProvider`` or a builder-backed Hybrid model config, which
+    exposes the nested transformer settings as flat attributes. Run it before the Hybrid
+    finalization, which appends the MTP pattern and derives ``num_layers``.
+
+    Args:
+        config: Provider or model config with a Hybrid layer pattern and DSA settings.
+
+    Raises:
+        ValueError: If explicit first/last stage layer counts are set, or the pattern cannot
+            be split into one segment per model chunk without crossing a DSA IndexShare group.
+    """
+    pattern_attr = "hybrid_layer_pattern"
+    pattern = config.hybrid_layer_pattern
+    if pattern is None and config.hybrid_override_pattern is not None:
+        pattern_attr = "hybrid_override_pattern"
+        pattern = config.hybrid_override_pattern
+
+    main_pattern = pattern.split(Symbols.MTP_SEPARATOR)[0] if pattern is not None else ""
+    num_pipeline_segments = config.pipeline_model_parallel_size * (config.virtual_pipeline_model_parallel_size or 1)
+    if Symbols.DS_ATTENTION not in main_pattern or num_pipeline_segments <= 1:
+        return
+    if config.num_layers_in_first_pipeline_stage is not None or config.num_layers_in_last_pipeline_stage is not None:
+        raise ValueError(
+            "Hybrid MLA derives pipeline stages from hybrid_layer_pattern; "
+            "num_layers_in_first_pipeline_stage and num_layers_in_last_pipeline_stage are unsupported."
+        )
+    pattern = _add_dsa_pipeline_separators(
+        pattern,
+        num_pipeline_segments=num_pipeline_segments,
+        topk_freq=config.dsa_indexer_topk_freq or 1,
+        skip_topk_offset=config.dsa_indexer_skip_topk_offset or 0,
+    )
+    setattr(config, pattern_attr, pattern)
+
+
 @dataclass
 class HybridMLAModelProvider(HybridModelProvider, MLATransformerConfig):
     """Provider for Hybrid models using Multi-Latent Attention."""
 
     def finalize(self) -> None:
         """Finalize the provider after adding DSA-safe pipeline segments."""
-        pattern_attr = "hybrid_layer_pattern"
-        pattern = self.hybrid_layer_pattern
-        if pattern is None and self.hybrid_override_pattern is not None:
-            pattern_attr = "hybrid_override_pattern"
-            pattern = self.hybrid_override_pattern
-
-        main_pattern = pattern.split(Symbols.MTP_SEPARATOR)[0] if pattern is not None else ""
-        num_pipeline_segments = self.pipeline_model_parallel_size * (self.virtual_pipeline_model_parallel_size or 1)
-        if Symbols.DS_ATTENTION in main_pattern and num_pipeline_segments > 1:
-            if (
-                self.num_layers_in_first_pipeline_stage is not None
-                or self.num_layers_in_last_pipeline_stage is not None
-            ):
-                raise ValueError(
-                    "Hybrid MLA derives pipeline stages from hybrid_layer_pattern; "
-                    "num_layers_in_first_pipeline_stage and num_layers_in_last_pipeline_stage are unsupported."
-                )
-            pattern = _add_dsa_pipeline_separators(
-                pattern,
-                num_pipeline_segments=num_pipeline_segments,
-                topk_freq=self.dsa_indexer_topk_freq or 1,
-                skip_topk_offset=self.dsa_indexer_skip_topk_offset or 0,
-            )
-            setattr(self, pattern_attr, pattern)
-
+        apply_dsa_pipeline_separators(self)
         super().finalize()

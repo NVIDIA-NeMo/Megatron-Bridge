@@ -1,6 +1,6 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
-"""Tests for the GLM-5.3-Flash VLM wrapper: pipeline stages, packed layouts and provider config."""
+"""Tests for the GLM-5.3-Flash VLM wrapper: pipeline stages, packed layouts and MTP depth."""
 
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -43,6 +43,7 @@ class _StubLanguageModel:
         self.calls = []
         self.embedding_calls = 0
         self.input_tensor = None
+        self.share_embeddings_and_output_weights = False
         self.shared_embedding_or_output_weight = None
 
     def embedding(self, input_ids, position_ids=None):
@@ -58,22 +59,31 @@ class _StubLanguageModel:
         return torch.zeros(1)
 
 
-def _config(*, tp=1, cp=1, cp_rank=0, fp8=None, sequence_parallel=False, language_model=None):
-    pg_collection = SimpleNamespace(tp=_Group(tp), cp=_Group(cp, cp_rank), pp=_Group(1))
+def _pg_collection(*, tp=1, cp=1, cp_rank=0):
+    return SimpleNamespace(tp=_Group(tp), cp=_Group(cp, cp_rank), pp=_Group(1))
+
+
+def _config(*, fp8=None, sequence_parallel=False):
+    """Stand-in for the transformer config a builder passes: no process groups or LM factory."""
     return SimpleNamespace(
         fp8=fp8,
         sequence_parallel=sequence_parallel,
-        _pg_collection=pg_collection,
-        share_embeddings_and_output_weights=False,
+        params_dtype=None,
         vision_config=SimpleNamespace(spatial_merge_size=2),
-        provide_language_model=lambda **_: language_model or _StubLanguageModel(),
     )
 
 
-def _model(*, pre_process=True, post_process=True, **config_kwargs) -> GLM53FlashModel:
-    config = _config(language_model=_StubLanguageModel(), **config_kwargs)
+def _model(*, pre_process=True, post_process=True, tp=1, cp=1, cp_rank=0, **config_kwargs) -> GLM53FlashModel:
+    """Build the wrapper as ``GLM53FlashModelBuilder`` does, with a stub language model."""
+    language_model = _StubLanguageModel()
     # Construct without the HF vision tower, then mark the stage that embeds tokens.
-    model = GLM53FlashModel(config, pre_process=False, post_process=post_process)
+    model = GLM53FlashModel(
+        _config(**config_kwargs),
+        pre_process=False,
+        post_process=post_process,
+        build_language_model=lambda **_: language_model,
+        pg_collection=_pg_collection(tp=tp, cp=cp, cp_rank=cp_rank),
+    )
     model.pre_process = pre_process
     return model
 
@@ -125,6 +135,35 @@ def test_non_preprocess_stage_constructs_and_forwards_without_vision_or_embeddin
     torch.testing.assert_close(call["packed_seq_params"].cu_seqlens_q, torch.tensor([0, 2, 5], dtype=torch.int32))
     torch.testing.assert_close(call["labels"], torch.tensor([[1011, 1012, 1021, 1022, 1023]]))
     torch.testing.assert_close(packed_loss_mask, torch.ones(1, 5))
+
+
+def test_builder_supplies_language_model_and_process_groups():
+    model = _model(tp=2)
+    assert model._process_groups() is model.pg_collection
+    assert model.share_embeddings_and_output_weights is False
+
+    input_ids, attention_mask, _, _ = _dense_batch()
+    model(input_ids=input_ids, attention_mask=attention_mask)
+    # TP2 alignment from the builder's process groups pads the second sequence to four tokens.
+    packed_seq_params = model.language_model.calls[0]["packed_seq_params"]
+    torch.testing.assert_close(packed_seq_params.cu_seqlens_q, torch.tensor([0, 2, 6], dtype=torch.int32))
+
+
+def test_provider_supplies_language_model_and_process_groups():
+    language_model = _StubLanguageModel()
+    provider = SimpleNamespace(
+        **vars(_config()),
+        _pg_collection=_pg_collection(tp=2),
+        provide_language_model=lambda **_: language_model,
+    )
+    model = GLM53FlashModel(provider, pre_process=False, post_process=True)
+    assert model.language_model is language_model
+    assert model._process_groups() is provider._pg_collection
+
+    input_ids, attention_mask, _, _ = _dense_batch()
+    model(input_ids=input_ids, attention_mask=attention_mask)
+    packed_seq_params = language_model.calls[0]["packed_seq_params"]
+    torch.testing.assert_close(packed_seq_params.cu_seqlens_q, torch.tensor([0, 2, 6], dtype=torch.int32))
 
 
 @pytest.mark.parametrize(
@@ -360,31 +399,40 @@ def _glm_config(num_nextn_predict_layers: int):
     )
 
 
-def test_zero_depth_source_stays_mtp_free_after_repeated_finalize():
+def _language_config(path: str, config):
+    """Return the builder-backed model config, or the deprecated provider, for a HF config."""
+    if path == "model_config":
+        return GLM53FlashBridge().hf_config_to_model_config(config)
+    return GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
+
+
+@pytest.mark.parametrize("path", ["model_config", "provider"])
+def test_zero_depth_source_stays_mtp_free_after_repeated_finalize(path):
     config = _glm_config(0)
-    provider = GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
+    language_config = _language_config(path, config)
     for _ in range(2):
-        provider.finalize()
-        assert provider.mtp_num_layers == 0
-        assert provider.mtp_hybrid_override_pattern is None
-        assert Symbols.MTP_SEPARATOR not in provider.hybrid_layer_pattern
+        language_config.finalize()
+        assert language_config.mtp_num_layers == 0
+        assert language_config.mtp_hybrid_override_pattern is None
+        assert Symbols.MTP_SEPARATOR not in language_config.hybrid_layer_pattern
 
     bridge = GLM53FlashBridge()
     bridge.hf_config = config
     assert not any(".mtp." in mapping.megatron_param for mapping in bridge.mapping_registry().mappings)
 
 
+@pytest.mark.parametrize("path", ["model_config", "provider"])
 @pytest.mark.parametrize("num_mtp", [1, 2])
-def test_positive_depth_source_keeps_its_mtp_depth(num_mtp):
+def test_positive_depth_source_keeps_its_mtp_depth(num_mtp, path):
     config = _glm_config(num_mtp)
-    provider = GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
-    assert provider.mtp_use_repeated_layer
-    assert provider.mtp_loss_scaling_factor == 0.1
+    language_config = _language_config(path, config)
+    assert language_config.mtp_use_repeated_layer
+    assert language_config.mtp_loss_scaling_factor == 0.1
     for _ in range(2):
-        provider.finalize()
-        assert provider.mtp_num_layers == num_mtp
-        assert provider.hybrid_layer_pattern.count(Symbols.MTP_SEPARATOR) == num_mtp
-        assert provider.hybrid_layer_pattern.endswith(Symbols.MTP_SEPARATOR + "DE")
+        language_config.finalize()
+        assert language_config.mtp_num_layers == num_mtp
+        assert language_config.hybrid_layer_pattern.count(Symbols.MTP_SEPARATOR) == num_mtp
+        assert language_config.hybrid_layer_pattern.endswith(Symbols.MTP_SEPARATOR + "DE")
 
     bridge = GLM53FlashBridge()
     bridge.hf_config = config

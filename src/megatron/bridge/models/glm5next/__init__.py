@@ -17,10 +17,15 @@ from megatron.bridge.models.glm5next.glm53flash_bridge import (
     GLM53FlashModel,
     GLM53FlashModelProvider,
 )
+from megatron.bridge.models.glm5next.glm53flash_builder import GLM53FlashModelBuilder
+from megatron.bridge.models.glm5next.glm53flash_config import GLM53FlashModelConfig, GLM53FlashTransformerConfig
 
 
 __all__ = [
     "GLM53FlashBridge",
     "GLM53FlashModel",
+    "GLM53FlashModelBuilder",
+    "GLM53FlashModelConfig",
     "GLM53FlashModelProvider",
+    "GLM53FlashTransformerConfig",
 ]
