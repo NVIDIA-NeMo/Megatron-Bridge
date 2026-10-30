@@ -135,6 +135,8 @@ def _maybe_restore_pipeline_layout(
         with config_path.open() as config_file:
             config = yaml.safe_load(config_file) or {}
         model_config = config.get("model", {})
+        # Builder-backed model configs serialize the Megatron-Core fields under ``transformer``.
+        model_config = {**(model_config.get("transformer") or {}), **model_config}
         if "mtp_num_layers" in model_config:
             model_provider.mtp_num_layers = model_config["mtp_num_layers"]
         saved_layout = model_config.get("pipeline_model_parallel_layout")
@@ -143,6 +145,10 @@ def _maybe_restore_pipeline_layout(
         is_same_topology = saved_pp == pp or (saved_pp is None and len(saved_layout or []) % pp == 0)
         if is_valid_layout and is_same_topology and len(saved_layout) % pp == 0:
             model_provider.pipeline_model_parallel_layout = saved_layout
+            # Hybrid models take their stage boundaries from the '|' segments saved with this layout.
+            saved_pattern = model_config.get("hybrid_layer_pattern")
+            if isinstance(saved_pattern, str) and "|" in saved_pattern:
+                model_provider.hybrid_layer_pattern = saved_pattern
             print_rank_0(f"Read pipeline layout from checkpoint ({len(saved_layout)} PP/VPP stages)")
             return
         if is_valid_layout:
@@ -397,6 +403,7 @@ def export_checkpoint(
         _maybe_restore_pipeline_layout(bridge, model_config, megatron_path, pp)
         resolved_pipeline_layout = model_config.pipeline_model_parallel_layout
         model_config.finalize()
+        resolved_hybrid_layer_pattern = getattr(model_config, "hybrid_layer_pattern", None)
         bridge._get_or_initialize_pg_collection(model_config.transformer)
     else:
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -404,6 +411,7 @@ def export_checkpoint(
         _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
         resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
         model_provider.finalize()
+        resolved_hybrid_layer_pattern = getattr(model_provider, "hybrid_layer_pattern", None)
         model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
 
     model_parallel_overrides: dict[str, object] = {
@@ -416,6 +424,10 @@ def export_checkpoint(
     }
     if isinstance(resolved_pipeline_layout, list):
         model_parallel_overrides["pipeline_model_parallel_layout"] = resolved_pipeline_layout
+        # load_megatron_model drops the '|' stage boundaries from the checkpoint's hybrid layer pattern,
+        # so pass the segments that match this layout; HybridModel allocates pipeline stages from them.
+        if isinstance(resolved_hybrid_layer_pattern, str) and "|" in resolved_hybrid_layer_pattern:
+            model_parallel_overrides["hybrid_layer_pattern"] = resolved_hybrid_layer_pattern
 
     megatron_model = bridge.load_megatron_model(
         megatron_path,

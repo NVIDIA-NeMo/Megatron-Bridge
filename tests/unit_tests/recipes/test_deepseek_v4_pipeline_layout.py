@@ -18,10 +18,17 @@ from unittest.mock import patch
 
 import pytest
 from megatron.core.models.hybrid import hybrid_layer_allocation as allocation
+from megatron.core.models.hybrid.hybrid_model import (
+    _get_hash_moe_layer_threshold,
+    _validate_hash_moe_pipeline_placement,
+)
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
-from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    DeepSeekV4Bridge,
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
 
 
@@ -112,3 +119,47 @@ def test_invalid_stage_counts_fail_before_model_construction(counts):
     cfg = _provider(61, 4, 4)
     with pytest.raises(ValueError, match="stage counts"):
         set_deepseek_v4_pipeline_model_parallel_layout(cfg, logical_layers_per_stage=counts)
+
+
+def _validate_hash_moe_placement(pattern, num_hash_layers):
+    """Apply MCore's per-stage hash-MoE check to every pipe segment of ``pattern``."""
+    threshold = _get_hash_moe_layer_threshold(pattern.replace("|", ""), num_hash_layers)
+    offset = 0
+    for index, segment in enumerate(pattern.split("|")):
+        _validate_hash_moe_pipeline_placement(list(segment), offset, threshold, pre_process=index == 0)
+        offset += len(segment)
+
+
+def test_even_split_would_leave_hash_moe_layers_off_the_embedding_stage():
+    # Four logical blocks with three hash-routed MoE layers: an even PP2 split puts the third on stage 1.
+    with pytest.raises(ValueError, match="hash MoE layers must be in the same pipeline"):
+        _validate_hash_moe_placement("WEWE|CEHE", num_hash_layers=3)
+
+
+@pytest.mark.parametrize(
+    ("logical_layers", "pp", "counts"),
+    [(4, 2, [3, 1]), (43, 32, [3] + [2] * 9 + [1] * 22), (43, 8, [6] * 3 + [5] * 5)],
+)
+def test_default_split_keeps_hash_moe_layers_on_the_embedding_stage(logical_layers, pp, counts):
+    cfg = _provider(logical_layers, pp)
+    cfg.moe_num_hash_layers = 3
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+
+    assert [len(segment) // 2 for segment in cfg.hybrid_layer_pattern.split("|")] == counts
+    _validate_hash_moe_placement(cfg.hybrid_layer_pattern, cfg.moe_num_hash_layers)
+
+
+def test_conversion_hook_lays_out_physical_layers_of_the_truncated_flash_model():
+    # The GPU conversion check truncates DeepSeek-V4-Flash to four logical layers plus MTP.
+    cfg = _provider(4, 2)
+    cfg.moe_num_hash_layers = 3
+    DeepSeekV4Bridge.configure_pipeline_layout(cfg)
+
+    assert cfg.hybrid_layer_pattern == "WEWECE|HE"
+    assert cfg.pipeline_model_parallel_layout == [
+        ["embedding"] + ["decoder"] * 6,
+        ["decoder"] * 2 + ["mtp", "loss"],
+    ]
+    layout = PipelineParallelLayerLayout(cfg.pipeline_model_parallel_layout, pipeline_model_parallel_size=2)
+    assert not layout.validate_layer_layout(cfg.num_layers, cfg.mtp_num_layers)
+    _validate_hash_moe_placement(cfg.hybrid_layer_pattern, cfg.moe_num_hash_layers)
