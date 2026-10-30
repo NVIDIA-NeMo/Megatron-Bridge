@@ -560,6 +560,100 @@ def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     assert [task.global_param_name for task in export_plan.conversion_tasks] == [first_name, last_name]
 
 
+def _quantizer_recipe_model(monkeypatch, **quantizers):
+    """Return a bridge and model whose ``layer`` holds the given ModelOpt quantizers."""
+    from megatron.bridge.models.conversion.quant_mapping import AmaxFanoutMapping, AmaxMapping
+
+    class QuantBridge(DummyBridge):
+        def mapping_registry(self):
+            return MegatronMappingRegistry(
+                AmaxMapping("layer.input_quantizer._amax", "hf.proj.input_quantizer._amax"),
+                AmaxFanoutMapping(
+                    "layer.qkv_quantizer._amax", ["hf.q.input_quantizer._amax", "hf.k.input_quantizer._amax"]
+                ),
+            )
+
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(num_moe_experts=None)
+    model.layer = torch.nn.Module()
+    for name, quantizer in quantizers.items():
+        setattr(model.layer, name, quantizer)
+    monkeypatch.setattr(model_bridge_module, "unwrap_model", lambda _model: [model])
+    monkeypatch.setattr(
+        model_bridge_module,
+        "_megatron_local_name_to_global",
+        lambda _models, _config, local_name, _vp_stage: local_name,
+    )
+    return QuantBridge(), model
+
+
+def test_build_modelopt_quantizer_recipe_maps_enabled_quantizers(monkeypatch):
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    input_quantizer = TensorQuantizer()
+    input_quantizer.amax = torch.tensor(1.0)
+    qkv_quantizer = TensorQuantizer()
+    qkv_quantizer.amax = torch.tensor(2.0)
+    disabled_quantizer = TensorQuantizer()
+    disabled_quantizer.disable()
+    bridge, model = _quantizer_recipe_model(
+        monkeypatch,
+        input_quantizer=input_quantizer,
+        qkv_quantizer=qkv_quantizer,
+        disabled_quantizer=disabled_quantizer,
+    )
+    expected_state = input_quantizer.get_modelopt_state(properties_only=True)
+    # build_conversion_tasks may attach the model config to quantizers; it must not reach the recipe.
+    input_quantizer.config = model.config
+
+    recipe = bridge.build_modelopt_quantizer_recipe(PretrainedConfig(), model)
+
+    assert set(recipe) == {"hf.proj.input_quantizer", "hf.q.input_quantizer", "hf.k.input_quantizer"}
+    assert recipe["hf.proj.input_quantizer"] == expected_state
+    assert recipe["hf.q.input_quantizer"] == recipe["hf.k.input_quantizer"]
+
+
+def test_build_modelopt_quantizer_recipe_rejects_unexportable_quantizers(monkeypatch):
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    input_quantizer = TensorQuantizer()
+    input_quantizer.pre_quant_scale = torch.ones(2)
+    unmapped_quantizer = TensorQuantizer()
+    rotating_quantizer = TensorQuantizer()
+    rotating_quantizer.set_from_attribute_config({"enable": False, "rotate": True})
+    bridge, model = _quantizer_recipe_model(
+        monkeypatch,
+        input_quantizer=input_quantizer,
+        unmapped_quantizer=unmapped_quantizer,
+        rotating_quantizer=rotating_quantizer,
+    )
+
+    with pytest.raises(ValueError, match="cannot be exported") as error:
+        bridge.build_modelopt_quantizer_recipe(PretrainedConfig(), model)
+
+    assert "layer.input_quantizer (unexported tensors ['_pre_quant_scale'])" in str(error.value)
+    assert "layer.unmapped_quantizer (no Hugging Face mapping)" in str(error.value)
+    assert "layer.rotating_quantizer (disabled but rotates or scales its input)" in str(error.value)
+
+
+def test_build_modelopt_quantizer_recipe_rejects_ranks_that_disagree(monkeypatch):
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    input_quantizer = TensorQuantizer()
+    bridge, model = _quantizer_recipe_model(monkeypatch, input_quantizer=input_quantizer)
+
+    def all_gather_object(output, local):
+        recipe, unsupported = local
+        output[:] = [local, ({name: {**state, "_num_bits": 4} for name, state in recipe.items()}, unsupported)]
+
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "all_gather_object", all_gather_object)
+
+    with pytest.raises(ValueError, match="Ranks disagree on the ModelOpt quantizer state of hf.proj.input_quantizer"):
+        bridge.build_modelopt_quantizer_recipe(PretrainedConfig(), model)
+
+
 def _setup_tied_output_bridge(
     monkeypatch, *, share_embeddings_and_output_weights, global_param_names=None, flag_on_model=False
 ):
@@ -2115,7 +2209,6 @@ def test_fake_refit_excludes_weight_quantizer_state_before_validation(monkeypatc
         "projection.k_bmm_quantizer._amax",
         "projection.v_bmm_quantizer._amax",
     }
-    monkeypatch.setenv("ENABLE_BRIDGE_QUANT_MAPPING", "0")
     monkeypatch.setattr(
         implementation,
         "mapping_registry",
@@ -2245,6 +2338,34 @@ def test_non_yarn_mapping_adds_no_yarn_defaults():
 
     assert "position_embedding_type" not in kwargs
     assert not any(key.startswith("yarn_") for key in kwargs)
+
+
+_YARN_SCALING = {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 4096}
+
+
+@pytest.mark.parametrize(
+    ("rope_scaling", "bridge_type", "expected"),
+    [
+        (None, None, "rope"),
+        (None, "rope", "rope"),
+        (None, "none", "none"),
+        (None, "yarn", "yarn"),
+        (_YARN_SCALING, None, "yarn"),
+        (_YARN_SCALING, "rope", "yarn"),
+    ],
+)
+def test_provider_bridge_keeps_the_bridge_position_embedding(monkeypatch, rope_scaling, bridge_type, expected):
+    """The shared provider path keeps a type the bridge selects, unless the checkpoint uses YaRN."""
+    config = _yarn_qwen2_config(rope_scaling)
+    bridge = DummyBridge()
+    kwargs = bridge.hf_config_to_provider_kwargs(config)
+    if bridge_type is not None:
+        kwargs["position_embedding_type"] = bridge_type
+    monkeypatch.setattr(bridge, "hf_config_to_provider_kwargs", lambda _hf_config: dict(kwargs))
+
+    provider = MegatronModelBridge.provider_bridge(bridge, SimpleNamespace(config=config))
+
+    assert provider.position_embedding_type == expected
 
 
 @pytest.mark.parametrize(

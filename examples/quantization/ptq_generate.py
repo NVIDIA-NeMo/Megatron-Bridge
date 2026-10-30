@@ -19,7 +19,7 @@ and perform text generation using the AutoBridge on multiple GPUs.
 Prerequisites:
 First, you must run the quantization process to create a quantized checkpoint:
     torchrun --nproc_per_node 2 examples/quantization/quantize.py \
-        --hf-model-id meta-llama/Llama-3.2-1B --megatron-save-path ./quantized_megatron_checkpoint --tp 2
+        --hf-model-id Qwen/Qwen3-0.6B --megatron-save-path ./quantized_megatron_checkpoint --tp 2
 
 The process is as follows:
 1. An AutoBridge is initialized from a pretrained Hugging Face model
@@ -28,7 +28,7 @@ The process is as follows:
 3. Text generation is performed using the loaded quantized model.
 
 Usage:
-torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py --hf-model-id meta-llama/Llama-3.2-1B \
+torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py --hf-model-id Qwen/Qwen3-0.6B \
     --megatron-load-path ./quantized_megatron_checkpoint --tp 2
 """
 

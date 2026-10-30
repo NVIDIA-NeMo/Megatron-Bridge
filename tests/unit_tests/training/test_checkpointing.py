@@ -30,9 +30,16 @@ from megatron.core.dist_checkpointing.strategies.torch import (
     TorchDistLoadShardedStrategy,
     TorchDistSaveShardedStrategy,
 )
+from megatron.core.distributed import DistributedDataParallel, TorchFullyShardedDataParallel
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+    FullyShardedDataParallelV1,
+    FullyShardedDataParallelV2,
+)
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.optimizer import distrib_optimizer
 from megatron.core.rerun_state_machine import RerunMode, RerunState, RerunStateMachine
+from megatron.core.transformer.module import Float16Module
+from megatron.core.utils import unwrap_model
 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
 from megatron.bridge.training.checkpointing import (
@@ -57,6 +64,7 @@ from megatron.bridge.training.checkpointing import (
     _has_global_non_persistent_checkpoint,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
+    _load_global_dist_base_checkpoint,
     _load_hf_pretrained_checkpoint,
     _load_model_state_dict,
     _load_non_persistent_base_checkpoint,
@@ -149,12 +157,8 @@ def test_global_checkpoint_load_with_older_core(per_rank_objects, monkeypatch):
     from megatron.bridge.training import checkpointing
 
     # Model both an older config without the field and a config with an explicit policy.
-    config_values = dict(
-        fully_parallel_load=True,
-        fully_parallel_save=True,
-        ckpt_format="torch_dist",
-        dist_ckpt_strictness="assume_ok_unexpected",
-    )
+    config_values = vars(CheckpointConfig(async_save=False, fully_parallel_load=True)).copy()
+    config_values.pop("ckpt_fully_parallel_load_per_rank_objects", None)
     if per_rank_objects is not None:
         config_values["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
     config = SimpleNamespace(**config_values)
@@ -934,8 +938,24 @@ class TestSaveCheckpoint:
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
         assert legacy_tracker.read_text() == "500"
 
+    @pytest.mark.parametrize("save_validation_supported", [True, False])
+    @pytest.mark.parametrize("num_flops", [1000000, 16777217, 10**20 + 1234567890123])
     @pytest.mark.parametrize("verify_integrity", [False, True])
     @pytest.mark.parametrize("save_rng", [True, False])
+    @pytest.mark.parametrize("validate_sharding", [True, False])
+    @pytest.mark.parametrize(
+        "fully_parallel,cached_strategy,constant_structure,is_mimo",
+        [
+            (False, False, False, False),
+            (True, False, False, False),
+            (False, True, True, False),
+            (True, True, True, False),
+            (True, True, False, False),
+            (False, False, False, True),
+            (True, False, False, True),
+        ],
+    )
+    @patch("megatron.bridge.training.checkpointing.FullyParallelSaveStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
     @patch("builtins.open", new_callable=mock_open)
@@ -982,11 +1002,31 @@ class TestSaveCheckpoint:
         mock_file_open,
         mock_is_last_rank,
         mock_wandb,
+        mock_parallel_strategy,
         save_checkpoint_fixtures,
+        monkeypatch,
+        save_validation_supported,
         save_rng,
+        validate_sharding,
+        fully_parallel,
+        cached_strategy,
+        constant_structure,
+        is_mimo,
+        num_flops,
         verify_integrity,
     ):
         """Test saving a global checkpoint."""
+        monkeypatch.setattr(
+            "megatron.bridge.training.checkpointing._FULLY_PARALLEL_SAVE_HAS_VALIDATION_POLICY",
+            save_validation_supported,
+            raising=False,
+        )
+        if not save_validation_supported:
+            # Match the supported dev pin's constructor: a new keyword must fail this test.
+            def legacy_wrapper(strategy, parallelization_group, do_cache_distribution):
+                return Mock()
+
+            mock_parallel_strategy.side_effect = legacy_wrapper
         # Setup mocks
         mock_dist_init.return_value = True
         mock_get_dist_rank.return_value = 0
@@ -1019,6 +1059,12 @@ class TestSaveCheckpoint:
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.save_rng = save_rng
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.ckpt_load_validate_sharding_integrity = validate_sharding
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.fully_parallel_save = fully_parallel
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.ckpt_assume_constant_structure = constant_structure
+        if not is_mimo:
+            del save_checkpoint_fixtures["mock_model"][0].mimo_config
+        checkpoint_context = {"save_strategy": Mock()} if cached_strategy else {}
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.verify_integrity = verify_integrity
 
         call_order = Mock()
@@ -1031,17 +1077,38 @@ class TestSaveCheckpoint:
             save_checkpoint_fixtures["mock_model"],
             save_checkpoint_fixtures["mock_optimizer"],
             save_checkpoint_fixtures["mock_scheduler"],
-            1000000,
-            checkpointing_context={},
+            num_flops,
+            checkpointing_context=checkpoint_context,
             non_persistent_ckpt=False,
         )
 
         assert [call[0] for call in call_order.mock_calls] == ["model", "loader"]
 
+        train_state_saves = [
+            call.args[0] for call in mock_torch_save.call_args_list if str(call.args[1]).endswith("train_state.pt")
+        ]
+        assert train_state_saves
+        for saved_state in train_state_saves:
+            assert saved_state["floating_point_operations_so_far"].dtype == torch.float64
+            assert saved_state["floating_point_operations_so_far"].item() == float(num_flops)
+
         # Verify calls
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+        expected_validation = (validate_sharding or not save_validation_supported) and not (
+            (cached_strategy and constant_structure) or (is_mimo and not fully_parallel)
+        )
+        assert mock_dist_ckpt.save.call_args.kwargs["validate_access_integrity"] is expected_validation
+        if fully_parallel and not cached_strategy:
+            if save_validation_supported:
+                assert (
+                    mock_parallel_strategy.call_args.kwargs.get("validate_access_integrity", True) is validate_sharding
+                )
+            else:
+                assert "validate_access_integrity" not in mock_parallel_strategy.call_args.kwargs
+        else:
+            mock_parallel_strategy.assert_not_called()
         assert mock_dist_ckpt.save.call_args.kwargs["verify_integrity"] is verify_integrity
         if save_rng:
             mock_get_rng.assert_called_once()
@@ -2591,7 +2658,7 @@ class TestLoadCheckpoint:
         mock_dist_init.return_value = False  # Disable distributed for simpler testing
         mock_is_last_rank.return_value = False
         mock_exists.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
 
         # Mock train state file existence (for train_state.pt check)
         mock_exists_os.return_value = True  # train_state.pt exists (normal case)
@@ -3739,7 +3806,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load.return_value = mock_full_state_dict
         mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(1)}}
-        mock_unwrap_model.return_value = mock_model
+        mock_unwrap_model.side_effect = unwrap_model
 
         from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
 
@@ -3979,6 +4046,62 @@ class TestLoadModelStateDictHelper:
     @pytest.fixture(autouse=True)
     def _disable_gtp_load_context(self, monkeypatch):
         monkeypatch.setattr("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", False)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "wrapper_types",
+        [
+            pytest.param((), id="unwrapped"),
+            pytest.param((DistributedDataParallel,), id="ddp"),
+            pytest.param((Float16Module,), id="float16"),
+            pytest.param((DistributedDataParallel, Float16Module), id="ddp-float16"),
+        ],
+    )
+    @pytest.mark.parametrize("strict", [True, False])
+    def test_load_model_state_dict_delegating_wrappers(
+        self, wrapper_types: tuple[type[torch.nn.Module], ...], strict: bool
+    ) -> None:
+        module = torch.nn.Linear(2, 1)
+        original_bias = module.bias.detach().clone()
+        state_dict = {"weight": torch.full_like(module.weight, 2.0)}
+        wrapped = module
+        for wrapper_type in reversed(wrapper_types):
+            # Only exercise native loading; the constructors require distributed setup.
+            wrapper = object.__new__(wrapper_type)
+            torch.nn.Module.__init__(wrapper)
+            wrapper.module = wrapped
+            wrapped = wrapper
+
+        with patch("megatron.bridge.training.checkpointing.print_rank_0") as print_rank_0:
+            _load_model_state_dict(wrapped, state_dict, strict=strict)
+
+        torch.testing.assert_close(module.weight, state_dict["weight"])
+        torch.testing.assert_close(module.bias, original_bias)
+        if strict:
+            assert print_rank_0.call_count == 2
+            assert print_rank_0.call_args_list[1].args == ("Non-extra-state mismatched keys: ['bias']",)
+        else:
+            print_rank_0.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "adapter_type",
+        [TorchFullyShardedDataParallel, FullyShardedDataParallelV1, FullyShardedDataParallelV2],
+    )
+    @pytest.mark.parametrize("strict", [True, False])
+    def test_load_model_state_dict_preserves_fsdp_adapters(
+        self, adapter_type: type[torch.nn.Module], strict: bool
+    ) -> None:
+        # Test routing, not distributed FSDP weight-refresh numerical parity.
+        adapter = Mock(spec=adapter_type)
+        adapter.module = Mock()
+        adapter.load_state_dict.return_value = None
+        state_dict = {"weight": torch.tensor([1.0])}
+
+        _load_model_state_dict(adapter, state_dict, strict=strict)
+
+        adapter.load_state_dict.assert_called_once_with(state_dict, strict=strict)
+        adapter.module.load_state_dict.assert_not_called()
 
     @patch("megatron.core.tensor_parallel.gtp_api.gtp_native_fp8_load_context", create=True)
     @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
@@ -4268,8 +4391,7 @@ class TestMegatronLMCompatibility:
         mock_dist_init.return_value = False
         mock_is_last_rank.return_value = False
         mock_exists_checkpoint.return_value = True
-        mock_unwrap.return_value = [Mock()]
-        mock_unwrap.return_value[0].parameters.return_value = []
+        mock_unwrap.side_effect = unwrap_model
 
         # Mock file existence checks
         def mock_exists_side_effect(path):
@@ -6114,7 +6236,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_dist_init.return_value = False
         mock_exists.return_value = True
         mock_exists_os.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
         mock_generate_state_dict.return_value = {"test": "state"}
         mock_get_rng_state.return_value = Mock()
         mock_build_metadata.return_value = {}
@@ -6244,7 +6366,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_dist_init.return_value = False
         mock_exists.return_value = True
         mock_exists_os.return_value = True
-        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_unwrap.side_effect = unwrap_model
         mock_generate_state_dict.return_value = {"test": "state"}
         mock_get_rng_state.return_value = Mock()
         mock_build_metadata.return_value = {}
@@ -6954,3 +7076,30 @@ def test_checkpoint_minor_version_changes_are_compatible(monkeypatch, versions):
     assert checkpointing.get_checkpoint_version() == versions[-1]
     with pytest.raises(AssertionError, match="checkpoint versions do not match"):
         checkpointing.set_checkpoint_version(2.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("validate_sharding", [True, False])
+@pytest.mark.parametrize("fully_parallel", [True, False])
+@pytest.mark.parametrize("is_mimo", [True, False])
+def test_global_checkpoint_load_honors_sharding_validation(
+    validate_sharding: bool, fully_parallel: bool, is_mimo: bool
+) -> None:
+    """Public checkpoint policy must reach the Core loader."""
+    cfg = CheckpointConfig(
+        ckpt_format="torch_dist",
+        ckpt_load_validate_sharding_integrity=validate_sharding,
+        fully_parallel_load=fully_parallel,
+        fully_parallel_save=fully_parallel,
+    )
+    pg_collection = Mock()
+    with (
+        patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy"),
+        patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper"),
+        patch("megatron.bridge.training.checkpointing.dist_checkpointing.load", return_value={}) as load,
+    ):
+        _load_global_dist_base_checkpoint(
+            "checkpoints", cfg, False, {"model": {}}, 1, False, is_megatron_mimo=is_mimo, pg_collection=pg_collection
+        )
+    expected_validation = validate_sharding and not (is_mimo and not fully_parallel)
+    assert load.call_args.kwargs["validate_access_integrity"] is expected_validation

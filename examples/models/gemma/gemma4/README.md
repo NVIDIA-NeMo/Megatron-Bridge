@@ -243,6 +243,7 @@ runtime that supports the Gemma 4 chat template and multimodal preprocessing.
 ```bash
 PYTHONPATH=$PWD/src:${MEGATRON_LM_ROOT}:${PYTHONPATH:-} uv run --no-sync python -m pytest \
     tests/unit_tests/models/gemma/test_gemma4_bridge.py \
+    tests/unit_tests/models/gemma/test_gemma4_builder.py \
     tests/unit_tests/models/gemma/test_gemma4_provider.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_provider.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_bridge.py \
@@ -264,13 +265,15 @@ NVIDIA_VISIBLE_DEVICES=0,1 uv run --no-sync python -m torch.distributed.run --np
 
 Gemma 4 keeps model-specific behavior in Bridge:
 
-- `Gemma4DenseProvider` builds a standard `GPTModel`, then installs Gemma 4
-  dual RoPE, shared-KV wiring, PLE modules, and checkpoint load aliases.
+- `Gemma4DenseModelBuilder` builds a standard `GPTModel`, then installs Gemma 4
+  dual RoPE, shared-KV wiring, PLE modules, and checkpoint load aliases. The
+  legacy `Gemma4DenseProvider` builds the same model.
 - `modeling_gemma4.py` patches only the created Gemma 4 decoder instance to
   thread `per_layer_inputs` through clean Megatron-Core's generic
   `extra_block_kwargs` path.
 - No Gemma 4 specific Megatron-Core CLI arguments or `TransformerConfig` fields
-  are required for the dense text path.
+  are required: Gemma 4 decoder fields live on Bridge's
+  `Gemma4DenseTransformerConfig` and `Gemma4TransformerConfig`.
 
 ### Text and VL Separation
 
@@ -278,8 +281,12 @@ The text-only implementation lives in `megatron.bridge.models.gemma`:
 
 - `modeling_gemma4.py` contains Dense/MoE layers, attention, dual RoPE, PLE,
   shared-KV wiring, and output softcapping.
-- `gemma4_provider.py` contains `Gemma4DenseProvider` and
-  `Gemma4ModelProvider`.
+- `gemma4_config.py` and `gemma4_builder.py` contain the builder-backed
+  `Gemma4DenseModelConfig` and `Gemma4ModelConfig` and their builders.
+  `AutoBridge.get_model_config()` returns them, including for the VL checkpoints
+  in `GEMMA4_CONVERSION_MODE=text`.
+- `gemma4_provider.py` contains the legacy `Gemma4DenseProvider` and
+  `Gemma4ModelProvider`, built from the same settings.
 - `gemma4_bridge.py` registers `Gemma4ForCausalLM` and defines text checkpoint
   mappings.
 
