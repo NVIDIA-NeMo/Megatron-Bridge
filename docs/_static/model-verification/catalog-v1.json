@@ -7599,19 +7599,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-sft-gb200",
-          "expected_result": "The GB200 recipe owns TP8/EP64, HybridEP NVL72 topology, natural routing, FP32 optimizer state and gradient reduction, synchronous saves, and numerical checks. This 500-step text-only Super VL command awaits verification with the new recipe. Historical results used the H100 recipe with explicit GB200 overrides at the recorded verification revision; they do not verify this command. Require finite main and MTP losses, zero skipped or NaN iterations, and a complete final checkpoint.\n",
+          "expected_result": "Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super SFT recipe on 64 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export and native HF reload passed; they do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison. The date and metrics retain the verification at the recorded Bridge revision, using the H100 recipe with explicit GB200 settings. The command above uses the dedicated GB200 recipe with those settings built in and requires a revision containing that recipe; it is not a new 500-step measurement.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-10-27",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.5677395,
+            "initial_loss": 0.6108874,
+            "last_10_steps_model_tflops_per_gpu_avg": 12.33,
+            "last_10_steps_step_time_ms_avg": 7115.13,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 143.9186634678495
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft"
         },
@@ -7675,13 +7675,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-sft-export-inference-gb200",
-          "expected_result": "Awaiting export and deterministic HF inference from the new GB200 SFT recipe's final checkpoint. Verify the language and MTP tensor inventory, strict native HF reload, and a finite bounded greedy completion. Historical export results at the recorded revision belong to the previous SFT command and are not a rerun of this chain.\n",
+          "expected_result": "Exported the final step-500 language checkpoint through its standalone native text source, retaining 42,683 language tensors including 1,040 MTP tensors and zero media tensors. The only config differences from the pretrained text source were initializer_range=0.014 and max_position_embeddings=2048, both checked against the saved training config. Strict native Transformers reload covered 862 modules and generated exactly 7 tokens, stopping at EOS before the 32-token maximum. The literal completion was \"Two plus two equals four.\". This validates full-model export and one greedy completion, not native HF MTP execution or broad numerical equivalence.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-10-27",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft_export_inference"
         },
@@ -7788,19 +7788,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-text-only-peft-gb200",
-          "expected_result": "The GB200 recipe owns TP8/EP16, HybridEP NVL72 topology, natural routing, FP32 optimizer state and gradient reduction, synchronous saves, and numerical checks. This 500-step text-only Super VL command awaits verification with the new recipe. Historical results used the H100 recipe with explicit GB200 overrides at the recorded verification revision; they do not verify this command. Require finite main and MTP losses, zero skipped or NaN iterations, and a complete final checkpoint. Standalone HF adapter export does not preserve trained router-bias buffers.\n",
+          "expected_result": "Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super PEFT recipe on 16 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. LoRA rank/alpha 32/32 targets native language projections with zero dropout. Standalone HF adapter export does not preserve trained router-bias buffers. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison. The date and metrics retain the verification at the recorded Bridge revision, using the H100 recipe with explicit GB200 settings. The command above uses the dedicated GB200 recipe with those settings built in and requires a revision containing that recipe; it is not a new 500-step measurement.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-10-27",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.6626218,
+            "initial_loss": 0.6527908,
+            "last_10_steps_model_tflops_per_gpu_avg": 14.07,
+            "last_10_steps_step_time_ms_avg": 12216.59,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 167.64088833299635
           },
           "precision": "bf16",
           "source_pointer": "items.peft.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "peft"
         },
@@ -7856,7 +7856,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "nemotron-3.5-super-vl-120b-a12b-text-only",
       "source_card": "examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b-text-only/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This companion card covers importing only language and MTP weights from the VL checkpoint, reusing Nemotron 3 Super text recipes, and exporting a standalone NemotronHForCausalLM checkpoint. It excludes all media encoders, projectors, and video embedding weights. The full-VL card is separate. SFT and PEFT use the prepared full Tulu 3 training split: 892,375 examples after the native 95/5 split, data and packing seed 5678, model seed 1234, 2048-token offline packs aligned to eight tokens, and assistant-only loss. H100 and GB200 use byte-identical packed training and validation files; their training metrics count padded token slots, not supervised tokens. Inference and H100 PEFT are re-verified at the public revision below. The retained eight-GPU conversion and CPU forward results do not establish verification at this revision. Refreshed SFT and PEFT, dependent export, and reload checks are recorded for H100. GB200 SFT and PEFT commands now use dedicated GB200 recipes; their 500-step text-only verification and dependent SFT export/inference await a rerun. Historical GB200 results remain in git history.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This companion card covers importing only language and MTP weights from the VL checkpoint, reusing Nemotron 3 Super text recipes, and exporting a standalone NemotronHForCausalLM checkpoint. It excludes all media encoders, projectors, and video embedding weights. The full-VL card is separate. SFT and PEFT use the prepared full Tulu 3 training split: 892,375 examples after the native 95/5 split, data and packing seed 5678, model seed 1234, 2048-token offline packs aligned to eight tokens, and assistant-only loss. H100 and GB200 use byte-identical packed training and validation files; their training metrics count padded token slots, not supervised tokens. Inference and H100 PEFT are re-verified at the public revision below. The retained eight-GPU conversion and CPU forward results do not establish verification at this revision. Refreshed SFT and PEFT, dependent export, and reload checks are recorded for H100 and GB200. GB200 retains its verified 500-step results, dates, and original revision. Its commands now express the recorded GB200 overrides through dedicated recipes instead of H100 recipes plus overrides; this command refactor does not replace the recorded measurements.\n",
       "title": "nemotron_3_5_super_vl_120b_a12b_text_only"
     },
     {

@@ -17,9 +17,10 @@ summary: >
   Inference and H100 PEFT are re-verified at the public revision below.
   The retained eight-GPU conversion and CPU forward results do not establish
   verification at this revision. Refreshed SFT and PEFT, dependent export,
-  and reload checks are recorded for H100. GB200 SFT and PEFT commands now use
-  dedicated GB200 recipes; their 500-step text-only verification and dependent
-  SFT export/inference await a rerun. Historical GB200 results remain in git history.
+  and reload checks are recorded for H100 and GB200. GB200 retains its verified
+  500-step results, dates, and original revision. Its commands now express the
+  recorded GB200 overrides through dedicated recipes instead of H100 recipes plus
+  overrides; this command refactor does not replace the recorded measurements.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, manual_forward_pass, inference]
@@ -29,7 +30,8 @@ verification_index:
       verified: [sft, sft_export_inference, peft]
       unverified: [pretrain, sft_long_context, checkpoint_resume]
     GB200:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [sft, sft_export_inference, peft]
+      unverified: [pretrain, sft_long_context, checkpoint_resume]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16
   hf_revision: 1f8953f7f0935358e3605150d22bc15df062061c  # pragma: allowlist secret
@@ -219,7 +221,7 @@ items:
         Final export and native HF reload passed; they do not establish general probability equality.
         Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -241,21 +243,23 @@ items:
         checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false
         logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-sft-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-10-27
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 0.6108874
+        final_loss: 0.5677395
+        last_10_steps_step_time_ms_avg: 7115.13
+        last_10_steps_model_tflops_per_gpu_avg: 12.33
+        last_10_steps_tokens_per_second_per_gpu_avg: 143.9186634678495
       expected_result: >
-        The GB200 recipe owns TP8/EP64, HybridEP NVL72 topology, natural routing,
-        FP32 optimizer state and gradient reduction, synchronous saves, and numerical checks.
-        This 500-step text-only Super VL command awaits verification with the new recipe.
-        Historical results used the H100 recipe with explicit GB200 overrides at the recorded
-        verification revision; they do not verify this command. Require finite main and MTP
-        losses, zero skipped or NaN iterations, and a complete final checkpoint.
-
+        Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
+        Uses the native Nemotron 3 Super SFT recipe on 64 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1.
+        Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3.
+        Final export and native HF reload passed; they do not establish general probability equality.
+        Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+        The date and metrics retain the verification at the recorded Bridge revision,
+        using the H100 recipe with explicit GB200 settings. The command above uses
+        the dedicated GB200 recipe with those settings built in and requires a
+        revision containing that recipe; it is not a new 500-step measurement.
   sft_export_inference:
     H100:
       status: verified
@@ -290,7 +294,7 @@ items:
         export and one greedy completion, not native HF MTP execution or broad
         numerical equivalence.
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
       commands:
@@ -309,13 +313,18 @@ items:
           --prompt "What is two plus two?" --max-new-tokens 32
           --chat-template --disable-thinking --device cuda --device-map balanced
           --dtype bfloat16 --require-gpu-only
-      last_verified: null
+      last_verified: 2026-10-27
       expected_result: >
-        Awaiting export and deterministic HF inference from the new GB200 SFT recipe's
-        final checkpoint. Verify the language and MTP tensor inventory, strict native HF
-        reload, and a finite bounded greedy completion. Historical export results at the
-        recorded revision belong to the previous SFT command and are not a rerun of this chain.
-
+        Exported the final step-500 language checkpoint through its standalone
+        native text source, retaining 42,683 language tensors including 1,040
+        MTP tensors and zero media tensors. The only config differences from
+        the pretrained text source were initializer_range=0.014 and
+        max_position_embeddings=2048, both checked against the saved training
+        config. Strict native Transformers reload covered 862 modules and
+        generated exactly 7 tokens, stopping at EOS before the 32-token maximum. The literal
+        completion was "Two plus two equals four.". This validates full-model
+        export and one greedy completion, not native HF MTP execution or broad
+        numerical equivalence.
   sft_long_context:
     H100:
       status: unverified
@@ -399,7 +408,7 @@ items:
         not supervised-token counts. This is bounded support verification, not
         full convergence or a cross-model convergence comparison.
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -421,22 +430,23 @@ items:
         checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false
         logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-peft-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-10-27
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 0.6527908
+        final_loss: 0.6626218
+        last_10_steps_step_time_ms_avg: 12216.59
+        last_10_steps_model_tflops_per_gpu_avg: 14.07
+        last_10_steps_tokens_per_second_per_gpu_avg: 167.64088833299635
       expected_result: >
-        The GB200 recipe owns TP8/EP16, HybridEP NVL72 topology, natural routing,
-        FP32 optimizer state and gradient reduction, synchronous saves, and numerical checks.
-        This 500-step text-only Super VL command awaits verification with the new recipe.
-        Historical results used the H100 recipe with explicit GB200 overrides at the recorded
-        verification revision; they do not verify this command. Require finite main and MTP
-        losses, zero skipped or NaN iterations, and a complete final checkpoint.
-        Standalone HF adapter export does not preserve trained router-bias buffers.
-
+        Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
+        Uses the native Nemotron 3 Super PEFT recipe on 16 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1.
+        Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3.
+        LoRA rank/alpha 32/32 targets native language projections with zero dropout. Standalone HF adapter export does not preserve trained router-bias buffers.
+        Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+        The date and metrics retain the verification at the recorded Bridge revision,
+        using the H100 recipe with explicit GB200 settings. The command above uses
+        the dedicated GB200 recipe with those settings built in and requires a
+        revision containing that recipe; it is not a new 500-step measurement.
   checkpoint_resume:
     H100:
       status: unverified
