@@ -46,13 +46,13 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
     pack_dist_train_vision_module_output,
-    preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
     split_data_cp_rank,
     split_deepstack_embs,
     split_part_by_cp_tp,
 )
+from megatron.bridge.training.utils.packed_seq_utils import preprocess_packed_seqs
 
 
 """
