@@ -3545,10 +3545,13 @@ class TestCheckpointConfig:
         ],
     )
     def test_save_retain_interval_validation(self, config_overrides, error_message):
-        """Retain intervals require one valid, unambiguous persistent retention policy."""
+        """Retain intervals require one valid, unambiguous persistent retention policy.
+
+        The rule is Megatron-LM's `CheckpointConfig.validate()`, which `finalize()` runs.
+        """
         ckpt_cfg = create_test_checkpoint_config(**config_overrides)
 
-        with pytest.raises(ValueError, match=error_message):
+        with pytest.raises(AssertionError, match=error_message):
             ckpt_cfg.finalize()
 
     def test_save_retain_interval_accepts_multiple_of_save_interval(self):
@@ -3556,6 +3559,30 @@ class TestCheckpointConfig:
         ckpt_cfg = create_test_checkpoint_config(save_interval=10, save_retain_interval=20)
 
         ckpt_cfg.finalize()
+
+    @pytest.mark.parametrize("save_interval", [None, 0])
+    def test_save_without_a_periodic_interval_is_valid(self, save_interval):
+        """A save directory with no periodic interval saves at the end of training only; both
+        frameworks accept it."""
+        ckpt_cfg = create_test_checkpoint_config(save="/tmp/ckpt", save_interval=save_interval)
+
+        ckpt_cfg.finalize()
+
+    @pytest.mark.parametrize(
+        "config_overrides, error_message",
+        [
+            ({"async_strategy": "other"}, "async_strategy other is not supported"),
+            ({"verify_integrity": True, "ckpt_format": "torch"}, "only supported with torch_dist"),
+            ({"save_interval": -1}, "save_interval must be non-negative"),
+        ],
+    )
+    def test_shared_checkpoint_rules_are_inherited(self, config_overrides, error_message):
+        """The checks Megatron-LM used to run at construction, and its other own-section rules,
+        reach Bridge through `super().validate()`."""
+        ckpt_cfg = create_test_checkpoint_config(**config_overrides)
+
+        with pytest.raises(AssertionError, match=error_message):
+            ckpt_cfg.finalize()
 
     def test_precision_aware_optimizer_cpu_staging_defaults_off(self):
         ckpt_cfg = create_test_checkpoint_config()
