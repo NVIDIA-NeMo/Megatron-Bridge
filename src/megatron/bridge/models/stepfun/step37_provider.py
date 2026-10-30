@@ -52,7 +52,7 @@ class Step37ModelProvider(Step35ModelProvider):
     # ``position_embedding_type: str = "mrope"`` for the same reason.
     position_embedding_type: str = "rope"
 
-    # Vision / multimodal fields surfaced through Step37Bridge.provider_bridge.
+    # Vision / multimodal fields surfaced through Step37Bridge.hf_config_to_provider_kwargs.
     vision_config: Optional[Any] = None
     image_token_id: int = 128001
     understand_projector_stride: int = 2
@@ -77,7 +77,7 @@ class Step37ModelProvider(Step35ModelProvider):
         """Build a :class:`Step37Model` for the current PP/VP stage."""
         # Reuse Step-3.5's hybrid layer spec — Step3.7 keeps that decoder
         # verbatim. ``transformer_layer_spec`` is set on the provider by
-        # Step35Bridge.provider_bridge when moe_layers_enum is present, so
+        # Step35Bridge.hf_config_to_model_config_kwargs when moe_layers_enum is present, so
         # we honour that override; otherwise we fall back to the helper.
         layer_spec = self.transformer_layer_spec
         if not callable(layer_spec) and layer_spec is None:
