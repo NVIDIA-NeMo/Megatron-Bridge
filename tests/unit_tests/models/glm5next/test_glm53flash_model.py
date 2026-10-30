@@ -2,6 +2,7 @@
 
 """Tests for the GLM-5.3-Flash VLM wrapper: pipeline stages, packed layouts and MTP depth."""
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -202,6 +203,32 @@ def test_provider_resolves_omitted_stage_flags(pp_rank, vp_stage, vp_size, expec
 # ---------------------------------------------------------------------------
 
 
+def test_language_model_runs_mtp_with_packed_positions():
+    model = _model()
+    input_ids, attention_mask, labels, loss_mask = _dense_batch()
+    model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, loss_mask=loss_mask)
+
+    call = model.language_model.calls[0]
+    # MTP is not disabled, and only Megatron-Core's own arguments reach the language model.
+    assert set(call) == {
+        "input_ids",
+        "position_ids",
+        "attention_mask",
+        "decoder_input",
+        "labels",
+        "loss_mask",
+        "runtime_gather_output",
+        "packed_seq_params",
+    }
+    # Positions restart for each packed sequence; MTP rolls them with the token IDs.
+    torch.testing.assert_close(call["position_ids"], torch.tensor([[0, 1, 0, 1, 2]]))
+
+
+def test_forward_takes_no_caller_output_hooks():
+    parameters = inspect.signature(GLM53FlashModel.forward).parameters
+    assert not {"output_processor", "output_processor_context", "temperature"} & set(parameters)
+
+
 def test_text_forward_without_attention_mask_matches_all_ones_mask():
     input_ids = torch.tensor([[5, 6, 7], [8, 9, 10]])
     calls = []
@@ -260,53 +287,9 @@ def test_left_padded_integer_mask_keeps_valid_token_order():
     )
     call = model.language_model.calls[0]
     torch.testing.assert_close(call["input_ids"], torch.tensor([[11, 12, 21, 22, 23]]))
+    # Left padding does not shift positions: each sequence starts at 0.
+    torch.testing.assert_close(call["position_ids"], torch.tensor([[0, 1, 0, 1, 2]]))
     _assert_aligned_supervision(call, packed_loss_mask)
-
-
-# ---------------------------------------------------------------------------
-# Dense rows with caller-built metadata (verl)
-# ---------------------------------------------------------------------------
-
-
-def test_caller_metadata_and_thd_supervision_pass_through():
-    model = _model()
-    input_ids, attention_mask, _, _ = _dense_batch()
-    caller_params = PackedSeqParams(
-        qkv_format="thd",
-        cu_seqlens_q=torch.tensor([0, 2, 5], dtype=torch.int32),
-        cu_seqlens_kv=torch.tensor([0, 2, 5], dtype=torch.int32),
-        max_seqlen_q=3,
-        max_seqlen_kv=3,
-    )
-    thd_labels = torch.arange(5).unsqueeze(0)
-    thd_loss_mask = torch.ones(1, 5)
-
-    output = model(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        packed_seq_params=caller_params,
-        labels=thd_labels,
-        loss_mask=thd_loss_mask,
-    )
-
-    assert not isinstance(output, tuple)
-    call = model.language_model.calls[0]
-    assert call["packed_seq_params"] is caller_params
-    assert call["labels"] is thd_labels
-    assert call["loss_mask"] is thd_loss_mask
-    torch.testing.assert_close(call["input_ids"], torch.tensor([[11, 12, 21, 22, 23]]))
-
-
-def test_caller_metadata_must_describe_one_sequence_per_row():
-    model = _model()
-    input_ids, attention_mask, _, _ = _dense_batch()
-    one_sequence = PackedSeqParams(
-        qkv_format="thd",
-        cu_seqlens_q=torch.tensor([0, 5], dtype=torch.int32),
-        cu_seqlens_kv=torch.tensor([0, 5], dtype=torch.int32),
-    )
-    with pytest.raises(ValueError, match="each input row must be one sequence"):
-        model(input_ids=input_ids, attention_mask=attention_mask, packed_seq_params=one_sequence)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +327,17 @@ def test_existing_thd_stream_keeps_its_boundaries():
     assert call["labels"] is labels
     assert call["loss_mask"] is loss_mask
     torch.testing.assert_close(call["decoder_input"][:, 0, 0], input_ids[0].float())
+    # Physical boundaries [0, 2, 6]: the trailing alignment token belongs to the second sequence.
+    torch.testing.assert_close(call["position_ids"], torch.tensor([[0, 1, 0, 1, 2, 3]]))
+
+
+def test_existing_thd_stream_rejects_a_keep_mask():
+    model = _model()
+    input_ids, params, _, _ = _packed_batch()
+    with pytest.raises(ValueError, match="attention_mask=None"):
+        model(
+            input_ids=input_ids, attention_mask=torch.ones_like(input_ids, dtype=torch.bool), packed_seq_params=params
+        )
 
 
 def test_existing_thd_stream_selects_this_cp_rank_once():
@@ -359,6 +353,7 @@ def test_existing_thd_stream_selects_this_cp_rank_once():
     call = model.language_model.calls[0]
     assert call["packed_seq_params"] is params
     torch.testing.assert_close(call["input_ids"], torch.tensor([[12, 21, 0]]))
+    torch.testing.assert_close(call["position_ids"], torch.tensor([[1, 0, 3]]))
     _assert_aligned_supervision(call, local_loss_mask)
 
 
