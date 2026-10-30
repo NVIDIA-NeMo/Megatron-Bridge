@@ -521,6 +521,11 @@ def _local_expert_mapping(mapping: Any, global_param_name: str, pg_collection: A
             specs[0].name,
             getattr(mapping, "permute_dims", None),
         )
+    elif type(mapping) in (ColumnParallelMapping, RowParallelMapping):
+        if len(specs) != 1 or specs[0].split_count != 1:
+            return None
+        local_type = _LocalExpertColumnMapping if type(mapping) is ColumnParallelMapping else _LocalExpertRowMapping
+        replacement = local_type(mapping.megatron_param, specs[0].name)
     else:
         return None
     replacement.set_process_groups_from_pg_collection(pg_collection)
