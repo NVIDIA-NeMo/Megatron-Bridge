@@ -108,3 +108,37 @@ def test_dynamic_cp_recipe_rejects_model_config_without_dynamic_cp(builder_only:
 
     with pytest.raises(AttributeError, match="dynamic_context_parallel"):
         _DYNAMIC_CP_RECIPE()
+
+
+def test_pretrain_recipes_pin_base_model_revisions(builder_only: None, monkeypatch: pytest.MonkeyPatch):
+    """The pretrain recipes read the Base config and tokenizer at a fixed revision, not Hub main."""
+    calls = []
+
+    def load(path, **kwargs):
+        calls.append((path, kwargs))
+        return _HF_CONFIGS[path]()
+
+    monkeypatch.setattr(qwen35.AutoConfig, "from_pretrained", load)
+
+    dense = qwen35.qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
+    moe = qwen35.qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config()
+
+    assert calls == [
+        ("Qwen/Qwen3.5-9B-Base", {"revision": qwen35._QWEN35_9B_BASE_REVISION}),
+        ("Qwen/Qwen3.5-35B-A3B-Base", {"revision": qwen35._QWEN35_35B_A3B_BASE_REVISION}),
+    ]
+    assert dense.tokenizer.hf_tokenizer_kwargs == {"revision": qwen35._QWEN35_9B_BASE_REVISION}
+    assert moe.tokenizer.hf_tokenizer_kwargs == {"revision": qwen35._QWEN35_35B_A3B_BASE_REVISION}
+
+
+def test_35b_a3b_pretrain_keeps_hybridep_on_one_nvlink_domain(builder_only: None):
+    """EP8 over two four-GPU GB200 nodes runs HybridEP across one multi-node NVLink domain."""
+    cfg = qwen35.qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config()
+
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.env_vars == {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+    }

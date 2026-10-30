@@ -90,8 +90,10 @@ from megatron.bridge.models.gemma_vl import (
     Gemma3VLBridge,
     Gemma3VLModel,
     Gemma3VLModelProvider,
+    Gemma4DenseVLModelConfig,
     Gemma4VLBridge,
     Gemma4VLModel,
+    Gemma4VLModelConfig,
     Gemma4VLModelProvider,
 )
 from megatron.bridge.models.glm import (
@@ -168,6 +170,8 @@ from megatron.bridge.models.nemotron_omni import (
     Nemotron35SuperVLBridge,
     NemotronOmniBridge,
     NemotronOmniModel,
+    NemotronOmniModelBuilder,
+    NemotronOmniModelConfig,
 )
 from megatron.bridge.models.nemotron_vl import (
     NemotronVLBridge,
@@ -205,9 +209,12 @@ from megatron.bridge.models.qwen_vl import (
     Qwen35TokenClassificationBridge,
     Qwen35TokenClassificationModelProvider,
     Qwen35VLBridge,
+    Qwen35VLModelBuilder,
+    Qwen35VLModelConfig,
     Qwen35VLModelProvider,
     Qwen35VLMoEBridge,
     Qwen35VLMoEModelProvider,
+    Qwen35VLTransformerConfig,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLBridge,
@@ -325,15 +332,20 @@ __all__ = [
     "Qwen35VLBridge",
     "Qwen35TokenClassificationBridge",
     "Qwen35TokenClassificationModelProvider",
+    "Qwen35VLModelBuilder",
+    "Qwen35VLModelConfig",
     "Qwen35VLModelProvider",
     "Qwen35VLMoEBridge",
     "Qwen35VLMoEModelProvider",
+    "Qwen35VLTransformerConfig",
     "Gemma3VLBridge",
     "Gemma3VLModel",
     "Gemma3VLModelProvider",
     "Gemma4VLBridge",
     "Gemma4VLModel",
+    "Gemma4VLModelConfig",
     "Gemma4VLModelProvider",
+    "Gemma4DenseVLModelConfig",
     "DiffusionGemmaBridge",
     "DiffusionGemmaModel",
     "DiffusionGemmaModelProvider",
@@ -341,6 +353,8 @@ __all__ = [
     "NemotronVLBridge",
     "NemotronOmniBridge",
     "NemotronOmniModel",
+    "NemotronOmniModelBuilder",
+    "NemotronOmniModelConfig",
     "Nemotron35SuperVLBridge",
     # ASR Models
     "Qwen3ASRBridge",
