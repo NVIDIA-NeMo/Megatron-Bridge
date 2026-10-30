@@ -40,6 +40,12 @@ _MODEL_COLLATE_SPECS = {
         "nemotron_omni_expanded_collate_fn",
         always_use_model_collate=True,
     ),
+    # Nemotron 3.5 Super VL reuses the Nemotron Omni model and its processor-expanded sequence contract.
+    "NemotronH_Omni_Reasoning_V3Processor": _ModelCollateSpec(
+        "megatron.bridge.models.nemotron_omni.data.collate_fn",
+        "nemotron_omni_expanded_collate_fn",
+        always_use_model_collate=True,
+    ),
     "PixtralProcessor": _ModelCollateSpec(
         "megatron.bridge.models.ministral3.data.collate_fn", "ministral3_collate_fn"
     ),
@@ -51,6 +57,10 @@ _MODEL_COLLATE_SPECS = {
     "Glm4vProcessor": _ModelCollateSpec("megatron.bridge.models.glm_vl.data.collate_fn", "glm4v_collate_fn"),
     "KimiK25Processor": _ModelCollateSpec("megatron.bridge.models.kimi_vl.data.collate_fn", "kimi_k25_vl_collate_fn"),
     "MuseGlimmerProcessor": _ModelCollateSpec(
+        "megatron.bridge.models.muse_glimmer.data.collate_fn", "muse_glimmer_collate_fn"
+    ),
+    # Muse Spark Open shares Muse Glimmer's chat markers and THW-grid image inputs.
+    "MuseSparkProcessor": _ModelCollateSpec(
         "megatron.bridge.models.muse_glimmer.data.collate_fn", "muse_glimmer_collate_fn"
     ),
     "deepseek-v4": _ModelCollateSpec(

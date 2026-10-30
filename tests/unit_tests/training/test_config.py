@@ -25,6 +25,7 @@ import torch
 
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
+    DPODatasetConfig,
     EnergonDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
@@ -66,6 +67,7 @@ from megatron.bridge.training.config import (
     apply_environment_variables,
     megatron_mimo_runtime_config_update,
 )
+from megatron.bridge.training.dpo import DPOLossConfig
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.utils.cuda_graph import (
@@ -1519,6 +1521,90 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             assert dataset_cfg.pad_to_multiple_of == 24
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("tensor_size", "pipeline_size", "expected_pad_mult", "expected_variable_seq"),
+        [(4, 1, 4, False), (1, 2, 1, True)],
+        ids=["sequence-parallel", "pipeline-parallel"],
+    )
+    def test_dpo_dataset_adapts_to_sequence_and_pipeline_parallelism(
+        self, tensor_size, pipeline_size, expected_pad_mult, expected_variable_seq
+    ):
+        """DPO batches are padded dynamically: SP needs a TP-multiple collate width, PP stages must exchange shapes."""
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=tensor_size,
+            sequence_parallel=tensor_size > 1,
+            pipeline_model_parallel_size=pipeline_size,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = DPODatasetConfig(
+            seq_length=512,
+            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=tensor_size * pipeline_size,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.dpo = DPOLossConfig()
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_seq_length_to_mult == expected_pad_mult
+            assert gpt_model_cfg.variable_seq_lengths is expected_variable_seq
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("mutate", "match"),
+        [
+            (lambda c: setattr(c, "dpo", None), "DPOLossConfig"),
+            (lambda c: setattr(c.model, "calculate_per_token_loss", False), "calculate_per_token_loss"),
+            (lambda c: setattr(c.ddp, "average_in_collective", True), "average_in_collective"),
+            (lambda c: setattr(c.model, "context_parallel_size", 2), "context_parallel_size"),
+            (lambda c: setattr(c.model, "mtp_num_layers", 1), "mtp_num_layers"),
+            (lambda c: setattr(c.train, "micro_batch_size", 1), "even train.micro_batch_size"),
+            (lambda c: setattr(c.validation, "eval_micro_batch_size", 3), "eval_micro_batch_size"),
+            (lambda c: setattr(c.dist, "eval_context_parallel_size", 2), "eval_context_parallel_size"),
+        ],
+        ids=[
+            "no_loss_config",
+            "per_token_loss",
+            "average_in_collective",
+            "cp",
+            "mtp",
+            "odd_mbs",
+            "odd_eval_mbs",
+            "eval_cp",
+        ],
+    )
+    def test_dpo_dataset_enforces_the_loss_contract(self, mutate, match):
+        """A DPO dataset pulls in the loss contract: each violated knob is named in the error."""
+        gpt_model_cfg = create_test_gpt_config(calculate_per_token_loss=True)
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = DPODatasetConfig(
+            seq_length=512,
+            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.dpo = DPOLossConfig()
+        container.ddp.average_in_collective = False
+        mutate(container)
+
+        try:
+            with pytest.raises(ValueError, match=match):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -3609,6 +3695,33 @@ class TestCheckpointConfig:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_also_save_hf_checkpoint_accepts_builder_source_metadata_during_container_validation(self):
+        """Test that a builder-backed config's recorded source satisfies HF extra export validation."""
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+            seq_length=512,
+            extra_checkpoint_metadata={"hf_model_id": "hf/model"},
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=create_test_gpt_dataset_config(sequence_length=512),
+            tokenizer_config=create_test_tokenizer_config(tokenizer_model=None),
+            checkpoint_config=create_test_checkpoint_config(also_save_hf_checkpoint=True),
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_also_save_hf_checkpoint_accepts_tokenizer_model_during_container_validation(self):
         """Test that tokenizer.tokenizer_model satisfies HF extra export validation."""
         checkpoint_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True)
@@ -4128,6 +4241,29 @@ class TestRuntimeConfigUpdate:
                 "TORCHINDUCTOR_WORKER_START": "fork",
                 "USE_MNNVL": 1,
             }
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_layer_wise_param_layout_is_serializable_and_overridable(self, tmp_path):
+        """The recipe override path preserves the LayerWise layout choice."""
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            assert full_cfg.optimizer.use_layer_wise_param_layout is False
+            assert full_cfg.to_dict()["optimizer"]["use_layer_wise_param_layout"] is False
+            process_config_with_overrides(
+                full_cfg,
+                cli_overrides=["optimizer.use_layer_wise_param_layout=true"],
+            )
+            assert full_cfg.optimizer.use_layer_wise_param_layout is True
+
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+            assert restored_cfg.optimizer.use_layer_wise_param_layout is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -4990,6 +5126,61 @@ class TestEpochBasedTraining:
             megatron_mimo_runtime_config_update(cfg)
         assert os.environ["TORCHINDUCTOR_WORKER_START"] == "fork"
 
+    @pytest.mark.parametrize("ddp_overlap,optimizer_overlap", [(True, False), (False, True), (True, True)])
+    @pytest.mark.parametrize("ddp_reuse,optimizer_reuse", [(True, False), (False, True), (True, True)])
+    def test_megatron_mimo_runtime_config_update_rejects_mxfp8_overlap_param_gather(
+        self, ddp_overlap, optimizer_overlap, ddp_reuse, optimizer_reuse
+    ):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = DistributedDataParallelConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=ddp_overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse,
+            fp8_param_gather=ddp_reuse,
+            grad_reduce_in_fp32=True,
+        )
+        cfg.optimizer = OptimizerConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=optimizer_overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
+        )
+
+        with pytest.raises(ValueError, match="overlap_param_gather with reuse_grad_buf_for_mxfp8_param_ag"):
+            megatron_mimo_runtime_config_update(cfg)
+
+    @pytest.mark.parametrize(
+        ("overlap", "ddp_reuse", "optimizer_reuse"),
+        [(False, False, False), (False, True, False), (False, False, True), (False, True, True), (True, False, False)],
+    )
+    def test_megatron_mimo_runtime_config_update_accepts_supported_gather_configs(
+        self, overlap, ddp_reuse, optimizer_reuse
+    ):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = DistributedDataParallelConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse,
+            fp8_param_gather=ddp_reuse,
+            grad_reduce_in_fp32=True,
+        )
+        cfg.optimizer = OptimizerConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
+        )
+
+        megatron_mimo_runtime_config_update(cfg)
+
+        assert cfg.ddp.overlap_param_gather is overlap
+        assert cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag is ddp_reuse
+        assert cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+
 
 class TestDatasetSequenceLengthValidation:
     """Tests for dataset sequence length validation with different dataset types."""
@@ -5348,6 +5539,7 @@ def test_layerwise_optimizer_rejects_single_grouped_weight(use_recipe):
             cfg.optimizer, cfg.scheduler = distributed_muon_with_cosine_annealing()
             assert not cfg.optimizer.use_layer_wise_distributed_optimizer
         else:
+            cfg.optimizer.optimizer = "muon"
             cfg.optimizer.use_layer_wise_distributed_optimizer = True
         with pytest.raises(ValueError, match="moe_single_grouped_weight"):
             cfg.validate()

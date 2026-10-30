@@ -67,6 +67,7 @@ BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
         "llama3_70b_peft_8gpu_h100_bf16_config",
         "llama3_70b_sft_32gpu_h100_bf16_config",
         "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+        "nemotron_3_super_pretrain_64gpu_gb200_bf16_config",
         "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",
         "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     }
@@ -80,7 +81,7 @@ LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset(
     }
 )
 
-PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora"})
+PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora", "dpo"})
 TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})
 
 # Exact source-specific overrides take precedence over family defaults. The
@@ -111,6 +112,7 @@ RECIPE_FORWARD_STEP_PREFIXES = (
     ("kimi_k25_vl_", "vlm_step"),
     ("ministral3_", "vlm_step"),
     ("muse_glimmer_", "vlm_step"),
+    ("muse_spark_open_", "vlm_step"),
     ("qwen25_vl_", "vlm_step"),
     ("flux_", "flux_step"),
     ("wan_", "wan_step"),
@@ -233,6 +235,9 @@ def recipe_step(recipe_name: str, *, native_energon_packing: bool = False) -> st
         return "vlm_step"
     if recipe_name in RECIPE_FORWARD_STEPS:
         return RECIPE_FORWARD_STEPS[recipe_name]
+    # DPO computes its pair loss inside the forward step, so DPO recipes never use a modality step.
+    if infer_recipe_mode(recipe_name) == "dpo":
+        return "dpo_step"
     for prefix, step_name in RECIPE_FORWARD_STEP_PREFIXES:
         if recipe_name.startswith(prefix):
             return step_name
@@ -258,6 +263,8 @@ def infer_recipe_mode(recipe_name: str) -> str | None:
         return "pretrain"
     if "_sft_" in normalized_name or "_finetune_" in normalized_name:
         return "sft"
+    if "_dpo_" in normalized_name:
+        return "dpo"
     if "_dora_" in normalized_name:
         return "dora"
     if "_peft_" in normalized_name or "_lora_" in normalized_name:

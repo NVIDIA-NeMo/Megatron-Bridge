@@ -99,9 +99,9 @@ export OUTPUT_DIR="$WORKSPACE/results/qwen3-vl-hf-local-smoke"
 uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_config \
-  --dataset vlm-hf \
+  --dataset local-vlm \
   --step_func vlm_step \
-  --peft_scheme lora \
+  --mode lora \
   --seq_length 1024 \
   checkpoint.pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
   checkpoint.load=null \
@@ -126,7 +126,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
 
 Success means the launcher loads the native checkpoint, the Qwen processor opens the local PNGs, and iteration 1 reports a finite loss before writing the adapter checkpoint.
 
-`--dataset vlm-hf` selects the generic `DirectHFSFTDatasetConfig`; the remaining overrides select Qwen's processor and the local JSON source. Passing the selector also makes `--seq_length` update both model and dataset lengths.
+`--dataset local-vlm` keeps the recipe's `DirectHFSFTDatasetConfig` and swaps in a local JSON source; the remaining overrides point it at your file and select Qwen's processor. Passing the selector also makes `--seq_length` update both model and dataset lengths.
 
 ## Run the hosted MedPix preset with W&B
 
@@ -142,9 +142,9 @@ export OUTPUT_DIR="$WORKSPACE/results/qwen3-vl-medpix-direct"
 uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_config \
-  --dataset vlm-hf \
+  --dataset medpix \
   --step_func vlm_step \
-  --peft_scheme lora \
+  --mode lora \
   --seq_length 1024 \
   checkpoint.pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
   checkpoint.load=null \
@@ -237,13 +237,13 @@ needed for the recommended Qwen3-VL Direct-HF workflow.
 
 ## Migrate from `vlm-preloaded`
 
-`PreloadedVLMConversationProvider` and the `vlm-preloaded` launcher selector have been removed. No deprecated
-provider or replacement local selector remains. Use `vlm-hf` for hosted datasets or files accepted by Hugging Face
-datasets, and use `vlm-energon` for Energon/WebDataset data.
+`PreloadedVLMConversationProvider` and the `vlm-preloaded` launcher selector have been removed. Use `local-vlm` for
+local JSON/JSONL files, a named preset such as `medpix` or `cord-v2` for hosted Hugging Face datasets, and `energon`
+for Energon/WebDataset data.
 
 | Removed setting | Supported setting |
 | --- | --- |
-| `--dataset vlm-preloaded` | `--dataset vlm-hf` or `--dataset vlm-energon` |
+| `--dataset vlm-preloaded` | `--dataset local-vlm`, a named preset such as `--dataset medpix`, or `--dataset energon` |
 | `dataset.train_data_path` | `source=HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": {"train": ...}})` |
 | `dataset.valid_data_path` | An explicit HF `validation_source`, or an Energon split |
 | `dataset.test_data_path` | An explicit HF `test_source`, or an Energon split |

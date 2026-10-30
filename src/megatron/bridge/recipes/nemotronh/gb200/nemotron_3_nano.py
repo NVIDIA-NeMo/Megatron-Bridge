@@ -22,7 +22,8 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
     nemotron_3_5_lightning_pretrain_config,
     nemotron_3_5_lightning_sft_openmathinstruct2_packed_config,
 )
-from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS, DETERMINISM_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
@@ -45,7 +46,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).get_model_config()
     # Pretraining may use a tokenizer other than the HF checkpoint tokenizer.
     # Defer the model vocabulary size to the runtime tokenizer, matching the
     # pre-migration MambaModelProvider recipe behavior.
@@ -157,6 +158,31 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigContainer:
+    """Return a deterministic Nemotron 3 Nano BF16 pretraining config for eight GB200 GPUs.
+
+    Wraps :func:`nemotron_3_nano_pretrain_8gpu_gb200_bf16_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    """
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    apply_determinism_overrides(cfg)
+    # Keep the exact process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        **DETERMINISM_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
 def nemotron_3_5_lightning_pretrain_8k_config() -> ConfigContainer:
     """Return the Nemotron 3.5 Lightning BF16 8K pretraining config."""
     cfg = nemotron_3_5_lightning_pretrain_config()
@@ -250,4 +276,5 @@ __all__ = [
     "nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config",
     "nemotron_3_nano_gb200_pretrain_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config",
 ]

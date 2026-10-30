@@ -15,7 +15,7 @@
 """Serializable config and runtime builder for direct Hugging Face SFT."""
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Literal
@@ -33,13 +33,16 @@ from megatron.bridge.data.sft_processing import (
     PromptCompletionSFTPreprocessingConfig,
     SFTPreprocessingConfig,
     is_text_only_prompt_completion_example,
+    normalize_sft_example,
     normalize_sft_examples,
     validate_sft_preprocessing_config,
 )
 from megatron.bridge.data.sources.hf import (
     HFDatasetSourceConfig,
+    as_hf_dataset_source,
     hf_dataset_supports_split,
     load_and_adapt_hf_dataset,
+    load_and_adapt_hf_dataset_lazily,
     load_and_blend_hf_datasets,
     prepare_hf_dataset_sources,
     resolve_blend_weights,
@@ -56,13 +59,6 @@ _DEEPSEEK_V4_ASSISTANT_TOKEN = "<｜Assistant｜>"
 _DEEPSEEK_V4_ASSISTANT_TOKEN_ID = 128804
 
 
-def _as_source(entry: "HFDatasetSourceConfig | Mapping[str, Any]") -> HFDatasetSourceConfig:
-    """Rebuild a source that an override round trip flattened into a mapping."""
-    if isinstance(entry, HFDatasetSourceConfig):
-        return entry
-    return HFDatasetSourceConfig(**dict(entry))
-
-
 @dataclass(kw_only=True)
 class DirectHFSFTDatasetConfig(DataloaderConfig):
     """Serializable configuration for direct Hugging Face SFT datasets.
@@ -73,6 +69,10 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
 
     ``source`` takes one source or a list of them. A list blends the training
     rows across the sources, weighted by ``source_weights``.
+
+    ``lazy_examples`` keeps each split as its memory-mapped Hugging Face dataset
+    and adapts a row when it is read, instead of holding every row as Python
+    objects in each rank (a one-source training split only).
     """
 
     seq_length: int
@@ -93,6 +93,7 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     pad_to_max_length: bool = False
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
+    lazy_examples: bool = False
     megatron_mimo_scalable_dp: bool = False
     megatron_mimo_intra_microbatch_reorder: bool = False
     # Reorder cost = encoder_weight * image patches + language_weight * real tokens; only the ratio matters.
@@ -108,9 +109,9 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
         validate_sft_preprocessing_config(self.preprocessing)
         self._validate_sources()
         if self.validation_source is not None:
-            self.validation_source = _as_source(self.validation_source)
+            self.validation_source = as_hf_dataset_source(self.validation_source)
         if self.test_source is not None:
-            self.test_source = _as_source(self.test_source)
+            self.test_source = as_hf_dataset_source(self.test_source)
         if self.do_validation and self.validation_source is not None:
             self._inherit_source_adapter_kwargs(self.validation_source)
             self.validation_source.validate()
@@ -161,6 +162,8 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
             raise ValueError("pad_to_multiple_of must be greater than 0.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
+        if self.lazy_examples and (len(self.training_sources) > 1 or self.source_weights is not None):
+            raise ValueError("lazy_examples supports one training source without source_weights.")
 
     @property
     def training_sources(self) -> list[HFDatasetSourceConfig]:
@@ -178,9 +181,9 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
         # Any override re-serializes this config through OmegaConf, which returns
         # dataclasses as plain mappings even when the override targeted another field.
         if isinstance(self.source, list):
-            self.source = [_as_source(entry) for entry in self.source]
+            self.source = [as_hf_dataset_source(entry) for entry in self.source]
         else:
-            self.source = _as_source(self.source)
+            self.source = as_hf_dataset_source(self.source)
 
         sources = self.training_sources
         if isinstance(self.source, list) or self.source_weights is not None:
@@ -279,8 +282,23 @@ def load_direct_hf_sft_examples(
     return normalize_sft_examples(load_and_adapt_hf_dataset(source), preprocessing)
 
 
+def load_direct_hf_sft_examples_lazily(
+    source: HFDatasetSourceConfig,
+    preprocessing: SFTPreprocessingConfig,
+) -> Sequence[dict[str, Any]]:
+    """Like :func:`load_direct_hf_sft_examples`, but adapt and normalize each row on access."""
+    return load_and_adapt_hf_dataset_lazily(source, partial(normalize_sft_example, preprocessing=preprocessing))
+
+
+def _load_split_examples(
+    config: "DirectHFSFTDatasetConfig", source: HFDatasetSourceConfig
+) -> Sequence[dict[str, Any]]:
+    load = load_direct_hf_sft_examples_lazily if config.lazy_examples else load_direct_hf_sft_examples
+    return load(source, config.preprocessing)
+
+
 def select_direct_hf_sft_collate(
-    examples: list[dict[str, Any]],
+    examples: Sequence[dict[str, Any]],
     preprocessing: SFTPreprocessingConfig | None = None,
     collate_impl: CollateFunction | None = None,
 ) -> CollateFunction | None:
@@ -320,11 +338,11 @@ def _model_collate_key(processor: Any) -> str:
     return type(processor).__name__
 
 
-def load_direct_hf_sft_train_examples(config: DirectHFSFTDatasetConfig) -> list[dict[str, Any]]:
+def load_direct_hf_sft_train_examples(config: DirectHFSFTDatasetConfig) -> Sequence[dict[str, Any]]:
     """Load the training rows, blending them when the config names several sources."""
     sources = config.training_sources
     if len(sources) == 1 and config.source_weights is None:
-        return load_direct_hf_sft_examples(sources[0], config.preprocessing)
+        return _load_split_examples(config, sources[0])
     rows = load_and_blend_hf_datasets(sources, config.source_weights, seed=config.blend_seed)
     return normalize_sft_examples(rows, config.preprocessing)
 
@@ -336,7 +354,7 @@ def build_direct_hf_sft_split(
     processor: Any,
     *,
     collate_impl: CollateFunction | None = None,
-    examples: list[dict[str, Any]] | None = None,
+    examples: Sequence[dict[str, Any]] | None = None,
 ) -> DirectSFTDataset | None:
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
@@ -344,7 +362,7 @@ def build_direct_hf_sft_split(
     from megatron.bridge.data.collators.registry import always_use_model_collate, resolve_model_collate
 
     if examples is None:
-        examples = load_direct_hf_sft_examples(source, config.preprocessing)
+        examples = _load_split_examples(config, source)
     collate_key = _model_collate_key(processor)
     if collate_impl is None and always_use_model_collate(collate_key):
         if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
@@ -358,6 +376,12 @@ def build_direct_hf_sft_split(
                 loss_mode=config.preprocessing.loss_mode,
             )
         else:
+            # The remaining model-owned collators (Nemotron Omni) build assistant-only loss masks.
+            if config.preprocessing.loss_mode != "assistant":
+                raise ValueError(
+                    f"Processor type '{type(processor).__name__}' supports only assistant chat loss through its "
+                    "model-owned collator."
+                )
             selected_collate = None
     else:
         selected_collate = select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl)

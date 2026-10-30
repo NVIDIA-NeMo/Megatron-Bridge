@@ -17,7 +17,8 @@
 import io
 import json
 import re
-from collections.abc import Callable, Iterable, Mapping
+from array import array
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -444,3 +445,51 @@ def adapt_hf_dataset(
     if not examples:
         raise ValueError("Hugging Face source produced no examples after schema adaptation.")
     return examples
+
+
+class LazyAdaptedHFDataset(Sequence):
+    """Adapted rows of a loaded Hugging Face dataset, converted on access instead of held as Python objects.
+
+    A loaded (non-streaming) Hugging Face dataset is memory-mapped Arrow, so its rows stay in the
+    page cache that every process on a node shares. Only the indices of the rows the adapter keeps
+    are held per process; each access adapts, and optionally ``transform``s, its row again.
+
+    Args:
+        dataset: A loaded, indexable Hugging Face dataset.
+        adapter_name: Optional registered schema adapter, as for :func:`adapt_hf_dataset`.
+        adapter_kwargs: Declarative adapter-specific options.
+        transform: Optional function applied to each adapted row, e.g. SFT normalization.
+    """
+
+    def __init__(
+        self,
+        dataset: Any,
+        *,
+        adapter_name: str | None,
+        adapter_kwargs: Mapping[str, Any] | None = None,
+        transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> None:
+        validate_hf_dataset_adapter(adapter_name)
+        self._dataset = dataset
+        self._adapter = _native_conversation_adapter if adapter_name is None else _ADAPTERS[adapter_name]
+        self._adapter_kwargs = dict(adapter_kwargs or {})
+        self._transform = transform
+        # One pass over every row, as the eager path makes: it finds the rows the adapter keeps
+        # and raises on a malformed row at load time rather than mid-training.
+        self._indices = array("q", (i for i, row in enumerate(dataset) if self._convert(row) is not None))
+        if not self._indices:
+            raise ValueError("Hugging Face source produced no examples after schema adaptation.")
+
+    def _convert(self, row: Mapping[str, Any]) -> dict[str, Any] | None:
+        adapted = self._adapter(row, self._adapter_kwargs)
+        if adapted is None or self._transform is None:
+            return adapted
+        return self._transform(adapted)
+
+    def __len__(self) -> int:
+        return len(self._indices)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self[i] for i in range(*index.indices(len(self)))]
+        return self._convert(self._dataset[self._indices[index]])

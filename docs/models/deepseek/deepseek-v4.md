@@ -261,7 +261,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config --mode pretrain --dataset megatron-indexed --max_steps 100 --pretrained_checkpoint work/model-verification/dsv4-flash/import-gpu/iter_0000000 &#x27;dataset.blend=[[&quot;work/data/the-pile/my-gpt3_08_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/the-pile dataset.num_workers=0 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.finetune=false checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false --save_dir work/model-verification/dsv4-flash/pretrain-ref --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config --mode pretrain --dataset megatron-indexed --max_steps 100 --pretrained_checkpoint work/model-verification/dsv4-flash/import-gpu/iter_0000000 &#x27;dataset.blend=[[&quot;work/data/the-pile/my-gpt3_08_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/the-pile dataset.num_workers=0 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.finetune=false checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false --save_dir work/model-verification/dsv4-flash/pretrain-ref --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
@@ -447,30 +447,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>FP8 MX</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-06</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-14</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>13.5875</dd>
+            <dd>12.59972</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>3.62683</dd>
+            <dd>4.25929</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>8,134.600 ms</dd>
+            <dd>8,146.440 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>731.400 TFLOP/s/GPU</dd>
+            <dd>731.830 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>8,056.450 tokens/s/GPU</dd>
+            <dd>8,044.741 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -486,7 +486,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 128 GB200, PP1/EP64/CP1/TP1/DP2 with GBS/MBS 2048/1, FP8-MX, HybridEP dispatch, and full-iteration CUDA graphs completes 50 steps with finite losses, no skipped or NaN iterations, and all five metrics recorded. This benchmark uses forced routing, a static expert-rank capacity, paged stash, and a different batch/objective contract, so its metrics must not be compared with natural-routing library pretraining as convergence evidence.
+        <p>On 128 GB200, PP1/EP32/CP1/TP1/DP4 with GBS/MBS 2048/1, FP8-MX, HybridEP dispatch, and full-iteration CUDA graphs completes 50 steps with finite losses, no skipped or NaN iterations, and all five metrics recorded. This benchmark uses forced routing, a static expert-rank capacity, paged stash, and a different batch/objective contract, so its metrics must not be compared with natural-routing library pretraining as convergence evidence.
 </p>
       </section>
     </article>

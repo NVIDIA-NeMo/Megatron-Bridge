@@ -34,11 +34,14 @@ Key mapping decisions, anchored to the reference implementation
   fused into Megatron's TE ``linear_qkv``/``linear_fc1`` ``layer_norm_weight``.
 """
 
+from typing import Any
+
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
-from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider
+from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider, llada15_layer_spec
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -46,7 +49,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 # Registered under the trust_remote_code class name as a string so AutoBridge
@@ -59,11 +62,22 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
     model_type="llada",
 )
 class LLaDA15Bridge(MegatronModelBridge):
-    """HF ``LLaDAModelLM`` ↔ Megatron ``GPTModel`` bridge."""
+    """HF ``LLaDAModelLM`` ↔ Megatron ``GPTModel`` bridge.
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LLaDA15ModelProvider:
-        hf_config = hf_pretrained.config
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("GSAI-ML/LLaDA-1.5", trust_remote_code=True)
+        >>> model_config = bridge.get_model_config()
+    """
 
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face LLaDA-1.5 config to builder config kwargs.
+
+        The layer spec swaps in the bidirectional ``LLaDA15TEDotProductAttention``.
+        """
         # LLaDAConfig uses OLMo-style names (n_layers, d_model, n_heads, ...).
         # A few HF-standard names are exposed as @property aliases in
         # configuration_llada.py, but several are not — fill them in here.
@@ -77,7 +91,9 @@ class LLaDA15Bridge(MegatronModelBridge):
         )
         vocab_size = hf_config.embedding_size or hf_config.vocab_size
 
-        provider = LLaDA15ModelProvider(
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            transformer_layer_spec=llada15_layer_spec,
             num_layers=num_layers,
             hidden_size=hidden_size,
             ffn_hidden_size=ffn_hidden_size,
@@ -98,12 +114,22 @@ class LLaDA15Bridge(MegatronModelBridge):
             qk_layernorm=hf_config.attention_layer_norm,
             hidden_dropout=hf_config.residual_dropout,
             attention_dropout=hf_config.attention_dropout,
+            fp16=False,
             bf16=True,
             params_dtype=torch.bfloat16,
             autocast_dtype=torch.bfloat16,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(vocab_size),
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
         )
-        return provider
+        # LLaDA1.5 uses full standard RoPE; the base config default would add learned absolute embeddings.
+        config_kwargs.setdefault("position_embedding_type", "rope")
+        return config_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Global (non-layer) parameters.

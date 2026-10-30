@@ -28,6 +28,14 @@ if (
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
+from megatron.bridge.models.beam import (
+    BeamBridge,
+    BeamModelBuilder,
+    BeamModelConfig,
+    BeamModelProvider,
+    BeamQKVGateMapping,
+    BeamTransformerConfig,
+)
 from megatron.bridge.models.bert import (
     BertModelProvider,
 )
@@ -82,8 +90,10 @@ from megatron.bridge.models.gemma_vl import (
     Gemma3VLBridge,
     Gemma3VLModel,
     Gemma3VLModelProvider,
+    Gemma4DenseVLModelConfig,
     Gemma4VLBridge,
     Gemma4VLModel,
+    Gemma4VLModelConfig,
     Gemma4VLModelProvider,
 )
 from megatron.bridge.models.glm import (
@@ -150,10 +160,18 @@ from megatron.bridge.models.muse_glimmer import (
     MuseGlimmerModelBuilder,
     MuseGlimmerModelConfig,
 )
+from megatron.bridge.models.muse_spark_open import (
+    MuseSparkBridge,
+    MuseSparkModel,
+    MuseSparkModelBuilder,
+    MuseSparkModelConfig,
+)
 from megatron.bridge.models.nemotron_omni import (
     Nemotron35SuperVLBridge,
     NemotronOmniBridge,
     NemotronOmniModel,
+    NemotronOmniModelBuilder,
+    NemotronOmniModelConfig,
 )
 from megatron.bridge.models.nemotron_vl import (
     NemotronVLBridge,
@@ -274,6 +292,10 @@ __all__ = [
     "MuseGlimmerModel",
     "MuseGlimmerModelBuilder",
     "MuseGlimmerModelConfig",
+    "MuseSparkBridge",
+    "MuseSparkModel",
+    "MuseSparkModelBuilder",
+    "MuseSparkModelConfig",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",
@@ -287,6 +309,13 @@ __all__ = [
     "Qwen2AudioBridge",
     "Qwen2AudioModel",
     "Qwen2AudioModelProvider",
+    # Beam (Reflection AI) models
+    "BeamBridge",
+    "BeamModelBuilder",
+    "BeamModelProvider",
+    "BeamModelConfig",
+    "BeamQKVGateMapping",
+    "BeamTransformerConfig",
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",
@@ -308,7 +337,9 @@ __all__ = [
     "Gemma3VLModelProvider",
     "Gemma4VLBridge",
     "Gemma4VLModel",
+    "Gemma4VLModelConfig",
     "Gemma4VLModelProvider",
+    "Gemma4DenseVLModelConfig",
     "DiffusionGemmaBridge",
     "DiffusionGemmaModel",
     "DiffusionGemmaModelProvider",
@@ -316,6 +347,8 @@ __all__ = [
     "NemotronVLBridge",
     "NemotronOmniBridge",
     "NemotronOmniModel",
+    "NemotronOmniModelBuilder",
+    "NemotronOmniModelConfig",
     "Nemotron35SuperVLBridge",
     # ASR Models
     "Qwen3ASRBridge",
