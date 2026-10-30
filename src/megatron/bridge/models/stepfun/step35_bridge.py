@@ -164,10 +164,12 @@ def build_step35_layer_spec(cfg, **kw):
     for spec in block_submodules.layer_specs:
         spec.module = Step35DecoderLayer
         # Re-bind the shared-expert builder on MoE layers so the shared expert
-        # honors ``activation_func_clamp_value_shared_expert``. Dense layers
-        # have a plain MLP submodule (no ``shared_experts`` attribute) and are
-        # skipped by the ``getattr`` guard.
-        mlp_submodules = getattr(spec.submodules.mlp, "submodules", None)
+        # honors ``activation_func_clamp_value_shared_expert``. Megatron Core
+        # builds a MoE layer as ``partial(MoELayer, submodules=MoESubmodules(...))``.
+        # Dense layers have no ``shared_experts`` and are skipped by the
+        # ``getattr`` guard.
+        mlp = spec.submodules.mlp
+        mlp_submodules = mlp.keywords.get("submodules") if isinstance(mlp, partial) else None
         shared = getattr(mlp_submodules, "shared_experts", None)
         if shared is not None:
             mlp_submodules.shared_experts = partial(Step35SharedExpertMLP, **shared.keywords)

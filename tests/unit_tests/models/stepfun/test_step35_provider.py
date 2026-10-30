@@ -399,9 +399,9 @@ class TestStep35SharedExpertMLPForward:
         # Output is forwarded back from super().
         assert output == "sentinel-out"
 
-    def test_no_shared_clamp_passes_through_to_super(self):
-        """``activation_func_clamp_value_shared_expert=None`` -> fall through to
-        the ``else`` branch: no override, no try/finally."""
+    def test_no_shared_clamp_runs_unclamped(self):
+        """``activation_func_clamp_value_shared_expert=None`` (no ``swiglu_limits_shared`` for the layer): the shared
+        expert runs unclamped, as in Hugging Face, not with the routed experts' clamp."""
         instance = self._make_instance(shared_clamp=None, base_clamp=7.0)
         captured = {}
 
@@ -412,14 +412,14 @@ class TestStep35SharedExpertMLPForward:
         with self._patch_super_forward(fake_super_forward):
             output = instance.forward(hidden_states="x")
 
-        assert captured["clamp_during_call"] == 7.0
+        assert captured["clamp_during_call"] is None
         assert instance.config.activation_func_clamp_value == 7.0
         assert output == "passthrough"
 
-    def test_missing_shared_clamp_attribute_passes_through(self):
+    def test_missing_shared_clamp_attribute_runs_unclamped(self):
         """When the config has no ``activation_func_clamp_value_shared_expert``
-        attribute at all, ``getattr(..., None)`` returns None and the bridge
-        must not plant the attribute on the config."""
+        attribute at all, ``getattr(..., None)`` returns None, the shared expert
+        runs unclamped, and the bridge must not plant the attribute on the config."""
         instance = self._make_instance(shared_clamp=_UNSET, base_clamp=7.0)
         captured = {}
 
@@ -430,7 +430,7 @@ class TestStep35SharedExpertMLPForward:
         with self._patch_super_forward(fake_super_forward):
             instance.forward(hidden_states="x")
 
-        assert captured["clamp_during_call"] == 7.0
+        assert captured["clamp_during_call"] is None
         assert instance.config.activation_func_clamp_value == 7.0
         assert not hasattr(instance.config, "activation_func_clamp_value_shared_expert")
 
