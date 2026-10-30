@@ -16,12 +16,14 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer.multi_token_prediction import MultiTokenPredictionBlockSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.models.exaone4_5.configuration_exaone4_5 import Exaone4_5_Config, Exaone4_5_VisionConfig
 
 from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
@@ -29,15 +31,23 @@ from megatron.bridge.models.exaone.exaone45.modelling_exaone45.model import Exao
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
-def exaone_45_transformer_layer_spec(config: "Exaone45ModelProvider") -> ModuleSpec:
+if TYPE_CHECKING:
+    from megatron.bridge.models.exaone.exaone45.exaone45_config import Exaone45ModelConfig
+
+
+def exaone_45_transformer_layer_spec(config: "Exaone45ModelProvider | Exaone45ModelConfig") -> ModuleSpec:
     """Create an EXAONE 4.5 layer spec backed by the EXAONE Post-LN layer pattern."""
     return exaone4_layer_spec(config)
 
 
 def exaone_45_mtp_block_spec(
-    config: "Exaone45ModelProvider", vp_stage: int | None = None
+    config: TransformerConfig, vp_stage: int | None = None
 ) -> MultiTokenPredictionBlockSubmodules | None:
-    """Create an MTP block spec that preserves the EXAONE transformer layer."""
+    """Create an MTP block spec that preserves the EXAONE transformer layer.
+
+    ``config`` is the language transformer config: the provider itself, or a builder config's nested
+    ``transformer``.
+    """
     if not config.mtp_num_layers:
         return None
 

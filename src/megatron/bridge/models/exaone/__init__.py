@@ -13,7 +13,13 @@
 # limitations under the License.
 
 from megatron.bridge.models.exaone.exaone4 import Exaone4Bridge
-from megatron.bridge.models.exaone.exaone45 import Exaone45Bridge, Exaone45Model, Exaone45ModelProvider
+from megatron.bridge.models.exaone.exaone45 import (
+    Exaone45Bridge,
+    Exaone45Model,
+    Exaone45ModelBuilder,
+    Exaone45ModelConfig,
+    Exaone45ModelProvider,
+)
 from megatron.bridge.models.exaone.exaone_moe import ExaoneMoeBridge, ExaoneMoeModelProvider
 
 
@@ -21,6 +27,8 @@ __all__ = [
     "Exaone4Bridge",
     "Exaone45Bridge",
     "Exaone45Model",
+    "Exaone45ModelBuilder",
+    "Exaone45ModelConfig",
     "Exaone45ModelProvider",
     "ExaoneMoeBridge",
     "ExaoneMoeModelProvider",
