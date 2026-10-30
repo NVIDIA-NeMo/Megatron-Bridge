@@ -660,7 +660,8 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
 
     The GB300 recipes default to NCCL EP (dispatcher backend, device-side expert counts and the
     NCCL EP process setting); the VRNVL72 aliases keep the shared HybridEP base. The VRNVL72 BF16
-    recipe also offloads expert activations. Everything else must be identical.
+    recipe also offloads expert activations, and the VRNVL72 MXFP8 recipe gives HybridEP 32 SMs
+    and fuses the router. Everything else must be identical.
     """
     vrnvl72_cfg = vrnvl72_factory()
     gb300_cfg = gb300_factory()
@@ -674,6 +675,13 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
         assert "graph_capture_record_stream_reuse:True" in vrnvl72_cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
         vrnvl72_cfg.model.fine_grained_activation_offloading = gb300_cfg.model.fine_grained_activation_offloading
         vrnvl72_cfg.model.offload_modules = gb300_cfg.model.offload_modules
+    else:
+        assert vrnvl72_cfg.model.moe_hybridep_num_sms == 32
+        assert gb300_cfg.model.moe_hybridep_num_sms == 16
+        vrnvl72_cfg.model.moe_hybridep_num_sms = gb300_cfg.model.moe_hybridep_num_sms
+        assert vrnvl72_cfg.model.moe_router_fusion is True
+        assert gb300_cfg.model.moe_router_fusion is False
+        vrnvl72_cfg.model.moe_router_fusion = gb300_cfg.model.moe_router_fusion
 
     _enable_ncclep(vrnvl72_cfg)
     vrnvl72_cfg.model.moe_use_grouped_tensor = True
