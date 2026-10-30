@@ -163,6 +163,43 @@ def test_scheduler_override_skips_unavailable_optimizer_or_scheduler(stub, missi
     assert optimizer.param_groups == [{"max_lr": 0.1}]
 
 
+def _two_group_optimizer():
+    groups = [
+        {"params": [torch.nn.Parameter(torch.ones(1))], "max_lr": 0.2, "min_lr": 0.1, "default_config": True},
+        # A group with its own LR override, e.g. from an optimizer_config_override_provider.
+        {"params": [torch.nn.Parameter(torch.ones(1))], "max_lr": 0.5, "min_lr": 0.05, "default_config": False},
+    ]
+    return torch.optim.SGD(groups, lr=0.2)
+
+
+def test_scheduler_override_keeps_built_per_group_lr_overrides():
+    optimizer = _two_group_optimizer()
+    built = checkpointing._param_group_lr_bounds(optimizer)
+    # The checkpoint's groups replace the built ones; here they carry stale override bounds.
+    optimizer.param_groups[1]["max_lr"], optimizer.param_groups[1]["min_lr"] = 0.9, 0.09
+    scheduler = OptimizerParamScheduler(optimizer, 0, 0.2, 0.1, 0, 100, "linear", 0, 0, 100, "constant")
+    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002))
+
+    checkpointing._restore_scheduler_runtime_overrides(
+        cfg, TrainState(consumed_train_samples=50), optimizer, scheduler, built
+    )
+
+    assert (optimizer.param_groups[0]["max_lr"], optimizer.param_groups[0]["min_lr"]) == (0.02, 0.002)
+    assert (optimizer.param_groups[1]["max_lr"], optimizer.param_groups[1]["min_lr"]) == (0.5, 0.05)
+    assert optimizer.param_groups[1]["lr"] == pytest.approx(0.05 + 0.45 * 0.5)
+
+
+def test_scheduler_override_resets_overrides_when_groups_changed():
+    optimizer = _two_group_optimizer()
+    built = checkpointing._param_group_lr_bounds(optimizer)[:1]
+    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002))
+
+    checkpointing._restore_scheduler_runtime_overrides(cfg, TrainState(), optimizer, Mock(), built)
+
+    for group in optimizer.param_groups:
+        assert (group["max_lr"], group["min_lr"]) == (0.02, 0.002)
+
+
 def test_scheduler_override_preserves_unspecified_decoupled_bounds():
     optimizer = SimpleNamespace(param_groups=[{"is_decoupled_lr": True, "max_lr": 0.1, "min_lr": 0.01}])
     cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002))
