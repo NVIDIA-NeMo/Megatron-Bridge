@@ -6,7 +6,7 @@ Megatron Bridge provides checkpoint conversion and pretraining, SFT, and PEFT re
 
 Python recipes live in `megatron.bridge.recipes.nemotronh_multimodal`, the shared recipe package for Nemotron Omni and Super VL. Existing imports through `megatron.bridge.recipes.nemotron_omni` remain compatible aliases; CLI recipe names such as `nemotron_35_super_vl_sft_config` are unchanged.
 
-The `freeze_vision_model`, `freeze_vision_projection`, and `freeze_language_model` provider options independently control which model components are trained. The Super-VL SFT recipes freeze the vision encoder while keeping the projection and language model trainable.
+The `freeze_vision_model`, `freeze_vision_projection`, and `freeze_language_model` model config options independently control which model components are trained. The Super-VL SFT recipes freeze the vision encoder while keeping the projection and language model trainable.
 
 The records below contain refreshed conversion, inference, and training verification with the corrected training callbacks and shared-MTP objective. Verification is scoped to each recorded workflow and hardware configuration; the GB200 pretrain/resume comparison and stronger visual diagnostics are not all passing. The public checkpoint revision remains unbound, and functional throughput measurements are not optimized-performance claims.
 
