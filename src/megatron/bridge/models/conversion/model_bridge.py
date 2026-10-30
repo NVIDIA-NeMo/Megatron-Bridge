@@ -577,6 +577,12 @@ class MegatronModelBridge(
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
 
+    # Source checkpoint key suffixes that import consumes and export never writes back, such as the
+    # ``*_scale_inv`` companions of FP8 weights a bridge dequantizes on import. Saved artifacts drop
+    # ``quantization_config``, so such a bridge exports plain weights; strict saving then ignores
+    # these source keys instead of reporting them as missing.
+    DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ()
+
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Apply model-specific fixes after Hugging Face artifacts are saved.
 

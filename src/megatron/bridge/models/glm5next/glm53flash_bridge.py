@@ -31,7 +31,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.ssm.kda_layer_config import KDALayerConfig
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer import ModuleSpec
@@ -57,7 +64,10 @@ from megatron.bridge.models.conversion.utils import get_module_and_param_from_na
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import get_default_hybrid_stack_spec
 from megatron.bridge.models.hybrid_mla_provider import HybridMLAModelProvider
-from megatron.bridge.training.utils.packed_seq_utils import preprocess_packed_seqs
+from megatron.bridge.training.utils.packed_seq_utils import (
+    get_packed_seq_cp_partition_indices,
+    preprocess_packed_seqs,
+)
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
@@ -111,6 +121,23 @@ def _glm5next_mlp_layer_types(hf_config) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Packed-layout helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_keep_mask(attention_mask: Optional[Tensor], input_ids: Tensor) -> bool:
+    """Whether ``attention_mask`` is a ``[batch, seq]`` keep mask for dense ``input_ids`` rows."""
+    return attention_mask is not None and attention_mask.dim() == 2 and attention_mask.shape == input_ids.shape
+
+
+def _select_tokens(tensor: Optional[Tensor], index: Optional[Tensor]) -> Optional[Tensor]:
+    """Select tokens along dim 1 of a ``[1, total_tokens, ...]`` stream; no-op without an index."""
+    if tensor is None or index is None:
+        return tensor
+    return tensor.index_select(1, index.to(tensor.device))
+
+
+# ---------------------------------------------------------------------------
 # Custom param mappings
 # ---------------------------------------------------------------------------
 
@@ -151,30 +178,48 @@ class _ColumnParallelConcatMapping(MegatronParamMapping[dict]):
         return self._tp_mapping.scatter_to_tp_ranks(splits, shape, target.dtype, target.device)
 
     def megatron_to_hf(self, megatron_weights: Optional[torch.Tensor], megatron_module) -> dict:
+        # Non-owning PP stages receive None; replicate the owner's tensor and layout so
+        # every stage (including the saving rank) emits the HF tensors.
+        owns_weights = megatron_weights is not None
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
         if megatron_weights is None:
             return {}
+        local_layout = None
+        if owns_weights:
+            config = self._get_config(megatron_module) if megatron_module is not None else None
+            local_layout = (self._section_sizes(config), _module_uses_fsdp(megatron_module))
+        sizes, materialized = self.broadcast_obj_from_pp_rank(local_layout, cache_key=f"{self.hf_param}:layout")
         weights = self.maybe_dequantize(megatron_weights)
-        config = self._get_config(megatron_module) if megatron_module is not None else None
-        sizes = self._section_sizes(config)
-        sharded = self.tp_size > 1 and not _module_uses_fsdp(megatron_module)
-        if sizes is None:
-            if weights.shape[0] % len(self._hf_order):
-                raise ValueError("Cannot infer unequal KDA Q/K/V sections without the model config.")
-            rows = weights.shape[0] // len(self._hf_order) * (self.tp_size if sharded else 1)
-            sizes = [rows] * len(self._hf_order)
 
-        if sharded:
+        if self.tp_size == 1:
+            if sizes is None:
+                sizes = self._equal_sections(weights.shape[0])
+            parts = weights.split(sizes, dim=0)
+            return dict(zip(self._hf_order, parts, strict=True))
+
+        # Each TP rank holds [q_r | k_r | v_r]. A Megatron-FSDP tensor is already
+        # materialized as those rank pieces concatenated in rank order; plain shards
+        # need a TP gather. Either way, regroup the rank pieces section by section.
+        if materialized:
+            shards = list(weights.chunk(self.tp_size, dim=0))
+        else:
+            shards = self._tp_mapping.gather_from_tp_ranks(weights)
+        if sizes is None:
+            local_sizes = self._equal_sections(shards[0].shape[0])
+        else:
             if any(size % self.tp_size for size in sizes):
                 raise ValueError("Each KDA Q/K/V section must be divisible by tensor parallel size.")
             local_sizes = [size // self.tp_size for size in sizes]
-            shards = self._tp_mapping.gather_from_tp_ranks(weights)
-            parts = [
-                torch.cat(section_shards, dim=0)
-                for section_shards in zip(*(shard.split(local_sizes, dim=0) for shard in shards), strict=True)
-            ]
-        else:
-            parts = weights.split(sizes, dim=0)
+        parts = [
+            torch.cat(section_shards, dim=0)
+            for section_shards in zip(*(shard.split(local_sizes, dim=0) for shard in shards), strict=True)
+        ]
         return dict(zip(self._hf_order, parts, strict=True))
+
+    def _equal_sections(self, rows: int) -> list[int]:
+        if rows % len(self._hf_order):
+            raise ValueError("Cannot infer unequal KDA Q/K/V sections without the model config.")
+        return [rows // len(self._hf_order)] * len(self._hf_order)
 
     def _section_sizes(self, config):
         if config is None:
@@ -219,10 +264,18 @@ class _EhProjSplitMapping(MegatronParamMapping[torch.Tensor]):
         return weight[start : start + shard].contiguous()
 
     def megatron_to_hf(self, megatron_weights, megatron_module):
+        # MTP lives on the last PP stage; replicate it so every stage emits eh_proj.
+        owns_weights = megatron_weights is not None
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
         if megatron_weights is None:
             return {}
+        materialized = self.broadcast_obj_from_pp_rank(
+            _module_uses_fsdp(megatron_module) if owns_weights else None,
+            cache_key=f"{self.hf_param}:materialized",
+        )
         megatron_weights = self.maybe_dequantize(megatron_weights)
-        if self.tp_size == 1:
+        # A Megatron-FSDP tensor is already materialized across TP; gather plain shards only.
+        if self.tp_size == 1 or materialized:
             full = megatron_weights
         else:
             full = torch.cat(self.gather_from_tp_ranks(megatron_weights), dim=0)
@@ -289,7 +342,21 @@ class GLM53FlashModelProvider(HybridMLAModelProvider, KDALayerConfig):
     def provide(
         self, pre_process: Optional[bool] = None, post_process: Optional[bool] = None, vp_stage: Optional[int] = None
     ) -> "GLM53FlashModel":
-        """Build the VLM wrapper and apply explicitly requested freeze options."""
+        """Build the VLM wrapper and apply explicitly requested freeze options.
+
+        Omitted ``pre_process``/``post_process`` flags resolve to this rank's first/last
+        pipeline stage, as in ``HybridModelProvider.provide``, so the wrapper and its
+        language model agree on which stage owns the vision tower and embeddings.
+        """
+        vp_size = self.virtual_pipeline_model_parallel_size
+        if pre_process is None:
+            pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(
+                self._pg_collection.pp
+            )
+        if post_process is None:
+            post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(
+                self._pg_collection.pp
+            )
         model = GLM53FlashModel(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
             model.freeze(
@@ -332,17 +399,17 @@ class GLM53FlashModel(MegatronModule):
             self.visual = Glm5NextVisionModel._from_config(config.vision_config)
             hook_hf_module_setattr_for_tp_grad_sync(self.visual)
 
+            # Only the stage that owns the vision tower extracts and inserts its features.
+            self.get_image_features = types.MethodType(Glm5NextModel.get_image_features, self)
+            self.get_video_features = types.MethodType(Glm5NextModel.get_video_features, self)
+            self.get_placeholder_mask = types.MethodType(Glm5NextModel.get_placeholder_mask, self)
+
         self.language_model = self.config.provide_language_model(
             pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
         )
 
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
-
-        # Monkey-patch HF image/video feature extraction + placeholder-mask logic.
-        self.get_image_features = types.MethodType(Glm5NextModel.get_image_features, self)
-        self.get_video_features = types.MethodType(Glm5NextModel.get_video_features, self)
-        self.get_placeholder_mask = types.MethodType(Glm5NextModel.get_placeholder_mask, self)
 
         self.config.spatial_merge_size = getattr(self.config.vision_config, "spatial_merge_size", 2)
 
@@ -369,64 +436,97 @@ class GLM53FlashModel(MegatronModule):
         output_processor_context=None,
         *,
         loss_mask: Optional[Tensor] = None,
-    ) -> Tensor:
-        """Inject vision features before packing BSHD inputs into THD layout.
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        """Insert vision features, then run the language model on a THD token stream.
 
-        Placeholder masks require full BSHD sequences. Packing and sequence-parallel
-        scattering happen afterward; NoPE attention uses only packed_seq_params.
+        Three input layouts are accepted:
+
+        * Dense rows without ``packed_seq_params`` (Bridge BSHD training, generation).
+          ``attention_mask`` is an optional ``[batch, seq]`` keep mask; every token is
+          kept when it is omitted. Token IDs, embeddings, labels and the loss mask are
+          packed with the same layout, so padding has zero loss, and the packed loss
+          mask is returned with the output.
+        * Dense rows with caller-built ``packed_seq_params`` (verl). ``attention_mask``
+          marks each row's padded length, so packing reproduces the caller's layout;
+          the caller's metadata keeps its logical boundaries. Labels and the loss mask
+          already use that layout and pass through unchanged.
+        * A ``[1, total_tokens]`` stream that is already packed, with
+          ``packed_seq_params`` and no keep mask (Bridge collate-time packing). Its
+          boundaries are kept and only this context-parallel rank's tokens are selected.
+
+        Placeholder masks need whole sequences, so vision features are inserted before
+        packing or context-parallel selection; sequence-parallel scattering comes last.
+        Only the pre-process stage embeds tokens and runs the vision tower. Later stages
+        read activations from ``set_input_tensor`` and use token IDs only for layout.
         """
+        if input_ids is None:
+            raise ValueError("GLM53FlashModel requires input_ids to derive the packed token layout.")
+
+        keep_mask = attention_mask if _is_keep_mask(attention_mask, input_ids) else None
+        already_packed = packed_seq_params is not None and keep_mask is None
+        return_loss_mask = False
+        cp_index = None
+        if already_packed:
+            if input_ids.dim() != 2 or input_ids.size(0) != 1:
+                raise ValueError(
+                    "Packed GLM-5.3-Flash input must have shape [1, total_tokens]; pass a [batch, seq] "
+                    f"attention mask for dense rows. Got input_ids shape {tuple(input_ids.shape)}."
+                )
+            cp_index = self._packed_cp_index(packed_seq_params, input_ids)
+            lm_input_ids = _select_tokens(input_ids, cp_index)
+            if cp_index is not None:
+                labels = _select_tokens(labels, cp_index)
+                if loss_mask is not None:
+                    loss_mask = _select_tokens(loss_mask, cp_index)
+                    return_loss_mask = True
+        else:
+            if keep_mask is None:
+                keep_mask = torch.ones(input_ids.shape, dtype=torch.bool, device=input_ids.device)
+            elif packed_seq_params is not None and input_ids.size(0) != packed_seq_params.cu_seqlens_q.numel() - 1:
+                raise ValueError(
+                    "With an attention mask, each input row must be one sequence of packed_seq_params: "
+                    f"got {input_ids.size(0)} rows and {packed_seq_params.cu_seqlens_q.numel() - 1} sequences."
+                )
+            lm_input_ids, generated_params = self._pack_rows(input_ids, keep_mask)
+            if packed_seq_params is None:
+                packed_seq_params = generated_params
+                if labels is not None:
+                    labels = self._pack_rows(labels, keep_mask)[0]
+                if loss_mask is not None:
+                    loss_mask = self._pack_rows(loss_mask, keep_mask)[0]
+                    return_loss_mask = True
+
+        decoder_input = None
         if self.pre_process:
             if inputs_embeds is None:
-                inputs_embeds = self.language_model.embedding(
-                    input_ids=input_ids, position_ids=None
-                )  # [seq_len, batch, hidden] (full seq, scatter_embedding_sequence_parallel=False)
-                # Transpose to HF format [batch, seq_len, hidden].
-                inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
-
-            if pixel_values is not None:
-                image_embeds = self.get_image_features(pixel_values, image_grid_thw).pooler_output
-                image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-                image_mask, _ = self.get_placeholder_mask(
-                    input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
-                )
-                inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
-            if pixel_values_videos is not None:
-                video_embeds = self.get_video_features(pixel_values_videos, video_grid_thw).pooler_output
-                video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-                _, video_mask = self.get_placeholder_mask(
-                    input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
-                )
-                inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
-
-            use_fp8_padding = self.config.fp8 in ("e4m3", "hybrid")
-            inputs_embeds_thd = preprocess_packed_seqs(
-                inputs_embeds,
-                attention_mask,
-                pg_collection=self.config._pg_collection,
-                use_fp8_padding=use_fp8_padding,
-            )[0]
-            # Megatron expects [seq, batch, hidden] with batch=1 for THD.
-            inputs_embeds_thd = inputs_embeds_thd.transpose(1, 0).contiguous()  # [total, 1, hidden]
-
-            # MTP re-embeds input_ids, so it also needs the packed token layout.
-            input_ids_thd = preprocess_packed_seqs(
+                # [seq, batch, hidden], not yet scattered for SP -> HF's [batch, seq, hidden].
+                inputs_embeds = self.language_model.embedding(input_ids=input_ids, position_ids=None)
+                inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
+            inputs_embeds = self._insert_vision_features(
                 input_ids,
-                attention_mask,
-                pg_collection=self.config._pg_collection,
-                use_fp8_padding=use_fp8_padding,
-            )[0]
-
+                inputs_embeds,
+                pixel_values=pixel_values,
+                image_grid_thw=image_grid_thw,
+                pixel_values_videos=pixel_values_videos,
+                video_grid_thw=video_grid_thw,
+            )
+            if already_packed:
+                decoder_input = _select_tokens(inputs_embeds, cp_index)
+            else:
+                decoder_input = self._pack_rows(inputs_embeds, keep_mask)[0]
+            # Megatron expects [seq, batch, hidden]; THD uses batch 1.
+            decoder_input = decoder_input.transpose(0, 1).contiguous()
             if self.config.sequence_parallel:
-                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
-                inputs_embeds_thd = scatter_to_sequence_parallel_region(inputs_embeds_thd, group=tp_group)
+                pg_collection = self.config._pg_collection
+                tp_group = pg_collection.tp if pg_collection is not None else None
+                decoder_input = scatter_to_sequence_parallel_region(decoder_input, group=tp_group)
 
         # verl's output processor needs hidden states, not the MTP auxiliary loss.
-        return self.language_model.forward(
-            input_ids=input_ids_thd,
+        output = self.language_model.forward(
+            input_ids=lm_input_ids,
             position_ids=None,
             attention_mask=None,
-            decoder_input=inputs_embeds_thd,
+            decoder_input=decoder_input,
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
@@ -434,6 +534,62 @@ class GLM53FlashModel(MegatronModule):
             output_processor=output_processor,
             output_processor_context=output_processor_context,
             compute_mtp_loss=False,
+        )
+        if return_loss_mask:
+            return output, loss_mask
+        return output
+
+    def _insert_vision_features(
+        self,
+        input_ids: Tensor,
+        inputs_embeds: Tensor,
+        *,
+        pixel_values: Optional[Tensor],
+        image_grid_thw: Optional[Tensor],
+        pixel_values_videos: Optional[Tensor],
+        video_grid_thw: Optional[Tensor],
+    ) -> Tensor:
+        """Replace image and video placeholder embeddings with HF vision features."""
+        if pixel_values is not None:
+            image_embeds = self.get_image_features(pixel_values, image_grid_thw).pooler_output
+            image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+            image_mask, _ = self.get_placeholder_mask(
+                input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
+            )
+            inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+
+        if pixel_values_videos is not None:
+            video_embeds = self.get_video_features(pixel_values_videos, video_grid_thw).pooler_output
+            video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+            _, video_mask = self.get_placeholder_mask(
+                input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
+            )
+            inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+        return inputs_embeds
+
+    def _pack_rows(self, tensor: Tensor, keep_mask: Tensor) -> tuple[Tensor, "PackedSeqParams"]:
+        """Pack the kept tokens of dense rows into this rank's TP/CP/FP8-aligned THD stream."""
+        return preprocess_packed_seqs(
+            tensor,
+            keep_mask,
+            pg_collection=self.config._pg_collection,
+            use_fp8_padding=self.config.fp8 in ("e4m3", "hybrid"),
+        )
+
+    def _packed_cp_index(self, packed_seq_params: "PackedSeqParams", input_ids: Tensor) -> Optional[Tensor]:
+        """Return this CP rank's token indices into a packed stream, or None without CP."""
+        pg_collection = self.config._pg_collection
+        cp_group = pg_collection.cp if pg_collection is not None else parallel_state.get_context_parallel_group()
+        cp_size = cp_group.size()
+        if cp_size == 1:
+            return None
+        return get_packed_seq_cp_partition_indices(
+            packed_seq_params,
+            total_tokens=input_ids.size(1),
+            cp_size=cp_size,
+            cp_rank=cp_group.rank(),
+            device=input_ids.device,
+            cp_group=cp_group,
         )
 
     def freeze(
@@ -474,6 +630,10 @@ class GLM53FlashBridge(MegatronModelBridge):
     """Unified bridge for GLM-5.3-Flash: hybrid language model + replicated vision tower."""
 
     _provider_cls = GLM53FlashModelProvider
+
+    # FP8 source weights are dequantized on import and exported as plain weights; saved
+    # artifacts drop quantization_config, so their inverse scales are not written back.
+    DEQUANTIZED_SOURCE_KEY_SUFFIXES = ("_scale_inv",)
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM):
         hf_config = hf_pretrained.config
@@ -616,10 +776,12 @@ class GLM53FlashBridge(MegatronModelBridge):
 
         # ---- MTP (1 layer, DSA + MoE) ----
         # MTP has its own pattern and is excluded from num_layers/moe_layer_freq.
+        # A source without MTP gets no MTP pattern: finalize() would otherwise append
+        # one repeated depth and infer mtp_num_layers=1.
         num_mtp = int(getattr(text_config, "num_nextn_predict_layers", 0) or 0)
-        provider.mtp_num_layers = num_mtp or None
-        provider.mtp_hybrid_override_pattern = "DE"
-        provider.mtp_use_repeated_layer = True
+        provider.mtp_num_layers = num_mtp
+        provider.mtp_hybrid_override_pattern = "DE" if num_mtp else None
+        provider.mtp_use_repeated_layer = bool(num_mtp)
         provider.keep_mtp_spec_in_bf16 = True
         if num_mtp:
             provider.mtp_loss_scaling_factor = 0.1

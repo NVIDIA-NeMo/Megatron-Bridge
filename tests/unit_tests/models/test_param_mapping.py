@@ -379,6 +379,56 @@ class TestColumnParallelMapping:
             assert "hf.weight" in result
             assert torch.equal(result["hf.weight"], full_weight)
 
+    @staticmethod
+    def _module_with_param(param_path, tensor):
+        root = torch.nn.Module()
+        module = root
+        *parents, leaf = param_path.split(".")
+        for name in parents:
+            child = torch.nn.Module()
+            module.add_module(name, child)
+            module = child
+        module.register_parameter(leaf, torch.nn.Parameter(tensor))
+        return root
+
+    @pytest.mark.parametrize(
+        "megatron_param",
+        [
+            "embedding.word_embeddings.weight",
+            "language_model.embedding.word_embeddings.weight",
+            "language_model.output_layer.weight",
+        ],
+    )
+    def test_hf_to_megatron_zero_pads_vocab_under_wrapper_prefix(self, mock_distributed_env, megatron_param):
+        _, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = ColumnParallelMapping(megatron_param, "hf.weight")
+        # Local shard of a vocabulary padded from 1280 to 2560 rows for TP2.
+        module = self._module_with_param(megatron_param, torch.empty(1280, 4))
+        hf_weight = torch.randn(1280, 4)
+        mock_dist.scatter.side_effect = lambda output, scatter_list, src, group: output.copy_(scatter_list[0])
+
+        local = mapping.hf_to_megatron(hf_weight, module)
+
+        scattered = torch.cat(mock_dist.scatter.call_args[0][1], dim=0)
+        assert local.shape == (1280, 4)
+        assert scattered.shape == (2560, 4)
+        assert torch.equal(scattered[:1280], hf_weight)
+        assert torch.count_nonzero(scattered[1280:]) == 0
+
+    @pytest.mark.parametrize(
+        "megatron_param",
+        [
+            "language_model.decoder.layers.0.mlp.linear_fc1.weight",
+            "language_model.extra_output_layer.weight",
+        ],
+    )
+    def test_hf_to_megatron_rejects_padding_for_non_vocab_params(self, mock_distributed_env, megatron_param):
+        mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = ColumnParallelMapping(megatron_param, "hf.weight")
+        module = self._module_with_param(megatron_param, torch.empty(1280, 4))
+        with pytest.raises(AssertionError):
+            mapping.hf_to_megatron(torch.randn(1280, 4), module)
+
     def test_current_pp_stage_only_export_keeps_tp_gather(self, mock_distributed_env):
         _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)
         mapping = ColumnParallelMapping("col.weight", "hf.weight")
