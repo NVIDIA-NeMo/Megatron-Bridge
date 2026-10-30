@@ -105,6 +105,60 @@ cfg.checkpoint.load = "/checkpoints/my_existing_run"
 
 For model-weight initialization without optimizer, RNG, dataloader, or scheduler state, use `checkpoint.pretrained_checkpoint` instead of `checkpoint.load`.
 
+### Migrating Client Checkpoint Metadata
+
+Callers with a custom training loop can pass an optional
+`checkpoint_state_migration_hook` to `load_checkpoint()`. The hook receives the
+loaded checkpoint dictionary and the restored `TrainState`, and may update them
+in place. It runs before the microbatch calculator reads the restored counters
+and before the final model, optimizer, and scheduler `load_state_dict` calls.
+This lets a client migrate older metadata without replacing Bridge's resume logic.
+
+For example, a client whose older checkpoints saved scheduler progress but did
+not maintain `TrainState.consumed_train_samples` can opt into this migration:
+
+```python
+from megatron.core.dist_checkpointing.serialization import StateDict
+from megatron.bridge.training.checkpointing import load_checkpoint
+from megatron.bridge.training.state import TrainState
+
+
+def migrate_client_progress(checkpoint: StateDict, train_state: TrainState) -> None:
+    scheduler_state = checkpoint.get("opt_param_scheduler", checkpoint.get("lr_scheduler"))
+    if scheduler_state is None:
+        return
+    saved_steps = scheduler_state.get("num_steps", scheduler_state.get("num_iters", 0))
+    if train_state.consumed_train_samples == 0 and saved_steps > 0:
+        train_state.consumed_train_samples = saved_steps
+
+
+load_checkpoint(
+    state,
+    model,
+    optimizer,
+    scheduler,
+    checkpoint_state_migration_hook=migrate_client_progress,
+)
+```
+
+Use this example only for checkpoints from a client with that known legacy
+convention. Bridge does not assume that consumed samples and scheduler progress
+are interchangeable for every client.
+
+The hook runs once per loading rank for native training resumes, including
+metadata-only loads and loads without optimizer state. It does not run for
+missing checkpoints, finetuning, release checkpoints, or Hugging Face
+initialization. Migrations must make rank-consistent changes. Tensor loading and
+sharding validation have already finished, so the hook cannot migrate tensor
+layouts or repair storage-format incompatibilities. The hook can only inspect
+metadata returned by the selected loader. Tensor I/O may already have
+populated model storage. Exceptions propagate and abort the load without rolling
+back mutations; no checkpoint files are rewritten.
+Omitting the hook preserves the existing resume behavior.
+
+`DefaultCheckpointManager` also accepts the hook through
+`CheckpointLoadContext.checkpoint_state_migration_hook`.
+
 ## Fine-tuning and Initialization Configuration
 
 | Parameter | Type | Default | Description |
