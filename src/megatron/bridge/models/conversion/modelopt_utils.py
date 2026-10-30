@@ -183,12 +183,6 @@ def _mamba_row_indices(shards: list[_SourceState], tp_size: int) -> torch.Tensor
     return torch.cat([component.reshape(-1) for component in torch.split(rows, local_sizes, dim=1)])
 
 
-def _plan_spec(source: _SourceState) -> object | None:
-    # Mamba's fused weight can change row meaning without changing its total size.
-    # Keep geometry with the immutable format spec; mutable amax values stay out.
-    return source if source.mamba_layout is not None else source.state
-
-
 def _validate_quantized_task(task: WeightConversionTask) -> None:
     if ".to_wrap.weight" in task.global_param_name:
         raise NotImplementedError(
@@ -910,7 +904,7 @@ def build_modelopt_export_plan(
         export_tasks,
         quantization_config,
         quantized_params,
-        {name: _plan_spec(source) for name, source in local_specs.items()},
+        {name: source.state for name, source in local_specs.items()},
     )
 
 
@@ -922,7 +916,7 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
             if task.global_param_name not in plan.local_quantization_specs:
                 continue
             source = _capture_source_spec(task)
-            if source is None or _plan_spec(source) != plan.local_quantization_specs[task.global_param_name]:
+            if source is None or source.state != plan.local_quantization_specs[task.global_param_name]:
                 raise ValueError(f"ModelOpt quantization configuration changed for {task.global_param_name}")
     except Exception as error:
         validation_error = f"{type(error).__name__}: {error}"

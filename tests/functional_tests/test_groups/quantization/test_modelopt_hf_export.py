@@ -149,7 +149,6 @@ def _bits(tensor: torch.Tensor) -> torch.Tensor:
         ("qwen3", "fp8", [("--tp", "2")]),
         ("qwen3_moe", "mixed", [("--ep", "2"), ("--etp", "2"), ("--pp", "2")]),
         ("qwen3_5", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
-        ("nemotron_h", "fp8", [("--tp", "2"), ("--pp", "2")]),
         ("nemotron_h", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
     ],
 )

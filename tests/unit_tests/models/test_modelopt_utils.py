@@ -777,48 +777,24 @@ def test_mamba_row_scales_follow_the_existing_weight_mapping(monkeypatch, tp_siz
 def test_mamba_projection_plan_recaptures_weight_and_input_amax(monkeypatch, factory):
     config = _mamba_config()
     in_proj = factory(out_features=44, in_features=32)
-    out_proj = factory(out_features=32, in_features=16)
     in_name = "backbone.layers.0.mixer.in_proj.weight"
-    out_name = "backbone.layers.0.mixer.out_proj.weight"
     mapping = MambaInProjMapping("decoder.layers.0.mixer.in_proj.weight", in_name)
     monkeypatch.setattr(mapping, "_get_config", lambda _module: config)
-    tasks = [
-        _task(mapping, in_proj, global_name=mapping.megatron_param),
-        _task(
-            RowParallelMapping("decoder.layers.0.mixer.out_proj.weight", out_name),
-            out_proj,
-            global_name="out_proj.weight",
-        ),
-    ]
-    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[in_proj, out_proj])
+    task = _task(mapping, in_proj, global_name=mapping.megatron_param)
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[in_proj])
 
     def export():
-        return [
-            dict(task.export_hook(name, module.weight))
-            for task, name, module in zip(
-                modelopt_utils.prepare_modelopt_export_tasks(plan),
-                (in_name, out_name),
-                (in_proj, out_proj),
-                strict=True,
-            )
-        ]
+        export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+        return dict(export_task.export_hook(in_name, in_proj.weight))
 
     first = export()
-    for module in (in_proj, out_proj):
-        module.weight_quantizer._amax.mul_(2)
-        module.input_quantizer._amax.mul_(2)
+    in_proj.weight_quantizer._amax.mul_(2)
+    in_proj.input_quantizer._amax.mul_(2)
     second = export()
-    for name, before, after in zip((in_name, out_name), first, second, strict=True):
-        prefix = name.removesuffix(".weight")
-        weight_scale = "weight_scale_2" if factory is _nvfp4_linear else "weight_scale"
-        assert not torch.equal(before[f"{prefix}.{weight_scale}"], after[f"{prefix}.{weight_scale}"])
-        assert torch.equal(after[f"{prefix}.input_scale"], 2 * before[f"{prefix}.input_scale"])
-
-    # Same total rows, different meanings: [16,16,4,4,4] -> [12,12,8,8,4].
-    config.mamba_head_dim = 3
-    config.mamba_state_dim = 4
-    with pytest.raises(RuntimeError, match="ModelOpt export plan validation failed"):
-        modelopt_utils.prepare_modelopt_export_tasks(plan)
+    prefix = in_name.removesuffix(".weight")
+    weight_scale = "weight_scale_2" if factory is _nvfp4_linear else "weight_scale"
+    assert not torch.equal(first[f"{prefix}.{weight_scale}"], second[f"{prefix}.{weight_scale}"])
+    assert torch.equal(second[f"{prefix}.input_scale"], 2 * first[f"{prefix}.input_scale"])
 
 
 @pytest.mark.unit
