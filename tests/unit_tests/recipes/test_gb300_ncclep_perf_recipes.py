@@ -57,6 +57,25 @@ _GB300_NCCLEP_RECIPES = (
     ("qwen_vl.gb300.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"),
 )
 
+# Qwen3 30B BF16/MXFP8, 235B NVL8 recipes, and MXFP8 large-scale variants.
+_QWEN3_NVL8_RECIPES = tuple(
+    (f"qwen.{hardware}.qwen3_moe", f"qwen3_30b_a3b_pretrain_8gpu_{hardware}_{precision}_config")
+    for hardware in ("b200", "b300")
+    for precision in ("bf16", "fp8mx")
+) + tuple(
+    (f"qwen.{hardware}.qwen3_moe", f"qwen3_235b_a22b_pretrain_{gpus}gpu_{hardware}_{precision}_config")
+    for hardware in ("b200", "b300")
+    for gpus, precision in (
+        (64, "bf16"),
+        (64, "fp8mx"),
+        (64, "nvfp4"),
+        (256, "bf16"),
+        (256, "fp8mx"),
+        (256, "fp8mx_large_scale"),
+        (256, "nvfp4"),
+    )
+)
+
 # VRNVL72 aliases that share the GB300 NCCL EP builder instead of a HybridEP base.
 _VRNVL72_NCCLEP_RECIPES = (
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
@@ -92,7 +111,7 @@ _VRNVL72_ALIASES = (
 # every recipe module that is already loaded, so a lazy import inside a test would escape the patch.
 _RECIPE_MODULES = {
     module_name: importlib.import_module(f"megatron.bridge.perf_recipes.{module_name}")
-    for module_name in sorted({name for name, _ in (*_GB300_NCCLEP_RECIPES, *_VRNVL72_ALIASES)})
+    for module_name in sorted({name for name, _ in (*_GB300_NCCLEP_RECIPES, *_QWEN3_NVL8_RECIPES, *_VRNVL72_ALIASES)})
 }
 
 
@@ -106,18 +125,21 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("module_name", "factory_name"), (*_GB300_NCCLEP_RECIPES, *_VRNVL72_NCCLEP_RECIPES), ids=lambda value: value
+    ("module_name", "factory_name"),
+    (*_GB300_NCCLEP_RECIPES, *_QWEN3_NVL8_RECIPES, *_VRNVL72_NCCLEP_RECIPES),
+    ids=lambda value: value,
 )
-def test_gb300_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory_name: str) -> None:
+def test_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory_name: str) -> None:
     cfg = _build(module_name, factory_name)
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     # Device-side expert token counts; the legacy grouped-MLP path host-syncs tokens_per_expert per layer.
     assert cfg.model.moe_use_grouped_tensor is True
-    # The plugin runs in hierarchical-topology pull mode, and nothing reads the HybridEP tuning anymore.
-    assert {name: cfg.env_vars[name] for name in _NCCL_EP_ENV} == _NCCL_EP_ENV
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    if (module_name, factory_name) in _QWEN3_NVL8_RECIPES:
+        assert cfg.model.expert_model_parallel_size == 8
 
 
 def test_gb300_deepseek_hsdp_uses_hybridep() -> None:
@@ -155,9 +177,54 @@ def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_override
     assert cfg.model.cross_entropy_loss_fusion is False
     assert cfg.model.moe_router_aux_loss_fusion is False
     assert cfg.model.moe_router_fusion == base.model.moe_router_fusion
-    # Same NCCL EP stack as the base recipe; only the determinism overrides differ.
-    assert cfg.model.moe_token_dispatcher_type == base.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == base.model.moe_flex_dispatcher_backend == "ncclep"
-    assert cfg.model.moe_use_grouped_tensor is base.model.moe_use_grouped_tensor is True
-    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
-    assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
+    # HybridEP with the legacy grouped MLP until the NCCL EP path is deterministic.
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_use_grouped_tensor is False
+    assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
+    expected_env = {name: value for name, value in base.env_vars.items() if name not in _NCCL_EP_ENV}
+    expected_env.update({name: cfg.env_vars[name] for name in HYBRID_EP_ENV_NAMES})
+    assert cfg.env_vars == {**expected_env, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
+
+
+@pytest.mark.parametrize(
+    ("module_name", "factory_name"),
+    [(module, factory) for module, factory in _QWEN3_NVL8_RECIPES if "235b" in factory],
+    ids=lambda value: value,
+)
+def test_qwen3_235b_nvl8_preserves_layout_and_graphs(module_name: str, factory_name: str) -> None:
+    cfg = _build(module_name, factory_name)
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.seq_length == cfg.dataset.seq_length == 4096
+    assert cfg.train.micro_batch_size == (1 if ".b200." in module_name else 2)
+    assert cfg.train.global_batch_size == (
+        512 if "large_scale" in factory_name else (2048 if "64gpu" in factory_name else 8192)
+    )
+
+    full_iteration = "256gpu" in factory_name and ("fp8mx" in factory_name or "nvfp4" in factory_name)
+    assert cfg.model.cuda_graph_impl == ("full_iteration" if full_iteration else "none")
+    if full_iteration:
+        assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+        assert cfg.model.moe_paged_stash is True
+        assert cfg.model.use_transformer_engine_op_fuser is True
+        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+        assert cfg.comm_overlap.delay_wgrad_compute is True
+        assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    if "nvfp4" in factory_name:
+        assert cfg.comm_overlap.tp_comm_overlap is False
+
+
+def test_qwen3_235b_b200_bf16_disables_parameter_gather_overlap() -> None:
+    cfg = _build("qwen.b200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_b200_bf16_config")
+
+    assert cfg.comm_overlap.overlap_param_gather is False
+    assert cfg.comm_overlap.align_param_gather is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.ddp.align_param_gather is False
+    assert cfg.optimizer.overlap_param_gather is False
+    assert cfg.model.cuda_graph_impl == "none"
