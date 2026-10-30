@@ -14,6 +14,7 @@
 
 """Runtime dataset for direct SFT examples."""
 
+import functools
 import inspect
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -42,6 +43,16 @@ def _collate_kwargs_for_impl(
             "does not accept enable_in_batch_packing=True. Use a collate that supports in-batch packing."
         )
     return supported_kwargs
+
+
+def _apply_collate(
+    collate_impl: Callable[..., dict[str, torch.Tensor]],
+    processor: Any,
+    collate_kwargs: dict[str, Any],
+    batch: list,
+) -> dict[str, torch.Tensor]:
+    """Collate ``batch`` with the dataset's bound implementation, processor and keyword arguments."""
+    return collate_impl(batch, processor, **collate_kwargs)
 
 
 class DirectSFTDataset(torch.utils.data.Dataset):
@@ -100,10 +111,9 @@ class DirectSFTDataset(torch.utils.data.Dataset):
                 require_packing_support=bool(collate_kwargs["enable_in_batch_packing"]),
             )
 
-        def _bound_collate(batch: list) -> dict[str, torch.Tensor]:
-            return collate_impl(batch, self._processor, **collate_kwargs)
-
-        self.collate_fn = _bound_collate
+        # A module-level partial (not a closure) so the collate can be pickled into DataLoader workers
+        # started with the "spawn" or "forkserver" multiprocessing context.
+        self.collate_fn = functools.partial(_apply_collate, collate_impl, processor, collate_kwargs)
 
     def __len__(self) -> int:
         return self._length
