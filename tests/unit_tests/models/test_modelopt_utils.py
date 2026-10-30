@@ -37,7 +37,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    GDNLinearMappingSeparate,
     QKVMapping,
+    _fuse_gdn_separate_to_grouped,
+    merge_gdn_linear_weights,
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
@@ -674,6 +677,51 @@ def test_qkv_state_uses_megatron_interleaving(monkeypatch):
     }
     assert [len(indices) for _, _, indices in selections] == [8, 4, 4]
     assert sorted(index for _, _, indices in selections for index in indices) == list(range(16))
+
+
+@pytest.mark.parametrize("tp_size", [1, 2])
+def test_gdn_state_follows_the_in_proj_layout_and_keeps_gates_unquantized(monkeypatch, tp_size):
+    prefix = "model.layers.0.linear_attn.in_proj"
+    mapping = GDNLinearMappingSeparate(
+        "decoder.layers.0.self_attention.in_proj.weight",
+        f"{prefix}_qkv.weight",
+        f"{prefix}_z.weight",
+        f"{prefix}_b.weight",
+        f"{prefix}_a.weight",
+    )
+    monkeypatch.setattr(GDNLinearMappingSeparate, "tp_size", property(lambda _self: tp_size))
+    layout = (2, 4, 3, 5)  # key heads, value heads, key head dim, value head dim
+    config = SimpleNamespace(
+        hidden_size=1,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=3,
+        linear_value_head_dim=5,
+    )
+    # Label each HF row, then lay the rows out as the gathered Megatron in_proj at this TP size.
+    hf_rows = dict(zip(("qkv", "z", "b", "a"), torch.arange(60.0).unsqueeze(1).split([32, 20, 4, 4])))
+    in_proj = merge_gdn_linear_weights(config, *_fuse_gdn_separate_to_grouped(config, *hf_rows.values()), tp_size)
+    task = SimpleNamespace(mapping=mapping, global_param_name="in_proj.weight")
+    source = modelopt_utils._SourceState("in_proj", (60, 1), "column", gdn_layout=layout)
+    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda value, _mapping, _error=None: [value])
+    monkeypatch.setattr(weight_export, "select_quantized_weight_export_state", lambda _state, _dim, rows: rows)
+
+    transformed = modelopt_utils._transform_source_state(task, source)
+
+    for key in ("qkv", "z"):
+        assert torch.equal(in_proj[transformed[f"{prefix}_{key}.weight"]], hf_rows[key])
+    assert transformed[f"{prefix}_b.weight"] is None and transformed[f"{prefix}_a.weight"] is None
+
+
+def test_export_hook_passes_unquantized_outputs_through(monkeypatch):
+    task = SimpleNamespace(mapping=ColumnParallelMapping("projection.weight", "model.projection.weight"))
+    weight = torch.randn(4, 4, dtype=torch.bfloat16)
+    monkeypatch.setattr(modelopt_utils, "_capture_current_source_state", lambda _task: (None, None))
+    monkeypatch.setattr(modelopt_utils, "_transform_source_state", lambda *_args: {"model.projection.weight": None})
+
+    exported = list(modelopt_utils._make_export_hook(task)("model.projection.weight", weight))
+
+    assert exported == [HFWeightTuple("model.projection.weight", weight)]
 
 
 def test_inconsistent_tp_quantization_is_rejected(monkeypatch):

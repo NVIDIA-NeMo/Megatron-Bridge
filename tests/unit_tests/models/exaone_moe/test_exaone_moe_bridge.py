@@ -12,16 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import fields
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
 from megatron.core.transformer.mlp import MLP
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
 from megatron.bridge.models.exaone.exaone_moe.exaone_moe_bridge import ExaoneMoeBridge
+from megatron.bridge.models.exaone.exaone_moe.exaone_moe_config import (
+    ExaoneMoeModelConfig,
+    ExaoneMoeTransformerConfig,
+)
 from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import (
     ExaoneMoeDecoderLayer,
     ExaoneMoeModelProvider,
@@ -29,6 +35,7 @@ from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import (
     _MTPDenseLayerSpecsList,
     build_exaone_moe_layer_spec,
 )
+from megatron.bridge.models.gpt.gpt_builder import mtp_block_spec
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -71,6 +78,24 @@ def _make_pretrained(config: SimpleNamespace) -> Mock:
     pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = config
     return pretrained
+
+
+def _make_k_exaone_2_0_config(**overrides) -> SimpleNamespace:
+    """K-EXAONE 2.0 layout: dense-first MoE, per-layer windows and clamps, one repeated MTP layer."""
+    values = {
+        "layer_types": ["full_attention", "sliding_attention", "sliding_attention", "full_attention"],
+        "sliding_windows": [0, 4096, 128, 0],
+        "mlp_layer_types": ["dense", "dense", "sparse", "sparse"],
+        "swiglu_limits": [0.0, 0.0, 7.0, 7.0],
+        "num_nextn_predict_layers": 1,
+        "mtp_num_speculative_steps": 4,
+        "mtp_layer_types": ["sliding_attention"],
+        "mtp_sliding_windows": [128],
+        "mtp_loss_scaling_factor": 0.05,
+        "topk_method": "noaux_tc",
+    }
+    values.update(overrides)
+    return _make_config(**values)
 
 
 class TestExaoneMoeBridge:
@@ -367,3 +392,121 @@ class TestExaoneMoeBridge:
 
         assert registry.hf_to_megatron_lookup("mtp.layers.0.mlp.experts.3.gate_proj.weight") is None
         assert registry.megatron_to_hf_lookup("mtp.layers.0.mtp_model_layer.mlp.router.weight") is None
+
+
+class TestExaoneMoeBridgeModelConfig:
+    def test_conversion_uses_builder_config(self):
+        assert "provider_bridge" not in ExaoneMoeBridge.__dict__
+        assert ExaoneMoeBridge.MODEL_CONFIG_CLASS is ExaoneMoeModelConfig
+        assert ExaoneMoeModelConfig.transformer_config_class is ExaoneMoeTransformerConfig
+        assert ExaoneMoeBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_model_config_maps_hf_config_without_provider(self):
+        config = _make_k_exaone_2_0_config()
+        del config.torch_dtype
+        config.dtype = "bfloat16"
+        bridge = ExaoneMoeBridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(config)
+
+        assert isinstance(model_config, ExaoneMoeModelConfig)
+        assert isinstance(model_config.transformer, ExaoneMoeTransformerConfig)
+        assert model_config.transformer_layer_spec is build_exaone_moe_layer_spec
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.params_dtype is torch.bfloat16
+        assert model_config.moe_layer_freq == [0, 0, 1, 1]
+        assert model_config.window_size == (4095, 0)
+        assert model_config.transformer.layer_types == config.layer_types
+        assert model_config.transformer.sliding_windows == [0, 4096, 128, 0]
+        assert model_config.transformer.swiglu_limits == [0.0, 0.0, 7.0, 7.0]
+        assert model_config.transformer.mtp_layer_types == ["sliding_attention"]
+        assert model_config.transformer.mtp_sliding_windows == [128]
+        assert model_config.mtp_num_layers == 4
+        assert model_config.mtp_use_repeated_layer is True
+        assert model_config.mtp_loss_scaling_factor == 0.05
+        assert model_config.moe_router_load_balancing_type == "none"
+        assert model_config.moe_aux_loss_coeff == 0.0
+        # EXAONE provider settings that differ from the builder config defaults.
+        assert model_config.attention_softmax_in_fp32 is True
+        assert model_config.gradient_accumulation_fusion is False
+        assert model_config.moe_token_dispatcher_type == "alltoall"
+        assert model_config.moe_router_pre_softmax is True
+
+    @pytest.mark.parametrize(
+        "config_factory",
+        [
+            _make_config,
+            _make_k_exaone_2_0_config,
+            lambda: _make_config(mlp_layer_types=None, first_k_dense_replace=2, tie_word_embeddings=True),
+            lambda: _make_config(
+                rope_parameters={"rope_type": "linear", "rope_theta": 500000.0, "factor": 4.0},
+                num_nextn_predict_layers=1,
+                mtp_share_layers=True,
+            ),
+        ],
+        ids=["k_exaone", "k_exaone_2_0", "legacy_schedule_tied", "linear_rope_shared_mtp"],
+    )
+    def test_model_config_matches_provider(self, config_factory):
+        config = config_factory()
+        bridge = ExaoneMoeBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(_make_pretrained(config))
+
+        model_fields = {f.name for f in fields(model_config)} | {f.name for f in fields(model_config.transformer)}
+        shared = {f.name for f in fields(provider)} & model_fields
+        assert {"transformer_layer_spec", "sliding_windows", "swiglu_limits", "mtp_sliding_windows"} <= shared
+        mismatches = {
+            name: (getattr(model_config, name), getattr(provider, name))
+            for name in sorted(shared)
+            if getattr(model_config, name) != getattr(provider, name)
+        }
+        assert mismatches == {}
+
+    def test_layer_spec_accepts_model_config_without_mutating_it(self):
+        model_config = ExaoneMoeBridge().hf_config_to_model_config(_make_k_exaone_2_0_config())
+        before = (model_config.num_moe_experts, list(model_config.moe_layer_freq), model_config.moe_grouped_gemm)
+
+        block_spec = build_exaone_moe_layer_spec(model_config, pp_rank=0)
+
+        after = (model_config.num_moe_experts, list(model_config.moe_layer_freq), model_config.moe_grouped_gemm)
+        assert after == before
+        assert all(layer_spec.module is ExaoneMoeDecoderLayer for layer_spec in block_spec.layer_specs)
+        assert isinstance(block_spec.layer_specs[-1], TransformerBlockSubmodules)
+
+        # The GPT builder derives the MTP block from layer_specs[-1].
+        mtp_spec = mtp_block_spec(model_config, block_spec, vp_stage=None, pp_rank=0)
+        mtp_layer_spec = mtp_spec.layer_specs[0].submodules.mtp_model_layer
+        assert mtp_layer_spec.module is ExaoneMoeDecoderLayer
+        assert mtp_layer_spec.submodules.mlp.func == MLP.as_mlp_submodule
+
+    def test_model_config_round_trips_through_serialization(self):
+        model_config = ExaoneMoeBridge().hf_config_to_model_config(_make_k_exaone_2_0_config())
+
+        restored = ExaoneMoeModelConfig.from_dict(model_config.as_dict())
+
+        assert isinstance(restored, ExaoneMoeModelConfig)
+        assert isinstance(restored.transformer, ExaoneMoeTransformerConfig)
+        assert restored.transformer_layer_spec is build_exaone_moe_layer_spec
+        for name in ("layer_types", "sliding_windows", "swiglu_limits", "mtp_layer_types", "mtp_sliding_windows"):
+            assert getattr(restored.transformer, name) == getattr(model_config.transformer, name), name
+
+    def test_exported_config_keeps_physical_and_repeated_mtp_layers(self):
+        model_config = ExaoneMoeBridge().hf_config_to_model_config(_make_k_exaone_2_0_config())
+
+        exported_config = ExaoneMoeBridge.megatron_to_hf_config(model_config)
+
+        assert exported_config["num_nextn_predict_layers"] == 1
+        assert exported_config["mtp_num_speculative_steps"] == 4
+
+    def test_dtype_defaults_to_float32_without_dtype_fields(self):
+        config = _make_config()
+        del config.torch_dtype
+
+        model_config = ExaoneMoeBridge().hf_config_to_model_config(config)
+
+        assert model_config.params_dtype is torch.float32
+        assert model_config.bf16 is False

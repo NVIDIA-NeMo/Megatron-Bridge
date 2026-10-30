@@ -739,6 +739,8 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
                 fp16=False, use_precision_aware_optimizer_no_fp8_or_ds_fp8=precision_aware
             )
             wrapped.grad_scaler = None
+            # Single-rank stand-in for Core's data-parallel group; dp_reshardable loading reads its rank and size.
+            wrapped.data_parallel_group = SimpleNamespace(rank=lambda: 0, size=lambda: 1)
             wrapped.model_param_group_index_map = {param: (0, index) for index, param in enumerate(params)}
             return params, wrapped
 
