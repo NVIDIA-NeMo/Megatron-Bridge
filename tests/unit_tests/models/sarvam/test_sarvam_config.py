@@ -14,6 +14,7 @@
 
 """Unit tests for the builder-backed Sarvam MoE model config."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -140,7 +141,8 @@ class TestSarvamMoEModelConfigCheckpoint:
         loaded, _ = load_model_config(str(tmp_path))
         assert loaded.transformer.use_cpu_initialization is saved_cpu_init
 
-        model = [object()]
+        # Model chunks accept attributes: build_and_load_model attaches the outer config to each one.
+        model = [SimpleNamespace()]
         cpu_init_at_build = []
 
         def build_distributed_models(*args, **kwargs):
@@ -157,4 +159,5 @@ class TestSarvamMoEModelConfigCheckpoint:
             )
 
         assert result is model
+        assert result[0].model_config is loaded
         assert cpu_init_at_build == [use_cpu_init]

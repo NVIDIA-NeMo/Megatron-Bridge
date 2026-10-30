@@ -382,7 +382,8 @@ class TestLLaDA15BuilderConfig:
         loaded, _ = load_model_config(str(tmp_path))
         assert loaded.transformer.use_cpu_initialization is saved_cpu_init
 
-        model = [object()]
+        # Model chunks accept attributes: build_and_load_model attaches the outer config to each one.
+        model = [types.SimpleNamespace()]
         cpu_init_at_build = []
 
         def build_distributed_models(*args, **kwargs):
@@ -399,6 +400,7 @@ class TestLLaDA15BuilderConfig:
             )
 
         assert result is model
+        assert result[0].model_config is loaded
         assert cpu_init_at_build == [use_cpu_init]
 
     def test_legacy_private_layer_spec_target_resolves(self):
