@@ -13,10 +13,12 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from dataclasses import replace
+from math import lcm
 from typing import Optional
 
 import torch
-from megatron.core import InferenceParams
+from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -31,6 +33,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     Qwen3VLVisionPatchEmbed,
     Qwen3VLVisionPatchMerger,
     Qwen3VLVisionRotaryEmbedding,
+    gather_vision_sequence,
 )
 
 
@@ -106,6 +109,18 @@ def _vision_forward_packed_attention_setup(
         return packed_seq_params, attention_mask
 
     packed_seq_params = build_packed_seq_params(grid_thw)
+    if seq_len > original_seq_len:
+        # SP padding is a separate attention sequence. Real images and video
+        # frames retain their original RoPE positions and attention boundaries.
+        cu_seqlens = torch.cat((packed_seq_params.cu_seqlens_q, packed_seq_params.cu_seqlens_q.new_tensor([seq_len])))
+        max_seqlen = max(packed_seq_params.max_seqlen_q, seq_len - original_seq_len)
+        packed_seq_params = replace(
+            packed_seq_params,
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
+        )
     return packed_seq_params, None
 
 
@@ -132,10 +147,12 @@ class Qwen3VLVisionModel(VisionModule):
         self.spatial_merge_size = transformer_config.spatial_merge_size
         self.patch_size = transformer_config.patch_size
         self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
-        self.pg_collection = pg_collection
         if pg_collection is None:
             pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        self.pg_collection = pg_collection
         self.tp_group = self.pg_collection.tp
+        if transformer_config.sequence_parallel and self.tp_group.size() <= 1:
+            raise ValueError("vision_sequence_parallel requires a vision tensor-parallel group larger than one.")
 
         assert transformer_config.context_parallel_size == 1, (
             f"context_parallel_size should be 1 in vision model but got {transformer_config.context_parallel_size}"
@@ -337,10 +354,16 @@ class Qwen3VLVisionModel(VisionModule):
         # Check if we need to pad for CUDA graphs
         use_cuda_graph_padding = self._uses_vision_cuda_graph()
         original_seq_len = seq_len
+        alignment = lcm(self.tp_group.size(), self.spatial_merge_unit) if self.config.sequence_parallel else 1
         if use_cuda_graph_padding:
             max_seq_len = self._get_max_vision_seq_length()
             hidden_states, rotary_pos_emb, seq_len = _maybe_pad_vision_sequence_for_cuda_graph(
                 hidden_states, rotary_pos_emb, seq_len, max_seq_len
+            )
+        elif seq_len % alignment:
+            padded_seq_len = ((seq_len + alignment - 1) // alignment) * alignment
+            hidden_states, rotary_pos_emb, seq_len = _maybe_pad_vision_sequence_for_cuda_graph(
+                hidden_states, rotary_pos_emb, seq_len, padded_seq_len
             )
         hidden_states = hidden_states[:, None]
         packed_seq_params, attention_mask = _vision_forward_packed_attention_setup(
@@ -351,6 +374,8 @@ class Qwen3VLVisionModel(VisionModule):
             grid_thw=grid_thw,
             build_packed_seq_params=self.build_packed_seq_params,
         )
+        if self.config.sequence_parallel:
+            hidden_states = tensor_parallel.scatter_to_sequence_parallel_region(hidden_states, group=self.tp_group)
         hidden_states, deepstack_feature_lists = self.decoder(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -359,8 +384,9 @@ class Qwen3VLVisionModel(VisionModule):
             packed_seq_params=packed_seq_params,
             **(extra_block_kwargs or {}),
         )
+        hidden_states = gather_vision_sequence(hidden_states, self.config, self.tp_group)
         # Remove padding if we added it
-        if use_cuda_graph_padding and original_seq_len < seq_len:
+        if original_seq_len < seq_len:
             # Merge the padded rows (cut to whole merged tokens) and drop the padded merged tokens afterwards, so the
             # merger always sees the same row count. On the real patch count, which changes with every micro batch,
             # Transformer Engine builds a new patch_norm plan for each new count when the cuDNN norm flags

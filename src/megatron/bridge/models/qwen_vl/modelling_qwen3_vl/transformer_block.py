@@ -38,7 +38,10 @@ from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_
 from torch import Tensor, nn
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
+    Qwen3VLVisionPatchMerger,
+    gather_vision_sequence,
+)
 
 
 try:
@@ -149,7 +152,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         l_no = layer.layer_number - 1
                         if l_no in self.deepstack_visual_indexes:
                             deepstack_idx = self.deepstack_visual_indexes.index(l_no)
-                            deepstack_feature = self.deepstack_merger_list[deepstack_idx](hidden_states)
+                            deepstack_feature = self.deepstack_merger_list[deepstack_idx](
+                                gather_vision_sequence(hidden_states, self.config, self.tp_group)
+                            )
                             deepstack_feature_lists.append(deepstack_feature)
                 return hidden_states, deepstack_feature_lists, context
 
@@ -365,7 +370,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
                         if l_no in self.deepstack_visual_indexes:
                             deepstack_idx = self.deepstack_visual_indexes.index(l_no)
-                            deepstack_feature = self.deepstack_merger_list[deepstack_idx](hidden_states)
+                            deepstack_feature = self.deepstack_merger_list[deepstack_idx](
+                                gather_vision_sequence(hidden_states, self.config, self.tp_group)
+                            )
                             deepstack_feature_lists.append(deepstack_feature)
 
                     if (

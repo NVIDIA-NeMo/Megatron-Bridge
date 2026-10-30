@@ -114,6 +114,48 @@ Before training, ensure the following environment variables are set:
 3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
 4. `WANDB_API_KEY`: (optional) to enable WandB logging
 
+### Independent vision sequence parallelism
+
+Qwen3.5 dense and MoE providers expose `vision_sequence_parallel` separately
+from the language model's `sequence_parallel`. Vision SP defaults to `False`.
+Each enabled SP option requires its module's tensor-parallel group to have more
+than one rank. Vision SP currently requires `vision_cuda_graph_impl="none"`.
+
+The combined-model provider installs a Bridge gradient-finalization callback;
+no Core change is required. It owns vision SP gradient sums while Core retains
+DP synchronization, embedding synchronization and loss normalization. It also
+sums GDN's shared output-norm gradients across TP heads when language SP is off,
+including when vision SP is off. These parameters are excluded from Core's TP
+reduction pass to prevent duplicate reductions.
+
+The added reductions support Megatron DDP (including its distributed optimizer)
+with a shared vision/language TP group. FSDP, DTensor gradients and GTP weight
+rematerialization are not supported for these reductions. MIMO uses its existing
+per-module finalization path; this callback does not extend MIMO support.
+Custom training loops must call `config.finalize_model_grads_func`, as Bridge's
+training loop does, instead of calling Core's finalizer directly. A conflicting
+custom finalizer is rejected when the added reductions are needed.
+
+For a dense model, enable SP in the vision transformer while leaving language
+SP off:
+
+```python
+cfg.model.tensor_model_parallel_size = 2
+cfg.model.vision_sequence_parallel = True
+cfg.model.sequence_parallel = False
+```
+
+Core requires language SP for MoE training with language TP greater than one.
+For MoE, keep `sequence_parallel=True` and choose `vision_sequence_parallel`
+independently.
+
+Vision activations are scattered after patch and position embedding and gathered
+before spatial patch merging. The merger keeps ordinary tensor parallelism, and
+complete vision embeddings are inserted into language embeddings before any
+language SP scatter. Variable-length image/video inputs are padded as needed;
+padding receives its own packed attention sequence and is removed from outputs.
+The options do not change checkpoint parameter names or shapes.
+
 ### Vision activation recomputation
 
 The Qwen3.5-VL model config exposes vision recomputation independently of
