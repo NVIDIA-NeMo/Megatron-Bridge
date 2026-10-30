@@ -70,6 +70,7 @@ from megatron.bridge.models.hybrid.hybrid_provider import get_default_hybrid_sta
 from megatron.bridge.models.hybrid_mla_provider import HybridMLAModelProvider
 from megatron.bridge.training.utils.packed_seq_utils import (
     get_packed_seq_cp_partition_indices,
+    get_packed_seq_q_cu_seqlens,
     preprocess_packed_seqs,
 )
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
@@ -155,6 +156,20 @@ def _glm5next_hybrid_layout(hf_config) -> tuple[str, list[int]]:
 def _is_keep_mask(attention_mask: Optional[Tensor], input_ids: Tensor) -> bool:
     """Whether ``attention_mask`` is a ``[batch, seq]`` keep mask for dense ``input_ids`` rows."""
     return attention_mask is not None and attention_mask.dim() == 2 and attention_mask.shape == input_ids.shape
+
+
+def _packed_position_ids(packed_seq_params: "PackedSeqParams", total_tokens: int, device: torch.device) -> Tensor:
+    """Return per-sequence positions ``[1, total_tokens]`` for a packed THD stream.
+
+    Positions restart at each physical sequence start; tokens past the last boundary get 0.
+    """
+    _, cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    cu_seqlens = cu_seqlens.to(device=device, dtype=torch.long)
+    starts = torch.repeat_interleave(cu_seqlens[:-1], cu_seqlens.diff())
+    positions = torch.zeros(total_tokens, dtype=torch.long, device=device)
+    covered = min(starts.numel(), total_tokens)
+    positions[:covered] = torch.arange(covered, device=device) - starts[:covered]
+    return positions.unsqueeze(0)
 
 
 def _select_tokens(tensor: Optional[Tensor], index: Optional[Tensor]) -> Optional[Tensor]:
@@ -491,29 +506,24 @@ class GLM53FlashModel(MegatronModule):
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         packed_seq_params: Optional["PackedSeqParams"] = None,
-        temperature: Optional[float] = None,
-        output_processor=None,
-        output_processor_context=None,
         *,
         loss_mask: Optional[Tensor] = None,
     ) -> Tensor | tuple[Tensor, Tensor]:
         """Insert vision features, then run the language model on a THD token stream.
 
-        Three input layouts are accepted:
+        Two input layouts are accepted:
 
         * Dense rows without ``packed_seq_params`` (Bridge BSHD training, generation).
           ``attention_mask`` is an optional ``[batch, seq]`` keep mask; every token is
           kept when it is omitted. Token IDs, embeddings, labels and the loss mask are
           packed with the same layout, so padding has zero loss, and the packed loss
           mask is returned with the output.
-        * Dense rows with caller-built ``packed_seq_params`` (verl). ``attention_mask``
-          marks each row's padded length, so packing reproduces the caller's layout;
-          the caller's metadata keeps its logical boundaries. Labels and the loss mask
-          already use that layout and pass through unchanged.
-        * A ``[1, total_tokens]`` stream that is already packed, with
-          ``packed_seq_params`` and no keep mask (Bridge collate-time packing). Its
-          boundaries are kept and only this context-parallel rank's tokens are selected.
+        * A ``[1, total_tokens]`` stream that is already packed, with ``packed_seq_params``
+          and ``attention_mask=None`` (Bridge collate-time packing). Its boundaries are
+          kept and only this context-parallel rank's tokens are selected.
 
+        The language model applies no positional embedding, so ``position_ids`` is not
+        read; per-sequence positions in the packed layout are derived for MTP instead.
         Placeholder masks need whole sequences, so vision features are inserted before
         packing or context-parallel selection; sequence-parallel scattering comes last.
         Only the pre-process stage embeds tokens and runs the vision tower. Later stages
@@ -522,39 +532,44 @@ class GLM53FlashModel(MegatronModule):
         if input_ids is None:
             raise ValueError("GLM53FlashModel requires input_ids to derive the packed token layout.")
 
-        keep_mask = attention_mask if _is_keep_mask(attention_mask, input_ids) else None
-        already_packed = packed_seq_params is not None and keep_mask is None
+        already_packed = packed_seq_params is not None
         return_loss_mask = False
         cp_index = None
+        keep_mask = None
         if already_packed:
+            if attention_mask is not None:
+                raise ValueError(
+                    "Packed GLM-5.3-Flash input takes its sequence boundaries from packed_seq_params; "
+                    "pass attention_mask=None."
+                )
             if input_ids.dim() != 2 or input_ids.size(0) != 1:
                 raise ValueError(
-                    "Packed GLM-5.3-Flash input must have shape [1, total_tokens]; pass a [batch, seq] "
-                    f"attention mask for dense rows. Got input_ids shape {tuple(input_ids.shape)}."
+                    "Packed GLM-5.3-Flash input must have shape [1, total_tokens]; got input_ids shape "
+                    f"{tuple(input_ids.shape)}."
                 )
             cp_index = self._packed_cp_index(packed_seq_params, input_ids)
             lm_input_ids = _select_tokens(input_ids, cp_index)
+            lm_position_ids = _select_tokens(
+                _packed_position_ids(packed_seq_params, input_ids.size(1), input_ids.device), cp_index
+            )
             if cp_index is not None:
                 labels = _select_tokens(labels, cp_index)
                 if loss_mask is not None:
                     loss_mask = _select_tokens(loss_mask, cp_index)
                     return_loss_mask = True
         else:
-            if keep_mask is None:
+            if _is_keep_mask(attention_mask, input_ids):
+                keep_mask = attention_mask.bool()
+            else:
                 keep_mask = torch.ones(input_ids.shape, dtype=torch.bool, device=input_ids.device)
-            elif packed_seq_params is not None and input_ids.size(0) != packed_seq_params.cu_seqlens_q.numel() - 1:
-                raise ValueError(
-                    "With an attention mask, each input row must be one sequence of packed_seq_params: "
-                    f"got {input_ids.size(0)} rows and {packed_seq_params.cu_seqlens_q.numel() - 1} sequences."
-                )
-            lm_input_ids, generated_params = self._pack_rows(input_ids, keep_mask)
-            if packed_seq_params is None:
-                packed_seq_params = generated_params
-                if labels is not None:
-                    labels = self._pack_rows(labels, keep_mask)[0]
-                if loss_mask is not None:
-                    loss_mask = self._pack_rows(loss_mask, keep_mask)[0]
-                    return_loss_mask = True
+            lm_input_ids, packed_seq_params = self._pack_rows(input_ids, keep_mask)
+            row_positions = (keep_mask.long().cumsum(dim=-1) - 1).clamp(min=0)
+            lm_position_ids = self._pack_rows(row_positions, keep_mask)[0]
+            if labels is not None:
+                labels = self._pack_rows(labels, keep_mask)[0]
+            if loss_mask is not None:
+                loss_mask = self._pack_rows(loss_mask, keep_mask)[0]
+                return_loss_mask = True
 
         decoder_input = None
         if self.pre_process:
@@ -581,19 +596,15 @@ class GLM53FlashModel(MegatronModule):
                 tp_group = pg_collection.tp if pg_collection is not None else None
                 decoder_input = scatter_to_sequence_parallel_region(decoder_input, group=tp_group)
 
-        # verl's output processor needs hidden states, not the MTP auxiliary loss.
         output = self.language_model.forward(
             input_ids=lm_input_ids,
-            position_ids=None,
+            position_ids=lm_position_ids,
             attention_mask=None,
             decoder_input=decoder_input,
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
-            output_processor=output_processor,
-            output_processor_context=output_processor_context,
-            compute_mtp_loss=False,
         )
         if return_loss_mask:
             return output, loss_mask
