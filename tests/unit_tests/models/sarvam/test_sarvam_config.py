@@ -17,6 +17,7 @@
 from unittest.mock import patch
 
 import pytest
+import torch
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.sarvam.sarvam_config import SarvamMoEModelConfig, _get_sarvam_moe_pipeline_layout
@@ -140,7 +141,8 @@ class TestSarvamMoEModelConfigCheckpoint:
         loaded, _ = load_model_config(str(tmp_path))
         assert loaded.transformer.use_cpu_initialization is saved_cpu_init
 
-        model = [object()]
+        # Built chunks are modules: the loader keeps the outer config on each one for later saves.
+        model = [torch.nn.Module()]
         cpu_init_at_build = []
 
         def build_distributed_models(*args, **kwargs):
@@ -158,3 +160,4 @@ class TestSarvamMoEModelConfigCheckpoint:
 
         assert result is model
         assert cpu_init_at_build == [use_cpu_init]
+        assert result[0].model_config is loaded
