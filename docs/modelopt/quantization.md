@@ -206,6 +206,32 @@ Post-mapping key renames of quantized weights are not supported, including legac
 excluded weights retain their normal renaming behavior. This API requires a ModelOpt release that provides the
 functional quantized-weight export interface.
 
+#### KV-cache scales in online export
+
+The streaming API also supports symmetric FP8 and NVFP4 K/V quantizers on standard
+QKV-mapped attention layers. It supports both KV-only models with unquantized weights
+and combined weight/KV quantization. Build the plan after calibration and pass its
+`quantization_config` to the inference engine, as in the examples above.
+
+FP8 requires static per-tensor E4M3 quantization. NVFP4 requires block-16 E2M1
+quantization with dynamic E4M3 block scales and a static global scale. Enabled
+query quantizers must use the FP8 layout. Rotation and pre-quant scaling are rejected
+even on disabled quantizers; enabled custom quantization backends are also unsupported.
+The same checks run when a plan is reused.
+
+Each stream emits current `q_scale`, `k_scale`, and `v_scale` tensors under the
+attention's Hugging Face prefix, once per QKV conversion group. An absent, disabled or
+constant-amax query quantizer exports a Q scale of one. Calibrated Q scales use the
+maximum across TP ranks to cover all query heads; K/V scales must agree across TP.
+FP8 scales are not clamped to one in this online
+path. The consumer remains responsible for native cache allocation and for refreshing
+any captured attention coefficients when scales change.
+
+This requires ModelOpt's functional KV-cache export API; constant-amax FP8 recipes
+also require constant-amax export support. Asymmetric K/V formats, partially selected
+attention layers, and attention without a supported QKV mapping are rejected. Offline
+`save_hf_pretrained_modelopt()` KV-cache export remains unsupported.
+
 ### Fake-Quantized Hugging Face Export
 
 `AutoBridge.save_hf_pretrained()` and `save_hf_weights()` also save a fake-quantized ModelOpt model, for
