@@ -41,14 +41,14 @@ resolves the trust_remote_code class.
 ## Workflow
 
 ```
-HF safetensors  →  AutoBridge.to_megatron_model()  →  save_megatron_model()
-                                                              ↓
-                                                    iter_0000000/*.distcp
-                                                              ↓
-                                                    load_megatron_model()
-                                                              ↓
-                                                    generate_block_diffusion()
-                                                    (TE attention; MDM denoising)
+HF safetensors  →  AutoBridge.get_model()  →  save_megatron_model()
+                                                      ↓
+                                            iter_0000000/*.distcp
+                                                      ↓
+                                            load_megatron_model()
+                                                      ↓
+                                            generate_block_diffusion()
+                                            (TE attention; MDM denoising)
 ```
 
 The model uses NVIDIA Transformer Engine (TE) fused attention via
@@ -126,7 +126,7 @@ $CKPT_PATH/
     __0_0.distcp         # sharded weights (~15 GB bf16)
     common.pt
     metadata.json
-    run_config.yaml      # serialized GPTModelProvider config
+    run_config.yaml      # serialized builder-backed BridgeGPTModelConfig
     train_state.pt
     tokenizer/           # embedded HF tokenizer + chat template
   latest_checkpointed_iteration.txt

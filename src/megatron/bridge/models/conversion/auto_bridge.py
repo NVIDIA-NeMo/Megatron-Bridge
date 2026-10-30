@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import json
 import logging
 import os
 from collections.abc import Callable, Mapping
@@ -1376,6 +1377,132 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
+        model_bridge = self._save_hf_artifacts(path, source_path)
+
+        self.save_hf_weights(
+            model,
+            path,
+            show_progress,
+            strict,
+            merge_adapter_weights=merge_adapter_weights,
+            distributed_save=distributed_save,
+            save_every_n_ranks=save_every_n_ranks,
+            weight_dtype=weight_dtype,
+        )
+        if model_bridge is not None and (not dist.is_initialized() or dist.get_rank() == 0):
+            weight_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_weights", None)
+            if weight_postprocessor is not None:
+                weight_postprocessor(model_bridge, Path(path))
+
+    def save_hf_pretrained_modelopt(
+        self,
+        model: list[MegatronModelT],
+        path: str | Path,
+        *,
+        export_plan: Optional["ModelOptExportPlan"] = None,
+        show_progress: bool = True,
+        source_path: Optional[Union[str, Path]] = None,
+        max_shard_size: int = 5 * 1024**3,
+    ) -> None:
+        """Save a ModelOpt-quantized Megatron model as a quantized HuggingFace checkpoint.
+
+        Quantized weights are packed with their scales (e.g. NVFP4 ``weight``, ``weight_scale``,
+        ``weight_scale_2`` and ``input_scale``), and ``config.json`` carries the
+        ``quantization_config`` that vLLM, SGLang and TensorRT-LLM read. Any quantization config
+        of the source checkpoint is replaced. Unlike :meth:`save_hf_pretrained`, which exports
+        fake-quantized BF16 weights with quantizer sidecars, this writes the deployment format.
+
+        Args:
+            model: Megatron model instance or list of instances.
+            path: Directory to save the checkpoint to.
+            export_plan: Plan built by :meth:`build_hf_modelopt_export_plan`; built when omitted.
+            show_progress: Display progress bar during weight export.
+            source_path: Directory with custom modeling files to preserve, as in
+                :meth:`save_hf_pretrained`.
+            max_shard_size: Maximum size in bytes of each safetensors shard.
+
+        Raises:
+            NotImplementedError: If the bridge post-processes exported weights.
+            RuntimeError: If an enabled quantizer has no exported tensors (e.g. KV-cache quantizers).
+            ValueError: If projections that deployments fuse (e.g. ``q_proj`` / ``k_proj`` /
+                ``v_proj``) carry different per-tensor scales.
+
+        Note:
+            This method is collective - all ranks must call it. Rank 0 writes the files.
+        """
+        # TODO: Consider unifying with save_hf_pretrained, choosing the format from the quantizer
+        # state: enabled weight quantizers -> this quantized checkpoint, folded weights -> BF16 with
+        # quantizer sidecars.
+        from megatron.bridge.models.conversion.modelopt_utils import (
+            _raise_distributed_errors,
+            _world_group,
+            check_exportable_quantizers,
+            check_fused_sibling_scales,
+            save_safetensors_shards,
+        )
+
+        if not isinstance(model, list):
+            model = [model]
+        if (
+            type(self._model_bridge).postprocess_hf_export_weights
+            is not MegatronModelBridge.postprocess_hf_export_weights
+        ):
+            raise NotImplementedError(
+                f"{type(self._model_bridge).__name__} post-processes exported weights, which a quantized export cannot"
+            )
+        check_exportable_quantizers(model)
+        if export_plan is None:
+            export_plan = self.build_hf_modelopt_export_plan(model)
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        output_path = Path(path).resolve()
+        # Rank 0 saves the artifacts; fail the other ranks too before the export collectives.
+        error = None
+        try:
+            self._save_hf_artifacts(path, source_path)
+        except Exception as exception:
+            error = f"{type(exception).__name__}: {exception}"
+        _raise_distributed_errors(error, _world_group(), f"ModelOpt HF export to {output_path} failed")
+        tensors = self.export_hf_weights_modelopt(
+            model, cpu=True, show_progress=show_progress, export_plan=export_plan
+        )
+        scales = {}
+
+        def _keep_scales(tensors):
+            for name, tensor in tensors:
+                if name.endswith(("weight_scale_2", "input_scale")):
+                    scales[name] = tensor
+                yield name, tensor
+
+        try:
+            if rank == 0:
+                previous_weight_files = _existing_safetensors_files(output_path)
+                saved = save_safetensors_shards(_keep_scales(tensors), output_path, max_shard_size=max_shard_size)
+                check_fused_sibling_scales(scales)
+                for filename in previous_weight_files - saved:
+                    (output_path / filename).unlink(missing_ok=True)
+                # Quantizer sidecars or a separate config would describe other weights.
+                for stale in ("hf_quant_config.json", MODELOPT_QUANTIZER_STATE_FILE, MODELOPT_QUANTIZER_RECIPE_FILE):
+                    (output_path / stale).unlink(missing_ok=True)
+                config_file = output_path / "config.json"
+                config = json.loads(config_file.read_text())
+                config["quantization_config"] = export_plan.quantization_config
+                config_file.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+            else:
+                for _ in tensors:
+                    pass
+        except Exception as exception:  # Drain so the other ranks finish the export collectives.
+            error = f"{type(exception).__name__}: {exception}"
+            for _ in tensors:
+                pass
+
+        _raise_distributed_errors(error, _world_group(), f"ModelOpt HF export to {output_path} failed")
+
+    def _save_hf_artifacts(self, path: str | Path, source_path: Optional[Union[str, Path]]) -> Any:
+        """Check the bridge supports HF export and save the config and tokenizer artifacts on rank 0.
+
+        Returns:
+            The resolved model bridge, or ``None`` for a config-only save without one.
+        """
         # Some bridges (e.g. the language-model-only bridge of a multimodal model) cannot
         # produce a valid standalone Hugging Face checkpoint; gate the export on the
         # resolved bridge's capability flag. Resolving the bridge needs a concrete,
@@ -1453,26 +1580,9 @@ class AutoBridge(Generic[MegatronModelT]):
                 if artifact_postprocessor is not None:
                     artifact_postprocessor(model_bridge, Path(path))
 
-        if dist.is_initialized():
-            if dist.get_rank() == 0:
-                _save_artifacts()
-        else:
+        if not dist.is_initialized() or dist.get_rank() == 0:
             _save_artifacts()
-
-        self.save_hf_weights(
-            model,
-            path,
-            show_progress,
-            strict,
-            merge_adapter_weights=merge_adapter_weights,
-            distributed_save=distributed_save,
-            save_every_n_ranks=save_every_n_ranks,
-            weight_dtype=weight_dtype,
-        )
-        if model_bridge is not None and (not dist.is_initialized() or dist.get_rank() == 0):
-            weight_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_weights", None)
-            if weight_postprocessor is not None:
-                weight_postprocessor(model_bridge, Path(path))
+        return model_bridge
 
     def save_hf_weights(
         self,

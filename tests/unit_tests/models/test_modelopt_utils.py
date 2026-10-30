@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import copy
+import json
 from dataclasses import replace
+from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -34,7 +37,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    GDNLinearMappingSeparate,
     QKVMapping,
+    _fuse_gdn_separate_to_grouped,
+    merge_gdn_linear_weights,
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
@@ -119,6 +125,26 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
     assert exported[hf_name].dtype == torch.float8_e4m3fn
     assert plan.quantization_config["quant_algo"] == "FP8"
     assert plan.quantization_config["config_groups"]["group_0"]["targets"] == ["Linear"]
+
+
+@pytest.mark.unit
+def test_fp8_export_matches_fake_quantization_of_a_bf16_weight():
+    torch.manual_seed(0)
+    module = torch.nn.Linear(64, 64, bias=False).to(torch.bfloat16)
+    mtq.quantize(
+        module,
+        copy.deepcopy(mtq.FP8_DEFAULT_CFG),
+        lambda candidate: candidate(torch.randn(2, 64, dtype=torch.bfloat16)),
+    )
+    hf_name = "model.layers.0.self_attn.o_proj.weight"
+    task = _task(ColumnParallelMapping("projection.weight", hf_name), module)
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    exported = dict(modelopt_utils.prepare_modelopt_export_tasks(plan)[0].export_hook(hf_name, module.weight))
+
+    scale = exported["model.layers.0.self_attn.o_proj.weight_scale"]
+    dequantized = (exported[hf_name].float() * scale).to(torch.bfloat16)
+    assert torch.equal(dequantized, module.weight_quantizer(module.weight))
 
 
 @pytest.mark.unit
@@ -653,6 +679,51 @@ def test_qkv_state_uses_megatron_interleaving(monkeypatch):
     assert sorted(index for _, _, indices in selections for index in indices) == list(range(16))
 
 
+@pytest.mark.parametrize("tp_size", [1, 2])
+def test_gdn_state_follows_the_in_proj_layout_and_keeps_gates_unquantized(monkeypatch, tp_size):
+    prefix = "model.layers.0.linear_attn.in_proj"
+    mapping = GDNLinearMappingSeparate(
+        "decoder.layers.0.self_attention.in_proj.weight",
+        f"{prefix}_qkv.weight",
+        f"{prefix}_z.weight",
+        f"{prefix}_b.weight",
+        f"{prefix}_a.weight",
+    )
+    monkeypatch.setattr(GDNLinearMappingSeparate, "tp_size", property(lambda _self: tp_size))
+    layout = (2, 4, 3, 5)  # key heads, value heads, key head dim, value head dim
+    config = SimpleNamespace(
+        hidden_size=1,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=3,
+        linear_value_head_dim=5,
+    )
+    # Label each HF row, then lay the rows out as the gathered Megatron in_proj at this TP size.
+    hf_rows = dict(zip(("qkv", "z", "b", "a"), torch.arange(60.0).unsqueeze(1).split([32, 20, 4, 4])))
+    in_proj = merge_gdn_linear_weights(config, *_fuse_gdn_separate_to_grouped(config, *hf_rows.values()), tp_size)
+    task = SimpleNamespace(mapping=mapping, global_param_name="in_proj.weight")
+    source = modelopt_utils._SourceState("in_proj", (60, 1), "column", gdn_layout=layout)
+    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda value, _mapping, _error=None: [value])
+    monkeypatch.setattr(weight_export, "select_quantized_weight_export_state", lambda _state, _dim, rows: rows)
+
+    transformed = modelopt_utils._transform_source_state(task, source)
+
+    for key in ("qkv", "z"):
+        assert torch.equal(in_proj[transformed[f"{prefix}_{key}.weight"]], hf_rows[key])
+    assert transformed[f"{prefix}_b.weight"] is None and transformed[f"{prefix}_a.weight"] is None
+
+
+def test_export_hook_passes_unquantized_outputs_through(monkeypatch):
+    task = SimpleNamespace(mapping=ColumnParallelMapping("projection.weight", "model.projection.weight"))
+    weight = torch.randn(4, 4, dtype=torch.bfloat16)
+    monkeypatch.setattr(modelopt_utils, "_capture_current_source_state", lambda _task: (None, None))
+    monkeypatch.setattr(modelopt_utils, "_transform_source_state", lambda *_args: {"model.projection.weight": None})
+
+    exported = list(modelopt_utils._make_export_hook(task)("model.projection.weight", weight))
+
+    assert exported == [HFWeightTuple("model.projection.weight", weight)]
+
+
 def test_inconsistent_tp_quantization_is_rejected(monkeypatch):
     mapping = ColumnParallelMapping("projection.weight", "model.projection.weight")
     task = SimpleNamespace(mapping=mapping, global_param_name="projection.weight")
@@ -1141,3 +1212,185 @@ def test_grouped_modelopt_export_rejects_custom_model_bridge_export(monkeypatch)
                 export_plan=SimpleNamespace(),
             )
         )
+
+
+@pytest.mark.unit
+def test_plan_config_lists_unquantized_matrices_but_not_vectors():
+    norm = torch.nn.LayerNorm(32)
+    model = torch.nn.Module()
+    model.projection, model.unquantized, model.norm = _nvfp4_linear(), _nvfp4_linear(), norm
+    model.unquantized.weight_quantizer.disable()
+    model.unquantized.input_quantizer.disable()
+    tasks = [
+        _task(ColumnParallelMapping("projection.weight", "model.layers.0.mlp.up_proj.weight"), model.projection),
+        _task(
+            ColumnParallelMapping("unquantized.weight", "model.layers.0.mlp.gate.weight"),
+            model.unquantized,
+            global_name="decoder.layers.0.unquantized.weight",
+        ),
+        _task(
+            ColumnParallelMapping("norm.weight", "model.layers.0.input_layernorm.weight"),
+            norm,
+            global_name="decoder.layers.0.norm.weight",
+        ),
+    ]
+
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[model])
+
+    assert plan.quantization_config["ignore"] == ["model.layers.0.mlp.gate"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("max_shard_size", [1, 1 << 20])
+def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size):
+    from safetensors.torch import load_file
+
+    (tmp_path / "model.safetensors").write_bytes(b"stale")
+    tensors = {
+        "model.weight": torch.arange(4, dtype=torch.uint8),
+        "model.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
+        "model.input_scale": torch.tensor(0.5),
+    }
+
+    saved = modelopt_utils.save_safetensors_shards(iter(tensors.items()), tmp_path, max_shard_size=max_shard_size)
+
+    loaded = {}
+    for filename in saved - {"model.safetensors.index.json"}:
+        loaded.update(load_file(tmp_path / filename))
+    assert loaded.keys() == tensors.keys()
+    for name, tensor in tensors.items():
+        assert loaded[name].dtype == tensor.dtype and torch.equal(loaded[name].float(), tensor.float()), name
+    if max_shard_size == 1:
+        index = json.loads((tmp_path / "model.safetensors.index.json").read_text())
+        assert set(index["weight_map"]) == tensors.keys() and set(index["weight_map"].values()) == saved - {
+            "model.safetensors.index.json"
+        }
+        assert len(saved) == 4
+    else:
+        assert saved == {"model.safetensors"}
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+@pytest.mark.unit
+def test_shard_writer_rejects_duplicate_names(tmp_path):
+    tensors = [("model.weight", torch.ones(1)), ("model.weight", torch.ones(1))]
+    with pytest.raises(ValueError, match="Duplicate"):
+        modelopt_utils.save_safetensors_shards(iter(tensors), tmp_path, max_shard_size=1 << 20)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("projections", "scale", "matching"),
+    [
+        (("q_proj", "k_proj", "v_proj"), "input_scale", True),
+        (("q_proj", "k_proj", "v_proj"), "input_scale", False),
+        (("gate_proj", "up_proj"), "weight_scale_2", False),
+        (("q_a_proj", "kv_a_proj_with_mqa"), "input_scale", False),
+        (("q_proj", "o_proj"), "input_scale", True),  # Not fused: different scales are fine.
+    ],
+)
+def test_fused_sibling_scales_must_match(projections, scale, matching):
+    tensors = {
+        f"model.layers.0.self_attn.{projection}.{scale}": torch.tensor(1.0 if matching or index else 2.0)
+        for index, projection in enumerate(projections)
+    }
+    tensors["model.layers.1.self_attn.q_proj.input_scale"] = torch.tensor(3.0)  # Another layer.
+    if "o_proj" in projections:
+        tensors["model.layers.0.self_attn.o_proj.input_scale"] = torch.tensor(4.0)
+
+    if matching:
+        modelopt_utils.check_fused_sibling_scales(tensors)
+    else:
+        with pytest.raises(ValueError, match=projections[0]):
+            modelopt_utils.check_fused_sibling_scales(tensors)
+
+
+@pytest.mark.unit
+def test_export_rejects_enabled_quantizers_it_would_drop():
+    model = torch.nn.Module()
+    model.projection = _nvfp4_linear()
+    model.attention = torch.nn.Module()
+    model.attention.k_bmm_quantizer = mtq.nn.TensorQuantizer()
+    model.attention.k_bmm_quantizer.disable()
+    modelopt_utils.check_exportable_quantizers([model])
+
+    model.attention.k_bmm_quantizer.enable()
+    model.projection.output_quantizer.enable()
+    with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
+        modelopt_utils.check_exportable_quantizers([model])
+
+    # An activation-only layer would be exported unquantized.
+    model.attention.k_bmm_quantizer.disable()
+    model.projection.output_quantizer.disable()
+    model.projection.weight_quantizer.disable()
+    with pytest.raises(RuntimeError, match=r"\['projection\.input_quantizer'\]"):
+        modelopt_utils.check_exportable_quantizers([model])
+
+
+class _StreamingBridge(AutoBridge):
+    """Streams one tensor from every rank, or fails like a stale export plan or a rank-0 artifact save."""
+
+    def __init__(self, case):
+        self.case = case
+
+    @property
+    def _model_bridge(self):
+        return MegatronModelBridge()
+
+    def _save_hf_artifacts(self, path, source_path):
+        if self.case == "artifacts" and torch.distributed.get_rank() == 0:
+            raise OSError("tokenizer save failed")
+        if self.case == "success" and torch.distributed.get_rank() == 0:
+            (Path(path) / "config.json").write_text("{}")
+
+    def export_hf_weights_modelopt(self, model, **kwargs):
+        if self.case == "stale_plan":
+            raise ValueError("ModelOpt export plan validation failed")
+        yield HFWeightTuple("model.weight", torch.ones(2, 2))
+
+
+def _save_failure_worker(rank, world_size, init_file, out_dir, case):
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=60),
+    )
+    try:
+
+        def save():
+            _StreamingBridge(case).save_hf_pretrained_modelopt(
+                [torch.nn.Linear(2, 2)],
+                out_dir,
+                export_plan=SimpleNamespace(quantization_config={"quant_method": "modelopt"}),
+                show_progress=False,
+            )
+
+        if case == "success":
+            save()
+            config = json.loads((Path(out_dir) / "config.json").read_text())
+            assert config["quantization_config"] == {"quant_method": "modelopt"}
+        else:
+            # Artifact saving and a config.json missing at finalization fail rank 0 only; a stale plan
+            # fails every rank.
+            errors = {
+                "stale_plan": "plan validation failed",
+                "artifacts": "OSError",
+                "finalization": "FileNotFoundError",
+            }
+            with pytest.raises(RuntimeError, match=errors[case]):
+                save()
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("case", ["success", "stale_plan", "artifacts", "finalization"])
+def test_save_fails_on_every_rank_when_any_rank_fails(tmp_path, case):
+    torch.multiprocessing.spawn(
+        _save_failure_worker,
+        args=(2, str(tmp_path / "dist-init"), str(tmp_path), case),
+        nprocs=2,
+        join=True,
+    )
