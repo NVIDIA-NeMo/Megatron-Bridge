@@ -17,7 +17,7 @@ import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 import torch
@@ -936,9 +936,11 @@ class TestLoadMegatronModel:
         mock_model_cfg.get_builder_cls.assert_called_once()
         mock_get_pg_collection.assert_called_once_with(mock_model_cfg)
         mock_builder_cls.assert_called_once_with(mock_model_cfg)
+        # The shared builder helper supplies the FP32-preserving mixed-precision wrapper.
         mock_builder.build_distributed_models.assert_called_once_with(
-            mock_mpu_pgs,
+            pg_collection=mock_mpu_pgs,
             wrap_with_ddp=False,
+            mixed_precision_wrapper=ANY,
         )
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
