@@ -16,6 +16,7 @@ import copy
 import json
 from dataclasses import replace
 from datetime import timedelta
+from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -37,7 +38,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    MambaInProjMapping,
     QKVMapping,
+    RowParallelMapping,
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
@@ -674,6 +677,159 @@ def test_qkv_state_uses_megatron_interleaving(monkeypatch):
     }
     assert [len(indices) for _, _, indices in selections] == [8, 4, 4]
     assert sorted(index for _, _, indices in selections for index in indices) == list(range(16))
+
+
+def _mamba_config():
+    return SimpleNamespace(mamba_num_heads=4, mamba_head_dim=4, mamba_state_dim=2, mamba_num_groups=2, hidden_size=32)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tp_size", [1, 2])
+def test_mamba_row_scales_follow_the_existing_weight_mapping(monkeypatch, tp_size):
+    hf_name = "backbone.layers.0.mixer.in_proj.weight"
+    mapping = MambaInProjMapping("decoder.layers.0.mixer.in_proj.weight", hf_name)
+    config = _mamba_config()
+    layout = (16, 16, 4, 4, 4)
+    hf_weight = torch.arange(sum(layout) * 32, dtype=torch.float32).reshape(-1, 32) / 256 - 3
+    components = hf_weight.split(layout)
+    rank_weights = [torch.cat([part.chunk(tp_size)[rank] for part in components]) for rank in range(tp_size)]
+    monkeypatch.setattr(MambaInProjMapping, "tp_size", property(lambda _self: tp_size))
+    monkeypatch.setattr(mapping, "_get_config", lambda _module: config)
+    local_sizes = [size // tp_size for size in layout]
+    gathers = iter(zip(*(weight.split(local_sizes) for weight in rank_weights), strict=True))
+    monkeypatch.setattr(mapping, "gather_from_tp_ranks", lambda _component: list(next(gathers)))
+    converted = mapping.megatron_to_hf(rank_weights[0], torch.nn.Linear(32, rank_weights[0].shape[0]))
+    assert torch.equal(converted[hf_name], hf_weight)
+
+    def quantized_module(weight):
+        module = _fp8_linear(out_features=weight.shape[0], in_features=weight.shape[1])
+        with torch.no_grad():
+            module.weight.copy_(weight)
+        module.weight_quantizer.reset_amax()
+        module.weight_quantizer.axis = 0
+        module.weight_quantizer.amax = weight.abs().amax(dim=1, keepdim=True)
+        return module
+
+    shards = [
+        modelopt_utils._SourceState(
+            weight_export.capture_quantized_weight_export_state(quantized_module(weight), "weight", cpu=False),
+            tuple(weight.shape),
+            "column",
+            mamba_layout=layout,
+        )
+        for weight in rank_weights
+    ]
+    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda *_args: shards)
+    task = SimpleNamespace(mapping=mapping, global_param_name="in_proj.weight")
+    state = modelopt_utils._transform_source_state(task, shards[0])[hf_name]
+    exported = weight_export.export_quantized_weight_tensors(converted[hf_name], state, torch.float32)
+    reference_state = weight_export.capture_quantized_weight_export_state(
+        quantized_module(hf_weight), "weight", cpu=False
+    )
+    reference = weight_export.export_quantized_weight_tensors(hf_weight, reference_state, torch.float32)
+    assert exported.keys() == reference.keys()
+    for key in exported:
+        assert torch.equal(
+            exported[key].contiguous().reshape(-1).view(torch.uint8),
+            reference[key].contiguous().reshape(-1).view(torch.uint8),
+        ), key
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("factory", [_fp8_linear, _nvfp4_linear], ids=["fp8", "nvfp4"])
+def test_mamba_projection_plan_recaptures_weight_and_input_amax(monkeypatch, factory):
+    config = _mamba_config()
+    in_proj = factory(out_features=44, in_features=32)
+    out_proj = factory(out_features=32, in_features=16)
+    in_name = "backbone.layers.0.mixer.in_proj.weight"
+    out_name = "backbone.layers.0.mixer.out_proj.weight"
+    mapping = MambaInProjMapping("decoder.layers.0.mixer.in_proj.weight", in_name)
+    monkeypatch.setattr(mapping, "_get_config", lambda _module: config)
+    tasks = [
+        _task(mapping, in_proj, global_name=mapping.megatron_param),
+        _task(
+            RowParallelMapping("decoder.layers.0.mixer.out_proj.weight", out_name),
+            out_proj,
+            global_name="out_proj.weight",
+        ),
+    ]
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[in_proj, out_proj])
+
+    def export():
+        return [
+            dict(task.export_hook(name, module.weight))
+            for task, name, module in zip(
+                modelopt_utils.prepare_modelopt_export_tasks(plan),
+                (in_name, out_name),
+                (in_proj, out_proj),
+                strict=True,
+            )
+        ]
+
+    first = export()
+    for module in (in_proj, out_proj):
+        module.weight_quantizer._amax.mul_(2)
+        module.input_quantizer._amax.mul_(2)
+    second = export()
+    for name, before, after in zip((in_name, out_name), first, second, strict=True):
+        prefix = name.removesuffix(".weight")
+        weight_scale = "weight_scale_2" if factory is _nvfp4_linear else "weight_scale"
+        assert not torch.equal(before[f"{prefix}.{weight_scale}"], after[f"{prefix}.{weight_scale}"])
+        assert torch.equal(after[f"{prefix}.input_scale"], 2 * before[f"{prefix}.input_scale"])
+
+    # Same total rows, different meanings: [16,16,4,4,4] -> [12,12,8,8,4].
+    config.mamba_head_dim = 3
+    config.mamba_state_dim = 4
+    with pytest.raises(RuntimeError, match="ModelOpt export plan validation failed"):
+        modelopt_utils.prepare_modelopt_export_tasks(plan)
+
+
+@pytest.mark.unit
+def test_disabled_mamba_projection_remains_bf16():
+    module = torch.nn.Linear(32, 44, bias=False).to(torch.bfloat16)
+    hf_name = "backbone.layers.0.mixer.in_proj.weight"
+    mapping = MambaInProjMapping("decoder.layers.0.mixer.in_proj.weight", hf_name)
+    task = _task(mapping, module)
+    stable = _task(
+        RowParallelMapping("stable.weight", "model.stable.weight"), _fp8_linear(), global_name="stable.weight"
+    )
+    plan = modelopt_utils.build_modelopt_export_plan([task, stable], model=[module])
+    assert plan.conversion_tasks[0].export_hook is None
+    assert any(fnmatchcase(hf_name.removesuffix(".weight"), pattern) for pattern in plan.quantization_config["ignore"])
+    assert task.global_param_name not in plan.quantized_params
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("custom", [False, True])
+def test_mamba_projection_rejects_custom_row_layout(custom):
+    class Mapping(MambaInProjMapping):
+        pass
+
+    if custom:
+        Mapping.megatron_to_hf = lambda self, weight, module: {}
+    task = SimpleNamespace(
+        mapping=Mapping("in_proj.weight", "model.in_proj.weight"), global_param_name="in_proj.weight"
+    )
+    if custom:
+        with pytest.raises(NotImplementedError, match="Mamba mappings with a custom row layout"):
+            modelopt_utils._validate_quantized_task(task)
+    else:
+        modelopt_utils._validate_quantized_task(task)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("change", ["rows", "divisibility", "tp_geometry"])
+def test_mamba_state_rejects_incompatible_geometry(change):
+    source = modelopt_utils._SourceState("state", (22, 32), "column", mamba_layout=(16, 16, 4, 4, 4))
+    shards = [source, source]
+    if change == "rows":
+        shards[1] = replace(source, weight_shape=(21, 32))
+    elif change == "divisibility":
+        shards = [replace(source, mamba_layout=(17, 17, 3, 3, 4))] * 2
+    else:
+        shards[1] = replace(source, mamba_layout=(12, 12, 8, 8, 4))
+    with pytest.raises(ValueError, match="Mamba projection"):
+        modelopt_utils._mamba_row_indices(shards, 2)
 
 
 def test_inconsistent_tp_quantization_is_rejected(monkeypatch):

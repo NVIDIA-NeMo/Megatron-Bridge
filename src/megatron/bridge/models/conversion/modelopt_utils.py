@@ -34,6 +34,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    MambaInProjMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
@@ -61,6 +62,7 @@ class _SourceState:
     parallelism: str | None = None
     qkv_layout: tuple[int, int, int, int, bool] | None = None
     weight_dtype: torch.dtype | None = None
+    mamba_layout: tuple[int, int, int, int, int] | None = None
 
 
 def _same_storage(left: object, right: object) -> bool:
@@ -90,6 +92,8 @@ def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
         raise NotImplementedError("ModelOpt real-quant export does not yet support grouped HF expert weights")
     if isinstance(mapping, GatedMLPMapping):
         return "gated"
+    if isinstance(mapping, MambaInProjMapping):
+        return "column"
     if isinstance(mapping, QKVMapping):
         return mapping._tp_mapping._detect_parallelism_type(module)
     if isinstance(mapping, AutoMapping):
@@ -116,6 +120,35 @@ def _qkv_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, i
     )
 
 
+def _mamba_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, int, int] | None:
+    if not isinstance(mapping, MambaInProjMapping):
+        return None
+    config = mapping._get_config(module)
+    inner = int(config.mamba_num_heads * config.mamba_head_dim)
+    ssm = int(config.mamba_state_dim * config.mamba_num_groups)
+    return inner, inner, ssm, ssm, int(config.mamba_num_heads)
+
+
+def _mamba_row_indices(shards: list[_SourceState], tp_size: int) -> torch.Tensor:
+    """Follow MambaInProjMapping's component-wise TP gather for quantization state."""
+    layout = shards[0].mamba_layout
+    if layout is None or len(shards) != tp_size or any(shard.mamba_layout != layout for shard in shards):
+        raise ValueError("Inconsistent Mamba projection geometry across TP")
+    if any(size <= 0 or size % tp_size for size in layout):
+        raise ValueError("Mamba projection components must be divisible by TP")
+    local_sizes = [size // tp_size for size in layout]
+    if any(len(shard.weight_shape) != 2 or shard.weight_shape[0] != sum(local_sizes) for shard in shards):
+        raise ValueError("Mamba projection rows do not match its component geometry")
+    rows = torch.arange(sum(layout)).reshape(tp_size, -1)
+    return torch.cat([component.reshape(-1) for component in torch.split(rows, local_sizes, dim=1)])
+
+
+def _plan_spec(source: _SourceState) -> object | None:
+    # Mamba's fused weight can change row meaning without changing its total size.
+    # Keep geometry with the immutable format spec; mutable amax values stay out.
+    return source if source.mamba_layout is not None else source.state
+
+
 def _validate_quantized_task(task: WeightConversionTask) -> None:
     if ".to_wrap.weight" in task.global_param_name:
         raise NotImplementedError(
@@ -128,6 +161,11 @@ def _validate_quantized_task(task: WeightConversionTask) -> None:
         or type(task.mapping)._megatron_to_hf is not QKVMapping._megatron_to_hf
     ):
         raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
+
+    if isinstance(task.mapping, MambaInProjMapping) and (
+        type(task.mapping).megatron_to_hf is not MambaInProjMapping.megatron_to_hf
+    ):
+        raise NotImplementedError("ModelOpt export does not support Mamba mappings with a custom row layout")
 
 
 def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
@@ -152,6 +190,7 @@ def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
         _mapping_parallelism(task.mapping, task.megatron_module),
         _qkv_layout(task.mapping, task.megatron_module),
         task.param_weight.dtype,
+        _mamba_layout(task.mapping, task.megatron_module),
     )
 
 
@@ -176,6 +215,7 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
         _mapping_parallelism(task.mapping, task.megatron_module) if spec is not None else None,
         _qkv_layout(task.mapping, task.megatron_module) if spec is not None else None,
         task.param_weight.dtype,
+        _mamba_layout(task.mapping, task.megatron_module) if spec is not None else None,
     )
 
 
@@ -240,6 +280,8 @@ def _transform_source_spec(
     reference = shards[0].state
     if any(shard.state != reference for shard in shards[1:]):
         raise RuntimeError(f"Inconsistent ModelOpt export format across TP for {task.global_param_name}")
+    if isinstance(task.mapping, MambaInProjMapping):
+        _mamba_row_indices(shards, task.mapping.tp_size)
     return {name: reference for name in names.values() if name.endswith(".weight")}
 
 
@@ -393,6 +435,12 @@ def _transform_source_state(
                 names["q"]: _select_state(transformed_state, 0, q_indices),
                 names["k"]: _select_state(transformed_state, 0, k_indices),
                 names["v"]: _select_state(transformed_state, 0, v_indices),
+            }
+        elif isinstance(task.mapping, MambaInProjMapping):
+            transformed = {
+                task.mapping.hf_param: _select_state(
+                    transformed_state, 0, _mamba_row_indices(shards, task.mapping.tp_size)
+                )
             }
         else:
             if len(names) != 1:
@@ -834,7 +882,7 @@ def build_modelopt_export_plan(
         export_tasks,
         quantization_config,
         quantized_params,
-        {name: source.state for name, source in local_specs.items()},
+        {name: _plan_spec(source) for name, source in local_specs.items()},
     )
 
 
@@ -848,7 +896,7 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
             if task.global_param_name not in plan.local_quantization_specs:
                 continue
             source = _capture_source_spec(task)
-            if source is None or source.state != plan.local_quantization_specs[task.global_param_name]:
+            if source is None or _plan_spec(source) != plan.local_quantization_specs[task.global_param_name]:
                 raise ValueError(f"ModelOpt quantization configuration changed for {task.global_param_name}")
     except Exception as error:
         validation_error = f"{type(error).__name__}: {error}"
