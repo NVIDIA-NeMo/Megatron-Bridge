@@ -118,8 +118,8 @@ def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[tor
     ``moe_router_dtype="fp32"``. Promoting them immediately after construction
     prevents truncation when loading either HF weights or a native Megatron
     checkpoint. The router weights and expert biases are also marked so that
-    ``Float16Module`` leaves them in FP32 on the builder path, which wraps the
-    model without Bridge's provider wrapper.
+    Megatron Core's ``Float16Module`` leaves them in FP32 wherever a builder
+    wraps the model without Bridge's FP32-preserving wrapper.
     """
     for model_chunk in model:
         for module in model_chunk.modules():

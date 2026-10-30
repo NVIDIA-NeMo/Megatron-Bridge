@@ -369,6 +369,71 @@ class TestFloat32RouterTensors:
         torch.testing.assert_close(model.router.weight, source_weight, rtol=0, atol=0)
         torch.testing.assert_close(model.router.expert_bias, source_bias, rtol=0, atol=0)
 
+    @pytest.mark.parametrize("entry_point", ["bridge", "megatron_core"])
+    def test_distributed_build_keeps_float32_tensors_exact(self, monkeypatch, tmp_path, entry_point):
+        """FP32 tensors loaded before the wrap stay exact through the distributed build.
+
+        ``bridge`` is ``build_distributed_models()``, which ``AutoBridge.get_model()``, the training
+        build and checkpoint loading use; ``megatron_core`` is the builder's own method. Only the
+        stand-in for the GPT stage is fake: the MiniMax-M3 builder, Megatron Core's distributed build
+        and ``Float16Module`` run as in a real build.
+        """
+        from megatron.core import parallel_state
+        from megatron.core.process_groups_config import ProcessGroupCollection
+        from megatron.core.transformer.module import MegatronModule
+
+        from megatron.bridge.models.gpt.gpt_builder import GPTModelBuilder
+        from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3VisionPatchEmbeddings
+        from megatron.bridge.models.model_provider import build_distributed_models
+
+        model_config = MiniMaxM3Bridge().hf_config_to_model_config(_hf_config()).to_text_config()
+        model_config.use_cpu_initialization = True
+
+        class Stage(MegatronModule):
+            def __init__(self):
+                super().__init__(config=model_config.transformer)
+                self.router = _router()
+                self.patch_embedding = MiniMaxM3VisionPatchEmbeddings(
+                    {"hidden_size": 8, "patch_size": 2, "temporal_patch_size": 2, "num_channels": 3}
+                )
+                self.linear = torch.nn.Linear(8, 8)
+
+        monkeypatch.setattr(GPTModelBuilder, "build_model", lambda *args, **kwargs: Stage())
+        source = {
+            "router.weight": torch.randn(4, 8, dtype=torch.float32),
+            "router.expert_bias": torch.randn(4, dtype=torch.float32) / 3,
+            "patch_embedding.patch_embedding.weight": torch.randn(8, 3, 2, 2, 2, dtype=torch.float32),
+        }
+
+        def load_source(stages):
+            # As AutoBridge.get_model() loads Hugging Face weights, or PEFT its base weights, before the wrap.
+            stages[0].load_state_dict(source, strict=False)
+            return stages
+
+        model_config.pre_wrap_hooks.append(load_source)
+        torch.distributed.init_process_group(
+            "gloo", init_method=f"file://{tmp_path / 'dist_init'}", rank=0, world_size=1
+        )
+        parallel_state.initialize_model_parallel()
+        try:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+            if entry_point == "bridge":
+                stages = build_distributed_models(model_config, pg_collection, wrap_with_ddp=False)
+            else:
+                stages = MiniMaxM3ModelBuilder(model_config).build_distributed_models(
+                    pg_collection, wrap_with_ddp=False
+                )
+        finally:
+            parallel_state.destroy_model_parallel()
+            torch.distributed.destroy_process_group()
+
+        stage = stages[0].module
+        state = stage.state_dict()
+        for name, expected in source.items():
+            assert state[name].dtype == torch.float32, name
+            torch.testing.assert_close(state[name], expected, rtol=0, atol=0)
+        assert stage.linear.weight.dtype == torch.bfloat16
+
 
 class _FakeGroup:
     def __init__(self, rank: int, size: int):

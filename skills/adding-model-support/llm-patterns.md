@@ -312,12 +312,13 @@ silently drops every attribute set in `provider_bridge()`. To migrate a family:
    provider on every shared field, that export reproduces the source HF weights, and that logits are
    identical before and after, including on a checkpoint imported by `main`.
 
-Parameters a provider keeps in FP32 through `_keep_in_float32_parameter_names` lose that on the
-builder path: training, checkpoint loading and `get_model()` wrap the model in Megatron Core's
-`Float16Module`, which ignores those names. Mark the tensors with `mark_keep_in_fp32` when the model
-is built, as MiniMax-M3 does for its router weights and vision patch embedding. Builder conversion
-builds without any wrapper, so cast modules that are not built in `params_dtype`, such as a Hugging
-Face-style vision tower, with `convert_module_to_dtype_except_fp32_marked`.
+Bridge's `build_distributed_models()`, which `get_model()`, training and checkpoint loading use,
+keeps router expert biases and the parameters listed in `_keep_in_float32_parameter_names` in FP32
+through the `Float16Module` cast. Also mark those tensors with `mark_keep_in_fp32` when the model is
+built, as MiniMax-M3 does for its router weights and vision patch embedding: builder conversion
+builds without any wrapper, so a module cast there with `convert_module_to_dtype_except_fp32_marked`
+(such as a Hugging Face-style vision tower) keeps only marked tensors in FP32, and a caller of the
+builder's own `build_distributed_models()` gets Megatron Core's plain wrapper.
 
 ## Registration Options
 
