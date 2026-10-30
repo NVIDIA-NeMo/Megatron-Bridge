@@ -71,6 +71,15 @@ the base mapping.
   the builder config, so the callable must read only fields that config declares. If the same
   callable also serves the legacy provider, branch on `isinstance(config, GPTModelProvider)` before
   calling provider-only helpers such as `default_layer_spec`.
+- Custom decoder layers read their per-layer fields from the nested transformer config, so declare
+  those fields on a `TransformerConfig` subclass named by the model config's
+  `transformer_config_class`. A callable that edits a copy of the config must copy
+  `config.transformer`: a shallow copy of the builder config shares it.
+- With MTP, the GPT builder passes the block spec's `layer_specs[-1]` to `get_gpt_mtp_block_spec`,
+  which accepts a bare layer spec only when its module is `TransformerLayer` itself. If the MTP
+  layers use a `TransformerLayer` subclass, return a one-layer `TransformerBlockSubmodules` from
+  `layer_specs[-1]` for builder configs, as `build_exaone_moe_layer_spec` and
+  `build_step35_layer_spec` do.
 
 ### YaRN
 

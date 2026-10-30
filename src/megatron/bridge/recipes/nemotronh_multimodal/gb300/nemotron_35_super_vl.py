@@ -26,16 +26,15 @@ _NCCL_EP_WIRE_FIELDS = ("moe_dispatch_fwd_dtype", "moe_combine_bwd_dtype")
 
 
 def _require_nccl_ep_wire_fields(model_cfg: object) -> None:
-    """Raise unless the model provider declares the NCCL EP wire-format fields.
+    """Raise unless the model config declares the NCCL EP wire-format fields.
 
-    Assigning a field that Megatron-Core does not declare would not raise: the recipe would look tuned while the
-    BF16 wire stays in effect.
+    Name the Megatron-Core requirement instead of failing on the first assignment of an undeclared field.
 
     Args:
-        model_cfg: The model provider the recipe is about to configure.
+        model_cfg: The model config the recipe is about to configure.
 
     Raises:
-        ValueError: If a wire-format field is missing from the provider.
+        ValueError: If a wire-format field is missing from the model config.
     """
     missing = [
         name for name in _NCCL_EP_WIRE_FIELDS if not (hasattr(type(model_cfg), name) or hasattr(model_cfg, name))

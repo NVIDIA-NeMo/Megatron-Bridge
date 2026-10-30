@@ -421,7 +421,7 @@ def _nemotron_omni_base() -> ConfigContainer:
         _DEFAULT_HF_PATH,
         revision=_DEFAULT_HF_REVISION,
         trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
     cfg.model.seq_length = 4096
 
     cfg.model.tensor_model_parallel_size = 4
