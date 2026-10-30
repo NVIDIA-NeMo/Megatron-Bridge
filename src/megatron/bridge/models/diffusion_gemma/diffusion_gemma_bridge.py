@@ -17,7 +17,7 @@
 import copy
 from dataclasses import fields
 from types import SimpleNamespace
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 from torch import nn
@@ -104,6 +104,17 @@ class _TiedReplicatedMapping(ReplicatedMapping):
 )
 class DiffusionGemmaBridge(Gemma4VLBridge):
     """Convert the tied DiffusionGemma checkpoint into one Megatron text stack."""
+
+    # DiffusionGemma has not migrated to builder-backed configs: restore the base rejection
+    # instead of inheriting the Gemma 4 vision-language builder config.
+    MODEL_CONFIG_CLASS = None
+    USE_MODEL_CONFIG_FOR_CONVERSION = False
+    hf_config_to_model_config = MegatronModelBridge.hf_config_to_model_config
+    hf_config_to_model_config_kwargs = MegatronModelBridge.hf_config_to_model_config_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config) -> dict[str, Any]:
+        """Map the Gemma 4 vision-language fields for the DiffusionGemma provider."""
+        return super().hf_config_to_model_config_kwargs(hf_config)
 
     def provider_bridge(self, hf_pretrained) -> DiffusionGemmaModelProvider:
         hf_config = _normalized_diffusion_config(hf_pretrained.config)

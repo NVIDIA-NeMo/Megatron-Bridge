@@ -63,6 +63,8 @@ def _apply_kimi_k2_optimizer(cfg: ConfigContainer, optimizer_type: str) -> None:
         grad_reduce_in_fp32 = False
         cfg.ddp.use_distributed_optimizer = True
         cfg.ddp.overlap_param_gather = True
+        if cfg.comm_overlap is not None:
+            cfg.comm_overlap.overlap_param_gather = True
     elif optimizer_type == "muon":
         opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
             lr_warmup_iters=2000,
@@ -70,9 +72,14 @@ def _apply_kimi_k2_optimizer(cfg: ConfigContainer, optimizer_type: str) -> None:
             max_lr=3e-4,
             min_lr=3e-5,
         )
+        # Preserve this recipe's established compact LayerWise layout until the
+        # shard-aligned layout is validated with its MoE/pipeline topology.
+        opt_cfg.use_layer_wise_param_layout = False
         grad_reduce_in_fp32 = True
         cfg.ddp.use_distributed_optimizer = False
         cfg.ddp.overlap_param_gather = False
+        if cfg.comm_overlap is not None:
+            cfg.comm_overlap.overlap_param_gather = False
     else:
         raise ValueError(f"Invalid optimizer type: {optimizer_type}")
 

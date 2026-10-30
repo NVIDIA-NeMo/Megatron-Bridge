@@ -20,12 +20,14 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+import torch
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
 from megatron.bridge.training.config import GPTDatasetConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import (
     _delete_cuda_graphs,
+    _delete_local_cuda_graph_runners,
     _dummy_train_step,
     _finish_train,
     _handle_mxfp8_param_buffer_copy,
@@ -85,6 +87,8 @@ class TestCheckpointManagerLifecycle:
             ),
             optimizer=SimpleNamespace(
                 use_distributed_optimizer=False,
+                use_layer_wise_distributed_optimizer=False,
+                optimizer="adam",
                 optimizer_cuda_graph=False,
                 reuse_grad_buf_for_mxfp8_param_ag=False,
             ),
@@ -304,6 +308,46 @@ class TestCudaGraphCleanup:
         helper.delete_cuda_graphs.assert_not_called()
         mock_delete_local.assert_called_once_with()
         mock_collect.assert_called_once()
+
+    @patch("megatron.bridge.training.train.torch.cuda.synchronize")
+    def test_delete_local_cuda_graph_runners_drops_graphs(self, _mock_sync):
+        """Training graphs live on each CudaGraphManager, not in MCore's emptied capture record."""
+
+        class FakeManager(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.cudagraph_runners = [SimpleNamespace(fwd_graph=Mock(), bwd_graph=Mock(), mempool=Mock())]
+                self.custom_cudagraphs_lookup_table = {"key": self.cudagraph_runners[0]}
+
+        layer = torch.nn.Module()
+        layer.cudagraph_manager = FakeManager()
+        runner = layer.cudagraph_manager.cudagraph_runners[0]
+
+        with patch("megatron.bridge.training.train.CudaGraphManager", FakeManager):
+            _delete_local_cuda_graph_runners([layer])
+
+        assert runner.fwd_graph is None
+        assert runner.bwd_graph is None
+        assert runner.mempool is None
+        assert layer.cudagraph_manager.cudagraph_runners == []
+        assert layer.cudagraph_manager.custom_cudagraphs_lookup_table == {}
+
+    @patch("megatron.bridge.training.train.delete_local_cuda_graphs")
+    @patch("megatron.bridge.training.train._delete_local_cuda_graph_runners")
+    @patch("megatron.bridge.training.train.gc.collect")
+    def test_delete_cuda_graphs_frees_local_runners_before_global_reset(
+        self, _mock_collect, mock_delete_runners, mock_delete_local
+    ):
+        """Per-module runners must be freed before MCore resets its global capture state."""
+        calls = []
+        mock_delete_runners.side_effect = lambda _model: calls.append("runners")
+        mock_delete_local.side_effect = lambda: calls.append("global")
+        model = [Mock()]
+
+        _delete_cuda_graphs(None, model)
+
+        mock_delete_runners.assert_called_once_with(model)
+        assert calls == ["runners", "global"]
 
 
 class TestFSDPRegistration:
@@ -584,6 +628,15 @@ class TestForceParamSync:
             chunk2.start_param_sync.assert_called_once_with(force_sync=True)
 
 
+def test_force_param_sync_accepts_delegating_model_wrapper():
+    optimizer = Mock()
+    inner_ddp = Mock()
+    wrapper = SimpleNamespace(start_param_sync=inner_ddp.start_param_sync)
+    force_param_sync([wrapper], optimizer=optimizer)
+    optimizer.prepare_model_params_for_param_sync.assert_called_once_with()
+    inner_ddp.start_param_sync.assert_called_once_with(force_sync=True)
+
+
 class TestSaveCheckpointAndTime:
     """Unit tests for save_checkpoint_and_time behavior."""
 
@@ -660,6 +713,18 @@ class TestSaveCheckpointAndTime:
         mock_should_disable.assert_called_once_with(False, True, True)
         mock_force_param_sync.assert_not_called()
         mock_checkpoint_manager.save.assert_called_once()
+
+    @pytest.mark.parametrize("name,layerwise", [("dist_muon", False), ("muon", True)])
+    def test_layerwise_checkpoint_completes_parameter_gather(self, name, layerwise):
+        from megatron.bridge.training.config import OptimizerConfig
+
+        state, _ = self._make_state()
+        state.cfg.optimizer = OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=layerwise)
+        manager = Mock()
+        with patch("megatron.bridge.training.train.force_param_sync") as sync:
+            save_checkpoint_and_time(state, [Mock()], Mock(), Mock(), 0.0, checkpoint_manager=manager)
+        sync.assert_called_once()
+        manager.save.assert_called_once()
 
 
 class TestCheckpointAndDecideExit:

@@ -71,7 +71,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.15,<5.18",
+    "transformers>=5.15,<5.21",
     "mistral-common>=1.10.0",
     "peft>=0.20.0,<=0.21.0",
     "datasets>=2.20.0",
@@ -97,8 +97,8 @@ dependencies = [
     "mlflow>=3.16.0",   # CVE-2025-15031, CVE-2026-71211
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
-    "flashinfer-python==0.6.18.post1",  # keep flashinfer-python and flashinfer-cubin in lockstep:
-    "flashinfer-cubin==0.6.18.post1",   # the runtime version-match check fails otherwise
+    "flashinfer-python==0.7.2.post1",   # keep flashinfer-python and flashinfer-cubin in lockstep:
+    "flashinfer-cubin==0.7.2.post1",    # the runtime version-match check fails otherwise
     "fast-hadamard-transform>=1.1.0",
 ]
 
@@ -131,18 +131,20 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "filelock>=4.2.1",  # CVE-2026-112940; multi-storage-client 0.51 caps filelock below 4
     "wandb>=0.29.0",
     "mlflow>=3.16.0",                                       # CVE-2025-15031, CVE-2026-71211
-    "GitPython>=3.1.62,<4",                                 # BDSA-2026-31388, CVE-2026-78676, CVE-2026-78677
+    # BDSA-2026-31388, CVE-2026-78676, CVE-2026-78677, CVE-2026-114145
+    "GitPython>=3.2.1,<4",
     "sqlparse>=0.6.0,<1",                                   # CVE-2026-59894
     "cachetools>=5.0.0",
-    "cryptography>=43.0.0,<47",
-    "nvidia-modelopt==0.47.0",
+    "cryptography>=50.0.0,<51",
+    "nvidia-modelopt==0.48.0rc1",
     "urllib3>=2.6.3",                                       # To address CVE-2026-21441
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
-    "nvidia-cudnn-frontend==1.29.0",
+    "nvidia-cudnn-frontend==1.32.0",                       # Match MCore main (paired with flashinfer 0.7.2)
     # Match MCore main: cuDNN Frontend 1.29 needs the newer TileLang/TVM FFI family.
     "tilelang==0.1.12",
     "apache-tvm-ffi==0.1.11",
@@ -291,15 +293,9 @@ Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Bridge"
 # -vv will also display tests with durration = 0.00s
 addopts = "--verbose --pyargs --durations=0 --strict-markers"  # always add these arguments to pytest
 testpaths = ["tests"]
-# directories to ignore when discovering tests
+# directory basenames to ignore at any depth when discovering tests; the top-level non-test directories
+# (scripts, examples, ...) are ignored by path in the root conftest.py, so tests/unit_tests/scripts etc. are collected
 norecursedirs = [
-    "src",
-    "external",
-    "examples",
-    "docs",
-    "scripts",
-    "tools",
-    "tutorials",
     "*.egg",
     ".*",
     "_darcs",

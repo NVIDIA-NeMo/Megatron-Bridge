@@ -29,6 +29,8 @@ from megatron.bridge.data.builders import (
 )
 from megatron.bridge.data.collators.registry import resolve_model_collate
 from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_expanded_collate_fn
+from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import Nemotron35SuperVLBridge, NemotronOmniBridge
+from megatron.bridge.models.nemotron_omni.nemotron_omni_config import NemotronOmniModelConfig
 from megatron.bridge.peft.lora_layers import LoRALinear
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
@@ -70,11 +72,13 @@ _RECIPE_FUNCS = [
         "",
         ".h100",
         ".gb200",
+        ".gb300",
         ".nemotron_omni",
         ".nemotron_35_super_vl",
         ".h100.nemotron_omni",
         ".h100.nemotron_35_super_vl",
         ".gb200.nemotron_35_super_vl",
+        ".gb300.nemotron_35_super_vl",
     ],
 )
 def test_legacy_recipe_modules_alias_canonical_modules(suffix):
@@ -88,7 +92,12 @@ def test_top_level_recipe_exports_keep_canonical_functions():
     from megatron.bridge import recipes
     from megatron.bridge.recipes import nemotronh_multimodal
 
-    for package in (nemotronh_multimodal, nemotronh_multimodal.h100, nemotronh_multimodal.gb200):
+    for package in (
+        nemotronh_multimodal,
+        nemotronh_multimodal.h100,
+        nemotronh_multimodal.gb200,
+        nemotronh_multimodal.gb300,
+    ):
         for name in package.__all__:
             value = getattr(package, name)
             if callable(value):
@@ -96,24 +105,64 @@ def test_top_level_recipe_exports_keep_canonical_functions():
                 assert value.__module__.startswith("megatron.bridge.recipes.nemotronh_multimodal.")
 
 
-class _FakeModelCfg:
-    def __init__(self, *, has_sound: bool, mtp_num_layers: int) -> None:
-        self.dynamic_resolution = True
-        self.has_sound = has_sound
-        self.mtp_num_layers = mtp_num_layers
-        self.separate_video_embedder = bool(mtp_num_layers)
-        self.temporal_ckpt_compat = False
-        self.temporal_patch_dim = 2 if mtp_num_layers else 1
-        self.vision_final_layernorm = bool(mtp_num_layers)
+class _DictConfig(SimpleNamespace):
+    def to_dict(self):
+        return vars(self).copy()
 
-    def finalize(self):
-        return None
+
+def _tiny_hf_config(*, super_vl: bool) -> _DictConfig:
+    """Return a tiny Nano Omni, or Super VL, Hugging Face config."""
+    llm_config = _DictConfig(
+        torch_dtype="bfloat16",
+        hidden_size=256,
+        intermediate_size=512,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=32,
+        layer_norm_epsilon=1e-6,
+        vocab_size=131072,
+        max_position_embeddings=4096,
+        hybrid_override_pattern="MEM*E",
+        mamba_head_dim=64,
+        mamba_num_heads=4,
+        n_groups=2,
+        ssm_state_size=16,
+        moe_intermediate_size=384,
+        moe_shared_expert_intermediate_size=768,
+        n_routed_experts=8,
+        num_experts_per_tok=2,
+    )
+    config = _DictConfig(
+        architectures=["NemotronH_Nano_Omni_Reasoning_V3"],
+        llm_config=llm_config,
+        vision_config=_DictConfig(separate_video_embedder=True, video_temporal_patch_size=2),
+        sound_config=_DictConfig(
+            model_type="parakeet",
+            hidden_size=128,
+            projection_hidden_size=256,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            intermediate_size=512,
+            subsampling_factor=8,
+            num_mel_bins=128,
+        ),
+        projector_hidden_size=1024,
+        img_context_token_id=18,
+        sound_context_token_id=27,
+    )
+    if super_vl:
+        config.architectures = ["NemotronH_Omni_Reasoning_V3"]
+        config.sound_config = None
+        config.sound_context_token_id = None
+        config.video_temporal_patch_size = 2
+        llm_config.num_nextn_predict_layers = 1
+        llm_config.mtp_hybrid_override_pattern = "*E"
+    return config
 
 
 class _FakeAutoBridge:
     hf_path = None
     kwargs = None
-    load_weights = None
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
@@ -121,10 +170,14 @@ class _FakeAutoBridge:
         _FakeAutoBridge.kwargs = kwargs
         return _FakeAutoBridge()
 
+    def get_model_config(self) -> NemotronOmniModelConfig:
+        # A real strict config rejects recipe assignments to undeclared fields.
+        if _FakeAutoBridge.hf_path == _TEST_SUPER_VL_HF_ID:
+            return Nemotron35SuperVLBridge().hf_config_to_model_config(_tiny_hf_config(super_vl=True))
+        return NemotronOmniBridge().hf_config_to_model_config(_tiny_hf_config(super_vl=False))
+
     def to_megatron_provider(self, load_weights: bool = False):
-        _FakeAutoBridge.load_weights = load_weights
-        is_super_vl = _FakeAutoBridge.hf_path == _TEST_SUPER_VL_HF_ID
-        return _FakeModelCfg(has_sound=not is_super_vl, mtp_num_layers=2 if is_super_vl else 0)
+        raise AssertionError("recipes must use get_model_config()")
 
 
 @pytest.fixture
@@ -173,7 +226,7 @@ def _assert_common_config(cfg: ConfigContainer):
 
     assert _FakeAutoBridge.hf_path == _TEST_HF_ID
     assert _FakeAutoBridge.kwargs == {"revision": _PUBLIC_HF_REVISION, "trust_remote_code": True}
-    assert _FakeAutoBridge.load_weights is False
+    assert isinstance(cfg.model, NemotronOmniModelConfig)
 
     assert cfg.model.seq_length == 4096
     assert cfg.model.dynamic_resolution is True
@@ -563,7 +616,7 @@ def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_proc
     assert isinstance(cfg, ConfigContainer)
     assert _FakeAutoBridge.hf_path == _TEST_SUPER_VL_HF_ID
     assert _FakeAutoBridge.kwargs == {"revision": _SUPER_VL_HF_REVISION, "trust_remote_code": True}
-    assert _FakeAutoBridge.load_weights is False
+    assert isinstance(cfg.model, NemotronOmniModelConfig)
 
     assert isinstance(cfg.dataset, EnergonDatasetConfig)
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)

@@ -13,6 +13,7 @@
 # limitations under the License.
 """B300 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     ConfigContainer,
@@ -221,7 +222,7 @@ def gpt_oss_20b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
 
 
 def gpt_oss_120b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× B300, BF16, GBS=1280."""
+    """GPT-OSS 120B pretrain: 64× B300, BF16, GBS=1280, NCCL EP."""
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.moe_router_fusion = True
@@ -242,6 +243,9 @@ def gpt_oss_120b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     _benchmark_common(cfg)
+    _enable_ncclep(cfg)
+    # Keep per-expert token counts on-device for grouped GEMM.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -253,11 +257,8 @@ def gpt_oss_120b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
+        # Pull/push mode requires each EP8 group to stay within one NVL8 domain.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

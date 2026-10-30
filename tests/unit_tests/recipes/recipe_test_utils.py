@@ -142,6 +142,8 @@ class _OfflineModelProvider:
         self.dsa_indexer_topk_freq = 1
         self.delay_wgrad_compute = False
         self.experimental_attention_variant = "dsa"
+        # Builder-backed configs record their Hugging Face source here.
+        self.extra_checkpoint_metadata = {}
         self.fp16 = False
         # Preconditions of the MXFP8 CuTe DSL fused grouped MLP, asserted by the
         # perf recipe tests: SwiGLU, and FC1/FC2 dims divisible by 64. Absent here
@@ -152,6 +154,8 @@ class _OfflineModelProvider:
         self.gradient_accumulation_fusion = True
         self.hidden_size = 2048
         self.make_vocab_size_divisible_by = 128
+        self.moe_combine_bwd_dtype = "bf16"
+        self.moe_dispatch_fwd_dtype = "bf16"
         self.moe_flex_dispatcher_backend = None
         self.moe_ffn_hidden_size = 768
         self.mtp_num_layers = 1
@@ -218,8 +222,92 @@ class _OfflineAutoBridge:
         return provider
 
     def get_model_config(self) -> _OfflineModelProvider:
-        """Return a mutable stand-in for builder-backed recipe construction."""
-        return _OfflineModelProvider()
+        """Return the same mutable stand-in for builder-backed recipe construction."""
+        return self.to_megatron_provider()
+
+
+# A small Nemotron-H architecture with Mamba, attention, dense MLP and MoE layers.
+_NEMOTRON_H_HF_CONFIG = {
+    "hidden_size": 256,
+    "intermediate_size": 512,
+    "num_attention_heads": 8,
+    "num_key_value_heads": 2,
+    "head_dim": 32,
+    "mamba_num_heads": 8,
+    "mamba_head_dim": 32,
+    "ssm_state_size": 16,
+    "n_groups": 2,
+    "n_routed_experts": 8,
+    "num_experts_per_tok": 2,
+    "moe_intermediate_size": 128,
+    "moe_shared_expert_intermediate_size": 256,
+    "n_group": 1,
+    "topk_group": 1,
+    "routed_scaling_factor": 2.5,
+    "vocab_size": 1024,
+    "max_position_embeddings": 8192,
+    "hybrid_override_pattern": "MEM*EM-E",
+    "dtype": "bfloat16",
+}
+
+
+def nemotron_h_model_config(model_id: str = "", **hf_overrides: object):
+    """Build a strict builder-backed Nemotron-H model config from a small Hugging Face config.
+
+    Args:
+        model_id: Source id recorded in the config's checkpoint metadata.
+        **hf_overrides: Hugging Face ``NemotronHConfig`` fields to override.
+
+    Returns:
+        The ``BridgeHybridModelConfig`` that ``AutoBridge.get_model_config()`` returns.
+    """
+    from transformers import NemotronHConfig
+
+    from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+    values = {**_NEMOTRON_H_HF_CONFIG, **hf_overrides}
+    values.setdefault("num_hidden_layers", len(values["hybrid_override_pattern"]))
+    hf_config = NemotronHConfig(**values)
+    hf_config.architectures = ["NemotronHForCausalLM"]
+    hf_config._name_or_path = model_id
+    return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+
+class NemotronHBuilderOnlyBridge:
+    """Stand-in for ``AutoBridge`` that returns strict Nemotron-H model configs offline.
+
+    Subclasses set ``hf_config_overrides`` to select another architecture. The
+    legacy provider API fails, so recipes must use ``get_model_config()``.
+    """
+
+    hf_config_overrides: dict[str, object] = {}
+
+    def __init__(self, model_id: str, revision: str | None = None) -> None:
+        self.model_id = model_id
+        self.hf_model_revision = revision
+
+    @classmethod
+    def from_hf_pretrained(cls, model_id: object, **kwargs: object) -> "NemotronHBuilderOnlyBridge":
+        return cls(str(model_id), kwargs.get("revision"))
+
+    def get_model_config(self):
+        model_config = nemotron_h_model_config(self.model_id, **self.hf_config_overrides)
+        if self.hf_model_revision:
+            model_config.extra_checkpoint_metadata["hf_model_revision"] = self.hf_model_revision
+        return model_config
+
+    def to_megatron_provider(self, *args: object, **kwargs: object):
+        raise AssertionError("Nemotron-H recipes must use get_model_config(), not the legacy provider API")
+
+
+class NemotronHUltraBuilderOnlyBridge(NemotronHBuilderOnlyBridge):
+    """Builder-only stand-in with Nemotron 3 Ultra's decoder pattern and shared MTP block."""
+
+    hf_config_overrides = {
+        "hybrid_override_pattern": NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
+        "num_nextn_predict_layers": 1,
+        "mtp_hybrid_override_pattern": "*E",
+    }
 
 
 class _OfflineTokenizer:

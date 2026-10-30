@@ -67,6 +67,7 @@ BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
         "llama3_70b_peft_8gpu_h100_bf16_config",
         "llama3_70b_sft_32gpu_h100_bf16_config",
         "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+        "nemotron_3_super_pretrain_64gpu_gb200_bf16_config",
         "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",
         "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     }
@@ -114,6 +115,7 @@ RECIPE_FORWARD_STEP_PREFIXES = (
     ("kimi_k25_vl_", "vlm_step"),
     ("ministral3_", "vlm_step"),
     ("muse_glimmer_", "vlm_step"),
+    ("muse_spark_open_", "vlm_step"),
     ("qwen25_vl_", "vlm_step"),
     ("flux_", "flux_step"),
     ("wan_", "wan_step"),

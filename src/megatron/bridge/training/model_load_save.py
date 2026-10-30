@@ -390,8 +390,6 @@ def build_and_load_model(
                     pg_collection=pg_collection,
                 )
 
-            builder_cls = model_cfg.get_builder_cls()
-            builder = builder_cls(model_cfg)
             # Note: `use_cpu_initialization` is not passed as an explicit kwarg here,
             # unlike the ModelProviderMixin path which passes it directly to
             # `provide_distributed_model`. Instead, it is handled by the
@@ -399,6 +397,12 @@ def build_and_load_model(
             # the flag on the config object. This is intentional — we do not want
             # to duplicate TransformerConfig fields like `use_cpu_initialization`
             # as kwargs on `build_distributed_models`.
+            if not use_cpu_init:
+                # Like the provider override above, clear the flag a CPU import saved
+                # in the config, so a GPU load builds the model on the GPU.
+                model_cfg.use_cpu_initialization = False
+            builder_cls = model_cfg.get_builder_cls()
+            builder = builder_cls(model_cfg)
             return builder.build_distributed_models(pg_collection, wrap_with_ddp=False)
         else:
             assert model_type in ("gpt", "hybrid", "mamba"), f"model type {model_type} not supported."
@@ -434,6 +438,12 @@ def build_and_load_model(
                 model = _call_model_provider(model_cfg)
         else:
             model = _call_model_provider(model_cfg)
+
+        if isinstance(model_cfg, ModelConfig):
+            # As in AutoBridge.get_model, retain the outer config for subsequent
+            # saves; the modules' runtime config only describes the transformer.
+            for model_chunk in model:
+                model_chunk.model_config = model_cfg
 
         if getattr(model_cfg, "restore_modelopt_state", False):
             from megatron.bridge.training.post_training.checkpointing import (

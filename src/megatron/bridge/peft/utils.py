@@ -2110,8 +2110,13 @@ class GroupedExpertLinearAdapter(nn.Module):
 
         linear_in_weight = torch.empty(linear_in_shape, device=params_device, dtype=dtype)
         linear_out_weight = torch.empty(linear_out_shape, device=params_device, dtype=dtype)
-        ParallelLinearAdapter._get_init_fn(self, column_init_method)(linear_in_weight)
-        ParallelLinearAdapter._get_init_fn(self, row_init_method)(linear_out_weight)
+        # The weights are stacked per-expert matrices. Resolve the fan-dependent
+        # init methods from the full (unsharded) per-expert dims: a fan read off
+        # the 3-D tensor would scale with ``dim * in_features`` and with the
+        # number of local experts, so the init would depend on EP/ETP size and
+        # start far too small (see ``_get_init_fn``).
+        ParallelLinearAdapter._get_init_fn(self, column_init_method, fan_in=in_features, fan_out=dim)(linear_in_weight)
+        ParallelLinearAdapter._get_init_fn(self, row_init_method, fan_in=dim, fan_out=out_features)(linear_out_weight)
 
         use_expert_process_groups = (
             _process_group_size(
@@ -2750,8 +2755,11 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
         # :class:`GroupedExpertLinearAdapter`.
         self._is_fc1 = not input_is_parallel
 
-        column_init = ParallelLinearAdapter._get_init_fn(self, column_init_method)
-        row_init = ParallelLinearAdapter._get_init_fn(self, row_init_method)
+        # Full per-matrix fans: the shared side is a TP-sharded Megatron linear
+        # (initialized per shard) and the per-expert side is initialized one
+        # expert matrix at a time, so both resolve to the same fixed scale.
+        column_init = ParallelLinearAdapter._get_init_fn(self, column_init_method, fan_in=in_features, fan_out=dim)
+        row_init = ParallelLinearAdapter._get_init_fn(self, row_init_method, fan_in=dim, fan_out=out_features)
         if self._is_fc1:
             # Shared A (hidden → rank); per-expert B (rank → 2*intermediate).
             self.linear_in = ColumnParallelLinear(

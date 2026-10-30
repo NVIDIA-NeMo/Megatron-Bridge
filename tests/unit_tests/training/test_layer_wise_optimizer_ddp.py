@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -19,24 +20,28 @@ import pytest
 
 import megatron.bridge.models.model_provider as model_provider
 import megatron.bridge.training.setup as training_setup
-from megatron.bridge.training.config import _validate_and_sync_distributed_optimizer_settings
+from megatron.bridge.training.config import (
+    DistributedDataParallelConfig,
+    OptimizerConfig,
+    _validate_and_sync_distributed_optimizer_settings,
+)
 
 
 @pytest.mark.parametrize("optimizer_name, layer_wise", [("muon", True), ("dist_muon", False)])
 def test_layer_wise_keeps_optimizer_separate_from_ddp(optimizer_name, layer_wise):
     cfg = SimpleNamespace(
-        optimizer=SimpleNamespace(
+        optimizer=OptimizerConfig(
             optimizer=optimizer_name,
             use_layer_wise_distributed_optimizer=layer_wise,
             use_distributed_optimizer=True,
             overlap_param_gather=True,
         ),
-        ddp=SimpleNamespace(use_distributed_optimizer=False, overlap_param_gather=True),
+        ddp=DistributedDataParallelConfig(use_distributed_optimizer=False, overlap_param_gather=True),
     )
 
     _validate_and_sync_distributed_optimizer_settings(cfg)
 
-    assert cfg.ddp.use_distributed_optimizer is True
+    assert cfg.ddp.use_distributed_optimizer is False
     assert cfg.optimizer.use_distributed_optimizer is False
     assert cfg.ddp.overlap_param_gather is True
     assert cfg.optimizer.overlap_param_gather is True
@@ -53,7 +58,12 @@ def test_training_setup_forwards_layer_wise_layout(monkeypatch, optimizer_name, 
             overlap_param_gather_with_optimizer_step=False,
         ),
         ddp=object(),
-        dist=SimpleNamespace(use_megatron_fsdp=False, use_torch_fsdp2=False),
+        dist=SimpleNamespace(
+            use_megatron_fsdp=False,
+            use_torch_fsdp2=False,
+            gtp_remat_reduce_scatter_with_fp32_accumulation=False,
+            gtp_remat_nccl_ub=False,
+        ),
         rng=SimpleNamespace(data_parallel_random_init=False),
     )
     monkeypatch.setattr(training_setup, "configure_gtp_remat", Mock())
@@ -63,23 +73,51 @@ def test_training_setup_forwards_layer_wise_layout(monkeypatch, optimizer_name, 
 
     provider.finalize.assert_called_once_with()
     kwargs = provider.provide_distributed_model.call_args.kwargs
-    if layer_wise or optimizer_name.startswith("dist_"):
-        assert kwargs["use_layer_wise_distributed_optimizer"] is True
-    else:
-        assert "use_layer_wise_distributed_optimizer" not in kwargs
+    assert kwargs["use_layer_wise_distributed_optimizer"] is (layer_wise or optimizer_name.startswith("dist_"))
+    assert kwargs["use_layer_wise_param_layout"] is False
 
 
-def test_model_provider_forwards_layer_wise_flag_to_mcore_ddp(monkeypatch):
+@pytest.mark.parametrize("api", ["main", "private_dev", "public_dev"])
+@pytest.mark.parametrize("param_layout", [False, True])
+def test_model_provider_forwards_layer_wise_layout_to_mcore_ddp(monkeypatch, api, param_layout):
+    @dataclass
+    class MainDDPConfig:
+        use_distributed_optimizer: bool = False
+
+    @dataclass
+    class DevDDPConfig(MainDDPConfig):
+        use_layer_wise_param_layout: bool = False
+
+    ddp_config = MainDDPConfig() if api == "main" else DevDDPConfig()
     provider = SimpleNamespace(fp16=False, bf16=False, use_cpu_initialization=True, init_model_with_meta_device=False)
     chunk = Mock()
     chunk.parameters.return_value = []
-    captured_kwargs = {}
+    captured = {}
 
-    def ddp_wrap(model, *args, use_layer_wise_distributed_optimizer=False, **kwargs):
-        captured_kwargs["use_layer_wise_distributed_optimizer"] = use_layer_wise_distributed_optimizer
+    def private_ddp_wrap(
+        model,
+        data_parallel_random_init,
+        effective_ddp_config,
+        overlap,
+        *,
+        use_layer_wise_distributed_optimizer=False,
+        pg_collection,
+        use_megatron_fsdp=False,
+        use_torch_fsdp2=False,
+    ):
+        captured["enabled"] = use_layer_wise_distributed_optimizer
+        captured["config"] = effective_ddp_config
         return model
 
-    monkeypatch.setattr(model_provider, "_ddp_wrap", ddp_wrap)
+    def current_ddp_wrap(model, *args, use_layer_wise_param_layout=False, **kwargs):
+        captured["layout"] = use_layer_wise_param_layout
+        if api == "public_dev":
+            # Public dev accepts the new argument as a consistency assertion;
+            # its actual layout selection still comes from the DDP field.
+            assert args[1].use_layer_wise_param_layout is use_layer_wise_param_layout
+        return private_ddp_wrap(model, *args, **kwargs)
+
+    monkeypatch.setattr(model_provider, "_ddp_wrap", private_ddp_wrap if api == "private_dev" else current_ddp_wrap)
     monkeypatch.setattr(model_provider, "_create_model", Mock(return_value=[chunk]))
     monkeypatch.setattr(model_provider, "_finalize_model_quantization", Mock())
     monkeypatch.setattr(model_provider, "_print_num_params", Mock())
@@ -88,13 +126,42 @@ def test_model_provider_forwards_layer_wise_flag_to_mcore_ddp(monkeypatch):
 
     result = model_provider.get_model(
         provider,
-        ddp_config=object(),
+        ddp_config=ddp_config,
         pg_collection=object(),
         use_layer_wise_distributed_optimizer=True,
+        use_layer_wise_param_layout=param_layout,
     )
 
     assert result == [chunk]
-    assert captured_kwargs["use_layer_wise_distributed_optimizer"] is True
+    assert captured["enabled"] is True
+    assert captured["config"] is not ddp_config
+    assert ddp_config.use_distributed_optimizer is False
+    assert captured["config"].use_distributed_optimizer is (param_layout or api != "main")
+    if api != "main":
+        assert captured["config"].use_layer_wise_param_layout is param_layout
+        assert ddp_config.use_layer_wise_param_layout is False
+    if api != "private_dev":
+        assert captured["layout"] is param_layout
+
+
+def test_layer_wise_layout_rejects_unsupported_selection_before_allocation(monkeypatch):
+    def old_ddp_wrap(model, *args, use_layer_wise_distributed_optimizer=False, pg_collection):
+        return model
+
+    allocate_model = Mock()
+    monkeypatch.setattr(model_provider, "_ddp_wrap", old_ddp_wrap)
+    monkeypatch.setattr(model_provider, "_create_model", allocate_model)
+
+    with pytest.raises(RuntimeError, match="does not support selecting shard-aligned layouts"):
+        model_provider.get_model(
+            SimpleNamespace(),
+            ddp_config=object(),
+            pg_collection=object(),
+            use_layer_wise_distributed_optimizer=True,
+            use_layer_wise_param_layout=True,
+        )
+
+    allocate_model.assert_not_called()
 
 
 def test_layer_wise_layout_rejects_unsupported_mcore_before_model_allocation(monkeypatch):

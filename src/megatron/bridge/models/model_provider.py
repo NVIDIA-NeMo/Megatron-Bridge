@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import dataclasses
 import inspect
 import os
 import warnings
@@ -216,6 +217,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         pg_collection: ProcessGroupCollection | None = None,
         *,
         use_layer_wise_distributed_optimizer: bool = False,
+        use_layer_wise_param_layout: bool = False,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -225,6 +227,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         in the Megatron ecosystem.
 
         Args:
+            use_layer_wise_distributed_optimizer: Build DDP layouts for layer-wise optimizer state.
+            use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+                False retains compact DDP buffers and variable-size parameter synchronization.
             ddp_config: Configuration for distributed data parallel.
             model_type: Type of model (encoder, decoder, or both).
             overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
@@ -246,8 +251,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             pg_collection: Optional pre-initialized ProcessGroupCollection. If provided, skips
                 model parallel initialization and uses the provided collection directly.
                 This is used when `use_decentralized_pg=True` in the distributed config.
-            use_layer_wise_distributed_optimizer: Build DDP parameter buffers using the
-                layer-wise optimizer layout, including Muon's matrix/scalar split.
 
         Returns:
             A list containing the wrapped model instance.
@@ -309,6 +312,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             mixed_precision_wrapper=mixed_precision_wrapper,
             pg_collection=pg_collection,
             use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
         )
 
         if final_post_wrap_hook:
@@ -537,12 +541,13 @@ class GetModelKwargs(TypedDict, total=False):
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
         mixed_precision_wrapper: Module wrapper to apply for fp16/bf16. None to skip.
+        use_layer_wise_distributed_optimizer: Enable LayerWise optimizer model wrapping.
+        use_layer_wise_param_layout: Opt into shard-aligned LayerWise buffers instead of compact buffers.
     """
 
     ddp_config: DistributedDataParallelConfig | None
     model_type: ModelType
     overlap_param_gather_with_optimizer_step: bool
-    use_layer_wise_distributed_optimizer: bool
     fp16: bool | None
     bf16: bool | None
     use_megatron_fsdp: bool
@@ -560,6 +565,8 @@ class GetModelKwargs(TypedDict, total=False):
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
+    use_layer_wise_distributed_optimizer: bool
+    use_layer_wise_param_layout: bool
 
 
 class ModelParallelKwargs(TypedDict, total=False):
@@ -615,6 +622,7 @@ def get_model(
     *,
     pg_collection: ProcessGroupCollection,
     use_layer_wise_distributed_optimizer: bool = False,
+    use_layer_wise_param_layout: bool = False,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -638,6 +646,8 @@ def get_model(
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
         use_layer_wise_distributed_optimizer: Build shard-aligned DDP layouts for layer-wise optimizers.
+        use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+            False retains compact DDP buffers and variable-size parameter synchronization.
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
@@ -657,10 +667,22 @@ def get_model(
         raise ValueError("Only one of fp16 and bf16 can be enabled.")
 
     layer_wise_ddp_kwargs = {}
-    if wrap_with_ddp and use_layer_wise_distributed_optimizer:
-        if "use_layer_wise_distributed_optimizer" not in inspect.signature(_ddp_wrap).parameters:
+    ddp_selects_layer_wise_layout = "use_layer_wise_param_layout" in getattr(
+        type(ddp_config), "__dataclass_fields__", {}
+    )
+    if wrap_with_ddp:
+        parameters = inspect.signature(_ddp_wrap).parameters
+        accepts_kwargs = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+        if "use_layer_wise_distributed_optimizer" in parameters or accepts_kwargs:
+            layer_wise_ddp_kwargs["use_layer_wise_distributed_optimizer"] = use_layer_wise_distributed_optimizer
+        elif use_layer_wise_distributed_optimizer:
             raise RuntimeError("The installed MCore DDP wrapper does not support layer-wise optimizer layouts.")
-        layer_wise_ddp_kwargs["use_layer_wise_distributed_optimizer"] = True
+        if "use_layer_wise_param_layout" in parameters or accepts_kwargs:
+            layer_wise_ddp_kwargs["use_layer_wise_param_layout"] = use_layer_wise_param_layout
+        elif (
+            use_layer_wise_distributed_optimizer and use_layer_wise_param_layout and not ddp_selects_layer_wise_layout
+        ):
+            raise RuntimeError("The installed MCore DDP wrapper does not support selecting shard-aligned layouts.")
 
     if fp16 is not None:
         model_provider.fp16 = fp16
@@ -741,10 +763,24 @@ def get_model(
         correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
+        effective_ddp_config = ddp_config
+        if use_layer_wise_distributed_optimizer and not use_megatron_fsdp and not use_torch_fsdp2:
+            # Direct callers can bypass ConfigContainer normalization. Keep the
+            # ordinary DistOpt flag aligned with the requested LayerWise layout
+            # without mutating their configuration object.
+            layout_overrides = {"use_distributed_optimizer": use_layer_wise_param_layout}
+            if ddp_selects_layer_wise_layout:
+                # Development MCore selects compact/padded LayerWise buffers via
+                # the DDP field, while sibling Adam buffers always use DistOpt.
+                # Its newer wrapper argument only checks consistency with this
+                # field; the private DSv4 pin does not accept that argument.
+                layout_overrides["use_layer_wise_param_layout"] = use_layer_wise_param_layout
+                layout_overrides["use_distributed_optimizer"] = True
+            effective_ddp_config = dataclasses.replace(ddp_config, **layout_overrides)
         model = _ddp_wrap(
             model,
             data_parallel_random_init,
-            ddp_config,
+            effective_ddp_config,
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
