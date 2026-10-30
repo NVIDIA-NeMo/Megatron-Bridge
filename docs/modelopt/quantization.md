@@ -220,8 +220,10 @@ even on disabled quantizers; enabled custom quantization backends are also unsup
 The same checks run when a plan is reused.
 
 Each stream emits current `q_scale`, `k_scale`, and `v_scale` tensors under the
-attention's Hugging Face prefix, once per QKV conversion group. An absent or disabled query
-quantizer exports a Q scale of one. FP8 scales are not clamped to one in this online
+attention's Hugging Face prefix, once per QKV conversion group. An absent, disabled or
+constant-amax query quantizer exports a Q scale of one. Calibrated Q scales use the
+maximum across TP ranks to cover all query heads; K/V scales must agree across TP.
+FP8 scales are not clamped to one in this online
 path. The consumer remains responsible for native cache allocation and for refreshing
 any captured attention coefficients when scales change.
 
