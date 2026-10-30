@@ -28,6 +28,7 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from megatron.core.dist_checkpointing.optimizer import get_param_id_to_sharded_param_map
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
@@ -274,3 +275,70 @@ def test_shared_outer_adapter_shared_side_is_synchronized_across_ep(
         _assert_identical_across_ep(shared.grad, ep_pg_collection.ep)
         # The per-expert pack holds different experts on every EP rank and is reduced by expert-DP only.
         torch.testing.assert_close(per_expert.grad, local_per_expert_grad, rtol=0, atol=0)
+
+
+def _sharded_tensors(entry: object) -> list:
+    """Flatten a sharded state dict entry (tensor, factory, or nested container) into ShardedTensors."""
+    if hasattr(entry, "build"):
+        entry = entry.build()
+    if isinstance(entry, dict):
+        entry = list(entry.values())
+    if isinstance(entry, (list, tuple)):
+        return [tensor for value in entry for tensor in _sharded_tensors(value)]
+    return [entry] if hasattr(entry, "axis_fragmentations") else []
+
+
+@pytest.mark.gpu
+def test_shared_outer_adapter_sharded_state_dict_is_checkpointable(
+    ep_pg_collection: ProcessGroupCollection,
+) -> None:
+    """Optimizer state must map onto both factors, and each EP rank must save only its own experts.
+
+    The adapter is built without ``pg_collection``, as the LoRA transform does, so the per-expert side
+    must discover every process group its sharded tensor needs.
+    """
+    if not hasattr(torch, "_grouped_mm"):
+        pytest.skip("requires torch._grouped_mm")
+    ep_rank = dist.get_rank(group=ep_pg_collection.ep)
+    device = torch.device("cuda", torch.cuda.current_device())
+    num_local_experts = 2
+    for base_linear_name, input_is_parallel in _ADAPTER_CASES:
+        config = ModelParallelConfig(
+            tensor_model_parallel_size=1,
+            expert_model_parallel_size=_EP_SIZE,
+            expert_tensor_parallel_size=1,
+            params_dtype=torch.bfloat16,
+            bf16=True,
+            gradient_accumulation_fusion=False,
+        )
+        adapter = SharedOuterGroupedExpertAdapter(
+            16,
+            16,
+            8,
+            num_local_experts=num_local_experts,
+            base_linear_name=base_linear_name,
+            activation="identity",
+            input_is_parallel=input_is_parallel,
+            model_parallel_config=config,
+            params_device=device,
+            params_dtype=torch.bfloat16,
+        )
+        metadata = {"dp_cp_group": parallel_state.get_data_parallel_group(with_context_parallel=True)}
+        sharded = adapter.sharded_state_dict(prefix="adapter.", metadata=metadata)
+
+        # Megatron matches optimizer state to shards by tensor identity; a shard built from a copy
+        # (e.g. ``weight.data``) is silently dropped from this map.
+        params = list(adapter.parameters())
+        assert set(get_param_id_to_sharded_param_map(sharded, params)) == set(range(len(params)))
+
+        shared_name, per_expert_name = (
+            ("linear_out", "linear_in") if input_is_parallel else ("linear_in", "linear_out")
+        )
+        per_expert = _sharded_tensors(sharded[f"adapter.{per_expert_name}.weight"])
+        shared = _sharded_tensors(sharded[f"adapter.{shared_name}.weight"])
+        assert per_expert and shared
+        for tensor in per_expert:
+            assert tensor.axis_fragmentations[0] == _EP_SIZE
+            assert tensor.global_offset[0] == ep_rank * num_local_experts
+        for tensor in shared:
+            assert tensor.axis_fragmentations[0] == 1
