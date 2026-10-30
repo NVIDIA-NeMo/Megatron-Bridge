@@ -273,6 +273,8 @@ class Qwen3VLModel(MegatronModule):
             will live on only a subset of the pipeline stages (specifically, every stage after the first one).
     """
 
+    language_model_class = Qwen3VLGPTModel
+
     def __init__(
         self,
         language_transformer_config: Qwen3VLTransformerConfig,
@@ -289,7 +291,7 @@ class Qwen3VLModel(MegatronModule):
     ) -> None:
         super().__init__(config=language_transformer_config)
 
-        if hasattr(language_transformer_layer_spec, "submodules"):
+        if hasattr(getattr(language_transformer_layer_spec, "submodules", None), "self_attention"):
             language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.vision_transformer_config = vision_transformer_config
@@ -381,7 +383,7 @@ class Qwen3VLModel(MegatronModule):
             else:
                 language_model_vocab_size = language_transformer_config.vocab_size
 
-            self.language_model = Qwen3VLGPTModel(
+            self.language_model = self.language_model_class(
                 config=language_transformer_config,
                 transformer_layer_spec=language_transformer_layer_spec,
                 vocab_size=language_model_vocab_size,
