@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Union
 
 import torch
 from transformers import AutoConfig, PreTrainedModel, PreTrainedTokenizerBase, ProcessorMixin
+from transformers.utils import CHAT_TEMPLATE_DIR
 
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict, StateSource
 
@@ -37,6 +38,7 @@ def _artifact_fingerprint(artifact: Any) -> str | None:
     """
     try:
         if isinstance(artifact, PreTrainedTokenizerBase):
+            backend = getattr(artifact, "backend_tokenizer", None)
             state = (
                 len(artifact),
                 str(artifact.added_tokens_decoder),
@@ -45,6 +47,13 @@ def _artifact_fingerprint(artifact: Any) -> str | None:
                 artifact.padding_side,
                 artifact.truncation_side,
                 artifact.model_max_length,
+                # A fast tokenizer's saved pipeline. Encoding changes only its padding and truncation.
+                None
+                if backend is None
+                else [
+                    None if (component := getattr(backend, name)) is None else component.__getstate__()
+                    for name in ("normalizer", "pre_tokenizer", "post_processor", "decoder")
+                ],
             )
         elif isinstance(artifact, ProcessorMixin):
             # ``to_json_string`` leaves out the processor's tokenizer and chat template.
@@ -63,7 +72,7 @@ def _artifact_fingerprint(artifact: Any) -> str | None:
 
 
 def _file_mtimes(path: Path) -> Dict[str, int]:
-    return {file.name: file.stat().st_mtime_ns for file in path.iterdir() if file.is_file()}
+    return {file.relative_to(path).as_posix(): file.stat().st_mtime_ns for file in path.rglob("*") if file.is_file()}
 
 
 class PreTrainedBase(ABC):
@@ -106,6 +115,7 @@ class PreTrainedBase(ABC):
             "*.tiktoken",
             "chat_template.jinja",
             "chat_template.json",
+            f"{CHAT_TEMPLATE_DIR}/*.jinja",
         ],
         "processor": [
             "processor_config.json",
@@ -113,9 +123,27 @@ class PreTrainedBase(ABC):
             "video_preprocessor_config.json",
             "chat_template.jinja",
             "chat_template.json",
+            f"{CHAT_TEMPLATE_DIR}/*.jinja",
         ],
         "image_processor": ["preprocessor_config.json"],
     }
+    # Loading arguments that do not change what an artifact saves. Any other argument, e.g. a tokenizer's
+    # ``model_max_length``, overrides the source's files, so the artifact is re-serialized instead.
+    LOAD_ONLY_KWARGS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "revision",
+            "cache_dir",
+            "token",
+            "local_files_only",
+            "force_download",
+            "proxies",
+            "torch_dtype",
+            "dtype",
+            "device_map",
+            "attn_implementation",
+            "low_cpu_mem_usage",
+        }
+    )
 
     def __init__(self, **kwargs):
         self._state_dict_accessor: Optional[StateDict] = None
@@ -229,7 +257,7 @@ class PreTrainedBase(ABC):
             revision: Optional Hugging Face Hub revision to use for remote sources.
 
         Returns:
-            List of successfully copied file names
+            Source-relative names of the copied files, placed at the same relative paths in the target.
         """
         source_path = Path(source_path)
         target_path = Path(target_path)
@@ -242,10 +270,12 @@ class PreTrainedBase(ABC):
             for file_spec in patterns:
                 for file_path in source_path.glob(file_spec):
                     if file_path.is_file():
-                        target_file = target_path / file_path.name
+                        relative_path = file_path.relative_to(source_path).as_posix()
+                        target_file = target_path / relative_path
                         try:
+                            target_file.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(file_path, target_file)
-                            copied_files.append(file_path.name)
+                            copied_files.append(relative_path)
                         except (OSError, IOError):
                             # Silently skip files that can't be copied
                             pass
@@ -306,7 +336,7 @@ class PreTrainedBase(ABC):
         return (
             name in self.SOURCE_ARTIFACT_FILES
             and getattr(self, "model_name_or_path", None) is not None
-            and not self.init_kwargs.get("subfolder")
+            and set(self.init_kwargs) <= self.LOAD_ONLY_KWARGS
             and loaded is not None
             and loaded[0] is artifact
             and loaded[1] is not None
@@ -342,8 +372,9 @@ class PreTrainedBase(ABC):
                     artifact.save_pretrained(save_path)
             written = {file for file, mtime in _file_mtimes(save_path).items() if mtimes.get(file) != mtime}
             for file in copied:
-                if Path(file).name not in written:
-                    shutil.copy2(Path(source_files) / file, save_path / Path(file).name)
+                if file not in written:
+                    (save_path / file).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(Path(source_files) / file, save_path / file)
 
     def save_artifacts(
         self,

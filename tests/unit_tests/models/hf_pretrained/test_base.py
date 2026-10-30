@@ -823,11 +823,14 @@ def test_save_artifacts_saves_artifacts_the_source_has_no_files_for(tmp_path):
     base._processor.save_pretrained.assert_called_once_with(tmp_path / "target")
 
 
-@pytest.mark.parametrize("edit", [None, "add_special_tokens", "chat_template", "setter"])
+@pytest.mark.parametrize(
+    "edit",
+    [None, "encode", "add_special_tokens", "chat_template", "normalizer", "load_kwargs", "setter"],
+)
 def test_causal_lm_save_artifacts_tokenizer_edits(tmp_path, edit):
-    """Test an unedited tokenizer is copied verbatim, while one edited in place or replaced is re-serialized."""
-    from tokenizers import Tokenizer, models
-    from transformers import LlamaConfig, PreTrainedTokenizerFast
+    """Test an unedited tokenizer is copied verbatim, while one edited, loaded with overrides or replaced is re-saved."""
+    from tokenizers import Tokenizer, models, normalizers
+    from transformers import AutoTokenizer, LlamaConfig, PreTrainedTokenizerFast
 
     from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -839,19 +842,52 @@ def test_causal_lm_save_artifacts_tokenizer_edits(tmp_path, edit):
     tokenizer_config = source_dir / "tokenizer_config.json"
     tokenizer_config.write_text(json.dumps(json.loads(tokenizer_config.read_text()), indent=7))
 
-    model = PreTrainedCausalLM(str(source_dir))
-    if edit == "add_special_tokens":
+    model = PreTrainedCausalLM(str(source_dir), **({"model_max_length": 256} if edit == "load_kwargs" else {}))
+    if edit == "encode":  # Sets the backend's truncation, which is not saved.
+        model.tokenizer("a a", truncation=True, max_length=1)
+    elif edit == "add_special_tokens":
         model.tokenizer.add_special_tokens({"additional_special_tokens": ["<x>"]})
     elif edit == "chat_template":
         model.tokenizer.chat_template = "{{ messages }}"
+    elif edit == "normalizer":
+        model.tokenizer.backend_tokenizer.normalizer = normalizers.Lowercase()
     elif edit == "setter":
         model.tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="<unk>")
     model.save_artifacts(tmp_path / "target")
 
     saved = (tmp_path / "target" / "tokenizer_config.json").read_text()
-    assert (saved == tokenizer_config.read_text()) == (edit is None)
+    assert (saved == tokenizer_config.read_text()) == (edit in (None, "encode"))
+    reloaded = AutoTokenizer.from_pretrained(tmp_path / "target")
     if edit == "add_special_tokens":
         assert "<x>" in (tmp_path / "target" / "tokenizer.json").read_text()
+    elif edit == "normalizer":
+        assert reloaded.encode("A", add_special_tokens=False) == [0]
+    elif edit == "load_kwargs":
+        assert reloaded.model_max_length == 256
+
+
+def test_save_artifacts_copies_named_chat_templates(tmp_path):
+    """Test an unchanged tokenizer keeps its named chat templates, which live in a subdirectory."""
+    from tokenizers import Tokenizer, models
+    from transformers import AutoTokenizer, LlamaConfig, PreTrainedTokenizerFast
+
+    from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+    source_dir = tmp_path / "source"
+    LlamaConfig().save_pretrained(source_dir)
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=Tokenizer(models.WordLevel({"a": 0, "<unk>": 1}, unk_token="<unk>")), unk_token="<unk>"
+    )
+    tokenizer.chat_template = {"default": "{{ 'default' }}", "tool_use": "{{ 'tool use' }}"}
+    tokenizer.save_pretrained(source_dir)
+
+    PreTrainedCausalLM(str(source_dir)).save_artifacts(tmp_path / "target")
+
+    templates = sorted(path.relative_to(source_dir) for path in source_dir.rglob("*.jinja"))
+    assert len(templates) == 2
+    for template in templates:
+        assert (tmp_path / "target" / template).read_bytes() == (source_dir / template).read_bytes()
+    assert AutoTokenizer.from_pretrained(tmp_path / "target").chat_template == tokenizer.chat_template
 
 
 def main():
