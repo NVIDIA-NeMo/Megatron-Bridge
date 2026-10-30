@@ -144,6 +144,8 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 
@@ -200,6 +202,8 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
@@ -400,6 +404,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(*, num_gpus: int = 256) 
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
         # offloading weights;
         "NVTE_CPU_OFFLOAD_V1": 1,

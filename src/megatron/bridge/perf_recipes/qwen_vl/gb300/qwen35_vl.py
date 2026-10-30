@@ -87,6 +87,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 
@@ -157,6 +159,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
         # use_transformer_engine_op_fuser above to take effect.
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 
@@ -316,6 +320,8 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 
@@ -410,6 +416,8 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Gate for the CuTe DSL fused grouped MLP enabled above. Transformer Engine checks it when it
         # registers the fusion; without it the op fuser runs the unfused path.
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
