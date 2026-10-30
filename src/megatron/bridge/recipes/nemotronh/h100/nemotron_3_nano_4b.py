@@ -148,7 +148,7 @@ def nemotron_3_nano_4b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
 

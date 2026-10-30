@@ -283,7 +283,7 @@ def test_qwen3_8b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyPatch)
     assert cfg.scheduler.lr_warmup_init == 0.0
     assert cfg.scheduler.lr_warmup_iters == 40
     assert cfg.scheduler.lr_decay_iters == 100
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.optimizer.main_grads_dtype == torch.float32
     assert cfg.optimizer.exp_avg_dtype == torch.float32
@@ -646,7 +646,7 @@ def test_qwen3_30b_a3b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.rng.te_rng_tracker is True
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.optimizer.optimizer == "adam"
     assert cfg.optimizer.lr == 3.0e-4
     assert cfg.optimizer.min_lr == 3.0e-5
@@ -714,7 +714,8 @@ def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_main_config(
     assert perf_cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert default_cfg.comm_overlap.overlap_moe_expert_parallel_comm is None
     assert perf_cfg.comm_overlap.delay_wgrad_compute is False
-    assert perf_cfg.optimizer.use_precision_aware_optimizer == default_cfg.optimizer.use_precision_aware_optimizer
+    assert perf_cfg.optimizer.use_precision_aware_optimizer is True
+    assert default_cfg.optimizer.use_precision_aware_optimizer is False
     assert perf_cfg.model.moe_router_force_load_balancing is True
     assert default_cfg.model.moe_router_force_load_balancing is False
     assert perf_cfg.model.moe_permute_fusion_into_hybridep is True

@@ -448,12 +448,16 @@ def test_nemotron_3_super_64gpu_h100_matches_benchmark_execution_configuration()
     assert training_cfg.model.apply_rope_fusion is benchmark_cfg.model.apply_rope_fusion is True
     assert training_cfg.tokenizer.use_tokenizer_vocab_size is benchmark_cfg.tokenizer.use_tokenizer_vocab_size is False
     assert training_cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
-    assert training_cfg.optimizer.use_precision_aware_optimizer is True
+    assert training_cfg.optimizer.use_precision_aware_optimizer is False
     assert benchmark_cfg.optimizer.use_precision_aware_optimizer is True
-    assert training_cfg.optimizer.main_grads_dtype == benchmark_cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert training_cfg.optimizer.main_params_dtype == benchmark_cfg.optimizer.main_params_dtype == torch.float16
-    assert training_cfg.optimizer.exp_avg_dtype == benchmark_cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert training_cfg.optimizer.exp_avg_sq_dtype == benchmark_cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert training_cfg.optimizer.main_grads_dtype == torch.float32
+    assert benchmark_cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert training_cfg.optimizer.main_params_dtype == torch.float32
+    assert benchmark_cfg.optimizer.main_params_dtype == torch.float16
+    assert training_cfg.optimizer.exp_avg_dtype == torch.float32
+    assert benchmark_cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert training_cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert benchmark_cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
     assert training_cfg.optimizer.optimizer_cpu_offload is benchmark_cfg.optimizer.optimizer_cpu_offload is False
     assert (
         training_cfg.optimizer.optimizer_offload_fraction == benchmark_cfg.optimizer.optimizer_offload_fraction == 0.0

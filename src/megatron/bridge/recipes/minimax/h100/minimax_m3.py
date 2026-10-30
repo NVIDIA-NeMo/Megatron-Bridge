@@ -112,11 +112,11 @@ def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
         grad_reduce_in_fp32=False,
     )
 
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.comm_overlap.delay_wgrad_compute = False

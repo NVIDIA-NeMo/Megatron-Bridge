@@ -35,6 +35,12 @@ _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c
 def nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× H100, BF16."""
     cfg = nemotron_3_super_pretrain_config()
+    # Keep the existing benchmark state independently of library defaults.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     cfg.mixed_precision = _perf_precision("bf16")
 
     # The library recipe owns the measured execution layout. Performance mode

@@ -233,21 +233,21 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.model.init_model_with_meta_device = True
 
-    # Use one distributed-optimizer instance so this memory-feasible profile
+    # Use one distributed-optimizer instance so this profile
     # uses pure FSDP rather than an outer HSDP group.
     cfg.ddp.num_distributed_optimizer_instances = 1
     cfg.ddp.outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.float32
     cfg.ddp.megatron_fsdp_main_params_dtype = torch.float32
     cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
-    cfg.ddp.megatron_fsdp_use_decoupled_grad = True
+    cfg.ddp.megatron_fsdp_use_decoupled_grad = False
     cfg.ddp.suggested_communication_unit_size = 1
 
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.model.gradient_accumulation_fusion = True
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
 

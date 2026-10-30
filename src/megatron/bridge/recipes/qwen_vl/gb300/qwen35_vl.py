@@ -150,11 +150,11 @@ def qwen35_vl_397b_a17b_pretrain_config() -> ConfigContainer:
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     _apply_qwen35_vl_397b_a17b_64gpu_gb300_execution_config(cfg)
 
@@ -303,11 +303,11 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     _apply_qwen35_vl_35b_a3b_16gpu_gb300_execution_config(cfg)
 

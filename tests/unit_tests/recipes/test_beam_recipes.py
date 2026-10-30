@@ -246,9 +246,9 @@ def test_pretrain_keeps_beam_bounded_settings() -> None:
     assert cfg.train.global_batch_size // data_parallel == 4
     assert _field(cfg.model, "seq_length") == cfg.dataset.seq_length == 4096
     assert (cfg.optimizer.lr, cfg.optimizer.min_lr) == (1e-4, 1e-5)
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.optimizer.main_grads_dtype == cfg.optimizer.exp_avg_dtype == cfg.optimizer.exp_avg_sq_dtype
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
     assert cfg.optimizer.main_params_dtype == torch.float32
     # runtime_config_update copies the mixed-precision fields onto the DDP config, so both must agree.
     assert cfg.ddp.grad_reduce_in_fp32 is False
