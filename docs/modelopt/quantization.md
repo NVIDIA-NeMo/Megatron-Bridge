@@ -133,7 +133,8 @@ uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/
 The export runs at any tensor, pipeline, expert and expert-tensor parallelism and writes the same checkpoint for all
 of them: packed quantized weights with their scales, and the `quantization_config` in `config.json` that vLLM, SGLang
 and TensorRT-LLM read. Unquantized linear layers are listed in its `ignore` list, derived from the disabled weight
-quantizers. KV-cache quantization falls back to ModelOpt's Megatron exporter, which supports TP=1 only.
+quantizers. For unsupported configurations (e.g. KV-cache quantization or fused QKV-gate projections), the script falls
+back to ModelOpt's Megatron exporter, which supports TP=1 only.
 
 **Key Arguments:**
 - `--export-dir` - Output directory for the quantized HuggingFace checkpoint
