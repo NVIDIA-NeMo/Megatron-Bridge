@@ -22,13 +22,13 @@ preserving its legacy parameter namespace exactly.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import torch
 import torch.nn.functional as F
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
-from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.module import MegatronModule, mark_keep_in_fp32
 from torch import nn
 
 from megatron.bridge.utils.common_utils import (
@@ -38,7 +38,9 @@ from megatron.bridge.utils.common_utils import (
 
 
 if TYPE_CHECKING:
+    from megatron.core.models.gpt import GPTModel
     from megatron.core.packed_seq_params import PackedSeqParams
+    from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 def _config_value(config: Any, name: str, default: Any = None) -> Any:
@@ -75,9 +77,10 @@ class MiniMaxM3VisionPatchEmbeddings(nn.Module):
         )
 
         # The released checkpoint stores this one vision tensor in FP32. Mark it
-        # so Bridge's mixed-precision wrapper does not truncate it to BF16.
+        # so the mixed-precision wrapper does not truncate it to BF16.
         self.patch_embedding.float()
         self.patch_embedding._keep_in_float32_parameter_names = ("weight",)
+        mark_keep_in_fp32(self.patch_embedding.weight)
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """Embed flattened image/video patches."""
@@ -377,7 +380,19 @@ class MiniMaxM3LightningIndexerState(nn.Module):
 
 
 class MiniMaxM3VLModel(MegatronModule):
-    """MiniMax-M3 vision tower, projectors, and Megatron language model."""
+    """MiniMax-M3 vision tower, projectors, and Megatron language model.
+
+    Args:
+        config: The provider, or the vision-language transformer config of a builder-backed model
+            config. Either one carries the vision config, the token IDs, the projector shape and
+            the Lightning Indexer layout.
+        pre_process: Whether to build the vision tower, the projectors and the embeddings.
+        post_process: Whether to build the language-model output layer.
+        vp_stage: Virtual pipeline stage.
+        build_language_model: Builds the language model from ``pre_process``, ``post_process`` and
+            ``vp_stage``. Defaults to the provider's ``provide_language_model()``.
+        pg_collection: Process groups a builder passes. Defaults to the provider's.
+    """
 
     def __init__(
         self,
@@ -385,8 +400,13 @@ class MiniMaxM3VLModel(MegatronModule):
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: int | None = None,
+        *,
+        build_language_model: Callable[..., GPTModel] | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> None:
         super().__init__(config=config)
+        if pg_collection is not None:
+            self.pg_collection = pg_collection
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
@@ -414,7 +434,9 @@ class MiniMaxM3VLModel(MegatronModule):
             for module in (self.vision_tower, self.multi_modal_projector, self.patch_merge_mlp):
                 hook_hf_module_setattr_for_tp_grad_sync(module)
 
-        self.language_model = config.provide_language_model(
+        if build_language_model is None:
+            build_language_model = config.provide_language_model
+        self.language_model = build_language_model(
             pre_process=pre_process,
             post_process=post_process,
             vp_stage=vp_stage,
@@ -426,7 +448,7 @@ class MiniMaxM3VLModel(MegatronModule):
             layer_idx = int(layer.layer_number) - 1
             if layer_idx in sparse_layer_indices:
                 self.lightning_indexers[str(layer_idx)] = MiniMaxM3LightningIndexerState(config)
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
     @property
@@ -550,6 +572,10 @@ class MiniMaxM3VLModel(MegatronModule):
             )
             inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
 
+        # A builder passes the model its process groups; a provider carries them.
+        pg_collection = getattr(self, "pg_collection", None)
+        if pg_collection is None:
+            pg_collection = getattr(self.config, "_pg_collection", None)
         inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
             inputs_embeds=inputs_embeds,
             labels=labels,
@@ -557,10 +583,10 @@ class MiniMaxM3VLModel(MegatronModule):
             position_ids=position_ids,
             attention_mask=attention_mask,
             packed_seq_params=packed_seq_params,
-            pg_collection=self.config._pg_collection,
+            pg_collection=pg_collection,
         )
         if self.config.sequence_parallel and inputs_embeds is not None:
-            tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+            tp_group = pg_collection.tp if pg_collection is not None else None
             inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         output = self.language_model(
