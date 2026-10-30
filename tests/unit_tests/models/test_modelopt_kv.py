@@ -36,7 +36,6 @@ pytestmark = [
 from modelopt.torch.quantization.config import QuantizerAttributeConfig
 
 from megatron.bridge.models.conversion import modelopt_utils
-from megatron.bridge.models.conversion._modelopt_kv import _KVExportHook
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import QKVMapping
 
@@ -93,7 +92,8 @@ def _model_and_task(kv_format="FP8", query=False):
 
 @pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
 @pytest.mark.parametrize("query", [False, True])
-def test_kv_only_plan_captures_fresh_unclamped_scales_exactly_once(kv_format, query):
+@pytest.mark.parametrize("rename_query", [False, True])
+def test_kv_only_plan_captures_fresh_unclamped_scales_exactly_once(kv_format, query, rename_query):
     model, attention, task = _model_and_task(kv_format, query)
     plan = modelopt_utils.build_modelopt_export_plan([task], model=[model])
     assert not plan.quantized_params
@@ -104,7 +104,10 @@ def test_kv_only_plan_captures_fresh_unclamped_scales_exactly_once(kv_format, qu
         return [
             item
             for hf_name in task.mapping.hf_param.values()
-            for item in prepared.export_hook(hf_name, task.param_weight)
+            for item in prepared.export_hook(
+                hf_name.replace(".q_proj.", ".query_proj.") if rename_query else hf_name,
+                task.param_weight,
+            )
         ]
 
     first = stream()
@@ -120,6 +123,39 @@ def test_kv_only_plan_captures_fresh_unclamped_scales_exactly_once(kv_format, qu
     second = dict(stream())
     assert second[f"{prefix}.k_scale"].item() == 0.5
     assert first[f"{prefix}.k_scale"].item() == 0.25
+
+
+def test_quantized_qkv_plan_reuses_weight_and_kv_companions():
+    model, attention, task = _model_and_task(query=True)
+    linear = model.self_attention.linear_qkv
+    mtq.quantize(linear, deepcopy(mtq.FP8_DEFAULT_CFG), lambda candidate: candidate(torch.ones(2, 4)))
+    task = replace(task, megatron_module=linear, param_weight=linear.weight)
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[model])
+    assert task.global_param_name in plan.quantized_params
+    prefix = "model.layers.0.self_attn"
+
+    def stream():
+        prepared = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+        converted = task.mapping.megatron_to_hf(task.param_weight, linear)
+        outputs = [item for name, tensor in converted.items() for item in prepared.export_hook(name, tensor)]
+        assert len(outputs) == len({name for name, _ in outputs})
+        return dict(outputs)
+
+    first = stream()
+    expected = {f"{prefix}.{axis}_scale" for axis in ("q", "k", "v")}
+    expected.update(
+        f"{prefix}.{projection}.{suffix}"
+        for projection in ("q_proj", "k_proj", "v_proj")
+        for suffix in ("weight", "weight_scale", "input_scale")
+    )
+    assert set(first) == expected
+    attention.k_bmm_quantizer.amax = 224.0
+    second = stream()
+    assert set(second) == expected
+    assert first[f"{prefix}.k_scale"].item() == 0.25
+    assert second[f"{prefix}.k_scale"].item() == 0.5
+    for name in expected - {f"{prefix}.k_scale"}:
+        torch.testing.assert_close(second[name].float(), first[name].float(), rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
@@ -276,24 +312,35 @@ def test_live_invalid_kv_scales_fail_instead_of_using_native_defaults(monkeypatc
         "capture_kv_cache_export_state",
         lambda *_args, **_kwargs: SimpleNamespace(k_scale=torch.tensor(bad_scale), v_scale=torch.tensor(1.0)),
     )
-    hook = modelopt_utils.prepare_modelopt_export_tasks(plan)[0].export_hook
     with pytest.raises(RuntimeError, match="finite and positive"):
-        list(hook(task.mapping.hf_param["q"], task.param_weight))
+        modelopt_utils.prepare_modelopt_export_tasks(plan)
 
 
-def test_kv_tp_disagreement_is_not_silently_merged(monkeypatch):
-    model, _attention, task = _model_and_task()
+@pytest.mark.parametrize("axis", ["q", "k", "v"])
+def test_kv_tp_scales_use_query_max_and_require_matching_kv(monkeypatch, axis):
+    model, _attention, task = _model_and_task(query=True)
     plan = modelopt_utils.build_modelopt_export_plan([task], model=[model])
     hook = modelopt_utils.prepare_modelopt_export_tasks(plan)[0].export_hook
-    monkeypatch.setattr(task.mapping, "gather_from_tp_ranks", lambda value: [value, value * 2])
-    with pytest.raises(ValueError, match="scales across TP"):
-        list(hook(task.mapping.hf_param["q"], task.param_weight))
+
+    def gather(value):
+        peer = value.clone()
+        peer[("q", "k", "v").index(axis)] *= 2
+        return [value, peer]
+
+    monkeypatch.setattr(task.mapping, "gather_from_tp_ranks", gather)
+    if axis == "q":
+        exported = dict(hook(task.mapping.hf_param["q"], task.param_weight))
+        assert exported["model.layers.0.self_attn.q_scale"].item() == 1.0
+        assert exported["model.layers.0.self_attn.k_scale"].item() == 0.25
+        assert exported["model.layers.0.self_attn.v_scale"].item() == 0.125
+    else:
+        with pytest.raises(ValueError, match="scales across TP"):
+            list(hook(task.mapping.hf_param["q"], task.param_weight))
 
 
 def test_remote_kv_capture_propagates_owner_failure(monkeypatch):
-    _model, _attention, task = _model_and_task()
-    task = replace(task, megatron_module=None, param_weight=None)
-    hook = _KVExportHook(task, None, "model.layers.0.self_attn", ("FP8", False))
-    monkeypatch.setattr(task.mapping, "broadcast_obj_from_pp_rank", lambda _value: ("owner capture failed",))
+    model, _attention, task = _model_and_task()
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[model])
+    monkeypatch.setattr(modelopt_utils, "_all_gather_objects", lambda value, _group: [value, "owner capture failed"])
     with pytest.raises(RuntimeError, match="owner capture failed"):
-        list(hook.scales())
+        modelopt_utils.prepare_modelopt_export_tasks(plan)
