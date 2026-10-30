@@ -295,9 +295,7 @@ class TestNemotron3NanoSft:
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
             config = recipe_factory()
 
-        from_hf.assert_called_once_with(
-            recipe_module._NEMOTRON_3_NANO_MODEL_ID, revision=recipe_module._NEMOTRON_3_NANO_MODEL_REVISION
-        )
+        from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
         bridge.get_model_config.assert_called_once_with()
         bridge.to_megatron_provider.assert_not_called()
         assert config.model is model_config
@@ -378,9 +376,7 @@ class TestNemotron3NanoSft:
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
             config = recipe_module.nemotron_3_5_lightning_sft_openmathinstruct2_packed_config()
 
-        from_hf.assert_called_once_with(
-            recipe_module._NEMOTRON_3_NANO_MODEL_ID, revision=recipe_module._NEMOTRON_3_NANO_MODEL_REVISION
-        )
+        from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
         assert config.model.mtp_num_layers == 2
         assert config.model.mtp_hybrid_override_pattern == "*E"
         assert config.model.mtp_use_repeated_layer is True
@@ -661,28 +657,6 @@ def test_gb200_8gpu_deterministic_pretrain_applies_determinism():
         assert cfg.env_vars[key] == value
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "recipe_factory",
-    [
-        nemotron_3_nano_pretrain_config,
-        nemotron_3_5_lightning_pretrain_config,
-        nemotron_3_5_lightning_pretrain_8k_config,
-    ],
-)
-def test_pretrain_recipes_pin_nemotron_3_nano_config_revision(recipe_factory):
-    """Nemotron 3 Nano and the Lightning recipes built from it load a pinned Nano config, not Hub main."""
-    bridge = Mock()
-    bridge.get_model_config.return_value = nemotron_h_model_config(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
-
-    with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
-        recipe_factory()
-
-    from_hf.assert_called_once_with(
-        recipe_module._NEMOTRON_3_NANO_MODEL_ID, revision=recipe_module._NEMOTRON_3_NANO_MODEL_REVISION
-    )
 
 
 @pytest.mark.unit
