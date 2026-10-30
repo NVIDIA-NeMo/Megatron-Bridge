@@ -209,6 +209,24 @@ class MyVLModel(MegatronModule):
         return self.language_model(decoder_input=text_embeds, ...)
 ```
 
+#### Building an HF-encoder wrapper from a builder config
+
+Gemma 4 VL (`gemma_vl/gemma4_vl_config.py`, `gemma_vl/gemma4_vl_builder.py`) builds such a wrapper, written for a
+provider, from a builder config:
+
+- A builder-built model's `config` is its transformer config. When the wrapper, or Hugging Face methods bound to
+  it, read vision-language settings from `self.config`, declare those fields on the vision-language transformer
+  config. Keep the rest, such as freeze options, on the outer config.
+- The builder passes the wrapper a language-model factory, `partial(super().build_model, pg_collection)`, in place
+  of `provide_language_model()`, so the encoders and the language model are created in the provider's order. It
+  also passes the process groups, which a provider carries on itself as `_pg_collection`.
+- Checkpoint conversion builds a builder model without the `Float16Module` wrapper, which casts a provider-built
+  model to `params_dtype`. Cast the Hugging Face encoders to `params_dtype` in the wrapper or the builder;
+  `Gemma4VLModel` casts its encoders itself.
+- Hugging Face configs are dataclasses, and Megatron Core's `ModelConfig.as_dict()` reads every field of a nested
+  dataclass. `Gemma4TextConfig` raises on its per-layer attributes, so the Gemma 4 VL configs serialize their
+  Hugging Face sub-configs with `_ConfigContainerBase._convert_value_to_dict()`, as provider checkpoints do.
+
 ## Weight Mapping Naming Conventions
 
 VLM weight names typically have these prefixes:
