@@ -684,7 +684,7 @@ def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.sequence_parallel is False
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
@@ -713,8 +713,9 @@ def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.optimizer.overlap_param_gather is True
     assert cfg.checkpoint.async_save is False
 
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
 
 
 def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_policy():
@@ -735,6 +736,7 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
         "moe_flex_dispatcher_backend",
         "moe_flex_dispatcher_num_sms",
         "moe_hybridep_num_sms",
+        "moe_use_grouped_tensor",
         "recompute_granularity",
         "recompute_modules",
         "recompute_method",

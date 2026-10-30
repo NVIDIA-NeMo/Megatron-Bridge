@@ -77,7 +77,10 @@ def _qwen35_text_35b_a3b_long_context_common(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["gdn_norm_out", "moe"]
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
     cfg.model.moe_router_fusion = True
@@ -120,10 +123,8 @@ def _qwen35_text_35b_a3b_long_context_common(
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
     }
     cfg.checkpoint.load = None
     return cfg
@@ -346,9 +347,14 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = True
 
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
+    # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+    cfg.env_vars = {**cfg.env_vars, "NCCL_EP_HT_EM_PULL_PUSH": 1}
     cfg.model.moe_router_dtype = "fp32"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False

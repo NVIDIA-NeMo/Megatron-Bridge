@@ -57,8 +57,11 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["moe_act"]
 
     # HybridEP and Blackwell overlap settings from the performance recipe.
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
     cfg.model.moe_token_dispatcher_type = "flex"
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_hybridep_num_sms = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
     cfg.model.moe_shared_expert_overlap = False
@@ -97,10 +100,8 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,

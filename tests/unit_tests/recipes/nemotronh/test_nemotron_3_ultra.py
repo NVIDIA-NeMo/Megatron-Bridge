@@ -130,7 +130,7 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 16
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
@@ -148,8 +148,9 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
     assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.ddp.check_for_large_grads is True
     assert cfg.rerun_state_machine.check_for_nan_in_loss is True
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
 
 
 @pytest.mark.unit
@@ -166,7 +167,8 @@ def test_gb200_ep16_deterministic_pretrain_applies_determinism() -> None:
     assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size
     for key, value in DETERMINISM_ENV_VARS.items():
         assert cfg.env_vars[key] == value
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
 
 
 @pytest.mark.unit

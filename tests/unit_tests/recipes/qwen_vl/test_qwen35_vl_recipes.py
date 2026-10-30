@@ -469,12 +469,12 @@ def test_qwen35_vl_397b_a17b_pretrain_64gpu_gb300_defaults(monkeypatch: pytest.M
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.context_parallel_size == 1
-    # EP32 measured 370.2 TF against 211.0 TF at EP64 on 64x GB300; the HybridEP
-    # NVLink rank count must track it or the domain is split wrongly.
+    # EP32 measured 370.2 TF against 211.0 TF at EP64 on 64x GB300.
     assert cfg.model.expert_model_parallel_size == 32
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     assert cfg.model.recompute_granularity == "selective"
     # No "moe_act": the CuTe DSL fused grouped MLP rejects it.
     assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out"]
@@ -500,12 +500,12 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_gb300_defaults(monkeypatch: pytest.Mon
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.context_parallel_size == 1
-    # EP4 on 16 GPUs; the HybridEP NVLink rank count must track it or the
-    # domain is split wrongly.
+    # EP4 on 16 GPUs.
     assert cfg.model.expert_model_parallel_size == 4
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     # LayerNorm SM margin is 0 at 35B, not the 397B recipe's 20.
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 0
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 0
@@ -541,7 +541,8 @@ def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_defaults(monkeypatc
     _assert_basic_config(cfg)
     # Same parallel layout, CUDA graphs, recompute, batch shape and routing as the 16-GPU recipe.
     assert cfg.model.expert_model_parallel_size == 4
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.train.global_batch_size == base.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == base.train.micro_batch_size == 4
     assert cfg.model.max_vision_cuda_graph_seq_length == 3712
@@ -562,9 +563,9 @@ def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_defaults(monkeypatc
     assert cfg.model.moe_permute_fusion_into_hybridep is False
     assert cfg.model.moe_hybridep_num_sms_preprocessing == 16
     assert cfg.model.overlap_dispatch_backward_with_experts_wgrad is True
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 64
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 64
+    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API" not in cfg.env_vars
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     # Building the 8-GPU recipe must not leak the env gate into the 16-GPU recipe.
@@ -593,8 +594,6 @@ def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_defaults(monkeypatc
     }
     assert changed_env_vars == {
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP",
-        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API",
-        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API",
         "NVTE_NORM_FWD_USE_CUDNN",
         "NVTE_NORM_BWD_USE_CUDNN",
     }
@@ -820,7 +819,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.model.expert_tensor_parallel_size == 1
         assert cfg.model.sequence_parallel is False
         assert cfg.model.moe_token_dispatcher_type == "flex"
-        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 32
         assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
         assert cfg.model.gdn_kernel_backend == "transformer_engine"
@@ -871,7 +870,8 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.comm_overlap.overlap_param_gather is False
         assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
         assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
-        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+        assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+        assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
 
     assert bf16_cfg.mixed_precision.fp8 is None
     assert bf16_cfg.mixed_precision.fp8_param_gather is False
@@ -886,7 +886,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
     assert fp8mx_cfg.checkpoint.load_rng is False
 
     assert bf16_cfg.model.use_transformer_engine_op_fuser is False
-    assert bf16_cfg.model.moe_use_grouped_tensor is False
+    assert bf16_cfg.model.moe_use_grouped_tensor is True
     assert bf16_cfg.model.moe_mlp_glu_interleave_size is None
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in bf16_cfg.env_vars
     assert fp8mx_cfg.model.use_transformer_engine_op_fuser is True
@@ -1074,7 +1074,7 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
     assert cfg.train.empty_unused_memory_level == 2
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_router_force_load_balancing is False
@@ -1118,9 +1118,10 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
     assert cfg.comm_overlap.delay_wgrad_compute is False
 
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
 

@@ -2266,6 +2266,61 @@ def apply_environment_variables(cfg: ConfigContainer) -> None:
         os.environ.setdefault(name, str(value))
 
 
+def apply_ncclep_one_gpu_per_rank(cfg: ConfigContainer) -> None:
+    """Bind NCCL EP recipes to one GPU per rank before CUDA is initialized.
+
+    The NCCL EP plugin allocates its buffers with ``ncclMemAlloc``, which maps them into every GPU
+    visible to the process; on Grace+Blackwell nodes each mapped GPU adds ~11 us to every ``munmap``
+    of the process, i.e. host-side overhead on every training step. When the resolved recipe uses
+    the ``ncclep`` flex backend and the launcher exposes several devices to this rank (Slurm's
+    default per-node list), keep only the local rank's device in ``CUDA_VISIBLE_DEVICES`` and make
+    the trainer select device 0 (``dist.external_gpu_device_mapping``). ``scripts/performance/
+    bootstrap.py`` does the same for perf recipes before the trainer imports torch; this covers
+    recipes launched through ``pretrain()`` directly.
+
+    No-op when the recipe does not use NCCL EP, when no local rank can be determined, or when CUDA
+    is already initialized in this process (the visible-device list can no longer change). A
+    launcher that already exposes exactly one device only gets ``external_gpu_device_mapping``.
+    """
+    model = getattr(cfg, "model", None)
+    if getattr(model, "moe_token_dispatcher_type", None) != "flex":
+        return
+    if getattr(model, "moe_flex_dispatcher_backend", None) != "ncclep":
+        return
+    local_rank = os.environ.get("LOCAL_RANK") or os.environ.get("SLURM_LOCALID")
+    if local_rank is None:
+        return
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    devices = [device for device in visible.split(",") if device] if visible else None
+    if devices is not None and len(devices) == 1:
+        cfg.dist.external_gpu_device_mapping = True
+        return
+
+    import torch
+
+    if torch.cuda.is_initialized():
+        warnings.warn(
+            "NCCL EP one-GPU-per-rank binding skipped: CUDA was initialized before runtime_config_update, "
+            "so CUDA_VISIBLE_DEVICES can no longer be narrowed; all devices stay visible to this rank."
+        )
+        return
+    if devices is None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = local_rank
+    elif int(local_rank) < len(devices):
+        os.environ["CUDA_VISIBLE_DEVICES"] = devices[int(local_rank)]
+    else:
+        warnings.warn(
+            f"NCCL EP one-GPU-per-rank binding skipped: local rank {local_rank} is not in "
+            f"CUDA_VISIBLE_DEVICES={visible}; all listed devices stay visible to this rank."
+        )
+        return
+    cfg.dist.external_gpu_device_mapping = True
+    print_rank_0(
+        f"NCCL EP one-GPU-per-rank binding: CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} "
+        f"(was {visible}), dist.external_gpu_device_mapping=True"
+    )
+
+
 def runtime_config_update(cfg: ConfigContainer) -> None:
     """Apply runtime configuration updates prior to initialization.
 
@@ -2284,6 +2339,8 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     """
     # Environment settings may affect runtime finalization and must be applied first.
     apply_environment_variables(cfg)
+    # Must also run before CUDA initialization (it edits CUDA_VISIBLE_DEVICES).
+    apply_ncclep_one_gpu_per_rank(cfg)
 
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
@@ -2334,6 +2391,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
     apply_environment_variables(cfg)
+    apply_ncclep_one_gpu_per_rank(cfg)
 
     if cfg.train.num_epochs is not None:
         raise ValueError("num_epochs is not supported for MegatronMIMO datasets")
