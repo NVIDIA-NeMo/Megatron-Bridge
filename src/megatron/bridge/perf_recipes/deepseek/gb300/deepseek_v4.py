@@ -156,7 +156,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
 
     Preserves the MXFP8 benchmark's full model, batch, forced routing and Adam
     precision: FP32 master weights with BF16 main gradients and Adam moments.
-    Uses selective MLA/mHC recompute without activation offload or CUDA graphs,
+    Uses selective MLA/mHC/MoE-block recompute without offload or CUDA graphs,
     whose combination is unsupported by the native HybridModel runtime.
     This synthetic-data performance benchmark is not a convergence recipe.
     """
@@ -165,6 +165,8 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.quant_recipe = None
     cfg.model.moe_router_padding_for_fp8 = False
     cfg.model.moe_router_padding_for_quantization = False
+    # Leave room for initialized optimizer state during steady-state training.
+    cfg.model.recompute_modules = ["mla_up_proj", "mhc", "moe"]
 
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = []

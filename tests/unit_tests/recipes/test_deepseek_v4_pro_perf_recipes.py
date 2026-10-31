@@ -72,7 +72,7 @@ def test_bf16_effective_precision_disables_quantized_compute_and_gather() -> Non
 def test_bf16_uses_supported_eager_recompute_combination() -> None:
     cfg = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["mla_up_proj", "mhc"]
+    assert cfg.model.recompute_modules == ["mla_up_proj", "mhc", "moe"]
     assert cfg.model.cuda_graph_impl == "none"
     assert cfg.model.cuda_graph_scope == []
     assert cfg.model.use_te_rng_tracker is cfg.rng.te_rng_tracker is False
