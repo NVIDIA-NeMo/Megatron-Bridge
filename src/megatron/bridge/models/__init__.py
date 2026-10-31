@@ -53,6 +53,8 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.deepseek import (
     DeepSeekV3Bridge,
+    DeepSeekV41Bridge,
+    DeepSeekV41ModelProvider,
 )
 from megatron.bridge.models.diffusion_gemma import (
     DiffusionGemmaBridge,
@@ -252,6 +254,8 @@ __all__ = [
     "BertModelProvider",
     # DeepSeek Models
     "DeepSeekV3Bridge",
+    "DeepSeekV41Bridge",
+    "DeepSeekV41ModelProvider",
     # ERNIE Text-Only Models
     "Ernie45Bridge",
     # ERNIE VL Models

@@ -63,6 +63,15 @@ class SimpleModel(nn.Module):
         self.layernorm = nn.LayerNorm(512)
 
 
+class ParameterBackedProjectionModel(nn.Module):
+    """Model fixture with an explicitly targetable bare projection weight."""
+
+    def __init__(self):
+        super().__init__()
+        self.projection_weight = nn.Parameter(torch.randn(8, 4))
+        self.unmarked_matrix = nn.Parameter(torch.randn(8, 4))
+
+
 class NestedModel(nn.Module):
     """Model with nested structure for testing pattern matching."""
 
@@ -303,6 +312,21 @@ class TestLoRA:
         assert isinstance(transformed_model.embedding, nn.Embedding)
         assert isinstance(transformed_model.layernorm, nn.LayerNorm)
 
+    def test_lora_promotes_targeted_bare_parameter(self):
+        """An explicitly targeted bare projection receives the regular LoRA wrapper."""
+        model = ParameterBackedProjectionModel()
+        base_weight = model.projection_weight
+        lora = LoRA(target_modules=["projection_weight"], dim=2, alpha=4)
+
+        transformed_model = lora(model, training=True)
+
+        assert isinstance(transformed_model.projection_weight, LoRALinear)
+        assert transformed_model.projection_weight.to_wrap.weight is base_weight
+        assert not base_weight.requires_grad
+        assert transformed_model.projection_weight.adapter.linear_in.weight.requires_grad
+        assert transformed_model.projection_weight.adapter.linear_out.weight.requires_grad
+        assert isinstance(transformed_model.unmarked_matrix, nn.Parameter)
+
     def test_lora_transform_with_exclude_modules(self):
         """Test LoRA transformation with exclude_modules parameter."""
         model = SimpleModel()
@@ -515,6 +539,26 @@ class TestLoRA:
             assert proj_out.shape == (batch_size, seq_len, 512)
             assert fc1_out.shape == (batch_size, seq_len, 2048)
             assert fc2_out.shape == (batch_size, seq_len, 512)
+
+    def test_lora_forward_casts_mixed_dtype_adapter_branch(self):
+        """LoRA may use lower-precision weights than an FP32 base projection."""
+        base = nn.Linear(4, 3, bias=False, dtype=torch.float32)
+        adapter = LinearAdapter(base, dim=2, alpha=2, lora_dtype=torch.bfloat16)
+        with torch.no_grad():
+            adapter.linear_out.weight.fill_(0.25)
+        wrapped = LoRALinear(base, adapter)
+        x = torch.randn(2, 4, dtype=torch.float32, requires_grad=True)
+
+        output = wrapped(x)
+        expected = base(x) + adapter(x.to(torch.bfloat16)).to(torch.float32)
+
+        assert output.dtype == torch.float32
+        torch.testing.assert_close(output, expected)
+        output.sum().backward()
+        assert x.grad is not None
+        assert x.grad.dtype == torch.float32
+        assert adapter.linear_in.weight.grad is not None
+        assert adapter.linear_in.weight.grad.dtype == torch.bfloat16
 
     def test_lora_training_vs_inference_mode(self):
         """Test LoRA behavior in training vs inference mode."""
