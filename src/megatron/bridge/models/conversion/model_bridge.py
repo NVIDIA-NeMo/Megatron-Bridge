@@ -577,6 +577,12 @@ class MegatronModelBridge(
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
 
+    # Source checkpoint key suffixes that import consumes and export never writes back, such as the
+    # ``*_scale_inv`` companions of FP8 weights a bridge dequantizes on import. Saved artifacts drop
+    # ``quantization_config``, so such a bridge exports plain weights; strict saving then ignores
+    # these source keys instead of reporting them as missing.
+    DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ()
+
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Apply model-specific fixes after Hugging Face artifacts are saved.
 
@@ -1109,6 +1115,35 @@ class MegatronModelBridge(
                     )
         """
         raise NotImplementedError("Subclass must implement mapping_registry method")
+
+    @staticmethod
+    def _prefix_mapping_registry(
+        registry: MegatronMappingRegistry, megatron_prefix: str, *extra: MegatronParamMapping
+    ) -> MegatronMappingRegistry:
+        """Re-key a text-model mapping registry for a VLM wrapper.
+
+        VLM bridges typically reuse a text bridge's ``mapping_registry`` but must
+        re-prefix every Megatron parameter (e.g. ``embedding.*`` →
+        ``language_model.embedding.*``) because the language model is a submodule of
+        the VLM wrapper. Concatenation/delegation mappings that hold a nested
+        ``_tp_mapping`` keep it in sync with the parent ``megatron_param``.
+
+        Args:
+            registry: The text-model registry returned by ``super().mapping_registry()``.
+            megatron_prefix: Prefix prepended to each ``megatron_param``.
+            *extra: Additional mappings appended verbatim (e.g. replicated vision
+                weights); they are NOT prefixed.
+
+        Returns:
+            A new ``MegatronMappingRegistry`` with prefixed text mappings + extras.
+        """
+        mappings = list(registry.mappings)
+        for mapping in mappings:
+            mapping.megatron_param = megatron_prefix + mapping.megatron_param
+            nested = getattr(mapping, "_tp_mapping", None)
+            if nested is not None:
+                nested.megatron_param = mapping.megatron_param
+        return MegatronMappingRegistry(*mappings, *extra)
 
     def _megatron_global_param_names_all_pp_ranks(
         self,
