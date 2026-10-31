@@ -14,6 +14,7 @@
 
 """Unit tests for the Qwen3.5-VL builder-backed model config and builder."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -29,6 +30,7 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig,
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5_MOE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.model_load_save import load_model_config
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.yaml_utils import dump_dataclass_to_yaml
 
 
@@ -38,6 +40,15 @@ pytestmark = pytest.mark.skipif(
 
 _BUILDER_MODULE = "megatron.bridge.models.qwen_vl.qwen35_vl_builder"
 _PROVIDER_MODULE = "megatron.bridge.models.qwen_vl.qwen35_vl_provider"
+_MODEL_MODULE = "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model"
+
+# Opt-in static vision settings (model.vision_static_shapes) with non-default values.
+_STATIC_VISION_SETTINGS = {
+    "vision_static_shapes": True,
+    "vision_patch_cap": 1024,
+    "vision_max_images": 2,
+    "vision_over_cap_policy": "error",
+}
 
 
 def _model_config(**overrides) -> Qwen35VLModelConfig:
@@ -310,3 +321,112 @@ class TestQwen35VLModelBuilder:
 
         with pytest.raises(ValueError, match="transformer_layer_spec"):
             Qwen35VLModelBuilder(config).build_model(_pg_collection())
+
+
+@dataclass
+class _ModelContainer:
+    """Training-style container for CLI overrides of the model config."""
+
+    model: Qwen35VLModelConfig
+
+
+class TestQwen35VLStaticVision:
+    """The opt-in static vision settings (``vision_static_shapes``) of the builder-backed config."""
+
+    @pytest.fixture
+    def model_parts(self, monkeypatch):
+        """Build the real Qwen3VLModel, with mocked language and vision models and language specs."""
+        language_model = Mock()
+        language_model.config.cuda_graph_impl = "none"
+        language_model.decoder.layers = []
+        vision_model = Mock()
+        monkeypatch.setattr(f"{_MODEL_MODULE}.Qwen3VLGPTModel", Mock(return_value=language_model))
+        monkeypatch.setattr(f"{_MODEL_MODULE}.Qwen3VLVisionModel", Mock(return_value=vision_model))
+        monkeypatch.setattr(
+            f"{_PROVIDER_MODULE}.get_transformer_block_with_experimental_attention_variant_spec",
+            lambda config, vp_stage=None, pp_rank=None: SimpleNamespace(layer_specs=[]),
+        )
+        monkeypatch.setattr(f"{_BUILDER_MODULE}.mtp_block_spec", lambda *args, **kwargs: None)
+        return SimpleNamespace(language_model=language_model, vision_model=vision_model)
+
+    @staticmethod
+    def _build(config, *, pre_process=True):
+        group = _FakeGroup(rank=0, size=1)
+        pg_collection = SimpleNamespace(pp=group, tp=group, cp=group, embd=None)
+        return Qwen35VLModelBuilder(config).build_model(pg_collection, pre_process=pre_process, post_process=True)
+
+    def test_settings_default_off_on_the_outer_config(self):
+        config = _model_config()
+
+        assert config.vision_static_shapes is False
+        assert (config.vision_patch_cap, config.vision_max_images, config.vision_over_cap_policy) == (
+            None,
+            1,
+            "downscale",
+        )
+        for name, value in _STATIC_VISION_SETTINGS.items():
+            setattr(config, name, value)
+            assert getattr(config, name) == value
+            assert name not in vars(config.transformer)
+
+    def test_cli_overrides_switch_static_vision_on(self):
+        """Recipes build this config with AutoBridge; the CUDA graphs guide enables static vision with overrides."""
+        container = _ModelContainer(model=_model_config())
+
+        process_config_with_overrides(
+            container,
+            cli_overrides=[
+                "model.cuda_graph_impl=full_iteration",
+                "model.vision_static_shapes=true",
+                "model.vision_patch_cap=1024",
+                "model.vision_max_images=2",
+                "model.vision_over_cap_policy=error",
+            ],
+        )
+
+        model = container.model
+        assert isinstance(model, Qwen35VLModelConfig)
+        assert {name: getattr(model, name) for name in _STATIC_VISION_SETTINGS} == _STATIC_VISION_SETTINGS
+        assert model.transformer.cuda_graph_impl == "full_iteration"
+
+    def test_serialization_round_trip(self, tmp_path):
+        config = _model_config(**_STATIC_VISION_SETTINGS)
+        serialized = ConfigContainer._convert_value_to_dict(config)
+        (tmp_path / "run_config.yaml").write_text(dump_dataclass_to_yaml({"model": serialized}))
+
+        restored, _ = load_model_config(str(tmp_path))
+
+        assert isinstance(restored, Qwen35VLModelConfig)
+        assert {name: getattr(restored, name) for name in _STATIC_VISION_SETTINGS} == _STATIC_VISION_SETTINGS
+
+    def test_build_model_hands_the_settings_to_the_model(self, model_parts):
+        config = _model_config(**_STATIC_VISION_SETTINGS)
+
+        model = self._build(config)
+
+        # The model is built with the nested transformer config, which does not declare the settings, and reads
+        # them from the builder config, as it reads them from a provider's language config.
+        assert model.config is config.transformer
+        assert not hasattr(config.transformer, "vision_static_shapes")
+        assert model.vision_static_shapes is True
+        assert model.vision_model is model_parts.vision_model
+        assert model.vision_model.static_patch_cap == 1024
+
+    def test_build_model_keeps_the_default_vision_path(self, model_parts):
+        model = self._build(_model_config())
+
+        assert model.vision_static_shapes is False
+
+    @pytest.mark.parametrize(
+        ("overrides", "pre_process", "match"),
+        [
+            ({}, True, "vision_patch_cap"),
+            ({"vision_patch_cap": 1022}, True, "vision_patch_cap"),
+            ({"vision_patch_cap": 1024}, False, "pipeline parallelism"),
+        ],
+    )
+    def test_build_model_rejects_unsupported_static_vision(self, model_parts, overrides, pre_process, match):
+        config = _model_config(vision_static_shapes=True, **overrides)
+
+        with pytest.raises(ValueError, match=match):
+            self._build(config, pre_process=pre_process)

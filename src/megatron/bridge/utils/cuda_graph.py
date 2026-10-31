@@ -131,6 +131,20 @@ def is_full_iteration_cuda_graph(config: Any) -> bool:
     ) or "full_iteration" in _member_names(getattr(config, "cuda_graph_scope", None))
 
 
+def supports_deferred_result_validation() -> bool:
+    """Return whether Megatron Core validates results captured in a full-iteration CUDA graph after each replay.
+
+    With deferred result validation, ``RerunStateMachine.validate_result`` records a snapshot of the checked value
+    while ``FullCudaGraphWrapper`` captures the iteration instead of reading it on the host, and the wrapper checks
+    the replayed snapshots on the host after every call, before the training step updates the optimizer.
+    """
+    from megatron.core.rerun_state_machine import RerunStateMachine
+
+    return hasattr(RerunStateMachine, "capture_deferred_validations") and hasattr(
+        RerunStateMachine, "run_deferred_validations"
+    )
+
+
 def validate_cuda_graph_configuration(config: Any, *, config_name: str = "model") -> None:
     """Validate Bridge-supported CUDA graph implementation/scope combinations."""
     cuda_graph_impl = getattr(config, "cuda_graph_impl", "none")
