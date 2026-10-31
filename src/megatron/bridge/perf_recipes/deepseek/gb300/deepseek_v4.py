@@ -18,7 +18,7 @@ import torch
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
-from megatron.bridge.perf_recipes._common import _benchmark_common
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
 )
@@ -57,12 +57,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Pro pretrain: 256× GB300, MXFP8, native HybridModel layout.
-
-    Requires mHC PP/VPP and CUDA graphs with recompute and activation offload;
-    the main-branch MCore pin does not yet support this combination.
-    """
+def _deepseek_v4_pro_pretrain_256gpu_gb300_common() -> ConfigContainer:
+    """Build the full Pro benchmark with the original MXFP8 execution settings."""
     cfg = deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config()
 
     cfg.model.tensor_model_parallel_size = 1
@@ -122,6 +118,16 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.offload_modules = ["core_attn", "attn_proj"]
     cfg.model.fine_grained_offloading_max_inflight_offloads = 2
     cfg.comm_overlap.overlap_grad_reduce = True
+    return cfg
+
+
+def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Pro pretrain: 256× GB300, MXFP8, native HybridModel layout.
+
+    Requires mHC PP/VPP and CUDA graphs with recompute and activation offload;
+    the main-branch MCore pin does not yet support this combination.
+    """
+    cfg = _deepseek_v4_pro_pretrain_256gpu_gb300_common()
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -136,6 +142,51 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         "USE_MNNVL": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+    return cfg
+
+
+def deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
+    """DeepSeek V4 Pro pretrain: 256× GB300, BF16, eager PP4/VPP4/EP64.
+
+    Preserves the MXFP8 benchmark's full model, batch, forced routing and Adam
+    precision: FP32 master weights with BF16 main gradients and Adam moments.
+    Uses selective MLA/mHC recompute without activation offload or CUDA graphs,
+    whose combination is unsupported by the native HybridModel runtime.
+    This synthetic-data performance benchmark is not a convergence recipe.
+    """
+    cfg = _deepseek_v4_pro_pretrain_256gpu_gb300_common()
+    cfg.mixed_precision = _perf_precision("bf16")
+    cfg.model.quant_recipe = None
+    cfg.model.moe_router_padding_for_fp8 = False
+    cfg.model.moe_router_padding_for_quantization = False
+
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = False
+    cfg.model.moe_paged_stash = False
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = []
+    cfg.model.fine_grained_offloading_max_inflight_offloads = None
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
