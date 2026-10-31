@@ -31,6 +31,29 @@ does:
 
 Recipes then use `AutoBridge.from_hf_pretrained(...).get_model_config()`.
 
+### Migrating a provider-based VLM
+
+Qwen3.5-VL (`qwen_vl/qwen35_vl_config.py`, `qwen_vl/qwen35_vl_builder.py`) moves a VLM whose model class
+was written for a provider onto a builder without changing the model:
+
+- Subclass the language family's builder config, here `BridgeGPTModelConfig`. Keep the vision-language
+  settings on the outer config: the Hugging Face vision config, token IDs, vision geometry, freeze options,
+  and the vision encoder's recompute and CUDA graph settings. On the nested transformer config, declare only
+  the fields that the model and its layers read from the config they are built with.
+- In the bridge, start from the text bridge's `hf_config_to_model_config_kwargs(text_config)`, add the
+  vision-language fields, and return the same kwargs from `hf_config_to_provider_kwargs()`. Set every
+  provider default that differs from the text kwargs explicitly, so the deprecated provider path stays
+  unchanged.
+- Have the builder construct the existing model class, so checkpoint keys and the bridge's registered target
+  stay the same. Pass the outer config to the model for the settings it reads at construction, which a
+  provider carries on the language config (`Qwen3VLModel(model_config=...)`).
+- Subclass bridges that must stay on providers, such as classification-head bridges, opt out with
+  `MODEL_CONFIG_CLASS = None` and `USE_MODEL_CONFIG_FOR_CONVERSION = False`.
+- A builder-built model's `config` is its transformer config, so a step function reads outer fields such as
+  `seq_length` from `state.cfg.model`. `GPTModelConfig.finalize()` also runs checks that a provider's
+  `provide()` override may skip, such as requiring the TE RNG tracker for CUDA graphs and equal virtual
+  pipeline chunks.
+
 ## Provider Pattern (legacy)
 
 Existing VLM families subclass `GPTModelProvider`. VLM providers add vision-specific fields on top of

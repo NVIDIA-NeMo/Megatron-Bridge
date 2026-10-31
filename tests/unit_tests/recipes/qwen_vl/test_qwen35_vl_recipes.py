@@ -156,8 +156,23 @@ class _FakeAutoBridge:
     def from_hf_pretrained(hf_path: str, *, revision: str | None = None):
         return _FakeAutoBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Qwen3.5-VL recipes must use get_model_config()")
+
+
+def _real_moe_model_config(**overrides):
+    """Return a strict builder config for the default Qwen3.5 MoE architecture (35B-A3B shape)."""
+    from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeConfig
+
+    from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLMoEBridge
+
+    model_config = Qwen35VLMoEBridge().hf_config_to_model_config(Qwen3_5MoeConfig())
+    for name, value in overrides.items():
+        setattr(model_config, name, value)
+    return model_config
 
 
 def _assert_basic_config(cfg):
@@ -599,7 +614,7 @@ class _FakeAutoBridgeWithGdnKernelBackend(_FakeAutoBridge):
     def from_hf_pretrained(hf_path: str, *, revision: str | None = None):
         return _FakeAutoBridgeWithGdnKernelBackend()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfgWithGdnKernelBackend()
 
 
@@ -781,14 +796,11 @@ def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyP
 def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest.MonkeyPatch):
     """The GB200 BF16 and MXFP8 recipes should share one 128K execution topology."""
     from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
-    from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
 
     monkeypatch.setattr(
         _FakeAutoBridge,
-        "to_megatron_provider",
-        lambda self, load_weights=False: Qwen35VLMoEModelProvider(
-            num_layers=40, hidden_size=2048, num_attention_heads=16, bias_activation_fusion=False
-        ),
+        "get_model_config",
+        lambda self: _real_moe_model_config(bias_activation_fusion=False),
     )
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
 
@@ -1499,7 +1511,7 @@ class _FakeAutoBridgeWithoutExpertTensorParallel:
     def from_hf_pretrained(hf_path: str):
         return _FakeAutoBridgeWithoutExpertTensorParallel()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfgWithoutExpertTensorParallel()
 
 
@@ -1641,7 +1653,7 @@ class _FakeAutoBridgeNoGdnFusion(_FakeAutoBridge):
     def from_hf_pretrained(hf_path: str):
         return _FakeAutoBridgeNoGdnFusion()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfgNoGdnFusion()
 
 
@@ -1659,9 +1671,9 @@ class _FakeAutoBridgeNoGdnFusion(_FakeAutoBridge):
 def test_qwen35_vl_library_recipes_enable_gdn_conv_fusion(monkeypatch: pytest.MonkeyPatch, recipe_name: str):
     """Qwen3.5-VL library recipes fuse the GatedDeltaNet pre-gated-delta-rule path.
 
-    ``_enable_gdn_conv_fusion`` is applied from ``_qwen35_vl_provider``, the single
-    construction point for every Qwen3.5-VL recipe in the module, so it applies to
-    pretrain, SFT and PEFT alike rather than only to the perf recipes.
+    Every Qwen3.5-VL recipe in the module applies ``_enable_gdn_conv_fusion`` right
+    after building its model config, so it covers pretrain, SFT and PEFT alike rather
+    than only the perf recipes.
     """
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
@@ -1690,22 +1702,14 @@ def test_qwen35_vl_gdn_conv_fusion_skipped_on_older_core(monkeypatch: pytest.Mon
         _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config,
     ],
 )
-def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_func):
-    from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
-
+def test_gb200_long_context_validates_with_real_model_config(monkeypatch, recipe_func):
     monkeypatch.setattr(
         torch.cuda, "get_device_properties", lambda index: SimpleNamespace(major=10, name="NVIDIA GB200")
     )
 
     config_module = importlib.import_module("megatron.bridge.training.config")
     monkeypatch.setattr(config_module, "get_world_size_safe", lambda: 32)
-    monkeypatch.setattr(
-        _FakeAutoBridge,
-        "to_megatron_provider",
-        lambda self, load_weights=False: Qwen35VLMoEModelProvider(
-            num_layers=40, hidden_size=2048, num_attention_heads=16
-        ),
-    )
+    monkeypatch.setattr(_FakeAutoBridge, "get_model_config", lambda self: _real_moe_model_config())
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
     config = recipe_func()
 
@@ -1722,7 +1726,7 @@ def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_fun
         "gdn_kernel_backend",
         "gdn_pre_gated_delta_rule_fusion",
         "gdn_gated_output_norm_fusion",
-    } <= {field.name for field in fields(config.model)}
+    } <= {field.name for field in fields(config.model.transformer)}
     assert config.model.gdn_kernel_backend == "transformer_engine"
     assert config.ddp.overlap_grad_reduce is False
     assert config.ddp.overlap_param_gather is False
@@ -1759,3 +1763,66 @@ def test_gb200_long_context_pins_model_and_processor_together(monkeypatch):
     cfg = recipe()
     encoder = cfg.dataset.task_encoder
     assert calls == [(encoder.hf_processor_path, {"revision": encoder.hf_processor_revision})]
+
+
+# ---------------------------------------------------------------------------
+# Builder-backed model config
+# ---------------------------------------------------------------------------
+
+
+class _BuilderOnlyAutoBridge:
+    """AutoBridge returning a strict Qwen3.5-VL builder config and rejecting the provider API."""
+
+    def __init__(self, hf_path: str):
+        self._hf_path = hf_path
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, *, revision: str | None = None):
+        return _BuilderOnlyAutoBridge(hf_path)
+
+    def get_model_config(self):
+        from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config
+        from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeConfig
+
+        from megatron.bridge import AutoBridge
+
+        # MoE checkpoints are named by active parameters, e.g. Qwen3.5-35B-A3B.
+        if "-A" in self._hf_path:
+            hf_config = Qwen3_5MoeConfig(architectures=["Qwen3_5MoeForConditionalGeneration"])
+        else:
+            hf_config = Qwen3_5Config(architectures=["Qwen3_5ForConditionalGeneration"])
+        return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Qwen3.5-VL recipes must use get_model_config()")
+
+
+_ALL_QWEN35_VL_RECIPE_FUNCS = list(
+    dict.fromkeys(
+        _QWEN35_VL_PRETRAIN_MOCK_FUNCS
+        + _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS
+        + _QWEN35_VL_SFT_FUNCS
+        + _QWEN35_VL_H100_SFT_FUNCS
+        + _QWEN35_VL_PEFT_FUNCS
+        + _QWEN35_VL_H100_PEFT_FUNCS
+        + _QWEN35_VL_GB200_FUNCS
+        + _QWEN35_VL_GB300_FUNCS
+    )
+)
+
+
+@pytest.mark.parametrize("recipe_func", _ALL_QWEN35_VL_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_qwen35_vl_recipes_build_strict_model_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Every recipe builds the builder-backed config and assigns only fields it declares."""
+    from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig
+
+    monkeypatch.setattr(_qwen35_vl_h100_module, "AutoBridge", _BuilderOnlyAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_gb200_module, "AutoBridge", _BuilderOnlyAutoBridge)
+
+    cfg = recipe_func()
+
+    _assert_basic_config(cfg)
+    assert isinstance(cfg.model, Qwen35VLModelConfig)
+    assert cfg.model.position_embedding_type == "mrope"
+    assert cfg.model.vision_config is not None
+    assert cfg.model.experimental_attention_variant == "gdn"
