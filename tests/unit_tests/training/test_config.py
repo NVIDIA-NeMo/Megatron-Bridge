@@ -5612,6 +5612,103 @@ def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
         restore_get_world_size_safe(original, module)
 
 
+@pytest.mark.skipif(
+    not all(
+        hasattr(GPTModelProvider, name)
+        for name in (
+            "experimental_attention_variant",
+            "sequence_packing_scheduler",
+            "pipeline_p2p_fixed_shape",
+            "cp_partition_mode",
+            "pad_packed_seq_alignment",
+        )
+    ),
+    reason="Fixed-THD DSv4 requires the development Megatron-Core configuration fields",
+)
+class TestFixedTHDDeepSeekV4PackingValidation:
+    @pytest.fixture
+    def fixed_thd_config(self, monkeypatch):
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            num_layers=4,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=2,
+            experimental_attention_variant="dsv4_hybrid",
+            sequence_packing_scheduler="dp_balanced",
+            pipeline_p2p_fixed_shape=True,
+            cp_partition_mode="contiguous",
+            pad_packed_seq_alignment="max",
+            cuda_graph_impl="transformer_engine",
+            use_te_rng_tracker=True,
+            calculate_per_token_loss=True,
+        )
+        # These tests isolate Bridge's data routing contract; the tiny GPT
+        # stand-in does not implement DSv4's model geometry or kernels.
+        monkeypatch.setattr(model_cfg, "finalize", lambda: None)
+        set_cuda_graph_modules(model_cfg, ["attn"])
+        dataset_cfg = create_test_gpt_sft_dataset_config(512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512, pad_cu_seqlens=True)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=create_test_training_config(micro_batch_size=1, global_batch_size=8),
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        try:
+            yield container
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fixed_thd_with_pipeline_and_attention_graphs_keeps_scheduler_marker(self, fixed_thd_config, monkeypatch):
+        from megatron.bridge.training import global_batch_packing
+
+        probe = MagicMock(side_effect=AssertionError("Prepacked batches must not probe the online scheduler"))
+        monkeypatch.setattr(global_batch_packing, "probe_global_batch_packing_support", probe)
+
+        fixed_thd_config.validate()
+
+        probe.assert_not_called()
+        assert fixed_thd_config.model.sequence_packing_scheduler == "dp_balanced"
+        assert not global_batch_packing.global_batch_packing_enabled(fixed_thd_config.model)
+
+    def test_fixed_thd_mock_dataset_satisfies_static_contract(self, fixed_thd_config):
+        from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import FixedTHDMockDatasetConfig
+
+        fixed_thd_config.dataset = FixedTHDMockDatasetConfig(
+            seq_length=512, vocab_size=128, seed=1234, metadata_capacity=8
+        )
+
+        fixed_thd_config.validate()
+
+    def test_explicit_online_request_is_not_silently_ignored(self, fixed_thd_config):
+        fixed_thd_config.dataset.enable_global_batch_packing = True
+        with pytest.raises(ValueError, match="does not run the online scheduler"):
+            fixed_thd_config.validate()
+
+    @pytest.mark.parametrize("missing_contract", ["offline", "specs", "boundaries", "fixed_width"])
+    def test_fixed_thd_requires_static_prepacked_data(self, fixed_thd_config, missing_contract):
+        dataset = fixed_thd_config.dataset
+        if missing_contract == "offline":
+            dataset.enable_offline_packing = False
+        elif missing_contract == "specs":
+            dataset.offline_packing_specs = None
+        elif missing_contract == "boundaries":
+            dataset.offline_packing_specs.pad_cu_seqlens = False
+        else:
+            dataset.dataset_kwargs = {"pad_to_max_length": False}
+        with pytest.raises(ValueError, match="Fixed-THD DSv4 requires dataset.enable_offline_packing"):
+            fixed_thd_config.validate()
+
+    def test_fixed_thd_requires_model_token_width(self, fixed_thd_config):
+        fixed_thd_config.dataset.offline_packing_specs.packed_sequence_size = 256
+        with pytest.raises(ValueError, match="packed_sequence_size=model.seq_length"):
+            fixed_thd_config.validate()
+
+
 class TestGlobalBatchPackingValidation:
     """Global-batch online packing joins the packing taxonomy in ConfigContainer.validate."""
 

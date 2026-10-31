@@ -27,10 +27,6 @@ import torch
 from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-    FullyShardedDataParallelV1,
-    FullyShardedDataParallelV2,
-)
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -63,6 +59,7 @@ from megatron.bridge.training.checkpointing import (
     maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.dsa_metrics import initialize_dsa_metrics
 from megatron.bridge.training.gtp import (
     classify_gtp_remat_chains,
     configure_gtp_remat,
@@ -85,6 +82,7 @@ from megatron.bridge.training.utils.log_utils import append_to_progress_log, bar
 from megatron.bridge.training.utils.optimizer_utils import uses_layer_wise_optimizer
 from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
+from megatron.bridge.utils.mcore_fsdp import FullyShardedDataParallelV1, FullyShardedDataParallelV2
 
 
 def _get_embedding_ranks(
@@ -419,6 +417,7 @@ def setup(
     start_memory_history_recording(cfg.profiling)
 
     model = _build_distributed_model(cfg, pg_collection)
+    initialize_dsa_metrics(model, cfg.model, pg_collection)
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers

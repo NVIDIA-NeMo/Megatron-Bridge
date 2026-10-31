@@ -520,6 +520,7 @@ def _resolve_packed_batch(
     config,
     tokens: torch.Tensor | None,
     labels: torch.Tensor | None,
+    _get_packed_seq_params_fn=None,
 ) -> _ResolvedPackedBatch:
     """Normalize packed-sequence metadata from any packing mode into PackedSeqParams.
 
@@ -575,7 +576,7 @@ def _resolve_packed_batch(
             metadata["total_tokens"] = labels.size(1)
         else:
             metadata["total_tokens"] = getattr(config, "seq_length", None)
-    resolved.packed_seq_params = get_packed_seq_params(metadata)
+    resolved.packed_seq_params = (_get_packed_seq_params_fn or get_packed_seq_params)(metadata)
     return resolved
 
 
@@ -586,6 +587,7 @@ def _forward_step_common(
     return_schedule_plan: bool = False,
     *,
     _get_batch_fn=None,
+    _get_packed_seq_params_fn=None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Forward training step.
 
@@ -624,7 +626,13 @@ def _forward_step_common(
         )
     timers("batch-generator").stop()
 
-    packed = _resolve_packed_batch(packed_seq_metadata, config=config, tokens=tokens, labels=labels)
+    packed = _resolve_packed_batch(
+        packed_seq_metadata,
+        config=config,
+        tokens=tokens,
+        labels=labels,
+        _get_packed_seq_params_fn=_get_packed_seq_params_fn,
+    )
 
     # Global-batch packing already fed the scheduler's exact per-step totals into the FLOPs
     # accumulators in train_step. For every other batch: packed CP partitions tokens but

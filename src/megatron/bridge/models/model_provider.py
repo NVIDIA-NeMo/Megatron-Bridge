@@ -14,6 +14,7 @@
 
 import abc
 import dataclasses
+import inspect
 import os
 import warnings
 from functools import partial
@@ -705,6 +706,24 @@ def get_model(
     if fp16 is True and bf16 is True:
         raise ValueError("Only one of fp16 and bf16 can be enabled.")
 
+    layer_wise_ddp_kwargs = {}
+    ddp_selects_layer_wise_layout = "use_layer_wise_param_layout" in getattr(
+        type(ddp_config), "__dataclass_fields__", {}
+    )
+    if wrap_with_ddp:
+        parameters = inspect.signature(_ddp_wrap).parameters
+        accepts_kwargs = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+        if "use_layer_wise_distributed_optimizer" in parameters or accepts_kwargs:
+            layer_wise_ddp_kwargs["use_layer_wise_distributed_optimizer"] = use_layer_wise_distributed_optimizer
+        elif use_layer_wise_distributed_optimizer:
+            raise RuntimeError("The installed MCore DDP wrapper does not support layer-wise optimizer layouts.")
+        if "use_layer_wise_param_layout" in parameters or accepts_kwargs:
+            layer_wise_ddp_kwargs["use_layer_wise_param_layout"] = use_layer_wise_param_layout
+        elif (
+            use_layer_wise_distributed_optimizer and use_layer_wise_param_layout and not ddp_selects_layer_wise_layout
+        ):
+            raise RuntimeError("The installed MCore DDP wrapper does not support selecting shard-aligned layouts.")
+
     if fp16 is not None:
         model_provider.fp16 = fp16
     if bf16 is not None:
@@ -789,10 +808,15 @@ def get_model(
             # Direct callers can bypass ConfigContainer normalization. Keep the
             # ordinary DistOpt flag aligned with the requested LayerWise layout
             # without mutating their configuration object.
-            effective_ddp_config = dataclasses.replace(
-                ddp_config,
-                use_distributed_optimizer=use_layer_wise_param_layout,
-            )
+            layout_overrides = {"use_distributed_optimizer": use_layer_wise_param_layout}
+            if ddp_selects_layer_wise_layout:
+                # Development MCore selects compact/padded LayerWise buffers via
+                # the DDP field, while sibling Adam buffers always use DistOpt.
+                # Its newer wrapper argument only checks consistency with this
+                # field; the private DSv4 pin does not accept that argument.
+                layout_overrides["use_layer_wise_param_layout"] = use_layer_wise_param_layout
+                layout_overrides["use_distributed_optimizer"] = True
+            effective_ddp_config = dataclasses.replace(ddp_config, **layout_overrides)
         model = _ddp_wrap(
             model,
             data_parallel_random_init,
@@ -800,9 +824,8 @@ def get_model(
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
-            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
-            use_layer_wise_param_layout=use_layer_wise_param_layout,
             pg_collection=pg_collection,
+            **layer_wise_ddp_kwargs,
         )
 
     return model

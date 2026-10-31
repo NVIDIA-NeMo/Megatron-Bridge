@@ -21,7 +21,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
 from megatron.bridge.training.config import GPTDatasetConfig
@@ -46,6 +45,7 @@ from megatron.bridge.training.train import (
     train_step,
 )
 from megatron.bridge.training.utils.train_utils import maybe_inject_state
+from megatron.bridge.utils.mcore_fsdp import FullyShardedDataParallelV1
 
 
 pytestmark = pytest.mark.unit
