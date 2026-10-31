@@ -765,7 +765,8 @@ class MegatronModelBridge(
         if rope_scaling is not None and isinstance(rope_scaling, dict) and rope_scaling != {}:
             rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
 
-        if rope_type == "yarn":
+        # MLA attention implements DeepSeek's YaRN, which some MLA checkpoints (Sarvam MLA) name "deepseek_yarn".
+        if rope_type == "yarn" or (is_mla and rope_type == "deepseek_yarn"):
             # MLA configs use direct field names; GPT configs use yarn_ prefixed field names
             if is_mla:
                 # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)
