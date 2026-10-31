@@ -13,11 +13,16 @@
 # limitations under the License.
 
 import pytest
+import torch
+from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from transformers import Qwen3_5MoeTextConfig, Qwen3_5TextConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.hybrid.gpt_checkpoint_compat import gpt_checkpoint_key
 from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hybrid_mappings
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import qwen35_pipeline_pattern
 
 
 @pytest.mark.parametrize("moe", [False, True])
@@ -83,3 +88,52 @@ def test_vl_mapping_splits_only_language_blocks():
     for template in vision.mappings:
         name = template.megatron_param.replace("*", "0")
         assert registry.megatron_to_hf_lookup(name).hf_param == vision.megatron_to_hf_lookup(name).hf_param
+
+
+@pytest.mark.parametrize("moe", [False, True])
+def test_gpt_checkpoint_keys_invert_the_block_split(moe):
+    """A GPTModel checkpoint stays loadable only if every Hybrid key maps back to its GPT layer."""
+    if moe:
+        templates = Qwen35MoEBridge._get_moe_lm_mappings() + Qwen35MoEBridge._get_moe_mtp_mappings()
+    else:
+        templates = Qwen35Bridge._get_dense_lm_mappings() + Qwen35Bridge._get_dense_mtp_mappings()
+
+    for template in templates:
+        hybrid = qwen35_hybrid_mappings([template], num_layers=4)
+        if "decoder.layers.*." in template.megatron_param:
+            gpt = [template.megatron_param.replace("decoder.layers.*.", f"decoder.layers.{i}.") for i in range(4)]
+        else:
+            gpt = [template.megatron_param]
+        # GPT MTP layers rename their inner layer to ``transformer_layer`` in checkpoints.
+        gpt = [name.replace(".mtp_model_layer.", ".transformer_layer.") for name in gpt]
+        assert [gpt_checkpoint_key(mapping.megatron_param) for mapping in hybrid] == gpt
+
+
+@pytest.mark.parametrize(
+    "pipeline",
+    [
+        dict(
+            pipeline_model_parallel_size=2, num_layers_in_first_pipeline_stage=17, num_layers_in_last_pipeline_stage=23
+        ),
+        dict(pipeline_model_parallel_size=2, virtual_pipeline_model_parallel_size=2),
+        dict(
+            pipeline_model_parallel_size=6,
+            account_for_embedding_in_pipeline_split=True,
+            account_for_loss_in_pipeline_split=True,
+        ),
+    ],
+)
+def test_pipeline_pattern_keeps_gpt_stage_assignment(pipeline):
+    config = TransformerConfig(
+        num_layers=40, hidden_size=64, num_attention_heads=4, pipeline_dtype=torch.bfloat16, **pipeline
+    )
+    pattern = "".join(("*" if (i + 1) % 4 == 0 else "G") + "E" for i in range(40))
+    segments = qwen35_pipeline_pattern(config, pattern).split("|")
+    assert "".join(segments) == pattern
+
+    pp_size = config.pipeline_model_parallel_size
+    vp_size = config.virtual_pipeline_model_parallel_size
+    for index, segment in enumerate(segments):
+        vp_stage, pp_rank = divmod(index, pp_size)
+        offset = get_transformer_layer_offset(config, vp_stage if vp_size else None, pp_rank)
+        assert sum(map(len, segments[:index])) == 2 * offset

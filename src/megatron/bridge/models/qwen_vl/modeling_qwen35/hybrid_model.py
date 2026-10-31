@@ -20,7 +20,9 @@ from typing import Any
 
 import torch
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_block import get_num_layers_to_build
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -40,6 +42,35 @@ class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
         if position_ids is None:
             raise RuntimeError("Qwen3.5 Hybrid mRoPE requires the current forward's position_ids.")
         return super().forward(position_ids, self.mrope_section)
+
+
+def qwen35_pipeline_pattern(config: GPTModelProvider, pattern: str) -> str:
+    """Place each HF block on the PP/VPP stage that the GPT decoder assigned it to.
+
+    The provider keeps pipeline settings in HF block units. Each block owns two
+    Hybrid positions, so the GPT stage boundaries become pipe separators.
+    """
+    pp_size = config.pipeline_model_parallel_size
+    vp_size = config.virtual_pipeline_model_parallel_size
+    if pp_size * (vp_size or 1) == 1:
+        return pattern
+
+    blocks = [pattern[index : index + 2] for index in range(0, len(pattern), 2)]
+    layout = config.pipeline_model_parallel_layout
+    segments, offset = [], 0
+    # Hybrid numbers segments as vp_stage * pp_size + pp_rank, which is also the
+    # order in which the GPT decoder assigns consecutive layers to stages.
+    for vp_stage in range(vp_size or 1):
+        for pp_rank in range(pp_size):
+            if layout is not None:
+                count = layout.layout[pp_rank][vp_stage].count(LayerType.decoder)
+            else:
+                count = get_num_layers_to_build(config, vp_stage if vp_size else None, pp_rank)
+            segments.append("".join(blocks[offset : offset + count]))
+            offset += count
+    if offset != len(blocks):
+        raise ValueError(f"Pipeline stages hold {offset} layers, but the language model has {len(blocks)}.")
+    return "|".join(segments)
 
 
 def qwen35_vl_hybrid_stack_spec() -> ModuleSpec:
@@ -70,15 +101,15 @@ class Qwen35VLHybridLanguageModel(HybridModel):
         )
         hybrid_kwargs = {}
         configure_qwen35_hybrid(hybrid_kwargs, text_config)
-        pattern = hybrid_kwargs.pop("hybrid_layer_pattern")
+        pattern = qwen35_pipeline_pattern(config, hybrid_kwargs.pop("hybrid_layer_pattern"))
         hybrid_kwargs.pop("hybrid_stack_spec")
         hybrid_config = copy(config)
         for name, value in hybrid_kwargs.items():
             setattr(hybrid_config, name, value)
-        for name in ("num_layers_in_first_pipeline_stage", "num_layers_in_last_pipeline_stage"):
-            value = getattr(hybrid_config, name, None)
-            if value is not None:
-                setattr(hybrid_config, name, 2 * value)
+        # The stage boundaries now live in the pattern's pipe separators.
+        hybrid_config.num_layers_in_first_pipeline_stage = None
+        hybrid_config.num_layers_in_last_pipeline_stage = None
+        hybrid_config.pipeline_model_parallel_layout = None
         if config.mtp_num_layers:
             pattern += "/" + "/".join([hybrid_config.mtp_hybrid_override_pattern] * config.mtp_num_layers)
 
