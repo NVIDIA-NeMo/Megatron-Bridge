@@ -31,6 +31,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    ReplicatedMapping,
     RowParallelMapping,
     _fuse_gdn_separate_to_grouped,
     merge_gdn_linear_weights,
@@ -732,6 +733,20 @@ def test_global_param_names_skip_adapter(monkeypatch):
 
     names = bridge._megatron_global_param_names_all_pp_ranks([FakeModel()])
     assert names == ["decoder.layers.0.mlp.linear_fc1.to_wrap.weight"]
+
+
+def test_conversion_mapping_falls_back_for_parameter_backed_lora_target():
+    bridge = DummyBridge()
+    base_name = "decoder.layers.0.self_attention.linear_o_group_proj"
+    mapping = ReplicatedMapping(base_name, "model.layers.0.attn.wo_a.weight")
+
+    class Registry:
+        def megatron_to_hf_lookup(self, key):
+            return mapping if key == base_name else None
+
+    names = [f"{base_name}.to_wrap.weight"]
+    resolved = bridge._validate_conversion_mappings(Registry(), names)
+    assert resolved[names[0]] is mapping
 
 
 def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
