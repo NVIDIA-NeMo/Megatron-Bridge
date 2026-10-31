@@ -18,6 +18,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
+    _enable_deepseek_full_iteration,
     _enable_deepseek_transformer_engine_graph,
     _perf_precision,
     deepseek_v3_pretrain_config,
@@ -151,7 +152,9 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    _enable_deepseek_transformer_engine_graph(cfg)
+    # Full-iteration CUDA graph (also enables overlap_moe_expert_parallel_comm + delay_wgrad_compute),
+    # then switch the dispatch backend from HybridEP to NCCL EP.
+    _enable_deepseek_full_iteration(cfg)
     _enable_ncclep(cfg)
     cfg.model.moe_use_grouped_tensor = True
     cfg.model.fp8_output_proj = True
@@ -165,6 +168,10 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
