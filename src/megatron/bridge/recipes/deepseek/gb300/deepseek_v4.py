@@ -35,9 +35,7 @@ DEEPSEEK_V4_PRO_HF_PATH = "deepseek-ai/DeepSeek-V4-Pro"
 def deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     """Return the DeepSeek-V4-Pro GB300 pre-training base config."""
     cfg = _pretrain_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_PRO_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_PRO_HF_PATH, trust_remote_code=True).get_model_config()
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -179,7 +177,6 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision.fp8_param_gather = False
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.model.moe_router_padding_for_fp8 = True
-    cfg.model.mtp_eval_in_bf16 = True
     cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,

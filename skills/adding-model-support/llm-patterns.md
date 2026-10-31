@@ -109,7 +109,9 @@ mapping maps a YaRN `rope_scaling` dict to the MLA fields (`rotary_scaling_facto
 `beta_fast`, ...) and selects `position_embedding_type="rope"`. Put checks in the config's
 `validate()`, which must not change the config, and the derived settings in `finalize()`, which runs
 `validate()` first. Follow GLM-5 (`src/megatron/bridge/models/glm_moe_dsa/glm5_config.py`), whose config
-shares its DSA-aware checks and updates with the provider and whose builder resolves a custom stack spec.
+shares its DSA-aware checks and updates with the provider and whose builder resolves a custom stack spec,
+and DeepSeek-V4 (`src/megatron/bridge/models/deepseek/deepseek_v4_config.py`), which adds a transformer
+field that recipes set.
 
 ### When you need a custom config class
 
