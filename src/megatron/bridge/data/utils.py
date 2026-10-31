@@ -31,6 +31,10 @@ from megatron.bridge.data.builders.gpt_sft import (
     GPTSFTDatasetConfig,
     gpt_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.mock_gpt_sft import (
+    MockGPTSFTDatasetConfig,
+    mock_gpt_sft_train_valid_test_datasets_provider,
+)
 from megatron.bridge.data.builders.mock_vlm_sft import (
     MockVLMSFTDatasetConfig,
     mock_vlm_sft_train_valid_test_datasets_provider,
@@ -98,6 +102,7 @@ _REGISTRY: dict[type[Any], Callable[..., Any]] = {
     DirectHFSFTDatasetConfig: direct_hf_sft_train_valid_test_datasets_provider,
     EnergonDatasetConfig: energon_train_valid_test_datasets_provider,
     MockVLMSFTDatasetConfig: mock_vlm_sft_train_valid_test_datasets_provider,
+    MockGPTSFTDatasetConfig: mock_gpt_sft_train_valid_test_datasets_provider,
     DPODatasetConfig: dpo_train_valid_test_datasets_provider,
 }
 
@@ -109,6 +114,7 @@ def get_dataset_provider(
         | DirectHFSFTDatasetConfig
         | EnergonDatasetConfig
         | MockVLMSFTDatasetConfig
+        | MockGPTSFTDatasetConfig
         | DPODatasetConfig
         | DatasetProvider
     ),

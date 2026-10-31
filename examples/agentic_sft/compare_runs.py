@@ -16,20 +16,20 @@
 """Compare the steady-state step time of two training logs, for example static versus dynamic context parallelism.
 
 Both runs must have consumed the same data in the same order. The script reads Bridge's per-iteration log lines, drops
-the warmup iterations (which include one-time compilation), and reports seconds per step and, when the mock dataset
-manifest is given, runtime tokens per second. Rows are consumed in file order, so iteration ``i`` processes rows
-``(i - 1) * global_batch_size`` to ``i * global_batch_size - 1``.
+the warmup iterations (which include one-time compilation), and reports seconds per step. For runs of
+``qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config`` it also reports runtime tokens per second: the
+``MockGPTSFTDatasetConfig`` lengths are deterministic, and samples are consumed in order, so iteration ``i`` processes
+samples ``(i - 1) * global_batch_size`` to ``i * global_batch_size - 1``.
 
 Example::
 
     python examples/agentic_sft/compare_runs.py --baseline static.log --candidate dynamic.log --warmup 10 \\
-        --manifest agentic_sft_workspace/data/mock/manifest.json --global-batch-size 32
+        --mock-seq-length 65536 --train-iters 200 --global-batch-size 32
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import re
 import statistics
@@ -113,17 +113,29 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--baseline", type=Path, required=True, help="Log of the reference run, e.g. static CP.")
     parser.add_argument("--candidate", type=Path, required=True, help="Log of the run being evaluated.")
     parser.add_argument("--warmup", type=int, default=10, help="Leading iterations to exclude.")
-    parser.add_argument("--manifest", type=Path, help="Mock dataset manifest, for tokens per second.")
-    parser.add_argument("--global-batch-size", type=int, help="Required with --manifest.")
+    parser.add_argument(
+        "--mock-seq-length", type=int, help="seq_length of the runs' MockGPTSFTDatasetConfig, for tokens per second."
+    )
+    parser.add_argument(
+        "--mock-seed", type=int, default=1234, help="random_seed of the runs' MockGPTSFTDatasetConfig."
+    )
+    parser.add_argument(
+        "--train-iters", type=int, help="train.train_iters of the runs; required with --mock-seq-length."
+    )
+    parser.add_argument("--global-batch-size", type=int, help="Required with --mock-seq-length.")
     args = parser.parse_args(argv)
-    if (args.manifest is None) != (args.global_batch_size is None):
-        parser.error("--manifest and --global-batch-size go together")
+    if args.mock_seq_length is not None and (args.train_iters is None or args.global_batch_size is None):
+        parser.error("--mock-seq-length needs --train-iters and --global-batch-size")
 
     runs = {"baseline": parse_log(args.baseline.read_text()), "candidate": parse_log(args.candidate.read_text())}
     common = sorted(set(runs["baseline"]) & set(runs["candidate"]))
     tokens = None
-    if args.manifest is not None:
-        lengths = json.loads(args.manifest.read_text())["splits"]["training"]["runtime_lengths"]
+    if args.mock_seq_length is not None:
+        from megatron.bridge.data.builders import MockGPTSFTDatasetConfig
+        from megatron.bridge.data.builders.mock_gpt_sft import mock_sft_sequence_lengths
+
+        mock = MockGPTSFTDatasetConfig(seq_length=args.mock_seq_length, vocab_size=2, random_seed=args.mock_seed)
+        lengths = mock_sft_sequence_lengths(mock, args.train_iters * args.global_batch_size).tolist()
         tokens = tokens_per_step(lengths, args.global_batch_size, common)
     summaries = {name: summarize({i: steps[i] for i in common}, args.warmup, tokens) for name, steps in runs.items()}
     for name, summary in summaries.items():
