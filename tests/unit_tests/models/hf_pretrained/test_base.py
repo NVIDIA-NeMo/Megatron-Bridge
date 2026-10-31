@@ -729,6 +729,167 @@ def test_additional_files_empty_list():
         print("✅ test_additional_files_empty_list passed")
 
 
+class MockPreTrainedProcessorBase(MockPreTrainedBase):
+    """Mock whose tokenizer and processor are loaded from the source, as the lazy properties load them."""
+
+    OPTIONAL_ARTIFACTS = ["generation_config", "processor"]
+
+    def __init__(self, model_name_or_path=None, **kwargs):
+        super().__init__(model_name_or_path=model_name_or_path, **kwargs)
+        self._tokenizer = self._load_artifact("tokenizer")
+        self._processor = self._load_artifact("processor")
+
+    def _load_tokenizer(self):
+        return Mock()
+
+    def _load_processor(self):
+        return Mock()
+
+    @property
+    def processor(self):
+        """Mock processor property."""
+        return self._processor
+
+
+def _writes(files):
+    """Return a save_pretrained side effect that writes ``files`` (name -> text) into the save directory."""
+
+    def save_pretrained(save_directory):
+        for name, text in files.items():
+            (Path(save_directory) / name).write_text(text)
+
+    return save_pretrained
+
+
+def test_save_artifacts_copies_unchanged_source_artifacts(tmp_path):
+    """Test unchanged artifacts loaded from the source get its files and are not re-serialized."""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source_files = {
+        "tokenizer.json": '{"source": "tokenizer"}',
+        "tokenizer_config.json": '{"added_tokens_decoder": {}}',
+        "vocab.json": "{}",
+        "merges.txt": "a b",
+        "chat_template.jinja": "{{ messages }}",
+        "preprocessor_config.json": '{"image_processor_type": "Qwen2VLImageProcessorFast"}',
+        "video_preprocessor_config.json": "{}",
+    }
+    for name, text in source_files.items():
+        (source_dir / name).write_text(text)
+    base = MockPreTrainedProcessorBase(model_name_or_path=str(source_dir))
+    base._config = Mock(save_pretrained=Mock())
+
+    base.save_artifacts(tmp_path / "target")
+
+    base._tokenizer.save_pretrained.assert_not_called()
+    base._processor.save_pretrained.assert_not_called()
+    assert {path.name: path.read_text() for path in (tmp_path / "target").iterdir()} == source_files
+
+
+def test_save_artifacts_keeps_files_saved_for_replaced_artifacts(tmp_path):
+    """Test a replaced processor's saved files win over the unchanged tokenizer's source copies."""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "tokenizer.json").write_text('{"source": "tokenizer"}')
+    (source_dir / "chat_template.jinja").write_text("source template")
+    base = MockPreTrainedProcessorBase(model_name_or_path=str(source_dir))
+    base._config = Mock(save_pretrained=Mock())
+    base._processor = Mock(
+        save_pretrained=Mock(
+            side_effect=_writes({"chat_template.jinja": "user template", "processor_config.json": "{}"})
+        )
+    )
+
+    base.save_artifacts(tmp_path / "target")
+
+    assert {path.name: path.read_text() for path in (tmp_path / "target").iterdir()} == {
+        "tokenizer.json": '{"source": "tokenizer"}',
+        "chat_template.jinja": "user template",
+        "processor_config.json": "{}",
+    }
+
+
+def test_save_artifacts_saves_artifacts_the_source_has_no_files_for(tmp_path):
+    """Test an unchanged processor is still saved when the source has none of its files."""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "tokenizer.json").write_text('{"source": "tokenizer"}')
+    base = MockPreTrainedProcessorBase(model_name_or_path=str(source_dir))
+    base._config = Mock(save_pretrained=Mock())
+
+    base.save_artifacts(tmp_path / "target")
+
+    base._tokenizer.save_pretrained.assert_not_called()
+    base._processor.save_pretrained.assert_called_once_with(tmp_path / "target")
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [None, "encode", "add_special_tokens", "chat_template", "normalizer", "load_kwargs", "setter"],
+)
+def test_causal_lm_save_artifacts_tokenizer_edits(tmp_path, edit):
+    """Test an unedited tokenizer is copied verbatim, while one edited, loaded with overrides or replaced is re-saved."""
+    from tokenizers import Tokenizer, models, normalizers
+    from transformers import AutoTokenizer, LlamaConfig, PreTrainedTokenizerFast
+
+    from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+    source_dir = tmp_path / "source"
+    LlamaConfig().save_pretrained(source_dir)
+    backend = Tokenizer(models.WordLevel({"a": 0, "<unk>": 1}, unk_token="<unk>"))
+    PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="<unk>").save_pretrained(source_dir)
+    # Formatting save_pretrained would not reproduce.
+    tokenizer_config = source_dir / "tokenizer_config.json"
+    tokenizer_config.write_text(json.dumps(json.loads(tokenizer_config.read_text()), indent=7))
+
+    model = PreTrainedCausalLM(str(source_dir), **({"model_max_length": 256} if edit == "load_kwargs" else {}))
+    if edit == "encode":  # Sets the backend's truncation, which is not saved.
+        model.tokenizer("a a", truncation=True, max_length=1)
+    elif edit == "add_special_tokens":
+        model.tokenizer.add_special_tokens({"additional_special_tokens": ["<x>"]})
+    elif edit == "chat_template":
+        model.tokenizer.chat_template = "{{ messages }}"
+    elif edit == "normalizer":
+        model.tokenizer.backend_tokenizer.normalizer = normalizers.Lowercase()
+    elif edit == "setter":
+        model.tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="<unk>")
+    model.save_artifacts(tmp_path / "target")
+
+    saved = (tmp_path / "target" / "tokenizer_config.json").read_text()
+    assert (saved == tokenizer_config.read_text()) == (edit in (None, "encode"))
+    reloaded = AutoTokenizer.from_pretrained(tmp_path / "target")
+    if edit == "add_special_tokens":
+        assert "<x>" in (tmp_path / "target" / "tokenizer.json").read_text()
+    elif edit == "normalizer":
+        assert reloaded.encode("A", add_special_tokens=False) == [0]
+    elif edit == "load_kwargs":
+        assert reloaded.model_max_length == 256
+
+
+def test_save_artifacts_copies_named_chat_templates(tmp_path):
+    """Test an unchanged tokenizer keeps its named chat templates, which live in a subdirectory."""
+    from tokenizers import Tokenizer, models
+    from transformers import AutoTokenizer, LlamaConfig, PreTrainedTokenizerFast
+
+    from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+    source_dir = tmp_path / "source"
+    LlamaConfig().save_pretrained(source_dir)
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=Tokenizer(models.WordLevel({"a": 0, "<unk>": 1}, unk_token="<unk>")), unk_token="<unk>"
+    )
+    tokenizer.chat_template = {"default": "{{ 'default' }}", "tool_use": "{{ 'tool use' }}"}
+    tokenizer.save_pretrained(source_dir)
+
+    PreTrainedCausalLM(str(source_dir)).save_artifacts(tmp_path / "target")
+
+    templates = sorted(path.relative_to(source_dir) for path in source_dir.rglob("*.jinja"))
+    assert len(templates) == 2
+    for template in templates:
+        assert (tmp_path / "target" / template).read_bytes() == (source_dir / template).read_bytes()
+    assert AutoTokenizer.from_pretrained(tmp_path / "target").chat_template == tokenizer.chat_template
+
+
 def main():
     """Run all tests."""
     print("Running PreTrainedBase custom modeling file preservation tests...")
