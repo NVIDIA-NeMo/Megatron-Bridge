@@ -1,16 +1,20 @@
 """Full-model and precision contracts for the DeepSeek V4 Pro BF16 benchmark."""
 
+import importlib
 from dataclasses import asdict
 
 import pytest
 import torch
 
-from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelConfig
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+from tests.unit_tests.recipes.recipe_test_utils import (
+    DeepSeekV4BuilderOnlyBridge,
+    patch_recipe_construction_dependencies,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -19,12 +23,17 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def _offline_recipe_construction(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
+    module = importlib.import_module("megatron.bridge.recipes.deepseek.gb300.deepseek_v4")
+    monkeypatch.setattr(module, "AutoBridge", DeepSeekV4BuilderOnlyBridge)
 
 
 def test_bf16_preserves_full_pro_workload_and_optimizer() -> None:
     bf16 = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
     mxfp8 = deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config()
 
+    assert isinstance(bf16.model, DeepSeekV4ModelConfig)
+    assert bf16.model.hidden_size == 7168
+    assert bf16.model.num_moe_experts == 384
     assert bf16.model.num_layers == 122  # 61 logical attention/MoE pairs.
     assert bf16.model.hybrid_layer_pattern == mxfp8.model.hybrid_layer_pattern
     assert bf16.model.pipeline_model_parallel_layout == mxfp8.model.pipeline_model_parallel_layout
@@ -46,11 +55,11 @@ def test_bf16_preserves_full_pro_workload_and_optimizer() -> None:
 
 def test_bf16_effective_precision_disables_quantized_compute_and_gather() -> None:
     cfg = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
-    # The offline factory double intentionally omits precision fields. Exercise
-    # propagation on the actual provider, including clearing prior FP8 settings.
-    model = DeepSeekV4HybridModelProvider(
-        num_layers=122, hidden_size=7168, num_attention_heads=128, fp8="e4m3", fp8_param=True
-    )
+    # Exercise precision propagation on the strict builder-backed recipe config,
+    # including clearing pre-existing FP8 settings.
+    model = cfg.model
+    model.fp8 = "e4m3"
+    model.fp8_param = True
     cfg.mixed_precision.finalize()
     cfg.mixed_precision.setup(model, cfg.optimizer, cfg.ddp)
 
