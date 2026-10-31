@@ -48,7 +48,7 @@ def _glm_pretrain_config(*, model_id: str, revision: str) -> ConfigContainer:
     """Build bounded pretraining with the selected variant's native model config."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).get_model_config()
     cfg.tokenizer.tokenizer_model = model_id
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": revision}
 
@@ -139,7 +139,7 @@ def _glm_sft_config(*, model_id: str, revision: str, data_slug: str) -> ConfigCo
     """Build bounded full SFT with the selected variant's native model config."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).get_model_config()
     cfg.tokenizer.tokenizer_model = model_id
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": revision}
     cfg.model.seq_length = 8192
@@ -255,7 +255,7 @@ def _glm_sft_128k_config(*, model_id: str, revision: str, data_slug: str) -> Con
     """Build 128K packed SFT with context parallelism with the selected variant's native model config."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).get_model_config()
     cfg.tokenizer.tokenizer_model = model_id
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": revision}
     cfg.model.seq_length = 131072
@@ -377,7 +377,7 @@ def _glm_peft_config(*, model_id: str, revision: str, data_slug: str, peft_schem
     """Build bounded PEFT with the selected variant's native model config."""
     cfg = _peft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).get_model_config()
     cfg.tokenizer.tokenizer_model = model_id
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": revision}
     cfg.model.seq_length = 2048

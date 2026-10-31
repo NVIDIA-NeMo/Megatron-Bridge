@@ -34,6 +34,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedGatedExpertMapping,
     GatedMLPMapping,
     GDNLinearMappingSeparate,
+    MambaInProjMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
@@ -64,6 +65,7 @@ class _SourceState:
     qkv_layout: tuple[int, int, int, int, bool] | None = None
     weight_dtype: torch.dtype | None = None
     gdn_layout: tuple[int, int, int, int] | None = None
+    mamba_layout: tuple[int, int, int, int, int] | None = None
 
 
 # Recipes keep GatedDeltaNet's beta / alpha gates in BF16, but Megatron fuses them into the
@@ -98,6 +100,8 @@ def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
         raise NotImplementedError("ModelOpt real-quant export does not yet support grouped HF expert weights")
     if isinstance(mapping, GatedMLPMapping):
         return "gated"
+    if isinstance(mapping, MambaInProjMapping):
+        return "column"
     if isinstance(mapping, (QKVMapping, GDNLinearMappingSeparate)):
         return mapping._tp_mapping._detect_parallelism_type(module)
     if isinstance(mapping, AutoMapping):
@@ -156,6 +160,29 @@ def _unquantized_outputs(mapping: Any) -> set[str]:
     return set()
 
 
+def _mamba_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, int, int] | None:
+    if not isinstance(mapping, MambaInProjMapping):
+        return None
+    config = mapping._get_config(module)
+    inner = int(config.mamba_num_heads * config.mamba_head_dim)
+    ssm = int(config.mamba_state_dim * config.mamba_num_groups)
+    return inner, inner, ssm, ssm, int(config.mamba_num_heads)
+
+
+def _mamba_row_indices(shards: list[_SourceState], tp_size: int) -> torch.Tensor:
+    """Follow MambaInProjMapping's component-wise TP gather for quantization state."""
+    layout = shards[0].mamba_layout
+    if layout is None or len(shards) != tp_size or any(shard.mamba_layout != layout for shard in shards):
+        raise ValueError("Inconsistent Mamba projection geometry across TP")
+    if any(size <= 0 or size % tp_size for size in layout):
+        raise ValueError("Mamba projection components must be divisible by TP")
+    local_sizes = [size // tp_size for size in layout]
+    if any(len(shard.weight_shape) != 2 or shard.weight_shape[0] != sum(local_sizes) for shard in shards):
+        raise ValueError("Mamba projection rows do not match its component geometry")
+    rows = torch.arange(sum(layout)).reshape(tp_size, -1)
+    return torch.cat([component.reshape(-1) for component in torch.split(rows, local_sizes, dim=1)])
+
+
 def _validate_quantized_task(task: WeightConversionTask) -> None:
     if ".to_wrap.weight" in task.global_param_name:
         raise NotImplementedError(
@@ -168,6 +195,10 @@ def _validate_quantized_task(task: WeightConversionTask) -> None:
         or type(task.mapping)._megatron_to_hf is not QKVMapping._megatron_to_hf
     ):
         raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
+    if isinstance(task.mapping, MambaInProjMapping) and (
+        type(task.mapping).megatron_to_hf is not MambaInProjMapping.megatron_to_hf
+    ):
+        raise NotImplementedError("ModelOpt export does not support Mamba mappings with a custom row layout")
 
 
 def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
@@ -193,6 +224,7 @@ def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
         _qkv_layout(task.mapping, task.megatron_module),
         task.param_weight.dtype,
         _gdn_layout(task.mapping, task.megatron_module),
+        _mamba_layout(task.mapping, task.megatron_module),
     )
 
 
@@ -218,6 +250,7 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
         _qkv_layout(task.mapping, task.megatron_module) if spec is not None else None,
         task.param_weight.dtype,
         _gdn_layout(task.mapping, task.megatron_module) if spec is not None else None,
+        _mamba_layout(task.mapping, task.megatron_module) if spec is not None else None,
     )
 
 
@@ -282,6 +315,8 @@ def _transform_source_spec(
     reference = shards[0].state
     if any(shard.state != reference for shard in shards[1:]):
         raise RuntimeError(f"Inconsistent ModelOpt export format across TP for {task.global_param_name}")
+    if isinstance(task.mapping, MambaInProjMapping):
+        _mamba_row_indices(shards, task.mapping.tp_size)
     unquantized = _unquantized_outputs(task.mapping)
     return {name: None if name in unquantized else reference for name in names.values() if name.endswith(".weight")}
 
@@ -447,6 +482,12 @@ def _transform_source_state(
                 else _select_state(transformed_state, 0, row_indices[key])
                 for key in names
             }
+        elif isinstance(task.mapping, MambaInProjMapping):
+            transformed = {
+                task.mapping.hf_param: _select_state(
+                    transformed_state, 0, _mamba_row_indices(shards, task.mapping.tp_size)
+                )
+            }
         else:
             if len(names) != 1:
                 raise ValueError(f"Expected one HF name for {task.global_param_name}")
@@ -521,6 +562,11 @@ def _local_expert_mapping(mapping: Any, global_param_name: str, pg_collection: A
             specs[0].name,
             getattr(mapping, "permute_dims", None),
         )
+    elif type(mapping) in (ColumnParallelMapping, RowParallelMapping):
+        if len(specs) != 1 or specs[0].split_count != 1:
+            return None
+        local_type = _LocalExpertColumnMapping if type(mapping) is ColumnParallelMapping else _LocalExpertRowMapping
+        replacement = local_type(mapping.megatron_param, specs[0].name)
     else:
         return None
     replacement.set_process_groups_from_pg_collection(pg_collection)
