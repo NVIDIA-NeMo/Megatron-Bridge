@@ -25,8 +25,9 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
     parse_hybrid_pattern,
 )
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
-from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideMixin
+from megatron.bridge.models.common.base import MLAModelConfigMixin, ModelConfig, ModelConfigOverrideMixin
 from megatron.bridge.models.hybrid.hybrid_builder import DEFAULT_MAMBA_CHUNK_SIZE, HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
@@ -49,8 +50,9 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
     ``transformer_config_class``.
 
     It keeps the construction contract of ``HybridModelProvider``.
-    ``finalize()`` appends ``mtp_hybrid_override_pattern`` to
-    ``hybrid_layer_pattern`` once per MTP depth and derives ``num_layers`` from
+    ``validate()`` checks the settings without changing them, and
+    ``finalize()`` runs it before appending ``mtp_hybrid_override_pattern`` to
+    ``hybrid_layer_pattern`` once per MTP depth and deriving ``num_layers`` from
     the pattern. :class:`~megatron.bridge.models.hybrid.BridgeHybridModelBuilder`
     resolves stack-spec factories, the local attention backend and
     ``mamba_chunk_size``.
@@ -75,22 +77,30 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
     hf_model_text_only: bool = False
     """Whether the source HF checkpoint was projected to its language model."""
 
-    def finalize(self) -> None:
-        """Combine the hybrid layer patterns and derive ``num_layers`` before finalizing the transformer config.
+    def validate(self) -> None:
+        """Check the Hybrid settings without changing the config.
 
         Raises:
-            ValueError: If ``mamba_chunk_size`` is not positive, both pattern fields are set, or
-                ``num_layers`` disagrees with ``hybrid_layer_pattern``.
+            ValueError: If ``mamba_chunk_size`` is not positive or both pattern fields are set.
         """
         if self.mamba_chunk_size < 1:
             raise ValueError("mamba_chunk_size must be at least 1.")
+        if self.hybrid_override_pattern is not None and self.hybrid_layer_pattern is not None:
+            raise ValueError(
+                "hybrid_override_pattern and hybrid_layer_pattern cannot both be specified. "
+                "hybrid_override_pattern is deprecated; use hybrid_layer_pattern instead."
+            )
+
+    def finalize(self) -> None:
+        """Validate, combine the hybrid layer patterns and derive ``num_layers``, then finalize the transformer config.
+
+        Raises:
+            ValueError: If :meth:`validate` rejects the config or ``num_layers`` disagrees with
+                ``hybrid_layer_pattern``.
+        """
+        self.validate()
 
         if self.hybrid_override_pattern is not None:
-            if self.hybrid_layer_pattern is not None:
-                raise ValueError(
-                    "hybrid_override_pattern and hybrid_layer_pattern cannot both be specified. "
-                    "hybrid_override_pattern is deprecated; use hybrid_layer_pattern instead."
-                )
             if get_rank_safe() == 0:
                 warnings.warn(
                     "hybrid_override_pattern is deprecated. Use hybrid_layer_pattern instead.",
@@ -145,7 +155,7 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
         return builder_cls
 
     def as_dict(self) -> dict[str, Any]:
-        """Serialize the config with a symbolic activation function."""
+        """Serialize the config with a symbolic activation function and a restorable pipeline layout."""
         data = super().as_dict()
         transformer_data = data.get("transformer")
         if not isinstance(transformer_data, dict):
@@ -161,6 +171,12 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
             raise ValueError(f"Cannot serialize unregistered activation callable: {activation_func!r}.")
 
         transformer_data["activation_func"] = activation_name
+
+        # finalize() parses the layout into an object that a saved run config cannot restore.
+        # Persist the layout as given, as the provider checkpoint path does.
+        layout = transformer_data.get("pipeline_model_parallel_layout")
+        if isinstance(layout, PipelineParallelLayerLayout):
+            transformer_data["pipeline_model_parallel_layout"] = layout.input_data
         return data
 
     @classmethod
@@ -181,4 +197,17 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
         return result
 
 
-__all__ = ["BridgeHybridModelConfig"]
+@dataclass(kw_only=True)
+class BridgeHybridMLAModelConfig(MLAModelConfigMixin, BridgeHybridModelConfig):
+    """Hybrid model config with Multi-Latent Attention (MLA) in its attention layers.
+
+    The nested transformer config is an ``MLATransformerConfig``. It alone
+    stores and serializes ``rotary_base`` and ``rotary_percent``, because MLA
+    attention applies RoPE from them; on this config they are constructor
+    arguments and views of the nested values (see ``MLAModelConfigMixin``).
+    Hybrid MLA families such as DeepSeek-V4 and GLM-5 subclass it, as their
+    providers combine ``HybridModelProvider`` with an MLA config.
+    """
+
+
+__all__ = ["BridgeHybridMLAModelConfig", "BridgeHybridModelConfig"]

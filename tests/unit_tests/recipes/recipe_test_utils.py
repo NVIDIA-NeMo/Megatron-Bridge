@@ -310,6 +310,92 @@ class NemotronHUltraBuilderOnlyBridge(NemotronHBuilderOnlyBridge):
     }
 
 
+# GLM-5.2's architecture from its Hugging Face config.
+_GLM5_HF_CONFIG = {
+    "num_hidden_layers": 78,
+    "first_k_dense_replace": 3,
+    "hidden_size": 6144,
+    "intermediate_size": 12288,
+    "moe_intermediate_size": 2048,
+    "num_attention_heads": 64,
+    "num_key_value_heads": 64,
+    "n_routed_experts": 256,
+    "n_shared_experts": 1,
+    "num_experts_per_tok": 8,
+    "q_lora_rank": 2048,
+    "kv_lora_rank": 512,
+    "qk_head_dim": 256,
+    "qk_nope_head_dim": 192,
+    "qk_rope_head_dim": 64,
+    "v_head_dim": 256,
+    "index_head_dim": 128,
+    "index_n_heads": 32,
+    "index_topk": 2048,
+    "index_topk_freq": 4,
+    "index_skip_topk_offset": 3,
+    "indexer_rope_interleave": True,
+    "rope_parameters": {"rope_theta": 8_000_000, "rope_type": "default"},
+    "vocab_size": 154880,
+    "max_position_embeddings": 1048576,
+    "num_nextn_predict_layers": 1,
+    "dtype": "bfloat16",
+}
+
+# GLM-5 and GLM-5.1 compute DSA top-k indices on every layer.
+GLM5_1_HF_CONFIG_OVERRIDES = {
+    "index_topk_freq": 1,
+    "index_skip_topk_offset": 0,
+    "rope_parameters": {"rope_theta": 1_000_000, "rope_type": "default"},
+    "max_position_embeddings": 202752,
+}
+
+
+def glm5_model_config(model_id: str = "", **hf_overrides: object):
+    """Build a strict builder-backed GLM-5 model config from GLM-5.2's architecture.
+
+    Args:
+        model_id: Source id recorded in the config's checkpoint metadata.
+        **hf_overrides: Hugging Face ``GlmMoeDsaConfig`` fields to override.
+
+    Returns:
+        The ``GLM5ModelConfig`` that ``AutoBridge.get_model_config()`` returns.
+    """
+    from transformers import GlmMoeDsaConfig
+
+    from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+    hf_config = GlmMoeDsaConfig(**{**_GLM5_HF_CONFIG, **hf_overrides})
+    hf_config.architectures = ["GlmMoeDsaForCausalLM"]
+    hf_config._name_or_path = model_id
+    return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+
+class GLM5BuilderOnlyBridge:
+    """Stand-in for ``AutoBridge`` that returns strict GLM-5 model configs offline.
+
+    GLM-5 and GLM-5.1 sources get their DSA and RoPE settings. The legacy provider API
+    fails, so recipes must use ``get_model_config()``.
+    """
+
+    def __init__(self, model_id: str, revision: str | None = None) -> None:
+        self.model_id = model_id
+        self.hf_model_revision = revision
+
+    @classmethod
+    def from_hf_pretrained(cls, model_id: object, **kwargs: object) -> "GLM5BuilderOnlyBridge":
+        return cls(str(model_id), kwargs.get("revision"))
+
+    def get_model_config(self):
+        overrides = GLM5_1_HF_CONFIG_OVERRIDES if self.model_id in ("zai-org/GLM-5", "zai-org/GLM-5.1") else {}
+        model_config = glm5_model_config(self.model_id, **overrides)
+        if self.hf_model_revision:
+            model_config.extra_checkpoint_metadata["hf_model_revision"] = self.hf_model_revision
+        return model_config
+
+    def to_megatron_provider(self, *args: object, **kwargs: object):
+        raise AssertionError("GLM-5 recipes must use get_model_config(), not the legacy provider API")
+
+
 class _OfflineTokenizer:
     """Small tokenizer stand-in used by Gemma vocabulary adjustment helpers."""
 
