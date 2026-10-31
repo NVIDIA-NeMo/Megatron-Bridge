@@ -78,6 +78,20 @@ def _config(**kwargs):
     return SimpleNamespace(**defaults)
 
 
+def _use_cpu_checkpoint_rng(monkeypatch):
+    """Let MCore's real CheckpointFunction run on CPU without touching the global RNG tracker."""
+    monkeypatch.setattr(
+        tensor_parallel.random, "_get_cuda_rng_state", lambda *args, **kwargs: torch.empty(0, dtype=torch.uint8)
+    )
+    monkeypatch.setattr(tensor_parallel.random, "_set_cuda_rng_state", lambda *args, **kwargs: None)
+    # CheckpointFunction calls set_states() on the tracker, which marks it initialized. Left on the global
+    # tracker, that makes later TE modules fork RNG states that were never added.
+    monkeypatch.setattr(
+        tensor_parallel.random, "_CUDA_RNG_STATE_TRACKER", tensor_parallel.random.CudaRNGStatesTracker()
+    )
+    monkeypatch.setattr(tensor_parallel.random, "_CUDA_RNG_STATE_TRACKER_INITIALIZED", True)
+
+
 class TestGemma4RMSNorm:
     def test_matches_hf_style_rms_norm(self):
         norm = Gemma4RMSNorm(_config(), hidden_size=2, eps=1e-6)
@@ -1868,6 +1882,213 @@ class TestGemma4PLEHelpers:
         torch.testing.assert_close(hidden_states, torch.tensor(3.0))
         torch.testing.assert_close(intermediates[0], torch.tensor(1.0))
         assert checkpoint_calls == [True]
+
+    @pytest.mark.parametrize("fp8", [False, True], ids=["tensor_parallel_checkpoint", "te_checkpoint"])
+    @pytest.mark.parametrize("dual_rope", [True, False], ids=["dual_rope", "single_rope"])
+    def test_gemma4_checkpointed_forward_full_recompute_saves_rope_as_tensors(self, monkeypatch, fp8, dual_rope):
+        from megatron.core.extensions import transformer_engine as mcore_te
+
+        class FakeTransformerLayer:
+            def __init__(self, layer_number):
+                self.layer_number = layer_number
+                self.rotary_pos_embs = []
+
+            def __call__(self, *, hidden_states, rotary_pos_emb, per_layer_input, **kwargs):
+                del kwargs
+                self.rotary_pos_embs.append(rotary_pos_emb)
+                if isinstance(rotary_pos_emb, tuple):
+                    # Layer 1 uses the local RoPE and layer 2 the global one.
+                    rotary_pos_emb = rotary_pos_emb[self.layer_number - 1]
+                return hidden_states * rotary_pos_emb.cos() + per_layer_input, None
+
+        te_checkpoint_calls = []
+
+        def fake_te_checkpoint(function, distribute_saved_activations, get_rng_state_tracker, tp_group, *args):
+            del get_rng_state_tracker
+            te_checkpoint_calls.append(tp_group)
+            return tensor_parallel.checkpoint(function, distribute_saved_activations, *args)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
+            FakeTransformerLayer,
+        )
+        _use_cpu_checkpoint_rng(monkeypatch)
+        monkeypatch.setattr(mcore_te, "HAVE_TE", True)
+        monkeypatch.setattr(mcore_te, "te_checkpoint", fake_te_checkpoint)
+        block = SimpleNamespace(
+            layers=[FakeTransformerLayer(1), FakeTransformerLayer(2)],
+            config=SimpleNamespace(
+                recompute_method="uniform",
+                recompute_num_layers=1,
+                fp8=fp8,
+                fp4=False,
+                distribute_saved_activations=False,
+            ),
+            num_layers_per_pipeline_rank=2,
+            pg_collection=SimpleNamespace(tp="tp-group"),
+        )
+        torch.manual_seed(0)
+        hidden_states = torch.randn(3, 1, 4, requires_grad=True)
+        per_layer_inputs = torch.randn(1, 3, 2, 4, requires_grad=True)
+        local_rope = torch.randn(3, 1, 4)
+        global_rope = torch.randn(3, 1, 4)
+        rotary_pos_emb = (local_rope, global_rope) if dual_rope else global_rope
+
+        output = _gemma4_checkpointed_forward(
+            block,
+            hidden_states,
+            attention_mask=None,
+            context=None,
+            context_mask=None,
+            rotary_pos_emb=rotary_pos_emb,
+            attention_bias=None,
+            packed_seq_params=None,
+            use_inner_quantization_context=False,
+            per_layer_inputs=per_layer_inputs,
+        )
+        output.sum().backward()
+
+        layer_ropes = [local_rope, global_rope] if dual_rope else [global_rope, global_rope]
+        expected_hidden_states = hidden_states.detach().clone().requires_grad_(True)
+        expected_per_layer_inputs = per_layer_inputs.detach().clone().requires_grad_(True)
+        expected_output = expected_hidden_states
+        for layer_idx, rope in enumerate(layer_ropes):
+            per_layer_input = expected_per_layer_inputs[:, :, layer_idx, :].transpose(0, 1)
+            expected_output = expected_output * rope.cos() + per_layer_input
+        expected_output.sum().backward()
+
+        torch.testing.assert_close(output, expected_output)
+        torch.testing.assert_close(hidden_states.grad, expected_hidden_states.grad)
+        torch.testing.assert_close(per_layer_inputs.grad, expected_per_layer_inputs.grad)
+        assert te_checkpoint_calls == (["tp-group", "tp-group"] if fp8 else [])
+        for layer in block.layers:
+            # One call in the checkpointed forward, one in the backward recompute.
+            assert len(layer.rotary_pos_embs) == 2
+            for seen_rope in layer.rotary_pos_embs:
+                if dual_rope:
+                    assert isinstance(seen_rope, tuple)
+                    torch.testing.assert_close(seen_rope[0], local_rope)
+                    torch.testing.assert_close(seen_rope[1], global_rope)
+                else:
+                    assert isinstance(seen_rope, torch.Tensor)
+                    torch.testing.assert_close(seen_rope, global_rope)
+
+    @pytest.mark.parametrize(
+        ("recompute_method", "recompute_num_layers", "fp8"),
+        [("uniform", 1, False), ("uniform", 2, False), ("block", 3, False), ("uniform", 1, True)],
+        ids=["uniform_1", "uniform_2", "block_3", "uniform_1_te_checkpoint"],
+    )
+    def test_gemma4_checkpointed_forward_full_recompute_keeps_shared_kv_gradients(
+        self, monkeypatch, recompute_method, recompute_num_layers, fp8
+    ):
+        from megatron.core.extensions import transformer_engine as mcore_te
+
+        class FakeSelfAttention:
+            def __init__(self, store_full_length_kv=False, kv_source=None):
+                self.store_full_length_kv = store_full_length_kv
+                self._kv_source_ref = None if kv_source is None else weakref.ref(kv_source)
+                self._stored_kv = None
+
+        class FakeKVSharingLayer(torch.nn.Module):
+            def __init__(self, layer_number, self_attention):
+                super().__init__()
+                self.layer_number = layer_number
+                self.self_attention = self_attention
+                self.key_weight = torch.nn.Parameter(torch.randn(4))
+                self.value_weight = torch.nn.Parameter(torch.randn(4))
+
+            def forward(self, *, hidden_states, per_layer_input, **kwargs):
+                del kwargs
+                attention = self.self_attention
+                if attention._kv_source_ref is not None:
+                    key, value = attention._kv_source_ref()._stored_kv
+                else:
+                    key, value = hidden_states * self.key_weight, (hidden_states * self.value_weight).tanh()
+                if attention.store_full_length_kv:
+                    attention._stored_kv = (key, value)
+                return hidden_states + (hidden_states * key).sigmoid() * value + per_layer_input, None
+
+        def fake_te_checkpoint(function, distribute_saved_activations, get_rng_state_tracker, tp_group, *args):
+            del get_rng_state_tracker, tp_group
+            return tensor_parallel.checkpoint(function, distribute_saved_activations, *args)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
+            FakeKVSharingLayer,
+        )
+        _use_cpu_checkpoint_rng(monkeypatch)
+        monkeypatch.setattr(mcore_te, "HAVE_TE", True)
+        monkeypatch.setattr(mcore_te, "te_checkpoint", fake_te_checkpoint)
+        # Like Gemma 4 E2B/E4B: two source layers store K/V, later layers reuse it instead of their own.
+        source_a = FakeSelfAttention(store_full_length_kv=True)
+        source_b = FakeSelfAttention(store_full_length_kv=True)
+        attentions = [
+            FakeSelfAttention(),
+            source_a,
+            source_b,
+            FakeSelfAttention(kv_source=source_a),
+            FakeSelfAttention(kv_source=source_b),
+            FakeSelfAttention(kv_source=source_a),
+        ]
+        torch.manual_seed(0)
+        layers = [FakeKVSharingLayer(index + 1, attention) for index, attention in enumerate(attentions)]
+        block = SimpleNamespace(
+            layers=layers,
+            config=SimpleNamespace(
+                recompute_method=recompute_method,
+                recompute_num_layers=recompute_num_layers,
+                fp8=fp8,
+                fp4=False,
+                distribute_saved_activations=False,
+            ),
+            num_layers_per_pipeline_rank=len(layers),
+            pg_collection=SimpleNamespace(tp=None),
+        )
+        hidden_states = torch.randn(3, 1, 4, requires_grad=True)
+        per_layer_inputs = torch.randn(1, 3, len(layers), 4, requires_grad=True)
+
+        output = _gemma4_checkpointed_forward(
+            block,
+            hidden_states,
+            attention_mask=None,
+            context=None,
+            context_mask=None,
+            rotary_pos_emb=None,
+            attention_bias=None,
+            packed_seq_params=None,
+            use_inner_quantization_context=False,
+            per_layer_inputs=per_layer_inputs,
+        )
+        output.sum().backward()
+        recompute_grads = {
+            name: param.grad
+            for layer in layers
+            for name, param in layer.named_parameters(prefix=str(layer.layer_number))
+        }
+
+        for layer in layers:
+            layer.zero_grad(set_to_none=True)
+        expected_hidden_states = hidden_states.detach().clone().requires_grad_(True)
+        expected_per_layer_inputs = per_layer_inputs.detach().clone().requires_grad_(True)
+        expected_output = expected_hidden_states
+        for index, layer in enumerate(layers):
+            per_layer_input = expected_per_layer_inputs[:, :, index, :].transpose(0, 1)
+            expected_output, _ = layer(hidden_states=expected_output, per_layer_input=per_layer_input)
+        expected_output.sum().backward()
+
+        torch.testing.assert_close(output, expected_output)
+        torch.testing.assert_close(hidden_states.grad, expected_hidden_states.grad)
+        torch.testing.assert_close(per_layer_inputs.grad, expected_per_layer_inputs.grad)
+        for layer in layers:
+            for name, param in layer.named_parameters(prefix=str(layer.layer_number)):
+                if param.grad is None:
+                    assert recompute_grads[name] is None, name
+                else:
+                    torch.testing.assert_close(recompute_grads[name], param.grad, msg=name)
+        # The shared layers used their source's K/V, so their own K/V weights got no gradient.
+        for layer_number in (4, 5, 6):
+            assert recompute_grads[f"{layer_number}.key_weight"] is None
+            assert recompute_grads[f"{layer_number}.value_weight"] is None
 
     def test_gemma4_checkpointed_forward_rejects_invalid_recompute_method(self):
         block = SimpleNamespace(
