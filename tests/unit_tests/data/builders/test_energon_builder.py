@@ -205,7 +205,9 @@ def test_custom_config_requires_construction_hook():
         build_energon_task_encoder(_qwen_config(task_encoder=EnergonTaskEncoderConfig()))
 
 
-@pytest.mark.parametrize("reserved_key", ["batch_size", "task_encoder", "split_part", "worker_config"])
+@pytest.mark.parametrize(
+    "reserved_key", ["batch_size", "task_encoder", "split_part", "worker_config", "prefetch_factor"]
+)
 def test_config_rejects_builder_owned_dataset_kwargs(reserved_key: str):
     config = _qwen_config(dataset_kwargs={reserved_key: 1})
 
@@ -631,3 +633,50 @@ def test_builder_skips_unrequested_validation(monkeypatch: pytest.MonkeyPatch):
     assert validation is None
     assert test is None
     datamodule.val_dataloader.assert_not_called()
+
+
+@pytest.mark.parametrize("bad", [0, -2, 2.5])
+def test_prefetch_factor_must_be_a_positive_integer(bad):
+    with pytest.raises(ValueError, match="prefetch_factor"):
+        _qwen_config(prefetch_factor=bad).validate()
+
+
+def test_prefetch_factor_round_trips_and_reaches_the_datamodule(monkeypatch: pytest.MonkeyPatch):
+    restored = instantiate(ConfigContainer._convert_value_to_dict(_qwen_config()))
+    assert restored.prefetch_factor is None
+    process_config_with_overrides(restored, cli_overrides=["prefetch_factor=16"])
+    assert restored.prefetch_factor == 16
+    datamodule = MagicMock()
+    datamodule_cls = MagicMock(return_value=datamodule)
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.build_energon_task_encoder", lambda _: object())
+    monkeypatch.setattr(base_energon_datamodule, "EnergonMultiModalDataModule", datamodule_cls)
+
+    EnergonDatasetBuilder(restored).build(DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0))
+
+    assert datamodule_cls.call_args.kwargs["prefetch_factor"] == 16
+
+
+@pytest.mark.parametrize(
+    ("prefetch_factor", "num_workers", "expected"),
+    [(16, 1, {"prefetch_factor": 16}), (None, 1, {}), (16, 0, {})],
+)
+def test_datamodule_hands_prefetch_factor_to_the_savable_loader(
+    monkeypatch: pytest.MonkeyPatch, prefetch_factor, num_workers, expected
+):
+    get_loader = MagicMock(side_effect=lambda dataset, **kwargs: MagicMock())
+    monkeypatch.setattr(base_energon_datamodule, "get_savable_loader", get_loader)
+    module = base_energon_datamodule.EnergonMultiModalDataModule(
+        path="unused", tokenizer=None, num_workers=num_workers, prefetch_factor=prefetch_factor
+    )
+    monkeypatch.setattr(module, "_build_worker_config", MagicMock(return_value="worker-config"))
+    monkeypatch.setattr(module, "datasets_provider", MagicMock(return_value="dataset"))
+
+    module.train_dataloader()
+    module.val_dataloader()
+
+    assert get_loader.call_count == 2
+    for call in get_loader.call_args_list:
+        kwargs = dict(call.kwargs)
+        assert kwargs.pop("worker_config") == "worker-config"
+        assert kwargs == expected
+        assert "prefetch_factor" not in module.kwargs

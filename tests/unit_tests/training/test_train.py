@@ -16,6 +16,7 @@
 
 import signal
 import time
+import weakref
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -114,6 +115,7 @@ class TestCheckpointManagerLifecycle:
             dp=SimpleNamespace(size=Mock(return_value=1)),
         )
         checkpoint_manager = OneShotCheckpointManager()
+        optimizer = Mock()
 
         with (
             patch("megatron.bridge.training.train.get_model_config", return_value=model_config),
@@ -124,7 +126,7 @@ class TestCheckpointManagerLifecycle:
             patch("megatron.bridge.training.train.get_num_microbatches", return_value=1),
             patch("megatron.bridge.training.train.get_forward_backward_func", return_value=Mock()),
             patch("megatron.bridge.training.train.P2PCommunicator", return_value=Mock()),
-            patch("megatron.bridge.training.train._delete_cuda_graphs"),
+            patch("megatron.bridge.training.train._delete_cuda_graphs") as mock_delete_cuda_graphs,
             patch("megatron.bridge.training.train.safe_shutdown_nvrx_straggler_manager"),
             patch("megatron.bridge.training.train.destroy_global_state"),
             patch("megatron.bridge.training.train.fault_tolerance"),
@@ -132,7 +134,7 @@ class TestCheckpointManagerLifecycle:
             train(
                 Mock(),
                 [Mock()],
-                Mock(),
+                optimizer,
                 Mock(),
                 None,
                 None,
@@ -143,6 +145,8 @@ class TestCheckpointManagerLifecycle:
             _finish_train(state, checkpoint_manager)
 
         assert checkpoint_manager.finalize_calls == [(True, False), (True, True)]
+        # The loop's graph cleanup also gets the optimizer (its full-iteration gradient-conversion graphs).
+        assert mock_delete_cuda_graphs.call_args_list[0].kwargs["optimizer"] is optimizer
 
     def test_natural_completion_restores_original_signal_handler(self):
         """Terminal training cleanup should restore the caller's signal handler."""
@@ -348,6 +352,63 @@ class TestCudaGraphCleanup:
 
         mock_delete_runners.assert_called_once_with(model)
         assert calls == ["runners", "global"]
+
+    @patch("megatron.bridge.training.train.delete_local_cuda_graphs")
+    @patch("megatron.bridge.training.train.gc.collect")
+    def test_delete_cuda_graphs_releases_full_iteration_grad_copy_graphs(self, _mock_collect, _mock_delete_local):
+        """No reference to the training graph may survive the cleanup, or destroy_process_group() hangs at exit.
+
+        With full_iteration and an eager optimizer step, Megatron Core's distributed optimizer (and the layer-wise
+        mixed-precision optimizer, chained one level deeper) keeps the training graph in its FullIterationGradCopy,
+        next to its own gradient-conversion graph.
+        """
+        from megatron.core import full_cuda_graph
+        from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+
+        grad_copy_cls = getattr(full_cuda_graph, "FullIterationGradCopy", None)
+        if grad_copy_cls is None:
+            pytest.skip("the installed Megatron Core has no full-iteration gradient-conversion graph")
+
+        class FakeGraph:
+            """Stands in for torch.cuda.CUDAGraph: only the references matter here."""
+
+        def optimizer_with_grad_copy(training_graph):
+            grad_copy = grad_copy_cls()
+            grad_copy.graph = FakeGraph()
+            grad_copy.forward_backward_graph = training_graph
+            grad_copy.outputs = [(Mock(), Mock())]
+            grad_copy.source_signature = [object()]
+            return SimpleNamespace(_cudagraphed_grad_copy=grad_copy)
+
+        training_graph = FakeGraph()
+        training_graph_ref = weakref.ref(training_graph)
+        children = [optimizer_with_grad_copy(training_graph) for _ in range(3)]
+        copies = [child._cudagraphed_grad_copy for child in children]
+        conversion_graph_refs = [weakref.ref(grad_copy.graph) for grad_copy in copies]
+        # Dense and expert distributed optimizers, a layer-wise optimizer chained one level deeper, and optimizers
+        # without a conversion graph (None with optimizer_cuda_graph; no attribute under Megatron-FSDP).
+        optimizer = SimpleNamespace(
+            chained_optimizers=[
+                children[0],
+                children[1],
+                SimpleNamespace(chained_optimizers=[children[2]]),
+                SimpleNamespace(_cudagraphed_grad_copy=None),
+                SimpleNamespace(),
+            ]
+        )
+
+        with (
+            patch.object(FullCudaGraphWrapper, "cuda_graph", {"training": training_graph, "validation": None}),
+            patch.object(FullCudaGraphWrapper, "result", {"training": object(), "validation": None}),
+            patch.object(FullCudaGraphWrapper, "curr_iteration", {"training": 5, "validation": 0}),
+        ):
+            del training_graph
+            _delete_cuda_graphs(None, optimizer=optimizer)
+
+        assert training_graph_ref() is None
+        assert all(ref() is None for ref in conversion_graph_refs)
+        # Back in the initial state: a later capture rebuilds the conversion graph.
+        assert all(vars(grad_copy) == vars(grad_copy_cls()) for grad_copy in copies)
 
 
 class TestFSDPRegistration:

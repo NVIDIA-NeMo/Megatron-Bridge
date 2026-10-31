@@ -52,6 +52,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_deepstack_embs,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.models.qwen_vl.static_vision import scatter_vision_embeds_static
 from megatron.bridge.training.utils.packed_seq_utils import (
     get_packed_seq_cp_partition_indices,
     get_packed_seq_q_cu_seqlens,
@@ -423,7 +424,62 @@ class Qwen3VLModel(MegatronModule):
                 "Qwen3-VL model only supports context parallelism with calculate_per_token_loss enabled"
             )
 
+        # Opt-in static-shape vision path for full-iteration CUDA graphs (static_vision_inputs in forward).
+        self.vision_static_shapes = bool(getattr(settings, "vision_static_shapes", False))
+        if self.vision_static_shapes:
+            self._init_static_vision(settings, vision_transformer_config)
+
         self._expose_language_model_for_cuda_graph_helper()
+
+    def _init_static_vision(self, settings, vision_transformer_config) -> None:
+        """Check the static vision constraints and hand the patch cap to the vision model.
+
+        Args:
+            settings: The config that carries the construction settings: the builder-backed model config, or the
+                provider's ``language_transformer_config``.
+            vision_transformer_config: The Hugging Face vision config.
+        """
+        patch_cap = getattr(settings, "vision_patch_cap", None)
+        if not isinstance(patch_cap, int) or patch_cap <= 0 or patch_cap % self.square_merge_size != 0:
+            raise ValueError(
+                f"vision_static_shapes needs vision_patch_cap, a positive multiple of {self.square_merge_size}; "
+                f"got {patch_cap!r}"
+            )
+        if not (self.pre_process and self.post_process):
+            raise ValueError("vision_static_shapes does not support pipeline parallelism")
+        if self.use_dist_train:
+            raise ValueError("vision_static_shapes does not support dist_train")
+        if self.pg_collection.cp.size() > 1:
+            raise ValueError("vision_static_shapes does not support context parallelism")
+        if len(getattr(vision_transformer_config, "deepstack_visual_indexes", None) or []) > 0:
+            raise ValueError("vision_static_shapes does not support deepstack visual features")
+        if self.vision_model is not None:
+            self.vision_model.static_patch_cap = patch_cap
+
+    def _static_vision_pre_process(
+        self, input_ids: torch.Tensor, static_vision_inputs: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor, list[torch.Tensor]]:
+        """Vision tower plus the scatter into the text embeddings, with static shapes and no host sync.
+
+        Replaces ``reorganize_inputs``, the vision call and ``combined_embeddings[vision_mask] = vision_embeds``.
+        Returns ``(combined_embeddings [S, B, H], vision_mask [B, S], deepstack_feature_lists)``.
+        """
+        s = static_vision_inputs
+        vision_mask = input_ids == self.image_token_id
+        vision_embeds, deepstack_feature_lists = self.vision_model.forward_static(
+            s["vision_pixel_values"],
+            s["vision_cu_seqlens"],
+            s["vision_patch_is_real"],
+            s["vision_pos_embed_idx"],
+            s["vision_pos_embed_w"],
+            s["vision_rope_pos_ids"],
+        )
+        combined_embeddings = self.language_model.embedding(
+            input_ids=input_ids,
+            position_ids=None,  # NOTE: disable
+        ).clone()  # [text_seq_len, b, h_language]
+        combined_embeddings = scatter_vision_embeds_static(combined_embeddings, vision_embeds, s["vision_dst_index"])
+        return combined_embeddings, vision_mask, deepstack_feature_lists
 
     def _expose_language_model_for_cuda_graph_helper(self) -> None:
         """Expose LM fields on the VLM root for the CUDA graph helper when cuda_graph_impl is enabled.
@@ -576,6 +632,7 @@ class Qwen3VLModel(MegatronModule):
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
         mm_token_type_ids: torch.Tensor = None,
+        static_vision_inputs: dict[str, torch.Tensor] | None = None,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
@@ -598,6 +655,9 @@ class Qwen3VLModel(MegatronModule):
             padding_mask (torch.Tensor): Optional boolean MoE padding mask where
                 true marks padding. For THD input, it is derived from logical and
                 physical cumulative sequence boundaries when omitted.
+            static_vision_inputs (dict[str, torch.Tensor]): Opt-in static-shape vision inputs
+                (``vision_static_shapes``; see ``megatron.bridge.models.qwen_vl.static_vision``). Requires
+                explicit 3D MRoPE ``position_ids`` and no ``pixel_values``/``image_grid_thw``.
 
         Returns:
             torch.Tensor | tuple[torch.Tensor, torch.Tensor] | dict[str, torch.Tensor]: Language-model loss of shape
@@ -613,6 +673,17 @@ class Qwen3VLModel(MegatronModule):
         vision_mask = None
         vision_embeds = None
         deepstack_feature_lists = None
+
+        if static_vision_inputs is not None:
+            # Host-side checks only (no tensor values are read).
+            if not self.vision_static_shapes:
+                raise ValueError("static_vision_inputs needs vision_static_shapes=True in the model config")
+            if any(x is not None for x in (pixel_values, pixel_values_videos, image_grid_thw, video_grid_thw)):
+                raise ValueError("static_vision_inputs replaces pixel_values/image_grid_thw; pass only one of them")
+            if packed_seq_params is not None or self.config.sequence_parallel or self.pg_collection.cp.size() > 1:
+                raise ValueError("static_vision_inputs does not support packing, sequence or context parallelism")
+            if not _is_mrope_position_ids(position_ids):
+                raise ValueError("static_vision_inputs needs explicit 3D MRoPE position_ids [3, b, s]")
 
         if not _is_mrope_position_ids(position_ids):
             position_ids = None
@@ -689,7 +760,11 @@ class Qwen3VLModel(MegatronModule):
         if self.language_model is not None:
             self.language_model.rotary_pos_emb.is_thd_format = False
 
-        if self.pre_process:
+        if self.pre_process and static_vision_inputs is not None:
+            combined_embeddings, vision_mask, deepstack_feature_lists = self._static_vision_pre_process(
+                input_ids, static_vision_inputs
+            )
+        elif self.pre_process:
             # can reorganize_inputs at dataset
             vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
                 input_ids=input_ids,

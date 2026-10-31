@@ -205,6 +205,7 @@ class EnergonMultiModalDataModule:
         packing_buffer_size: Optional[int] = None,
         validation_task_encoder: Optional[Any] = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
+        prefetch_factor: int | None = None,
         **kwargs,
     ) -> None:
         """
@@ -231,6 +232,9 @@ class EnergonMultiModalDataModule:
         and batching samples for validation. Defaults to None and will be the same as task_encoder.
         pg_collection (ProcessGroupCollection, optional): Process group collection for distributed training.
         If provided, used instead of the global parallel_state. Defaults to None.
+        prefetch_factor (int, optional): Batches each loader worker prepares ahead of consumption, passed to
+        Energon's ``get_savable_loader`` (train and validation loaders with workers). Defaults to None, which keeps
+        Energon's default (2). The sample order and the saved loader state do not depend on it.
         **kwargs: Additional keyword arguments. Will be passed to get_train_dataset() of Energon
         """
 
@@ -253,7 +257,14 @@ class EnergonMultiModalDataModule:
         self.validation_task_encoder = validation_task_encoder or self.task_encoder
         self.num_val_workers = self.num_workers if num_val_workers is None else num_val_workers
         self.pg_collection = pg_collection
+        self.prefetch_factor = prefetch_factor
         self.kwargs = kwargs
+
+    def _savable_loader_kwargs(self, num_workers: int) -> dict[str, int]:
+        """Keyword arguments for ``get_savable_loader``: the prefetch depth, when set and the loader has workers."""
+        if self.prefetch_factor is None or num_workers == 0:
+            return {}
+        return {"prefetch_factor": self.prefetch_factor}
 
     def _build_worker_config(self, num_workers: int, split: str = "train") -> WorkerConfig:
         """Build workers for distinct microbatches across data and GTP ranks.
@@ -343,7 +354,9 @@ class EnergonMultiModalDataModule:
             return self.train_dataloader_object
         worker_config = self._build_worker_config(self.num_workers, split="train")
         train_dataset = self.datasets_provider(worker_config, split="train")
-        energon_dataloader = get_savable_loader(train_dataset, worker_config=worker_config)
+        energon_dataloader = get_savable_loader(
+            train_dataset, worker_config=worker_config, **self._savable_loader_kwargs(self.num_workers)
+        )
         self.train_dataloader_object = energon_dataloader
         return EnergonDataloader(self.train_dataloader_object)
 
@@ -360,7 +373,9 @@ class EnergonMultiModalDataModule:
         if self.val_dataloader_object is None:
             worker_config = self._build_worker_config(self.num_val_workers, split="val")
             val_dataset = self.datasets_provider(worker_config, split="val")
-            energon_loader = get_savable_loader(val_dataset, worker_config=worker_config)
+            energon_loader = get_savable_loader(
+                val_dataset, worker_config=worker_config, **self._savable_loader_kwargs(self.num_val_workers)
+            )
             self.val_dataloader_object = energon_loader
         return EnergonDataloader(self.val_dataloader_object)
 

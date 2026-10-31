@@ -208,6 +208,12 @@ class Qwen35VLModelProvider(GPTModelProvider):
     vision_recompute_method: Literal["uniform", "block"] | None = None
     vision_recompute_num_layers: int | None = None
     vision_recompute_modules: list[str] | None = None
+    # Opt-in static-shape vision path for full-iteration CUDA graphs (megatron.bridge.models.qwen_vl.static_vision):
+    # per-image THD vision attention with a fixed patch cap; the data pipeline builds every vision tensor on the CPU.
+    vision_static_shapes: bool = False
+    vision_patch_cap: Optional[int] = None  # vision patches per microbatch (before the merge), multiple of 4
+    vision_max_images: int = 1  # image slots per microbatch
+    vision_over_cap_policy: str = "downscale"  # images over the per-image patch budget: "downscale" | "error"
     hetereogenous_dist_checkpoint: bool = True
 
     mtp_num_layers: Optional[int] = None
@@ -471,6 +477,12 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     vision_cuda_graph_impl: str = "none"
     vision_cuda_graph_scope: List[str] = field(default_factory=list)
     max_vision_cuda_graph_seq_length: Optional[int] = None
+    # Opt-in static-shape vision path for full-iteration CUDA graphs (megatron.bridge.models.qwen_vl.static_vision):
+    # per-image THD vision attention with a fixed patch cap; the data pipeline builds every vision tensor on the CPU.
+    vision_static_shapes: bool = False
+    vision_patch_cap: Optional[int] = None  # vision patches per microbatch (before the merge), multiple of 4
+    vision_max_images: int = 1  # image slots per microbatch
+    vision_over_cap_policy: str = "downscale"  # images over the per-image patch budget: "downscale" | "error"
 
     # Heterogeneous dist checkpoint (needed for hybrid architecture)
     hetereogenous_dist_checkpoint: bool = True

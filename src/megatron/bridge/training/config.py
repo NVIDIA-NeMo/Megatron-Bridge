@@ -90,6 +90,7 @@ from megatron.bridge.utils.common_utils import (
 from megatron.bridge.utils.cuda_graph import (
     cuda_graph_module_names,
     is_full_iteration_cuda_graph,
+    supports_deferred_result_validation,
     validate_cuda_graph_configuration,
 )
 from megatron.bridge.utils.gdn_utils import validate_cudnn_gdn_stack
@@ -1437,6 +1438,48 @@ class ConfigContainer(Container):
         if self.dist.eval_context_parallel_size is not None:
             raise ValueError("DPO does not support dist.eval_context_parallel_size.")
 
+    def _validate_full_iteration_result_validation(self) -> None:
+        """Result-validation checks (NaN/Inf and spiky values) under a full-iteration CUDA graph.
+
+        These checks go through ``RerunStateMachine.validate_result``, which reads the checked value on the host; a
+        captured iteration cannot do that. Megatron Core's deferred result validation records a snapshot at each
+        check during the capture, and ``FullCudaGraphWrapper`` validates the replayed snapshots on the host after
+        every replay, before ``forward_backward_func`` returns and so before the optimizer step. That matches the
+        eager checks when a rejected result raises right away (``rerun_mode="disabled"``: a replayed iteration cannot
+        be re-run in place) and no check keeps host-side history across calls (the spiky-loss and large-gradient
+        checks, which are untested with deferred validation).
+        """
+        rerun = self.rerun_state_machine
+        history_checks = ("rerun_state_machine.check_for_spiky_loss", "ddp.check_for_large_grads")
+        enabled = [
+            name
+            for name, is_on in (
+                ("rerun_state_machine.check_for_nan_in_loss", rerun.check_for_nan_in_loss),
+                ("rerun_state_machine.check_for_spiky_loss", rerun.check_for_spiky_loss),
+                ("ddp.check_for_nan_in_grad", getattr(self.ddp, "check_for_nan_in_grad", False)),
+                ("ddp.check_for_large_grads", getattr(self.ddp, "check_for_large_grads", False)),
+            )
+            if is_on
+        ]
+        if not enabled:
+            return
+        checks = ", ".join(enabled)
+        disable_hint = "Set " + ", ".join(f"{name}=False" for name in enabled) + " to run without them."
+        assert supports_deferred_result_validation(), (
+            f"{checks} with a full_iteration CUDA graph needs a Megatron Core with deferred result validation "
+            f"(RerunStateMachine.capture_deferred_validations). {disable_hint}"
+        )
+        assert rerun.rerun_mode == "disabled", (
+            f"{checks} with a full_iteration CUDA graph requires rerun_state_machine.rerun_mode='disabled' "
+            f"(got {rerun.rerun_mode!r}): a replayed iteration cannot be re-run in place. {disable_hint}"
+        )
+        enabled_history_checks = [name for name in enabled if name in history_checks]
+        assert not enabled_history_checks, (
+            f"{', '.join(enabled_history_checks)} is not supported with a full_iteration CUDA graph: the check keeps "
+            "host-side history across calls and is untested with deferred result validation. "
+            "Set " + ", ".join(f"{name}=False" for name in enabled_history_checks) + "."
+        )
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1777,13 +1820,18 @@ class ConfigContainer(Container):
         _validate_fine_grained_activation_offloading(self)
         validate_cudnn_gdn_stack(self.model)
 
-        # CUDA graph scope validation: check_for_nan_in_loss must be disabled with full_iteration graph
         if is_full_iteration_cuda_graph(self.model):
-            assert not self.rerun_state_machine.check_for_nan_in_loss, (
-                "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
-                "Set rerun_state_machine.check_for_nan_in_loss=False."
-            )
+            self._validate_full_iteration_result_validation()
         validate_cuda_graph_configuration(self.model)
+
+        # Opt-in static-shape vision path (full-iteration CUDA graphs with images): validate the run and hand the
+        # derived layout to the dataset config.
+        if getattr(self.model, "vision_static_shapes", False):
+            from megatron.bridge.models.qwen_vl.static_vision import configure_static_vision
+
+            configure_static_vision(self)
+        else:
+            _reject_static_vision_layout_without_flag(self)
 
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
@@ -2510,4 +2558,27 @@ def _validate_fine_grained_activation_offloading(config: ConfigContainer) -> Non
             raise ValueError(
                 "For fine-grained activation offloading with TE >= 2.10.0, "
                 "NVTE_CPU_OFFLOAD_V1 environment variable should be set to 1 to avoid offloading weights."
+            )
+
+
+def _reject_static_vision_layout_without_flag(config: ConfigContainer) -> None:
+    """Reject a static vision layout on the dataset config when ``model.vision_static_shapes`` is off.
+
+    With the flag on, ``configure_static_vision`` derives the layout from the model config. A layout left on the
+    dataset config with the flag off (for example a saved static-vision config reused with the flag flipped) would
+    make the data pipeline emit static vision batches, which the default vision path does not read: the images would
+    be dropped silently.
+
+    Args:
+        config: The configuration container to validate.
+
+    Raises:
+        ValueError: If ``dataset.static_vision`` or ``dataset.task_encoder.static_vision`` is set.
+    """
+    dataset = config.dataset
+    for name, owner in (("dataset", dataset), ("dataset.task_encoder", getattr(dataset, "task_encoder", None))):
+        if getattr(owner, "static_vision", None) is not None:
+            raise ValueError(
+                f"{name}.static_vision is set but model.vision_static_shapes is off; the static vision layout is "
+                f"derived from the model config. Set model.vision_static_shapes=true or {name}.static_vision=null."
             )
