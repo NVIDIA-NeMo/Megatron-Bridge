@@ -142,10 +142,11 @@ class TestGemma4DenseProviderDefaults:
         with pytest.raises(NotImplementedError, match="PP=1"):
             provider.provide()
 
-    def test_provide_rejects_context_parallel(self, provider):
+    def test_provide_accepts_context_parallel(self, provider):
         provider.context_parallel_size = 2
-        with pytest.raises(NotImplementedError, match="CP=1"):
-            provider.provide()
+        with patch.object(provider, "build", return_value="model") as build:
+            assert provider.provide() == "model"
+        build.assert_called_once_with(pre_process=True, post_process=True)
 
     def test_provide_rejects_virtual_pipeline_stage(self, provider):
         with pytest.raises(NotImplementedError, match="PP=1"):
