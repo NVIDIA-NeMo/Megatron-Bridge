@@ -23,6 +23,7 @@ from megatron.core.pipeline_parallel.schedules import forward_backward_no_pipeli
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.perf_recipes import deepseek
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -126,7 +127,8 @@ def test_proxy_preserves_parent_except_depth_layout_and_kernel_policy(precision:
     assert proxy.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert proxy.comm_overlap.delay_wgrad_compute is True
     assert proxy.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert model.moe_flex_dispatcher_backend == "hybridep"
+    assert model.moe_flex_dispatcher_backend == "ncclep"
+    assert proxy.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert model.mtp_num_layers == 1
     assert model.recompute_modules == []
 
@@ -149,13 +151,10 @@ def test_gb300_mxfp8_proxy_matches_vrnvl72() -> None:
             assert getattr(gb300, field.name) == getattr(vrnvl72, field.name), field.name
 
     assert gb300.model.moe_token_dispatcher_type == "flex"
-    assert gb300.model.moe_flex_dispatcher_backend == "hybridep"
-    assert not getattr(gb300.model, "moe_use_grouped_tensor", False)
-    assert "NCCL_EP_HT_EM_PULL_PUSH" not in gb300.env_vars
-    assert gb300.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-    assert gb300.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
-    assert gb300.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert gb300.env_vars["USE_MNNVL"] == 1
+    assert gb300.model.moe_flex_dispatcher_backend == "ncclep"
+    assert gb300.model.moe_use_grouped_tensor is True
+    assert gb300.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert gb300.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
     assert gb300.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
 
 

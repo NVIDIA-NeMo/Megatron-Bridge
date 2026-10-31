@@ -11,9 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Every GB300 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the VRNVL72
-aliases built on the shared HybridEP bases stay on HybridEP. VRNVL72 aliases built on an NCCL EP base
-carry the same NCCL EP stack."""
+"""Every GB300 and VRNVL72 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the
+VRNVL72 MoE recipes left off NCCL EP do not pick it up."""
 
 import importlib
 
@@ -57,34 +56,65 @@ _GB300_NCCLEP_RECIPES = (
     ("qwen_vl.gb300.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"),
 )
 
-# VRNVL72 aliases that share the GB300 NCCL EP builder instead of a HybridEP base.
+# VRNVL72 MoE recipes on NCCL EP. The Nemotron 3 Ultra aliases share the GB300 NCCL EP builders; the rest
+# switch their GB300 HybridEP base or recipe, or their own HybridEP setup, to NCCL EP.
 _VRNVL72_NCCLEP_RECIPES = (
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config"),
-)
-
-# VRNVL72 aliases of the same recipes: they reuse the shared HybridEP builders and must not pick up NCCL EP.
-_VRNVL72_ALIASES = (
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_bf16_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config"),
-    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config"),
-    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v4", "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config"),
+    (
+        "qwen_vl.vrnvl72.qwen35_vl",
+        "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config",  # pragma: allowlist secret
+    ),
+)
+
+# VRNVL72 MoE recipes that stay off NCCL EP: GPT-OSS 20B, Kimi K2, Nemotron 3 Nano, the FP8-CS recipes and
+# Qwen3.5-VL 122B stay on HybridEP, and GPT-OSS 120B BF16 uses alltoall, like the GB300 recipe it aliases.
+_VRNVL72_NON_NCCLEP_RECIPES = (
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_fp8cs_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8cs_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_bf16_config"),
+    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_bf16_config"),
+    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config"),
+    (
+        "qwen_vl.vrnvl72.qwen35_vl",
+        "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config",  # pragma: allowlist secret
+    ),
 )
 
 
@@ -92,7 +122,16 @@ _VRNVL72_ALIASES = (
 # every recipe module that is already loaded, so a lazy import inside a test would escape the patch.
 _RECIPE_MODULES = {
     module_name: importlib.import_module(f"megatron.bridge.perf_recipes.{module_name}")
-    for module_name in sorted({name for name, _ in (*_GB300_NCCLEP_RECIPES, *_VRNVL72_ALIASES)})
+    for module_name in sorted(
+        {
+            name
+            for name, _ in (
+                *_GB300_NCCLEP_RECIPES,
+                *_VRNVL72_NCCLEP_RECIPES,
+                *_VRNVL72_NON_NCCLEP_RECIPES,
+            )
+        }
+    )
 }
 
 
@@ -131,12 +170,12 @@ def test_gb300_deepseek_hsdp_uses_hybridep() -> None:
     assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
 
 
-@pytest.mark.parametrize(("module_name", "factory_name"), _VRNVL72_ALIASES, ids=lambda value: value)
-def test_vrnvl72_aliases_do_not_inherit_nccl_ep(module_name: str, factory_name: str) -> None:
+@pytest.mark.parametrize(("module_name", "factory_name"), _VRNVL72_NON_NCCLEP_RECIPES, ids=lambda value: value)
+def test_vrnvl72_recipes_left_off_nccl_ep_do_not_inherit_it(module_name: str, factory_name: str) -> None:
     cfg = _build(module_name, factory_name)
 
-    # The aliases keep the dispatcher their HybridEP base had upstream (flex/hybridep, or alltoall for the
-    # DeepSeek BF16 and NVFP4 recipes); the GB300 NCCL EP overlay must never leak into them.
+    # These recipes keep their own dispatcher (flex/hybridep or alltoall); the NCCL EP overlay must never
+    # leak into them.
     assert cfg.model.moe_flex_dispatcher_backend != "ncclep"
     assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
     if cfg.model.moe_token_dispatcher_type == "flex":
