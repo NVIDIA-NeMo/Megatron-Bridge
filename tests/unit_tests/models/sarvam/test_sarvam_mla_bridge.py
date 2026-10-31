@@ -16,84 +16,192 @@
 Unit tests for Sarvam MLA bridge.
 """
 
+from dataclasses import fields
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import patch
 
 import pytest
 import torch
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.deepseek.attention import get_deepseek_decoder_block_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTMLAModelConfig
 from megatron.bridge.models.sarvam.sarvam_mla_bridge import SarvamMLABridge
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMLAModelProvider
+from megatron.bridge.models.transformer_config import MLATransformerConfig
+
+
+def _sarvam_mla_config(**overrides) -> SimpleNamespace:
+    """A Sarvam MLA config with the attributes the remote ``SarvamMLAConfig`` sets, at sarvam-105b sizes."""
+    values = dict(
+        architectures=["SarvamMLAForCausalLM"],
+        auto_map={"AutoModelForCausalLM": "modeling_sarvam_moe.SarvamMLAForCausalLM"},
+        num_hidden_layers=32,
+        hidden_size=4096,
+        intermediate_size=16384,
+        moe_intermediate_size=2048,
+        num_attention_heads=64,
+        num_experts=128,
+        num_experts_per_tok=8,
+        num_shared_experts=1,
+        first_k_dense_replace=1,
+        vocab_size=262144,
+        max_position_embeddings=131072,
+        rope_theta=10000.0,
+        rope_scaling={
+            "type": "deepseek_yarn",
+            "factor": 40,
+            "beta_fast": 32,
+            "beta_slow": 1,
+            "mscale": 1.0,
+            "mscale_all_dim": 1.0,
+            "original_max_position_embeddings": 4096,
+        },
+        kv_lora_rank=512,
+        qk_nope_head_dim=128,
+        qk_rope_head_dim=64,
+        v_head_dim=128,
+        q_head_dim=192,
+        # The remote config sets head_dim to kv_lora_rank + qk_rope_head_dim for vLLM.
+        head_dim=576,
+        rms_norm_eps=1e-6,
+        initializer_range=0.006,
+        attention_dropout=0.0,
+        hidden_act="silu",
+        use_qk_norm=True,
+        routed_scaling_factor=2.5,
+        moe_router_enable_expert_bias=True,
+        tie_word_embeddings=False,
+        torch_dtype="float16",
+    )
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _provider(hf_config) -> SarvamMLAModelProvider:
+    with pytest.warns(FutureWarning, match="deprecated for builder-backed models"):
+        return SarvamMLABridge().provider_bridge(SimpleNamespace(config=hf_config))
 
 
 class TestSarvamMLABridge:
-    @pytest.fixture
-    def sarvam_mla_config_dict(self):
-        return {
-            "architectures": ["SarvamMLAForCausalLM"],
-            "auto_map": {"AutoModelForCausalLM": "modeling_sarvam.SarvamMLAForCausalLM"},
-            # Common Sarvam fields
-            "num_hidden_layers": 32,
-            "hidden_size": 4096,
-            "intermediate_size": 16384,
-            "moe_intermediate_size": 2048,
-            "num_attention_heads": 64,
-            "num_experts": 128,
-            "num_experts_per_tok": 8,
-            "num_shared_experts": 1,
-            "first_k_dense_replace": 1,
-            "vocab_size": 262144,
-            "max_position_embeddings": 131072,
-            "rope_theta": 8_000_000.0,
-            # dtype
-            "torch_dtype": torch.float16,
-            # MLA fields (bridge specific)
-            "kv_lora_rank": 512,
-            "qk_nope_head_dim": 128,
-            "qk_rope_head_dim": 64,
-            "v_head_dim": 128,
-        }
-
-    @pytest.fixture
-    def mock_pretrained_mla(self, sarvam_mla_config_dict):
-        cfg = Mock()
-        for k, v in sarvam_mla_config_dict.items():
-            setattr(cfg, k, v)
-
-        m = Mock(spec=PreTrainedCausalLM)
-        m.config = cfg
-        return m
-
     def test_registration(self):
         assert issubclass(SarvamMLABridge, MegatronModelBridge)
 
-    def test_provider_bridge_maps_common_and_mla_fields(self, mock_pretrained_mla):
+    def test_conversion_uses_builder_config(self):
+        assert SarvamMLABridge.MODEL_CONFIG_CLASS is BridgeGPTMLAModelConfig
+        assert SarvamMLABridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+        assert SarvamMLABridge.PROVIDER_CLASS is SarvamMLAModelProvider
+        assert "provider_bridge" not in SarvamMLABridge.__dict__
+
+    def test_model_config_maps_common_and_mla_fields(self):
+        hf_config = _sarvam_mla_config()
         bridge = SarvamMLABridge()
-        provider = bridge.provider_bridge(mock_pretrained_mla)
+        # The builder path must not route through the legacy provider.
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(hf_config)
+
+        assert isinstance(model_config, BridgeGPTMLAModelConfig)
+        assert isinstance(model_config.transformer, MLATransformerConfig)
+        assert model_config.num_layers == 32
+        assert model_config.hidden_size == 4096
+        assert model_config.ffn_hidden_size == 16384
+        assert model_config.moe_ffn_hidden_size == 2048
+        assert model_config.moe_shared_expert_intermediate_size == 2048
+        assert model_config.moe_layer_freq == [0] + [1] * 31
+        assert model_config.num_moe_experts == 128
+        assert model_config.moe_router_topk == 8
+        assert model_config.vocab_size == 262144
+        assert model_config.seq_length == 131072
+        assert model_config.transformer.rotary_base == 10000.0
+        # kv_channels follows the attention heads, not the remote config's vLLM head_dim.
+        assert model_config.kv_channels == 64
+        assert model_config.multi_latent_attention is True
+        assert model_config.q_lora_rank is None
+        assert model_config.kv_lora_rank == 512
+        assert model_config.qk_head_dim == 128
+        assert model_config.qk_pos_emb_head_dim == 64
+        assert model_config.v_head_dim == 128
+        assert model_config.qk_layernorm is True
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.rope_type == "yarn"
+        assert model_config.rotary_scaling_factor == 40
+        assert model_config.original_max_position_embeddings == 4096
+        assert model_config.mscale_all_dim == 1.0
+        assert model_config.params_dtype == torch.float16
+        assert model_config.transformer_layer_spec.func is get_deepseek_decoder_block_spec
+        assert model_config.transformer_layer_spec.keywords["normalization"] == "RMSNorm"
+
+    def test_yarn_settings_follow_the_checkpoint(self):
+        rope_scaling = {
+            "type": "deepseek_yarn",
+            "factor": 8,
+            "beta_fast": 16,
+            "beta_slow": 2,
+            "mscale": 0.707,
+            "mscale_all_dim": 0.707,
+            "original_max_position_embeddings": 2048,
+        }
+        hf_config = _sarvam_mla_config(rope_scaling=rope_scaling)
+
+        for config in (SarvamMLABridge().hf_config_to_model_config(hf_config), _provider(hf_config)):
+            assert config.rotary_scaling_factor == 8
+            assert config.beta_fast == 16
+            assert config.beta_slow == 2
+            assert config.mscale == 0.707
+            assert config.mscale_all_dim == 0.707
+            assert config.original_max_position_embeddings == 2048
+
+    def test_model_config_matches_provider(self):
+        hf_config = _sarvam_mla_config()
+        model_config = SarvamMLABridge().hf_config_to_model_config(hf_config)
+        provider = _provider(hf_config)
+
+        model_fields = {f.name for f in fields(model_config)} | {f.name for f in fields(model_config.transformer)}
+        shared = ({f.name for f in fields(provider)} & model_fields) - {"transformer_layer_spec"}
+        assert len(shared) > 400
+        for name in sorted(shared):
+            assert getattr(model_config, name) == getattr(provider, name), name
+        for spec in (model_config.transformer_layer_spec, provider.transformer_layer_spec):
+            assert spec.func is get_deepseek_decoder_block_spec
+            assert spec.keywords == model_config.transformer_layer_spec.keywords
+
+    def test_model_config_round_trip(self):
+        model_config = SarvamMLABridge().hf_config_to_model_config(_sarvam_mla_config())
+
+        restored = ModelConfig.from_dict(model_config.as_dict())
+
+        assert isinstance(restored, BridgeGPTMLAModelConfig)
+        assert restored.transformer_layer_spec.func is get_deepseek_decoder_block_spec
+        assert restored.transformer.rotary_base == 10000.0
+        assert restored.rotary_scaling_factor == 40
+        assert restored.q_lora_rank is None
+
+    def test_provider_bridge_maps_common_and_mla_fields(self):
+        hf_config = _sarvam_mla_config()
+        provider = _provider(hf_config)
 
         assert isinstance(provider, SarvamMLAModelProvider)
 
         # Common config
-        assert provider.num_layers == mock_pretrained_mla.config.num_hidden_layers
-        assert provider.hidden_size == mock_pretrained_mla.config.hidden_size
-        assert provider.ffn_hidden_size == mock_pretrained_mla.config.intermediate_size
-        assert provider.moe_ffn_hidden_size == mock_pretrained_mla.config.moe_intermediate_size
-        assert provider.num_attention_heads == mock_pretrained_mla.config.num_attention_heads
-        assert provider.vocab_size == mock_pretrained_mla.config.vocab_size
-        assert provider.seq_length == mock_pretrained_mla.config.max_position_embeddings
-        assert provider.rotary_base == mock_pretrained_mla.config.rope_theta
+        assert provider.num_layers == hf_config.num_hidden_layers
+        assert provider.hidden_size == hf_config.hidden_size
+        assert provider.ffn_hidden_size == hf_config.intermediate_size
+        assert provider.moe_ffn_hidden_size == hf_config.moe_intermediate_size
+        assert provider.num_attention_heads == hf_config.num_attention_heads
+        assert provider.vocab_size == hf_config.vocab_size
+        assert provider.seq_length == hf_config.max_position_embeddings
+        assert provider.rotary_base == hf_config.rope_theta
 
         # MLA-specific
-        assert (
-            provider.kv_channels
-            == mock_pretrained_mla.config.hidden_size // mock_pretrained_mla.config.num_attention_heads
-        )
-        assert provider.kv_lora_rank == mock_pretrained_mla.config.kv_lora_rank
-        assert provider.qk_head_dim == mock_pretrained_mla.config.qk_nope_head_dim
-        assert provider.qk_pos_emb_head_dim == mock_pretrained_mla.config.qk_rope_head_dim
-        assert provider.v_head_dim == mock_pretrained_mla.config.v_head_dim
+        assert provider.kv_channels == hf_config.hidden_size // hf_config.num_attention_heads
+        assert provider.kv_lora_rank == hf_config.kv_lora_rank
+        assert provider.qk_head_dim == hf_config.qk_nope_head_dim
+        assert provider.qk_pos_emb_head_dim == hf_config.qk_rope_head_dim
+        assert provider.v_head_dim == hf_config.v_head_dim
 
         # dtype mapping
         assert provider.fp16 is True
@@ -106,6 +214,7 @@ class TestSarvamMLABridge:
         assert provider.add_qkv_bias is False
         assert provider.gated_linear_unit is True
         assert provider.position_embedding_type == "rope"
+        assert provider.transformer_layer_spec.func is get_deepseek_decoder_block_spec
 
     def test_provider_bridge_requires_torch_dtype_attribute(self):
         """Match Qwen-style robustness tests: torch_dtype is required for dtype mapping."""
@@ -132,30 +241,20 @@ class TestSarvamMLABridge:
         )
         hf = SimpleNamespace(config=cfg)
 
-        with pytest.raises(AssertionError, match="torch_dtype"):
+        with pytest.warns(FutureWarning), pytest.raises(AssertionError, match="torch_dtype"):
             SarvamMLABridge().provider_bridge(hf)
 
-    def test_provider_bridge_dtype_handling_multiple_precisions(self, sarvam_mla_config_dict):
-        cfg = Mock()
-        for k, v in sarvam_mla_config_dict.items():
-            setattr(cfg, k, v)
+    @pytest.mark.parametrize(
+        ("torch_dtype", "expected"),
+        [("bfloat16", torch.bfloat16), ("float16", torch.float16), ("float32", torch.float32)],
+    )
+    def test_dtype_handling_multiple_precisions(self, torch_dtype, expected):
+        hf_config = _sarvam_mla_config(torch_dtype=torch_dtype)
 
-        mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = cfg
-
-        bridge = SarvamMLABridge()
-
-        cfg.torch_dtype = "bfloat16"
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.bf16 is True
-        assert provider.fp16 is False
-        assert provider.params_dtype == torch.bfloat16
-
-        cfg.torch_dtype = "float16"
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.fp16 is True
-        assert provider.bf16 is False
-        assert provider.params_dtype == torch.float16
+        for config in (SarvamMLABridge().hf_config_to_model_config(hf_config), _provider(hf_config)):
+            assert config.params_dtype == expected
+            assert config.bf16 is (expected == torch.bfloat16)
+            assert config.fp16 is (expected == torch.float16)
 
     def test_mapping_registry_basic_lookups(self):
         bridge = SarvamMLABridge()
