@@ -85,6 +85,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronH_Super_Omni_Reasoning_V3",
     "NemotronH_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
+    "MiniCPMO",
     "NemotronLabsDiffusionModel",
     "DiffusionGemmaForBlockDiffusion",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
@@ -1702,6 +1703,17 @@ class AutoBridge(Generic[MegatronModelT]):
             ignored_source_key_prefixes = (
                 _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ()
             ) or None
+            declared_prefixes = getattr(type(self._model_bridge), "HF_EXPORT_IGNORED_SOURCE_PREFIXES", ())
+            if not isinstance(declared_prefixes, tuple) or any(
+                not isinstance(prefix, str) or not prefix or not prefix.endswith(".") or "*" in prefix
+                for prefix in declared_prefixes
+            ):
+                raise ValueError(
+                    "HF_EXPORT_IGNORED_SOURCE_PREFIXES must contain nonempty module prefixes ending in '.'."
+                )
+            ignored_source_key_prefixes = (
+                tuple(dict.fromkeys((*(ignored_source_key_prefixes or ()), *declared_prefixes))) or None
+            )
             saved_filenames = source.save_generator(
                 generator,
                 path,
@@ -2248,6 +2260,9 @@ class AutoBridge(Generic[MegatronModelT]):
             else self.hf_pretrained
         )
         model_config = self._model_bridge.hf_config_to_model_config(hf_config)
+        # Only families declaring this option need checkpoint code at build time.
+        if hasattr(model_config, "trust_remote_code"):
+            model_config.trust_remote_code = self.trust_remote_code
 
         hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
         if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):

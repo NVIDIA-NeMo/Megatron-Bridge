@@ -245,6 +245,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL, Kimi K3 |
 | [**Llama**](docs/models/llama/index.md) | Llama 3 / 3.1 / 3.2 / 3.3 |
+| [**MiniCPM-o**](docs/models/minicpmo/minicpmo-4.5.md) | MiniCPM-o 4.5 (text/image/audio understanding only; no speech generation or SFT/LoRA recipes) |
 | [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7, MiniMax-M3 |
 | [**Mistral**](docs/models/mistral/index.md) | Ministral 3 (3B/8B/14B) |
 | [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
