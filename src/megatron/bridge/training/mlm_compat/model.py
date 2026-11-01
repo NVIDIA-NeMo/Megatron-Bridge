@@ -31,10 +31,9 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
     get_gpt_mtp_block_spec,
 )
-from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import (
-    get_gpt_heterogeneous_layer_spec,
-)
+from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import get_gpt_heterogeneous_layer_spec
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.transformer import MegatronModule, ModuleSpec, TransformerConfig
 from megatron.core.transformer.module import Float16Module
@@ -97,10 +96,12 @@ def _gpt_provider(
     pre_process: bool = True,
     post_process: bool = True,
     vp_stage: Optional[int] = None,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> GPTModel:
     """Provide the GPTModel exactly as done by MLM using an argparse args object.
 
-    May need to set `args` and `config` with functools.partial.
+    May need to set `args` and `config` with functools.partial. Omitted process groups
+    are resolved from the legacy MPU grid at this compatibility boundary.
     """
     use_te = args.transformer_impl == "transformer_engine"
 
@@ -138,6 +139,9 @@ def _gpt_provider(
             config, transformer_layer_spec_for_mtp, use_transformer_engine=use_te, vp_stage=vp_stage
         )
 
+    if pg_collection is None:
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
     return GPTModel(
         config=config,
         transformer_layer_spec=transformer_layer_spec,
@@ -155,6 +159,7 @@ def _gpt_provider(
         rope_scaling=args.use_rope_scaling,
         mtp_block_spec=mtp_block_spec,
         vp_stage=vp_stage,
+        pg_collection=pg_collection,
     )
 
 
@@ -164,6 +169,7 @@ def _hybrid_provider(
     pre_process: bool = True,
     post_process: bool = True,
     vp_stage: Optional[int] = None,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> HybridModel:
     """Provide the HybridModel exactly as done by MLM using an argparse args object.
 
@@ -220,6 +226,10 @@ def _hybrid_provider(
             + "The supported position embedding types are rope and none."
         )
 
+    # Keep legacy MPU resolution at the compatibility provider, outside the model.
+    if pg_collection is None:
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
     model = HybridModel(
         config=config,
         hybrid_stack_spec=hybrid_stack_spec,
@@ -236,6 +246,7 @@ def _hybrid_provider(
         rotary_percent=args.rotary_percent,
         rotary_base=args.rotary_base,
         vp_stage=vp_stage,
+        pg_collection=pg_collection,
     )
 
     return model
@@ -247,9 +258,17 @@ def _mamba_provider(
     pre_process: bool = True,
     post_process: bool = True,
     vp_stage: Optional[int] = None,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> HybridModel:
     """Backward-compatible wrapper for ``_hybrid_provider``."""
-    return _hybrid_provider(args, config=config, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+    return _hybrid_provider(
+        args,
+        config=config,
+        pre_process=pre_process,
+        post_process=post_process,
+        vp_stage=vp_stage,
+        pg_collection=pg_collection,
+    )
 
 
 def _get_model(
