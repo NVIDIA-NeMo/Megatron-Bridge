@@ -236,7 +236,12 @@ def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:
     uses_custom_attention_mask = not getattr(dataset_cfg, "skip_getting_attention_mask_from_dataset", True)
     dataset_kwargs = getattr(dataset_cfg, "dataset_kwargs", None) or {}
     returns_padding_mask = dataset_kwargs.get("return_padding_mask", False)
-    return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg) or returns_padding_mask
+    return (
+        uses_custom_attention_mask
+        or _uses_packed_sequence_metadata(cfg)
+        or returns_padding_mask
+        or getattr(dataset_cfg, "inter_document_masking", False)
+    )
 
 
 def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) -> bool:
@@ -341,6 +346,7 @@ def get_batch_from_iterator(
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
     include_full_batch_fields: bool = False,
+    inter_document_masking: bool = False,
 ) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
@@ -349,11 +355,24 @@ def get_batch_from_iterator(
         include_mtp_inputs: Whether this PP stage needs Multi-Token Prediction input tensors.
         skip_getting_attention_mask_from_dataset: If set, the dataset will pass a None attention mask.
         include_full_batch_fields: Whether to include all standard training tensors regardless of PP stage.
+        inter_document_masking: Whether to adapt Core GPTDataset document boundaries (MBS1/CP1 only).
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
     """
     batch = next(data_iterator)
+
+    if inter_document_masking:
+        # Core GPTDataset pads cu_seqlens with repeated S, drop the repeats.
+        cu_seqlens = torch.unique_consecutive(batch["cu_seqlens"].squeeze(0))
+        max_seqlen = batch["max_seqlen"]
+        batch = {key: value for key, value in batch.items() if key not in ("cu_seqlens", "max_seqlen")}
+        batch.update(
+            cu_seqlens_q=cu_seqlens.unsqueeze(0),
+            cu_seqlens_kv=cu_seqlens.unsqueeze(0),
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
+        )
 
     required_device_keys = set()
     required_host_keys = set()
@@ -468,6 +487,7 @@ def get_batch(
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
         include_full_batch_fields=include_full_batch_fields,
+        inter_document_masking=getattr(cfg.dataset, "inter_document_masking", False),
     )
 
     cp_size = pg_collection.cp.size()

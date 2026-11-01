@@ -1848,6 +1848,16 @@ class ConfigContainer(Container):
         if self.train.train_iters is not None:
             self._calculate_scheduler_steps()
 
+        if getattr(self.dataset, "inter_document_masking", False):
+            assert self.train.micro_batch_size == 1, "Inter-document masking requires micro_batch_size=1."
+            assert self.validation.eval_micro_batch_size == 1, (
+                "Inter-document masking requires validation.eval_micro_batch_size=1."
+            )
+            assert self.model.context_parallel_size == 1, "Inter-document masking requires context_parallel_size=1."
+            assert self.dist.eval_context_parallel_size in (None, 1), (
+                "Inter-document masking requires dist.eval_context_parallel_size=1."
+            )
+
         if self.model.context_parallel_size > 1:
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
