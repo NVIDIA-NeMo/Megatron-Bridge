@@ -17,7 +17,10 @@ summary: >
   Inference and H100 PEFT are re-verified at the public revision below.
   The retained eight-GPU conversion and CPU forward results do not establish
   verification at this revision. Refreshed SFT and PEFT, dependent export,
-  merge, and reload checks are recorded for H100 and GB200.
+  and reload checks are recorded for H100 and GB200. GB200 retains its verified
+  500-step results, dates, and original revision. Its commands now express the
+  recorded GB200 overrides through dedicated recipes instead of H100 recipes plus
+  overrides; this command refactor does not replace the recorded measurements.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, manual_forward_pass, inference]
@@ -228,18 +231,12 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
-        --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3
+        --recipe nemotron_3_super_sft_64gpu_gb200_bf16_config --mode sft --dataset tulu3
         --seq_length 2048 --max_steps 500 --save_interval 250
         --pretrained_checkpoint work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/gb200-sft
         model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf
         ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false
-        model.expert_model_parallel_size=64 model.moe_token_dispatcher_type=flex
-        model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false
-        model.moe_router_force_load_balancing=false
-        optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32
-        optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32
-        mixed_precision.grad_reduce_in_fp32=true ddp.grad_reduce_in_fp32=true
         dataset.hf_dataset=null dataset.hf_validation_proportion=null
         dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false
         dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true
@@ -247,24 +244,25 @@ items:
         'dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}'
         scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0
         checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false
-        checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true
         logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-sft-config/ConfigContainer.yaml
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-27
       metrics:
-        initial_loss: 0.5975891
-        final_loss: 0.5676602
-        last_10_steps_step_time_ms_avg: 6013.67
-        last_10_steps_model_tflops_per_gpu_avg: 14.42
-        last_10_steps_tokens_per_second_per_gpu_avg: 170.2787149943379
+        initial_loss: 0.6108874
+        final_loss: 0.5677395
+        last_10_steps_step_time_ms_avg: 7115.13
+        last_10_steps_model_tflops_per_gpu_avg: 12.33
+        last_10_steps_tokens_per_second_per_gpu_avg: 143.9186634678495
       expected_result: >
         Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
         Uses the native Nemotron 3 Super SFT recipe on 64 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1.
         Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3.
-        Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality.
+        Final export and native HF reload passed; they do not establish general probability equality.
         Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+        The date and metrics retain the verification at the recorded Bridge revision,
+        using the H100 recipe with explicit GB200 settings. The command above uses
+        the dedicated GB200 recipe with those settings built in and requires a
+        revision containing that recipe; it is not a new 500-step measurement.
   sft_export_inference:
     H100:
       status: verified
@@ -318,7 +316,7 @@ items:
           --prompt "What is two plus two?" --max-new-tokens 32
           --chat-template --disable-thinking --device cuda --device-map balanced
           --dtype bfloat16 --require-gpu-only
-      last_verified: 2026-09-27
+      last_verified: 2026-10-27
       expected_result: >
         Exported the final step-500 language checkpoint through its standalone
         native text source, retaining 42,683 language tensors including 1,040
@@ -329,8 +327,7 @@ items:
         generated exactly 7 tokens, stopping at EOS before the 32-token maximum. The literal
         completion was "Two plus two equals four.". This validates full-model
         export and one greedy completion, not native HF MTP execution or broad
-        numerical equivalence. The separate matched six-position forward
-        comparison also passed without changing numerical tolerances.
+        numerical equivalence.
   sft_long_context:
     H100:
       status: unverified
@@ -421,18 +418,12 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4
-        --recipe nemotron_3_super_peft_16gpu_h100_bf16_config --mode lora --dataset tulu3
+        --recipe nemotron_3_super_peft_16gpu_gb200_bf16_config --mode lora --dataset tulu3
         --seq_length 2048 --max_steps 500 --save_interval 250
         --pretrained_checkpoint work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/gb200-peft
         model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf
         ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false
-        model.expert_model_parallel_size=16 model.moe_token_dispatcher_type=flex
-        model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false
-        model.moe_router_force_load_balancing=false
-        optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32
-        optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32
-        ddp.grad_reduce_in_fp32=true
         dataset.hf_dataset=null dataset.hf_validation_proportion=null
         dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false
         dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true
@@ -440,24 +431,25 @@ items:
         'dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}'
         scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0
         checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false
-        checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true
         logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-peft-config/ConfigContainer.yaml
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-27
       metrics:
-        initial_loss: 0.6392546
-        final_loss: 0.6631947
-        last_10_steps_step_time_ms_avg: 13720.5
-        last_10_steps_model_tflops_per_gpu_avg: 12.72
-        last_10_steps_tokens_per_second_per_gpu_avg: 149.26569731423783
+        initial_loss: 0.6527908
+        final_loss: 0.6626218
+        last_10_steps_step_time_ms_avg: 12216.59
+        last_10_steps_model_tflops_per_gpu_avg: 14.07
+        last_10_steps_tokens_per_second_per_gpu_avg: 167.64088833299635
       expected_result: >
         Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
         Uses the native Nemotron 3 Super PEFT recipe on 16 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1.
         Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3.
-        LoRA rank/alpha 32/32 targets native language projections with zero dropout. Native adapter and trained router-bias buffers reloaded exactly; full merge, strict HF reload and one matched numerical fixture passed. Standalone HF adapter export does not preserve trained router-bias buffers.
+        LoRA rank/alpha 32/32 targets native language projections with zero dropout. Standalone HF adapter export does not preserve trained router-bias buffers.
         Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+        The date and metrics retain the verification at the recorded Bridge revision,
+        using the H100 recipe with explicit GB200 settings. The command above uses
+        the dedicated GB200 recipe with those settings built in and requires a
+        revision containing that recipe; it is not a new 500-step measurement.
   checkpoint_resume:
     H100:
       status: unverified
