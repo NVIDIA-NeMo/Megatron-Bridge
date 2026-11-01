@@ -132,6 +132,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     rotary_percent: float = 1.0
     rotary_base: int = 10000
     seq_len_interpolation_factor: float | None = None
+    scatter_embedding_sequence_parallel: bool = True
     apply_rope_fusion: bool = True
     make_vocab_size_divisible_by: int = 128
     gated_linear_unit: bool = False
@@ -334,6 +335,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
                 post_process=post_process,
                 pg_collection=pg_collection,
                 vp_stage=vp_stage,
+                scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
             )
         finally:
             self._pg_collection = pg_collection

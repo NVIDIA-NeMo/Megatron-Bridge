@@ -447,4 +447,8 @@ class TestGemma4DenseVLConversion:
         )
 
         run_config = yaml.safe_load((tmp_path / "megatron" / "iter_0000000" / "run_config.yaml").read_text())
-        assert run_config["model"]["window_size"] == [1023, 0]
+        # Builder-backed checkpoints keep the decoder fields under model.transformer.
+        assert run_config["model"]["_builder_"] == (
+            "megatron.bridge.models.gemma_vl.gemma4_vl_builder.Gemma4DenseVLModelBuilder"
+        )
+        assert run_config["model"]["transformer"]["window_size"] == [1023, 0]
