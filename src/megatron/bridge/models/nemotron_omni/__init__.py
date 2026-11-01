@@ -24,6 +24,8 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import (
     NemotronOmniBridge,
     NemotronOmniLlavaBridge,
 )
+from megatron.bridge.models.nemotron_omni.nemotron_omni_builder import NemotronOmniModelBuilder
+from megatron.bridge.models.nemotron_omni.nemotron_omni_config import NemotronOmniModelConfig
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NemotronOmniLlavaModelProvider,
     NemotronOmniModelProvider,
@@ -35,6 +37,8 @@ __all__ = [
     "NemotronOmniModel",
     "NemotronOmniBridge",
     "Nemotron35SuperVLBridge",
+    "NemotronOmniModelBuilder",
+    "NemotronOmniModelConfig",
     "NemotronOmniModelProvider",
     "NemotronOmniLlavaModel",
     "NemotronOmniMimoRadioEncoder",

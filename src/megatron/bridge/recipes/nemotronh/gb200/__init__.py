@@ -14,6 +14,7 @@
 
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano import (
     nemotron_3_5_lightning_pretrain_8k_config,
+    nemotron_3_5_lightning_pretrain_8k_deterministic_config,
     nemotron_3_5_lightning_pretrain_8k_fsdp_config,
     nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config,
     nemotron_3_nano_gb200_pretrain_config,
@@ -31,6 +32,7 @@ from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
 
 __all__ = [
     "nemotron_3_5_lightning_pretrain_8k_config",
+    "nemotron_3_5_lightning_pretrain_8k_deterministic_config",
     "nemotron_3_5_lightning_pretrain_8k_fsdp_config",
     "nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config",
     "nemotron_3_nano_gb200_pretrain_config",

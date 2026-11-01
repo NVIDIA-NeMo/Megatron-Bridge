@@ -35,7 +35,6 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.models.qwen.modeling_qwen35.hybrid import (
@@ -48,8 +47,8 @@ def _qwen35_common_config_kwargs(text_config) -> dict[str, Any]:
     """Return the Qwen3.5 LM configuration shared by the dense and MoE variants.
 
     Covers normalization and the GDN hybrid architecture. The text bridges add these
-    fields to their builder config kwargs, and the VL bridges apply them to their
-    providers through ``_apply_qwen35_common_config``.
+    fields to their builder config kwargs, which the VL bridges reuse for their
+    language model.
 
     Args:
         text_config: HuggingFace config object (or text_config for VLMs)
@@ -108,42 +107,6 @@ def _qwen35_moe_config_kwargs(text_config) -> dict[str, Any]:
     )
 
 
-def _apply_qwen35_common_config(provider: GPTModelProvider, text_config) -> None:
-    """Apply Qwen3.5 common LM configuration to a Megatron provider.
-
-    Covers settings shared by both dense and MoE variants:
-    normalization, GDN hybrid architecture, and MTP.
-
-    Args:
-        provider: GPTModelProvider (or subclass) to configure.
-        text_config: HuggingFace config object (or text_config for VLMs)
-            so that language-model fields are read from the correct level.
-    """
-    for name, value in _qwen35_common_config_kwargs(text_config).items():
-        setattr(provider, name, value)
-
-    # --- MTP (Multi-Token Prediction) ---
-    if provider.mtp_num_layers:
-        provider.mtp_loss_scaling_factor = 0.1
-
-
-def _apply_qwen35_moe_config(provider: GPTModelProvider, text_config) -> None:
-    """Apply Qwen3.5 MoE-specific configuration to a Megatron provider.
-
-    Calls _apply_qwen35_common_config first, then adds MoE parameters.
-
-    Args:
-        provider: GPTModelProvider (or subclass) to configure.
-        text_config: HuggingFace config object (or text_config for VLMs)
-            so that language-model fields are read from the correct level.
-    """
-    _apply_qwen35_common_config(provider, text_config)
-
-    # --- MoE specific parameters ---
-    for name, value in _qwen35_moe_config_kwargs(text_config).items():
-        setattr(provider, name, value)
-
-
 def _moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed, transpose_on_export=False):
     """Routed-expert mappings for a MoE decoder, for both the grouped-GEMM and SequentialMLP layouts.
 
@@ -182,6 +145,16 @@ class _Qwen35HybridBridge(MegatronModelBridge):
     PROVIDER_CLASS = HybridModelProvider
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
+    def hf_config_to_block_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Return the language config in HF block units, before the split into Hybrid positions."""
+        raise NotImplementedError
+
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3.5 text config to Hybrid builder config kwargs."""
+        config_kwargs = self.hf_config_to_block_config_kwargs(hf_config)
+        configure_qwen35_hybrid(config_kwargs, hf_config)
+        return config_kwargs
+
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Keep the deprecated provider's defaults identical to the canonical builder."""
         config = self.hf_config_to_model_config(hf_config)
@@ -217,8 +190,8 @@ class Qwen35MoEBridge(_Qwen35HybridBridge):
 
     Architecture: 15 × (3 × (GDN → MoE) + 1 × (Attention → MoE)) = 60 layers
 
-    The VL variant (Qwen35VLMoEBridge) reuses the LM settings and mapping
-    logic via the module-level helpers and static mapping methods.
+    The VL variant (Qwen35VLMoEBridge) reuses this bridge's builder config kwargs
+    for its language model, and the static mapping methods.
 
     Example:
         >>> from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -473,9 +446,9 @@ class Qwen35MoEBridge(_Qwen35HybridBridge):
 
         return mapping_list
 
-    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Convert a Hugging Face Qwen3.5 MoE text config to builder config kwargs."""
-        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+    def hf_config_to_block_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3.5 MoE text config to builder config kwargs in HF block units."""
+        config_kwargs = MegatronModelBridge.hf_config_to_model_config_kwargs(self, hf_config)
 
         # --- LM-specific parameters ---
         config_kwargs.update(_qwen35_common_config_kwargs(hf_config))
@@ -497,7 +470,6 @@ class Qwen35MoEBridge(_Qwen35HybridBridge):
         # --- MTP (Multi-Token Prediction) ---
         if config_kwargs.get("mtp_num_layers"):
             config_kwargs["mtp_loss_scaling_factor"] = 0.1
-        configure_qwen35_hybrid(config_kwargs, hf_config)
         return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
@@ -554,9 +526,8 @@ class Qwen35Bridge(_Qwen35HybridBridge):
 
     Architecture (27B): 16 × (3 × GDN + 1 × Attention) = 64 layers
 
-    This class also serves as the base for Qwen35VLBridge (vision-language
-    variant), which reuses the common LM settings and mapping logic via the
-    module-level helpers and static mapping methods.
+    The VL variant (Qwen35VLBridge) reuses this bridge's builder config kwargs
+    for its language model, and the static mapping methods.
 
     Example:
         >>> from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -722,9 +693,9 @@ class Qwen35Bridge(_Qwen35HybridBridge):
 
         return mapping_list
 
-    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Convert a Hugging Face Qwen3.5 dense text config to builder config kwargs."""
-        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+    def hf_config_to_block_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3.5 dense text config to builder config kwargs in HF block units."""
+        config_kwargs = MegatronModelBridge.hf_config_to_model_config_kwargs(self, hf_config)
 
         # --- LM-specific parameters ---
         config_kwargs.update(_qwen35_common_config_kwargs(hf_config))
@@ -745,7 +716,6 @@ class Qwen35Bridge(_Qwen35HybridBridge):
         # --- MTP (Multi-Token Prediction) ---
         if config_kwargs.get("mtp_num_layers"):
             config_kwargs["mtp_loss_scaling_factor"] = 0.1
-        configure_qwen35_hybrid(config_kwargs, hf_config)
         return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:

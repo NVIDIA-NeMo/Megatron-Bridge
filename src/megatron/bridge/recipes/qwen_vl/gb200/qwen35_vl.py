@@ -222,9 +222,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     """Build the shared 32-GB200 long-context SFT configuration."""
     cfg = _sft_common_vlm()
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).get_model_config()
     cfg.model.gdn_kernel_backend = "transformer_engine"
     cfg.model.gdn_pre_gated_delta_rule_fusion = True
     cfg.model.calculate_per_token_loss = True
