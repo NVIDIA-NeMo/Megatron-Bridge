@@ -74,6 +74,25 @@ When Megatron FSDP is enabled, Bridge also adjusts some settings
 automatically, including disabling `average_in_collective` and several
 buffer-reuse optimizations that do not match the FSDP path.
 
+### Separate all-gather communicator
+
+For Megatron FSDP configurations that overlap parameter all-gather with gradient
+reduce-scatter, enable a second communicator over the same replica ranks:
+
+```python
+cfg.dist.create_all_gather_group = True
+```
+
+Bridge then populates `ProcessGroupCollection.dp_cp_ag`; with expert parallelism
+it also populates `ProcessGroupCollection.expt_dp_ag`. This works with both the
+standard MCore process-group initialization and `use_decentralized_pg=True`.
+The extra groups reuse the exact dense and expert replica topology selected at
+initialization, including context/expert parallel layout and rank offsets.
+
+The option only creates and wires the communicators. The FSDP/optimizer overlap
+configuration must still select parameter-gather overlap for them to provide a
+performance benefit.
+
 ## Compatibility and Caveats
 
 At the configuration level, Megatron FSDP is intended to work with:

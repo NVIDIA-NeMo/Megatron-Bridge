@@ -411,6 +411,7 @@ def _create_pg_collection(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
+    create_all_gather_group: bool = False,
     world_size: int = None,
     rank_offset: int = None,
     save_grid: bool = False,
@@ -503,7 +504,7 @@ def _create_pg_collection(
     embd_pg = None
     pos_embd_pg = None
     # Enumerate ranks per PP group
-    pp_rank_lists = grid._gen_rank_enum(["pp"])
+    pp_rank_lists = grid.get_rank_enum(["pp"])
     # Determine embedding ranks for each pp group
     embedding_rank_lists: list[list[int]] = []
     pos_embedding_rank_lists: list[list[int]] = []
@@ -538,6 +539,29 @@ def _create_pg_collection(
         # combine tp-ep-pp ranks across the intra-partial DP slice.
         intra_dist_opt_pg = expert_grid.create_pg(["tp", "ep", inner_dp_dim, "pp"])
 
+    # Separate communicators let parameter all-gather overlap gradient reduce-scatter.
+    dp_cp_ag_pg = None
+    expt_dp_ag_pg = None
+    if create_all_gather_group:
+        # create_pg rejects duplicate dimensions; use the public rank enumeration
+        # to create another communicator with the existing group's membership.
+        dp_cp_rank_lists = grid.get_rank_enum(["dp", "cp"])
+        if dp_cp_rank_lists:
+            dp_cp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(
+                dp_cp_rank_lists,
+                backend="nccl",
+                group_desc="DATA_PARALLEL_GROUP_WITH_CP_AG",
+            )
+
+        if ep_size > 1:
+            expt_dp_rank_lists = expert_grid.get_rank_enum(dp_group_dims)
+            if expt_dp_rank_lists:
+                expt_dp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(
+                    expt_dp_rank_lists,
+                    backend="nccl",
+                    group_desc="EXPERT_DATA_PARALLEL_GROUP_AG",
+                )
+
     # Build ProcessGroupCollection with available groups.
     pg_collection = ProcessGroupCollection(
         tp=tp_pg,
@@ -555,7 +579,9 @@ def _create_pg_collection(
         tp_dp_cp=tp_dp_cp_pg,
         dp=dp_pg,
         dp_cp=dp_cp_pg,
+        dp_cp_ag=dp_cp_ag_pg,
         expt_dp=expt_dp_pg,
+        expt_dp_ag=expt_dp_ag_pg,
         intra_dp_cp=dp_cp_pg,
         intra_expt_dp=intra_expt_dp_pg if intra_expt_dp_pg is not None else expt_dp_pg,
         inter_dist_opt=inter_dist_opt_pg,
@@ -571,6 +597,7 @@ def _create_dist_train_pgs(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
+    create_all_gather_group: bool = False,
 ) -> DistTrainProcessGroupCollection:
     """Create process group collections for vision and language models for dist train."""
     vision_model_config = copy(model_config)
@@ -593,6 +620,7 @@ def _create_dist_train_pgs(
         world_size=model_config.dist_train.vision_world_size,
         rank_offset=0,
         save_grid=True,
+        create_all_gather_group=create_all_gather_group,
     )
     language_pg_collection = _create_pg_collection(
         language_model_config,
@@ -602,6 +630,7 @@ def _create_dist_train_pgs(
         world_size=model_config.dist_train.language_world_size,
         rank_offset=model_config.dist_train.vision_world_size,
         save_grid=True,
+        create_all_gather_group=create_all_gather_group,
     )
     grid_dict = {"vision_module": vision_model_config.grid, "language_module": language_model_config.grid}
 
@@ -793,6 +822,7 @@ def _initialize_distributed(
                 num_distributed_optimizer_instances,
                 get_embedding_ranks=get_embedding_ranks,
                 get_position_embedding_ranks=get_position_embedding_ranks,
+                create_all_gather_group=dist_config.create_all_gather_group,
             )
             return pg_collection
         pg_collection = _create_pg_collection(
@@ -800,6 +830,7 @@ def _initialize_distributed(
             num_distributed_optimizer_instances,
             get_embedding_ranks=get_embedding_ranks,
             get_position_embedding_ranks=get_position_embedding_ranks,
+            create_all_gather_group=dist_config.create_all_gather_group,
         )
         if get_rank_safe() == 0:
             tp = int(model_config.tensor_model_parallel_size)
@@ -862,6 +893,20 @@ def _initialize_distributed(
                     f"> initialized pipeline model parallel with size "
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
+
+        if dist_config.create_all_gather_group:
+            for_expert_parallelism = (getattr(model_config, "expert_model_parallel_size", 1) or 1) > 1
+            dp_cp_ag, expt_dp_ag = parallel_state.create_all_gather_groups(
+                for_expert_parallelism=for_expert_parallelism,
+                timeout=datetime.timedelta(minutes=dist_config.distributed_timeout_minutes),
+                nccl_comm_cfgs=None,
+            )
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+            pg_collection.dp_cp_ag = dp_cp_ag
+            if expt_dp_ag is not None:
+                pg_collection.expt_dp_ag = expt_dp_ag
+            return pg_collection
+
         # Return a ProcessGroupCollection using mpu process groups
         return ProcessGroupCollection.use_mpu_process_groups()
 

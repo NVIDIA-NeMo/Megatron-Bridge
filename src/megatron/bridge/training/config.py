@@ -193,6 +193,14 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     global parallel state (mpu) variables. When True, parallel groups are obtained from
     the pg_collection object rather than the global megatron.core.parallel_state module."""
 
+    create_all_gather_group: bool = False
+    """Create separate parameter all-gather groups over the data-parallel replica ranks.
+
+    Populates ``dp_cp_ag`` and, when expert parallelism is enabled, ``expt_dp_ag``
+    in the process-group collection. FSDP must also enable parameter-gather overlap
+    to use these groups concurrently with gradient reduce-scatter.
+    """
+
     eval_context_parallel_size: int | None = None
     """If set and different from model.context_parallel_size, validation runs with this CP
     degree instead of the training CP degree. Requires use_decentralized_pg=True. The caller
