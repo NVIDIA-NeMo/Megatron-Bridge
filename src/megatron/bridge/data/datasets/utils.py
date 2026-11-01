@@ -139,7 +139,7 @@ def safe_map(fn, iterable, workers=1, ctx="fork"):
     Args:
         fn: Function to apply to each item
         iterable: Items to process
-        workers: Number of worker processes
+        workers: Maximum number of worker processes. At most one worker starts for each item.
         ctx: Multiprocessing context ("fork", "spawn", etc.)
 
     Returns:
