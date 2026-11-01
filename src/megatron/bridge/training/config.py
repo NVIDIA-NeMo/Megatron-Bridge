@@ -194,11 +194,12 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     the pg_collection object rather than the global megatron.core.parallel_state module."""
 
     create_all_gather_group: bool = False
-    """Create separate all-gather process groups for AG/RS overlap optimization.
-    When True, creates separate process groups for all-gather operations, enabling
-    overlap between all-gather (forward pass) and reduce-scatter (backward pass)
-    communications in FSDP training. This improves training performance by hiding
-    communication latency."""
+    """Create separate parameter all-gather groups over the data-parallel replica ranks.
+
+    Populates ``dp_cp_ag`` and, when expert parallelism is enabled, ``expt_dp_ag``
+    in the process-group collection. FSDP must also enable parameter-gather overlap
+    to use these groups concurrently with gradient reduce-scatter.
+    """
 
     eval_context_parallel_size: int | None = None
     """If set and different from model.context_parallel_size, validation runs with this CP

@@ -539,12 +539,12 @@ def _create_pg_collection(
         # combine tp-ep-pp ranks across the intra-partial DP slice.
         intra_dist_opt_pg = expert_grid.create_pg(["tp", "ep", inner_dp_dim, "pp"])
 
-    # Create all-gather groups for AG/RS overlap if requested
+    # Separate communicators let parameter all-gather overlap gradient reduce-scatter.
     dp_cp_ag_pg = None
     expt_dp_ag_pg = None
     if create_all_gather_group:
-        # Create regular DP all-gather group with same ranks as dp_cp_pg
-        # Use HyperCommGrid to enumerate ranks for dp-cp groups
+        # create_pg rejects duplicate dimensions; use the public rank enumeration
+        # to create another communicator with the existing group's membership.
         dp_cp_rank_lists = grid.get_rank_enum(["dp", "cp"])
         if dp_cp_rank_lists:
             dp_cp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(
@@ -553,9 +553,7 @@ def _create_pg_collection(
                 group_desc="DATA_PARALLEL_GROUP_WITH_CP_AG",
             )
 
-        # Create expert DP all-gather group if expert parallelism is enabled
         if ep_size > 1:
-            # Use expert grid to enumerate ranks for expert dp groups
             expt_dp_rank_lists = expert_grid.get_rank_enum(dp_group_dims)
             if expt_dp_rank_lists:
                 expt_dp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(
@@ -896,15 +894,13 @@ def _initialize_distributed(
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
 
-        # Create AG groups if requested
         if dist_config.create_all_gather_group:
             for_expert_parallelism = (getattr(model_config, "expert_model_parallel_size", 1) or 1) > 1
             dp_cp_ag, expt_dp_ag = parallel_state.create_all_gather_groups(
                 for_expert_parallelism=for_expert_parallelism,
                 timeout=datetime.timedelta(minutes=dist_config.distributed_timeout_minutes),
-                nccl_comm_cfgs=None,  # Could use dist_config.nccl_communicator_config_path if needed
+                nccl_comm_cfgs=None,
             )
-            # Get ProcessGroupCollection and populate with AG groups
             pg_collection = ProcessGroupCollection.use_mpu_process_groups()
             pg_collection.dp_cp_ag = dp_cp_ag
             if expt_dp_ag is not None:
