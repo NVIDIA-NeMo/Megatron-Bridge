@@ -20,7 +20,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
 )
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
-    deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
+    _build_deepseek_v4_flash_gb200_fp8mx,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
@@ -31,7 +31,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
-    cfg = deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
+    cfg = _build_deepseek_v4_flash_gb200_fp8mx()
 
     cfg.model.expert_model_parallel_size = 32
     cfg.train.micro_batch_size = 2
