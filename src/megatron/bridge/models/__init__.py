@@ -191,6 +191,7 @@ from megatron.bridge.models.olmoe import (
     OlMoEBridge,
     OlMoEModelProvider,
 )
+from megatron.bridge.models.qwen import Qwen4ExpBridge, Qwen4ExpTextBridge
 from megatron.bridge.models.qwen3_asr import (
     Qwen3ASRBridge,
     Qwen3ASRModel,
@@ -342,6 +343,8 @@ __all__ = [
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
     "Qwen35VLBridge",
+    "Qwen4ExpBridge",
+    "Qwen4ExpTextBridge",
     "Qwen35TokenClassificationBridge",
     "Qwen35TokenClassificationModelProvider",
     "Qwen35VLModelBuilder",
