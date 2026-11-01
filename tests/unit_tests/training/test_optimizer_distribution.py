@@ -279,14 +279,13 @@ def test_reject_multiple_layerwise_optimizer_instances(name):
 
 
 @pytest.mark.parametrize("name", ["muon", "dist_muon"])
-@pytest.mark.parametrize("backend", ["torch", "megatron_dist", "megatron_ddp"])
+@pytest.mark.parametrize("backend", ["torch", "megatron_ddp"])
 def test_reject_emerging_optimizer_fsdp_before_model_construction(name, backend):
     from megatron.bridge.recipes.gpt.vanilla_gpt import vanilla_gpt_pretrain_config
 
     cfg = vanilla_gpt_pretrain_config()
     cfg.optimizer.optimizer = name
     cfg.dist.use_torch_fsdp2 = backend == "torch"
-    cfg.dist.use_megatron_fsdp = backend == "megatron_dist"
     cfg.ddp.use_megatron_fsdp = backend == "megatron_ddp"
     with pytest.raises(ValueError, match="do not support Megatron-FSDP or Torch-FSDP2"):
         cfg.validate()
@@ -309,6 +308,8 @@ def test_runtime_overlap_override_precedes_layerwise_validation(name, source, ov
     cfg.optimizer.use_distributed_optimizer = source in ("optimizer", "both")
     cfg.ddp.use_distributed_optimizer = source in ("ddp", "both")
     cfg.optimizer.overlap_param_gather_with_optimizer_step = True
+    # Megatron Core only accepts optimizer-step overlap together with param-gather overlap.
+    cfg.ddp.overlap_param_gather = True
     cfg.comm_overlap = (
         CommOverlapConfig(tp_comm_overlap=False, overlap_param_gather_with_optimizer_step=override)
         if override is not None

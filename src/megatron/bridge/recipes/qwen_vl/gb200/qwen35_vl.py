@@ -143,6 +143,8 @@ def _apply_qwen35_vl_35b_a3b_gb200_functional_defaults(cfg: ConfigContainer) -> 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
+    # HybridEP fused permute requires identical chunk sizes; combine uses 128 below.
+    cfg.model.moe_permute_fusion_into_hybridep = False
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.high_priority_a2a_comm_stream = True
@@ -222,9 +224,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     """Build the shared 32-GB200 long-context SFT configuration."""
     cfg = _sft_common_vlm()
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).get_model_config()
     cfg.model.gdn_kernel_backend = "transformer_engine"
     cfg.model.gdn_pre_gated_delta_rule_fusion = True
     cfg.model.calculate_per_token_loss = True

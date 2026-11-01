@@ -60,7 +60,12 @@ from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, _existing_safetensors_files
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
-from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
+from megatron.bridge.models.model_provider import (
+    GetModelKwargs,
+    ModelParallelKwargs,
+    ModelProviderMixin,
+    build_distributed_models,
+)
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
 
@@ -80,6 +85,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronH_Super_Omni_Reasoning_V3",
     "NemotronH_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
+    "MiniCPMO",
     "NemotronLabsDiffusionModel",
     "DiffusionGemmaForBlockDiffusion",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
@@ -511,9 +517,9 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_path: Directory path where the Megatron checkpoint is stored
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
-            trust_remote_code: Whether to trust remote code when loading config.
-                Defaults to False for security. Set to True only for models that
-                require custom modeling code from the repository.
+            trust_remote_code: Whether to trust remote code when loading the reference config and
+                the checkpoint's run config. Defaults to False for security. Set to True only for
+                models that require custom modeling code from the repository.
 
         Returns:
             AutoBridge: Bridge instance configured for the architecture
@@ -527,6 +533,7 @@ class AutoBridge(Generic[MegatronModelT]):
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
         from megatron.bridge.training.model_load_save import load_model_config
         from megatron.bridge.training.utils.checkpoint_utils import get_hf_source_from_model_config
+        from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
 
         checkpoint_path = Path(megatron_path)
         if not checkpoint_path.exists():
@@ -546,12 +553,14 @@ class AutoBridge(Generic[MegatronModelT]):
             )
 
         # 1. Load config from both sides
-        megatron_cfg, _ = load_model_config(str(run_config.parent))
         if trust_remote_code:
             logger.warning(
                 "Loading a model with trust_remote_code=True allows arbitrary code execution "
                 "from the model repository. Only use this with models you trust."
             )
+            # The run config can restore config classes from the repository code, such as a VLM's vision config.
+            register_allowed_target_prefix("transformers_modules.")
+        megatron_cfg, _ = load_model_config(str(run_config.parent))
         text_reference = None
         if getattr(megatron_cfg, "hf_model_text_only", False) is True:
             # A replacement reference repository need not contain the source revision.
@@ -984,7 +993,7 @@ class AutoBridge(Generic[MegatronModelT]):
         export_plan: Optional["ModelOptExportPlan"] = None,
         merge_adapter_weights: bool = True,
     ) -> Iterable[tuple["HFWeightTuple", ...]]:
-        """Export one materialized ModelOpt output group per conversion task.
+        """Export materialized ModelOpt weight groups.
 
         Args:
             model: Megatron model instance or virtual-pipeline model list.
@@ -996,7 +1005,8 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Yields:
             One tuple per conversion task. Empty tuples preserve tasks that emit no
-            tensors on a given topology.
+            tensors on a given topology. Bridges may append groups for checkpoint-only
+            tensors after the conversion-task groups.
 
         Note:
             This is a distributed collective stream. Every rank must consume groups
@@ -1697,6 +1707,23 @@ class AutoBridge(Generic[MegatronModelT]):
             ignored_source_key_prefixes = (
                 _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ()
             ) or None
+            declared_prefixes = getattr(type(self._model_bridge), "HF_EXPORT_IGNORED_SOURCE_PREFIXES", ())
+            if not isinstance(declared_prefixes, tuple) or any(
+                not isinstance(prefix, str) or not prefix or not prefix.endswith(".") or "*" in prefix
+                for prefix in declared_prefixes
+            ):
+                raise ValueError(
+                    "HF_EXPORT_IGNORED_SOURCE_PREFIXES must contain nonempty module prefixes ending in '.'."
+                )
+            ignored_source_key_prefixes = (
+                tuple(dict.fromkeys((*(ignored_source_key_prefixes or ()), *declared_prefixes))) or None
+            )
+            ignored_source_key_suffixes = tuple(
+                dict.fromkeys(
+                    (("_scale_inv",) if weight_dtype is not None else ())
+                    + tuple(getattr(type(bridge), "DEQUANTIZED_SOURCE_KEY_SUFFIXES", ()))
+                )
+            )
             saved_filenames = source.save_generator(
                 generator,
                 path,
@@ -1704,7 +1731,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 distributed_save=distributed_save,
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
-                ignored_source_key_suffixes=("_scale_inv",) if weight_dtype is not None else None,
+                ignored_source_key_suffixes=ignored_source_key_suffixes or None,
             )
         else:
             # Config-only path: shard and write safetensors directly
@@ -2243,6 +2270,9 @@ class AutoBridge(Generic[MegatronModelT]):
             else self.hf_pretrained
         )
         model_config = self._model_bridge.hf_config_to_model_config(hf_config)
+        # Only families declaring this option need checkpoint code at build time.
+        if hasattr(model_config, "trust_remote_code"):
+            model_config.trust_remote_code = self.trust_remote_code
 
         hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
         if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):
@@ -2309,6 +2339,10 @@ class AutoBridge(Generic[MegatronModelT]):
             pg_collection: Existing process groups. Standalone single-process
                 groups are initialized when omitted.
             **kwargs: Arguments for ``ModelBuilder.build_distributed_models``.
+                Its ``mixed_precision_wrapper`` (``Float16Module`` when omitted,
+                ``None`` to skip wrapping) keeps router expert biases and
+                parameters named in ``_keep_in_float32_parameter_names`` in FP32,
+                as :meth:`to_megatron_model` does.
 
         Returns:
             Distributed model stages created by the configured builder.
@@ -2361,11 +2395,10 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.gtp import classify_gtp_remat_chains, configure_gtp_remat
 
             configure_gtp_remat(model_config)
-            builder = model_config.get_builder_cls()(model_config)
             if pg_collection is None:
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
             kwargs.setdefault("data_parallel_random_init", False)
-            models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            models = build_distributed_models(model_config, pg_collection, **kwargs)
             classify_gtp_remat_chains(models, model_config)
             for model in models:
                 model.model_config = model_config
@@ -2665,6 +2698,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         bridge = model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
         bridge.export_weight_dtype = self.export_weight_dtype
+        bridge.trust_remote_code = self.trust_remote_code
         return bridge
 
     def _text_only_pretrained_from_path(self, path: str | Path) -> PreTrainedCausalLM:

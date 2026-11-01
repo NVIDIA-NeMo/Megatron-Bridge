@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-def create_mock_dataset_config(seq_length, num_workers=8, pin_memory=False, persistent_workers=False):
+def create_mock_dataset_config(
+    seq_length, num_workers=8, pin_memory=False, persistent_workers=False, create_attention_mask=True
+):
     """Create mock dataset configuration for Megatron-Bridge."""
     from megatron.bridge.training.config import MockGPTDatasetConfig
 
@@ -30,6 +32,7 @@ def create_mock_dataset_config(seq_length, num_workers=8, pin_memory=False, pers
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
+        create_attention_mask=create_attention_mask,
     )
 
 

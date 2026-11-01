@@ -152,13 +152,18 @@ class OptimizerConfig(MCoreOptimizerConfig):
         pass
 
     def finalize(self) -> None:
-        """Execute the deferred MCore post-init logic.
+        """Execute the deferred MCore validation and finalization.
 
-        This method calls the original Megatron Core OptimizerConfig.__post_init__()
-        to compute derived fields based on the current field values.
+        This method normalizes optimizer aliases, runs Megatron Core's
+        ``OptimizerConfig.validate()`` and then ``finalize_optimizer_config()`` to
+        resolve dtypes and derived fields based on the current field values.
         """
         normalize_optimizer_config(self)
-        super().__post_init__()
+        if hasattr(MCoreOptimizerConfig, "finalize_optimizer_config"):
+            self.validate()
+            self.finalize_optimizer_config()
+        else:
+            super().__post_init__()
 
 
 @dataclass(kw_only=True)
@@ -170,13 +175,6 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     (e.g., via CUDA_VISIBLE_DEVICES environment variable). When True, uses device 0
     instead of local rank for CUDA device selection. This is useful when launching
     with external process managers that handle GPU visibility.
-    """
-
-    use_megatron_fsdp: bool = False
-    """Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2.
-
-    Megatron Core no longer declares this field on its ``DistributedInitConfig``; Bridge keeps it
-    so recipes and user configs can continue to enable Megatron FSDP through ``cfg.dist``.
     """
 
     gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
@@ -328,10 +326,12 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         return config_dict
 
     def finalize(self) -> None:
-        """Execute the deferred MCore post-init logic and Bridge-specific checks.
+        """Execute the deferred MCore validation and Bridge-specific checks.
 
-        This method calls the original Megatron Core GPTDatasetConfig.__post_init__()
-        and then performs Bridge-specific validation.
+        This method runs Megatron Core's tokenizer-free ``GPTDatasetConfig`` checks
+        and then performs Bridge-specific validation. The tokenizer is bound later
+        during setup; ``BlendedMegatronDatasetBuilder`` runs the full ``validate()``
+        before building datasets.
         """
         self.sequence_length = self.seq_length
 
@@ -349,8 +349,12 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
             with open(self.per_dataset_sequences_path, "r") as f:
                 self.sequences_per_dataset = json.load(f)
 
-        # Call MCore's post_init
-        super(MCoreGPTDatasetConfig, self).__post_init__()
+        # Run MCore's checks that do not need the tokenizer.
+        if hasattr(MCoreGPTDatasetConfig, "validate_without_tokenizer"):
+            MCoreGPTDatasetConfig.validate_without_tokenizer(self)
+        else:
+            # Older dev validates the blend before the tokenizer is available.
+            super(MCoreGPTDatasetConfig, self).__post_init__()
 
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
@@ -1112,10 +1116,6 @@ class ConfigContainer(Container):
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """Validate and apply configuration required by the selected Megatron-FSDP version."""
-        # Set configs needed for Megatron-FSDP.
-        self.dist.use_megatron_fsdp = True
-        self.ddp.use_megatron_fsdp = True
-
         megatron_fsdp_version = self.ddp.megatron_fsdp_version
         if megatron_fsdp_version == 1:
             self._validate_and_apply_megatron_fsdp_v1_configs()
@@ -1222,7 +1222,6 @@ class ConfigContainer(Container):
         if self.model.fp4 or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP4.")
 
-        self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
         self.optimizer.use_distributed_optimizer = False
         self.ddp.overlap_grad_reduce = False
@@ -1445,7 +1444,7 @@ class ConfigContainer(Container):
         """
         _validate_and_sync_distributed_optimizer_settings(self)
         if self.optimizer.optimizer not in ("adam", "sgd") and (
-            self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
+            self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
         ):
             raise ValueError("Emerging optimizers such as Muon do not support Megatron-FSDP or Torch-FSDP2.")
 
@@ -1642,7 +1641,7 @@ class ConfigContainer(Container):
                     "checkpoint.dist_ckpt_optim_fully_reshardable=False."
                 )
             if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
-                if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+                if self.ddp.use_megatron_fsdp:
                     raise ValueError(
                         "GTP + mxfp8 is not supported with Megatron FSDP because "
                         "reuse_grad_buf_for_mxfp8_param_ag is required."
@@ -1739,7 +1738,7 @@ class ConfigContainer(Container):
             if not self.model.mtp_num_layers:
                 raise ValueError("freeze_base_model_for_mtp requires mtp_num_layers.")
         if getattr(self.model, "moe_shortcut_connection", False) and (
-            self.dist.use_torch_fsdp2 or self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+            self.dist.use_torch_fsdp2 or self.ddp.use_megatron_fsdp
         ):
             raise ValueError("moe_shortcut_connection is not supported with FSDP.")
         # Core also enables LayerWise for legacy dist_* optimizer names.
@@ -1749,14 +1748,14 @@ class ConfigContainer(Container):
             raise ValueError("Layer-wise distributed optimizer does not support moe_single_grouped_weight.")
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
-        if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
+        if self.ddp.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive.")
         # Validate Megatron-FSDP configuration.
-        if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+        if self.ddp.use_megatron_fsdp:
             self._validate_and_apply_megatron_fsdp_configs()
 
         # Validate reuse_grad_buf_for_mxfp8_param_ag when FSDP is not enabled
-        is_fsdp = self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+        is_fsdp = self.ddp.use_megatron_fsdp
         if (
             not is_fsdp
             and self.mixed_precision is not None

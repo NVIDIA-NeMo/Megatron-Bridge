@@ -287,6 +287,28 @@ def _route_flat_builder_override(cfg: DictConfig, override: str) -> str:
     return override
 
 
+def _is_hf_config(val: Any) -> bool:
+    """Check if a value is a Hugging Face ``PretrainedConfig`` or ``GenerationConfig``.
+
+    The OmegaConf conversion stores these as ``_target_`` dicts that override application
+    instantiates again, so they are leaves rather than dataclasses to walk field by field.
+    Walking their fields would also fail for heterogeneous configs (Transformers 5.20+), whose
+    per-layer attributes raise when read for the whole model.
+
+    Args:
+        val: The value to check
+
+    Returns:
+        True if the value is a Hugging Face config, False otherwise (or without transformers)
+    """
+    try:
+        from transformers import GenerationConfig, PretrainedConfig  # type: ignore
+    except ModuleNotFoundError:
+        # transformers is optional
+        return False
+    return isinstance(val, (GenerationConfig, PretrainedConfig))
+
+
 def _is_omegaconf_problematic(val: Any) -> bool:
     """Check if a value is a callable that OmegaConf cannot handle.
 
@@ -340,21 +362,15 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
 
     # Handle Hugging Face GenerationConfig / PretrainedConfig by converting to a callable dict
     # compatible with our YAML representer logic
-    try:
-        from transformers import GenerationConfig, PretrainedConfig  # type: ignore
-
-        if isinstance(val_to_convert, (GenerationConfig, PretrainedConfig)):
-            cfg_class = val_to_convert.__class__
-            target = f"{inspect.getmodule(cfg_class).__name__}.{cfg_class.__qualname__}.from_dict"
-            logger.debug(f"Converting {cfg_class.__qualname__} at {current_path} to callable dict")
-            return {
-                "_target_": target,
-                "_call_": True,
-                "config_dict": val_to_convert.to_dict(),
-            }
-    except ModuleNotFoundError:
-        # transformers is optional; if unavailable, fall through to other handlers
-        pass
+    if _is_hf_config(val_to_convert):
+        cfg_class = val_to_convert.__class__
+        target = f"{inspect.getmodule(cfg_class).__name__}.{cfg_class.__qualname__}.from_dict"
+        logger.debug(f"Converting {cfg_class.__qualname__} at {current_path} to callable dict")
+        return {
+            "_target_": target,
+            "_call_": True,
+            "config_dict": val_to_convert.to_dict(),
+        }
 
     # Explicitly handle torch.dtype - convert to string
     if isinstance(val_to_convert, torch.dtype):
@@ -395,6 +411,11 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
                 logger.warning(f"Error processing field {field_path}: {e}")
                 continue
 
+        from megatron.bridge.models.transformer_config import TransformerConfig
+
+        if isinstance(val_to_convert, TransformerConfig):
+            # Reapply original inputs, not inferred defaults that look like explicit overrides.
+            res.update(val_to_convert._inferred_cp_inputs())
         return res
 
     # Handle lists
@@ -470,7 +491,7 @@ def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
                 else:
                     excluded_fields[field_path] = field_value
                     logger.debug(f"Tracking excluded callable: {field_path}")
-            elif dataclasses.is_dataclass(field_value):
+            elif dataclasses.is_dataclass(field_value) and not _is_hf_config(field_value):
                 nested_excluded = _track_excluded_fields(field_value, field_path)
                 excluded_fields.update(nested_excluded)
             elif isinstance(field_value, dict):

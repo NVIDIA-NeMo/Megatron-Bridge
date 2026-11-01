@@ -23,9 +23,9 @@ from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import PretrainedConfig
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen.modeling_qwen35.hybrid import configure_qwen35_hybrid, qwen35_hybrid_stack_spec
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
@@ -44,10 +44,10 @@ class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
         return super().forward(position_ids, self.mrope_section)
 
 
-def qwen35_pipeline_pattern(config: GPTModelProvider, pattern: str) -> str:
+def qwen35_pipeline_pattern(config: TransformerConfig, pattern: str) -> str:
     """Place each HF block on the PP/VPP stage that the GPT decoder assigned it to.
 
-    The provider keeps pipeline settings in HF block units. Each block owns two
+    The VL config keeps pipeline settings in HF block units. Each block owns two
     Hybrid positions, so the GPT stage boundaries become pipe separators.
     """
     pp_size = config.pipeline_model_parallel_size
@@ -81,15 +81,17 @@ def qwen35_vl_hybrid_stack_spec() -> ModuleSpec:
 
 
 class Qwen35VLHybridLanguageModel(HybridModel):
-    """Adapt the existing VL provider's HF block coordinates and mRoPE inputs."""
+    """Adapt the VL config's HF block coordinates and mRoPE inputs."""
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config: TransformerConfig,
         transformer_layer_spec: ModuleSpec,
         vocab_size: int,
         max_sequence_length: int,
         *,
+        rotary_percent: float,
+        rotary_base: int,
         position_embedding_type: str = "mrope",
         mtp_block_spec: ModuleSpec | None = None,
         **kwargs: Any,
@@ -120,13 +122,15 @@ class Qwen35VLHybridLanguageModel(HybridModel):
             vocab_size=vocab_size,
             max_sequence_length=max_sequence_length,
             position_embedding_type="rope",
+            rotary_percent=rotary_percent,
+            rotary_base=rotary_base,
             **kwargs,
         )
         self.rotary_pos_emb = _HybridMultimodalRotaryEmbedding(
             kv_channels=config.kv_channels,
-            rotary_percent=kwargs.get("rotary_percent", config.rotary_percent),
+            rotary_percent=rotary_percent,
             rotary_interleaved=config.rotary_interleaved,
-            rotary_base=kwargs.get("rotary_base", 10000),
+            rotary_base=rotary_base,
             seq_len_interpolation_factor=kwargs.get("seq_len_interpolation_factor"),
             cp_group=self.pg_collection.cp,
         )

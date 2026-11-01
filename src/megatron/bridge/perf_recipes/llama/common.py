@@ -142,7 +142,6 @@ def _llama31_8b_common(cfg: ConfigContainer) -> None:
     cfg.dataset.inter_document_masking = False
     cfg.dataset.mid_level_dataset_surplus = 0.005
     cfg.dataset.mmap_bin_files = True
-    cfg.dataset.mock = False
     cfg.dataset.num_dataset_builder_threads = 1
     cfg.dataset.num_workers = 8
     cfg.dataset.persistent_workers = True

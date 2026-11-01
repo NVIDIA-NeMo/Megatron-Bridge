@@ -31,6 +31,10 @@ on:
         description: "MCore commit SHA to test against"
         required: false
         type: string
+      mcore_branch:
+        description: "MCore source branch (for logging)"
+        required: false
+        type: string
       mcore_repo:
         description: "MCore repository URL (for fetching from forks)"
         required: false
@@ -100,6 +104,8 @@ jobs:
       expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
       expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
       perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
+      dependency_only:   ${{ steps.coverage-scope.outputs.dependency_only }}
+      pr_head_sha:       ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.sha || github.sha }}
       skip_queue:        ${{ steps.configure.outputs.skip_queue }}
       merge_sha:         ${{ steps.merge-sha.outputs.merge_sha }}
     steps:
@@ -107,6 +113,31 @@ jobs:
         id: get-pr-info
         if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
+
+      - name: Determine PR coverage scope
+        id: coverage-scope
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PR_INFO: ${{ steps.get-pr-info.outputs.pr-info || '{}' }}
+        with:
+          script: |
+            const pr = JSON.parse(process.env.PR_INFO);
+            let dependencyOnly = false;
+            if (pr.number && pr.head.sha === context.sha) {
+              const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                basehead: `${pr.base.sha}...${pr.head.sha}`
+              });
+              const files = comparison.files || [];
+              const dependencyPaths = new Set([
+                '.main.commit', '.dev.commit', '3rdparty/Megatron-LM', 'uv.lock'
+              ]);
+              dependencyOnly = files.length > 0 && files.length === pr.changed_files
+                && files.every(file => dependencyPaths.has(file.filename)
+                  && (!file.previous_filename || dependencyPaths.has(file.previous_filename)));
+            }
+            core.setOutput('dependency_only', String(dependencyOnly));
 
       - name: Resolve merge commit sha
         id: merge-sha
@@ -311,6 +342,7 @@ jobs:
           pip install pre-commit==3.6.0
           pre-commit install
           pre-commit run --all-files --show-diff-on-failure --color=always
+          python3 .github/scripts/test_coverage_config.py
 
   cicd-wait-in-queue:
     needs: [pre-flight, lint-check, configure]
@@ -1219,6 +1251,15 @@ jobs:
     needs:
       - pre-flight
       - configure
+      - ephemeral-runner-routing
+      - lint-check
+      - cicd-wait-in-queue
+      - cicd-compute-build-matrix
+      - cicd-container-build
+      - generate-test-matrix
+      - generate-gb200-test-matrix
+      - cicd-functional-tests-flaky
+      - cicd-functional-tests-gb200-flaky
       - cicd-import-check
       - cicd-unit-tests-core
       - cicd-unit-tests-diffusion
@@ -1230,7 +1271,8 @@ jobs:
       - cicd-functional-tests-gb200-l2
     if: always() && !cancelled()
     runs-on: ubuntu-latest
-    permissions: write-all
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -1241,8 +1283,7 @@ jobs:
         id: result
         shell: bash -e -u -o pipefail {0}
         env:
-          GH_TOKEN:  ${{ github.token }}
-          GH_REPO:   ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
@@ -1262,6 +1303,7 @@ jobs:
         needs.configure.outputs.docs_only == 'true'
         || needs.pre-flight.outputs.is_deployment_workflow == 'true'
         || needs.configure.outputs.perf_scripts_only == 'true'
+        || (needs.configure.outputs.dependency_only == 'true' && needs.Nemo_CICD_Test.result == 'success')
       )
     steps:
       - name: Generate GitHub App token
@@ -1293,6 +1335,7 @@ jobs:
       && needs.configure.outputs.docs_only == 'false'
       && needs.pre-flight.outputs.is_deployment_workflow == 'false'
       && needs.configure.outputs.perf_scripts_only == 'false'
+      && needs.configure.outputs.dependency_only != 'true'
       && github.event.inputs.mcore_ref == ''
       && !cancelled()
     strategy:
@@ -1335,7 +1378,8 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
           flags: ${{ matrix.flag }}
-          base_sha: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').base.sha }}
+          override_pr: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
+          override_commit: ${{ needs.configure.outputs.pr_head_sha }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

@@ -76,6 +76,11 @@ class Step35DecoderLayer(TransformerLayer):
     All lookups are bounds-checked rather than raising. The spec-builder
     must keep these lists (and ``rotary_base_per_layer``) indexed by the
     global 0-indexed layer id.
+
+    ``rope_settings`` carries the model-level RoPE settings of a builder-backed
+    config, which keeps them on the outer GPT config. Megatron Core's per-layer
+    rotary embeddings (``rotary_base_per_layer``) read them from the layer's
+    config, as a provider carries them, so they are copied onto it.
     """
 
     def __init__(
@@ -90,6 +95,7 @@ class Step35DecoderLayer(TransformerLayer):
         add_layer_offset: bool = True,
         pp_layer_offset: Optional[int] = None,
         name: str | None = None,
+        rope_settings: Optional[dict[str, Any]] = None,
     ):
         pp_rank = get_pg_rank(pg_collection.pp)
         if is_mtp_layer:
@@ -103,6 +109,8 @@ class Step35DecoderLayer(TransformerLayer):
         # Keep those mutations local instead of rewriting other layers that were
         # constructed from the provider's shared TransformerConfig instance.
         config = copy.deepcopy(config)
+        for field_name, value in (rope_settings or {}).items():
+            setattr(config, field_name, value)
 
         rotary_percents = getattr(config, "rotary_percents", None) or []
         if 0 <= layer_idx < len(rotary_percents):
@@ -154,9 +162,10 @@ class Step35SharedExpertMLP(SharedExpertMLP):
     ``SharedExpertMLP.__init__`` private-deepcopies its config so the shared
     expert can mutate ``ffn_hidden_size`` without affecting the routed experts.
     Step-3.5 sets a separate per-layer ``activation_func_clamp_value_shared_expert``
-    field on the config in ``Step35DecoderLayer.__init__`` (with documented
-    fallback to ``activation_func_clamp_value`` when it is ``None``). This
-    subclass surfaces that field to ``MLP.forward`` — which only reads
+    field on the config in ``Step35DecoderLayer.__init__``; ``None`` (a layer
+    without ``swiglu_limits_shared``) leaves the shared expert unclamped, as in
+    Hugging Face, whatever the routed experts' clamp. This subclass surfaces that
+    field to ``MLP.forward`` — which only reads
     ``self.config.activation_func_clamp_value`` for SwiGLU clamping — by
     swapping the value on the private config for the duration of the forward
     pass.
@@ -165,23 +174,20 @@ class Step35SharedExpertMLP(SharedExpertMLP):
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Forward function"""
         # ``MLP.forward`` (called via ``super().forward``) reads
-        # ``self.config.activation_func_clamp_value``. To honor
-        # ``activation_func_clamp_value_shared_expert`` for the shared expert (and
-        # the documented fallback to ``activation_func_clamp_value`` when it is
-        # None), temporarily override the field on this instance's config (which
-        # is a private deepcopy and is not shared with routed experts) and
-        # restore it after ``super().forward`` returns.
-        shared_clamp = getattr(self.config, "activation_func_clamp_value_shared_expert", None)
-        if shared_clamp is not None:
-            original_clamp = self.config.activation_func_clamp_value
-            self.config.activation_func_clamp_value = shared_clamp
-            try:
-                output = super().forward(hidden_states)
-            finally:
-                self.config.activation_func_clamp_value = original_clamp
-        else:
-            output = super().forward(hidden_states)
-        return output
+        # ``self.config.activation_func_clamp_value``. To apply
+        # ``activation_func_clamp_value_shared_expert`` (or no clamp when it is
+        # None) instead of the routed experts' clamp, temporarily override the
+        # field on this instance's config (which is a private deepcopy and is not
+        # shared with routed experts) and restore it after ``super().forward``
+        # returns.
+        original_clamp = self.config.activation_func_clamp_value
+        self.config.activation_func_clamp_value = getattr(
+            self.config, "activation_func_clamp_value_shared_expert", None
+        )
+        try:
+            return super().forward(hidden_states)
+        finally:
+            self.config.activation_func_clamp_value = original_clamp
 
 
 @dataclass

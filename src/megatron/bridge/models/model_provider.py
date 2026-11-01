@@ -16,6 +16,7 @@ import abc
 import dataclasses
 import os
 import warnings
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
@@ -47,6 +48,7 @@ from megatron.core.quantization.utils import get_quant_config_or_none
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
@@ -104,6 +106,44 @@ def _apply_mixed_precision_wrapper(
         getattr(submodule, parameter_name).data = fp32_data
 
     return wrapped_model
+
+
+def _wrap_keeping_float32_tensors(
+    mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule],
+    config: Any,
+    module: MegatronModule,
+) -> MegatronModule:
+    """Wrap one model stage through ``_apply_mixed_precision_wrapper``."""
+    return _apply_mixed_precision_wrapper([module], config, mixed_precision_wrapper)[0]
+
+
+def build_distributed_models(
+    model_config: ModelConfig,
+    pg_collection: ProcessGroupCollection,
+    **kwargs: Any,
+) -> list[MegatronModule]:
+    """Build a builder-backed config through its ``ModelBuilder``, keeping FP32-marked tensors exact.
+
+    Megatron Core's builders apply ``mixed_precision_wrapper`` directly, so ``Float16Module`` rounds
+    router ``expert_bias`` values loaded before the wrap (Hugging Face or PEFT base weights) and casts
+    parameters listed in ``_keep_in_float32_parameter_names`` to the model dtype. The wrapper is
+    applied through ``_apply_mixed_precision_wrapper`` instead, which restores both after the cast,
+    as the provider path does.
+
+    Args:
+        model_config: Builder-backed model config.
+        pg_collection: Model communication process groups.
+        **kwargs: Arguments for ``ModelBuilder.build_distributed_models``. Its
+            ``mixed_precision_wrapper`` is ``Float16Module`` when omitted; ``None`` skips wrapping.
+
+    Returns:
+        Model stages created by the configured builder.
+    """
+    mixed_precision_wrapper = kwargs.get("mixed_precision_wrapper", Float16Module)
+    if mixed_precision_wrapper is not None:
+        kwargs["mixed_precision_wrapper"] = partial(_wrap_keeping_float32_tensors, mixed_precision_wrapper)
+    builder = model_config.get_builder_cls()(model_config)
+    return builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):

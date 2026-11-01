@@ -133,8 +133,10 @@ uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/
 The export runs at any tensor, pipeline, expert and expert-tensor parallelism and writes the same checkpoint for all
 of them: packed quantized weights with their scales, and the `quantization_config` in `config.json` that vLLM, SGLang
 and TensorRT-LLM read. Unquantized linear layers are listed in its `ignore` list, derived from the disabled weight
-quantizers. Models it does not cover yet (e.g. KV-cache quantization or Mamba layers) fall back to ModelOpt's
-Megatron exporter, which supports TP=1 only.
+quantizers. Fused projections are split the way the bridge's own weight mapping splits them, and each quantized
+weight's scales follow its rows. For unsupported configurations (e.g. KV-cache quantization, or a mapping that transposes
+or slices the columns of a quantized weight), the script falls back to ModelOpt's Megatron exporter, which supports TP=1
+only.
 
 **Key Arguments:**
 - `--export-dir` - Output directory for the quantized HuggingFace checkpoint
@@ -202,8 +204,8 @@ and EP collection. Unsupported custom grouped mappings fail explicitly.
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
 or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
 their ordinary conversion path. Custom QKV mappings that change row layout are rejected for quantized weights.
-Post-mapping key renames of quantized weights are not supported, including legacy DeepSeek-V4 indexer scorer names;
-excluded weights retain their normal renaming behavior. This API requires a ModelOpt release that provides the
+Post-mapping key renames of quantized weights are not supported; excluded weights retain their normal renaming
+behavior. This API requires a ModelOpt release that provides the
 functional quantized-weight export interface.
 
 ### Fake-Quantized Hugging Face Export
