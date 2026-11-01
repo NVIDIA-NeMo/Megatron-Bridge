@@ -347,6 +347,39 @@ class TestStep35DecoderLayerIsSliding:
         assert layer_1.config.activation_func_clamp_value == 7.0
         assert layer_1.config.activation_func_clamp_value_shared_expert == 16.0
 
+    def test_rope_settings_apply_to_layer_config_only(self):
+        """A builder config's model-level RoPE settings reach the layer's private config, not the shared one."""
+        config = _make_config(["full_attention", "sliding_attention"])
+        rope_settings = {
+            "position_embedding_type": "rope",
+            "rope_scaling": False,
+            "rope_scaling_factor": 1.0,
+            "rotary_scaling_factor": None,
+        }
+        recorder = _SuperInitRecorder()
+
+        with (
+            patch.object(TransformerLayer, "__init__", lambda self, config, **kw: recorder(self, config, **kw)),
+            patch("megatron.bridge.models.stepfun.step35_provider.get_pg_rank", return_value=0),
+            patch(
+                "megatron.bridge.models.stepfun.step35_provider.get_transformer_layer_offset",
+                return_value=0,
+            ),
+        ):
+            Step35DecoderLayer(
+                config=config,
+                submodules=None,
+                layer_number=2,
+                pg_collection=SimpleNamespace(pp="dummy"),
+                rope_settings=rope_settings,
+            )
+
+        captured = recorder.captured_config
+        assert {name: getattr(captured, name) for name in rope_settings} == rope_settings
+        assert captured.rotary_percent == 1.0
+        assert not any(hasattr(config, name) for name in ("rope_scaling", "rotary_scaling_factor"))
+        assert "rope_settings" not in recorder.captured_kwargs
+
 
 # ---------------------------------------------------------------------------
 # Step35SharedExpertMLP.forward
