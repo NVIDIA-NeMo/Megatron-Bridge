@@ -13,6 +13,8 @@
 # limitations under the License.
 """H100 performance recipes for Qwen3.5-VL."""
 
+import torch
+
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen_vl.common import (
     CommOverlapConfig,
@@ -36,6 +38,10 @@ from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
 def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 16× H100, BF16, PP=2 EP=8."""
     cfg = _library_pretrain_config()
+    # Benchmark-only state precision; the library recipe keeps FP32 state.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     cfg.mixed_precision = _perf_precision("bf16")
     _qwen35_vl_common(cfg)
     _benchmark_common(cfg)

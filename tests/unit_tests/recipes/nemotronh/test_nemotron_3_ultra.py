@@ -109,6 +109,9 @@ def test_h100_large_scale_pretrain_preserves_functional_policy() -> None:
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
     assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
+    # FSDP must populate .grad for the standard optimizer.
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.ddp.megatron_fsdp_use_decoupled_grad is False
     assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
     assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.ddp.check_for_large_grads is True
@@ -143,7 +146,7 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
     assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.ddp.use_distributed_optimizer is True
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.checkpoint.ckpt_format == "torch_dist"
     assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.ddp.check_for_large_grads is True

@@ -68,7 +68,7 @@ def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config() -> ConfigContaine
     cfg.ddp.num_distributed_optimizer_instances = 1
     cfg.ddp.num_buckets = 48
     cfg.ddp.average_in_collective = False
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.overlap_param_gather = True
     cfg.checkpoint.ckpt_format = "torch_dist"
 

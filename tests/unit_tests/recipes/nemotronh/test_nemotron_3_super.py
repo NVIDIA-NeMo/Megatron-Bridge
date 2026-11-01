@@ -139,7 +139,7 @@ class TestNemotron3SuperPretrain:
         # Check precision
         assert config.mixed_precision.bf16 is True
         assert config.mixed_precision.grad_reduce_in_fp32 is False
-        assert config.optimizer.main_grads_dtype == torch.bfloat16
+        assert config.optimizer.main_grads_dtype == torch.float32
         assert config.optimizer.optimizer_cpu_offload is False
         assert config.optimizer.optimizer_offload_fraction == 0.0
         assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is False
@@ -443,18 +443,18 @@ class TestNemotron3Super16GpuH100:
             nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
         ],
     )
-    def test_low_memory_optimizer_precision(self, recipe_fn):
-        """Full-model recipes use the explicit reduced-memory optimizer state."""
+    def test_fp32_optimizer_state(self, recipe_fn):
+        """Full-model recipes use FP32 optimizer state with BF16 gradient communication."""
         config = recipe_fn()
 
         assert config.mixed_precision.grad_reduce_in_fp32 is False
         assert config.ddp.grad_reduce_in_fp32 is False
         assert config.ddp.overlap_grad_reduce is False
         assert config.ddp.overlap_param_gather is False
-        assert config.optimizer.use_precision_aware_optimizer is True
-        assert config.optimizer.main_params_dtype == torch.float16
-        assert config.optimizer.exp_avg_dtype == torch.bfloat16
-        assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
+        assert config.optimizer.use_precision_aware_optimizer is False
+        assert config.optimizer.main_params_dtype == torch.float32
+        assert config.optimizer.exp_avg_dtype == torch.float32
+        assert config.optimizer.exp_avg_sq_dtype == torch.float32
 
     def test_long_context_parallelism_batch_size_and_sequence_length(self):
         """The 32K recipe owns its memory-bounded layout and batch size."""

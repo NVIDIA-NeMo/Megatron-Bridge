@@ -26,6 +26,7 @@ from megatron.bridge.training.config import ConfigContainer, MockGPTDatasetConfi
 def _muse_glimmer_30b_pretrain_32gpu_h100_config() -> ConfigContainer:
     """Build the common Muse Glimmer dense-decoder H100 benchmark."""
     cfg = muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config()
+    cfg.optimizer.use_precision_aware_optimizer = True
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 2

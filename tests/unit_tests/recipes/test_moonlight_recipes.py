@@ -296,7 +296,7 @@ def _assert_moonlight_router_identity(cfg, *, aux_loss_coeff: float):
     assert cfg.model.moe_router_force_load_balancing is False
 
 
-def _assert_finetuning_optimizer_contract(cfg, *, precision_aware: bool):
+def _assert_finetuning_optimizer_contract(cfg, *, reduce_in_fp32: bool):
     """Assert the shared SFT/PEFT optimizer and arithmetic contract."""
     assert cfg.optimizer.optimizer == "adam"
     assert cfg.optimizer.adam_beta1 == 0.9
@@ -306,16 +306,10 @@ def _assert_finetuning_optimizer_contract(cfg, *, precision_aware: bool):
     assert cfg.optimizer.clip_grad == 1.0
     assert cfg.optimizer.use_distributed_optimizer is True
     assert cfg.optimizer.main_params_dtype == torch.float32
-    if precision_aware:
-        assert cfg.optimizer.use_precision_aware_optimizer is True
-        assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-        assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-        assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
-    else:
-        assert cfg.optimizer.use_precision_aware_optimizer is False
-        assert cfg.optimizer.main_grads_dtype == torch.float32
-        assert cfg.optimizer.exp_avg_dtype == torch.float32
-        assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.scheduler.start_weight_decay == 0.033
     assert cfg.scheduler.end_weight_decay == 0.033
     assert cfg.scheduler.weight_decay_incr_style == "constant"
@@ -324,7 +318,6 @@ def _assert_finetuning_optimizer_contract(cfg, *, precision_aware: bool):
     assert cfg.mixed_precision.bf16 is True
     assert cfg.mixed_precision.params_dtype == torch.bfloat16
     assert cfg.mixed_precision.pipeline_dtype == torch.bfloat16
-    reduce_in_fp32 = not precision_aware
     assert cfg.mixed_precision.grad_reduce_in_fp32 is reduce_in_fp32
     assert cfg.ddp.grad_reduce_in_fp32 is reduce_in_fp32
 
@@ -382,11 +375,11 @@ def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyP
     assert cfg.optimizer.weight_decay == 0.1
     assert cfg.optimizer.clip_grad == 1.0
     assert cfg.optimizer.use_distributed_optimizer is True
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.scheduler.lr_warmup_iters == 40
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.scheduler.lr_decay_style == "cosine"
@@ -497,7 +490,7 @@ def test_moonlight_16b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch)
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.moe_router_fusion is True
-    _assert_finetuning_optimizer_contract(cfg, precision_aware=True)
+    _assert_finetuning_optimizer_contract(cfg, reduce_in_fp32=False)
     _assert_moonlight_router_identity(cfg, aux_loss_coeff=0.001)
 
 
@@ -642,7 +635,7 @@ def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.moe_router_fusion is True
-    _assert_finetuning_optimizer_contract(cfg, precision_aware=False)
+    _assert_finetuning_optimizer_contract(cfg, reduce_in_fp32=True)
     _assert_moonlight_router_identity(cfg, aux_loss_coeff=0.001)
 
 
@@ -673,11 +666,11 @@ def test_moonlight_16b_sft_8k_contract_is_separate(monkeypatch: pytest.MonkeyPat
     assert cfg.optimizer.adam_beta1 == 0.9
     assert cfg.optimizer.adam_beta2 == 0.98
     assert cfg.optimizer.adam_eps == 1e-5
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.scheduler.lr_warmup_iters == 2
     assert cfg.scheduler.lr_decay_iters == 20
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
@@ -703,11 +696,11 @@ def test_moonlight_compatibility_recipes_remain_exported(monkeypatch: pytest.Mon
     assert pretrain_cfg.model.pipeline_model_parallel_size == 1
     assert pretrain_cfg.model.expert_model_parallel_size == 8
     assert pretrain_cfg.train.global_batch_size == 2048
-    assert pretrain_cfg.optimizer.use_precision_aware_optimizer is True
-    assert pretrain_cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert pretrain_cfg.optimizer.use_precision_aware_optimizer is False
+    assert pretrain_cfg.optimizer.main_grads_dtype == torch.float32
     assert peft_cfg.model.tensor_model_parallel_size == 1
     assert peft_cfg.model.pipeline_model_parallel_size == 1
     assert peft_cfg.model.expert_model_parallel_size == 2
     assert peft_cfg.train.global_batch_size == 128
-    assert peft_cfg.optimizer.use_precision_aware_optimizer is True
-    assert peft_cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert peft_cfg.optimizer.use_precision_aware_optimizer is False
+    assert peft_cfg.optimizer.main_grads_dtype == torch.float32

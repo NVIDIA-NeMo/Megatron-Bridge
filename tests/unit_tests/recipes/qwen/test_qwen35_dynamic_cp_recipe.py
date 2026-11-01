@@ -55,7 +55,7 @@ def test_dynamic_cp_sft_recipe_uses_real_data_and_dataset_driven_packing():
     assert cfg.model.recompute_granularity == "full"
     # Lazily tokenized long trajectories need enough loader workers to keep the GPUs busy.
     assert cfg.dataset.num_workers == 16
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.validation.eval_iters == 0
 
 

@@ -460,8 +460,8 @@ def qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config() -> ConfigContain
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "uniform"
     cfg.model.recompute_num_layers = 1
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.ddp.use_distributed_optimizer = True
     return cfg

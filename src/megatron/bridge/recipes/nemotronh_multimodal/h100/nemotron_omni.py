@@ -113,8 +113,8 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     arithmetic. TP2 and EP8 fold over the same eight ranks so dense
     projections and experts are both sharded. A larger microbatch, fused
     kernels, and selective activation recompute reduce launch overhead while
-    preserving the training objective. Precision-aware Adam stores BF16
-    gradients/moments and scaled FP16 main parameters.
+    preserving the training objective. Standard Adam uses FP32 main parameters,
+    gradients, and moments; memory fit needs revalidation with this state.
     """
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
@@ -151,15 +151,15 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.store_param_remainders = False
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = True
+    cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = False
 
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=4096,
@@ -194,9 +194,9 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
 
     In-batch packing requires a micro batch greater than one. The TP4/CP2
     topology needs at least eight GPUs and aligns every packed row to the
-    combined CP/SP multiple. Precision-aware Adam uses scaled FP16 main
-    parameters, BF16 gradients, and BF16 moments so first-step optimizer-state
-    initialization fits within 80 GB H100 memory.
+    combined CP/SP multiple. Standard Adam uses FP32 main parameters, gradients,
+    and moments. First-step optimizer-state allocation and checkpoint memory
+    fit need revalidation on 80 GB H100 GPUs.
     The standard all-to-all dispatcher is used because HybridEP did not make
     forward progress for the packed CP2 workload in the controlled backend
     screen.
@@ -228,15 +228,15 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.store_param_remainders = False
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = True
+    cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = False
 
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=8192,
@@ -324,8 +324,7 @@ def nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     The adapter set, freezing policy, real image-text samples, batch sizes,
     optimizer hyperparameters, and BF16 model arithmetic match the portable
-    4-GPU recipe. Precision-aware Adam stores BF16 gradients/moments and scaled
-    FP16 main parameters.
+    4-GPU recipe. Standard Adam uses FP32 main parameters, gradients, and moments.
     """
     from megatron.bridge.peft.lora import LoRA
 
@@ -377,12 +376,12 @@ def nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.store_param_remainders = False
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
 
