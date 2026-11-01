@@ -51,15 +51,15 @@ def _apply_nemotron_3_5_lightning_defaults(cfg: ConfigContainer) -> ConfigContai
 
 
 def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× B200, BF16."""
+    """Nemotron 3 Super pretrain: 64× B200, BF16, NCCL EP8, TP2, selective recompute."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
@@ -68,12 +68,16 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
-    cfg.model.recompute_modules = ["moe_act", "moe", "layernorm", "core_attn"]
+    cfg.model.recompute_modules = ["moe_act", "layernorm", "core_attn"]
     cfg.model.recompute_granularity = "selective"
 
-    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
+    _enable_ncclep(cfg)
+    # Keep expert token counts on device to avoid a host synchronization in each MoE layer.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -85,11 +89,8 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
+        # EP8 stays within one NVL8 domain; enable pull/push mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -98,15 +99,15 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× B200, MXFP8."""
+    """Nemotron 3 Super pretrain: 64× B200, MXFP8, NCCL EP8, TP2, selective recompute."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
@@ -116,12 +117,16 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
-    cfg.model.recompute_modules = ["moe_act", "moe", "layernorm", "core_attn"]
+    cfg.model.recompute_modules = ["moe_act", "layernorm", "core_attn"]
     cfg.model.recompute_granularity = "selective"
 
-    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
+    _enable_ncclep(cfg)
+    # Keep expert token counts on device to avoid a host synchronization in each MoE layer.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -133,11 +138,8 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
+        # EP8 stays within one NVL8 domain; enable pull/push mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -146,7 +148,7 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× B200, NVFP4."""
+    """Nemotron 3 Super pretrain: 64× B200, NVFP4, NCCL EP."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
 
@@ -172,6 +174,9 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
+    _enable_ncclep(cfg)
+    # Keep expert token counts on device to avoid a host synchronization in each MoE layer.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -183,11 +188,8 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
+        # NCCL EP dispatcher mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
