@@ -15,28 +15,43 @@
 import pytest
 
 import megatron.bridge.recipes.minimax.h100.minimax_m3 as _minimax_m3_module
+from megatron.bridge.models.minimax_m3 import MiniMaxM3Bridge, MiniMaxM3ModelConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
-class _FakeTextProvider:
-    def finalize(self):
-        return None
+def _tiny_hf_config():
+    configuration = pytest.importorskip("transformers.models.minimax_m3_vl.configuration_minimax_m3_vl")
+    return configuration.MiniMaxM3VLConfig(
+        text_config={
+            "hidden_size": 64,
+            "intermediate_size": 32,
+            "dense_intermediate_size": 128,
+            "shared_intermediate_size": 32,
+            "num_hidden_layers": 4,
+            "num_attention_heads": 8,
+            "num_key_value_heads": 4,
+            "head_dim": 16,
+            "rotary_dim": 8,
+            "vocab_size": 1024,
+            "num_local_experts": 8,
+            "num_experts_per_tok": 2,
+            "moe_layer_freq": [0, 1, 1, 1],
+        },
+        vision_config={"hidden_size": 32, "num_hidden_layers": 2, "num_attention_heads": 4},
+    )
 
 
-class _FakeVLMProvider:
-    def to_text_provider(self):
-        return _FakeTextProvider()
-
-
-class _FakeAutoBridge:
+class _BuilderOnlyBridge:
     @staticmethod
     def from_hf_pretrained(_hf_path: str, *, trust_remote_code: bool):
         assert trust_remote_code is True
-        return _FakeAutoBridge()
+        return _BuilderOnlyBridge()
 
-    def to_megatron_provider(self, *, load_weights: bool):
-        assert load_weights is False
-        return _FakeVLMProvider()
+    def get_model_config(self):
+        return MiniMaxM3Bridge().hf_config_to_model_config(_tiny_hf_config())
+
+    def to_megatron_provider(self, load_weights=False):
+        raise AssertionError("recipes must use get_model_config()")
 
 
 @pytest.mark.parametrize(
@@ -46,12 +61,16 @@ class _FakeAutoBridge:
         _minimax_m3_module.minimax_m3_sft_128gpu_h100_bf16_config,
     ],
 )
-def test_text_recipe_uses_text_only_provider(monkeypatch, recipe):
-    patch_recipe_module_global(monkeypatch, _minimax_m3_module, "AutoBridge", _FakeAutoBridge)
+def test_text_recipe_uses_text_only_model_config(monkeypatch, recipe):
+    patch_recipe_module_global(monkeypatch, _minimax_m3_module, "AutoBridge", _BuilderOnlyBridge)
 
     cfg = recipe()
 
-    assert isinstance(cfg.model, _FakeTextProvider)
+    assert type(cfg.model) is MiniMaxM3ModelConfig
+    assert not hasattr(cfg.model, "vision_config")
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 32
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 16
