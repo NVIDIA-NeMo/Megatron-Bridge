@@ -13,11 +13,12 @@
 # limitations under the License.
 
 
+from copy import copy
 from dataclasses import dataclass
 from typing import Optional, Sequence, Union
 
 import torch
-from megatron.core import mpu
+from megatron.core import mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
@@ -109,6 +110,21 @@ class PatchMergerSubmodules:
     linear_fc2: Union[ModuleSpec, type] = None
 
 
+def gather_vision_sequence(
+    hidden_states: torch.Tensor, config: Qwen3VLTransformerConfig, tp_group: torch.distributed.ProcessGroup
+) -> torch.Tensor:
+    """Restore complete patch groups before the TP-only vision merger.
+
+    The merger's column-parallel linear already sums its input gradients across
+    TP. The gather must therefore split, rather than sum, those gradients.
+    """
+    if config.sequence_parallel:
+        hidden_states = tensor_parallel.gather_from_sequence_parallel_region(
+            hidden_states, tensor_parallel_output_grad=False, group=tp_group
+        )
+    return hidden_states
+
+
 class Qwen3VLVisionPatchMerger(MegatronModule):
     """
     Vision Patch Merger for Qwen3VL vision model.
@@ -121,6 +137,10 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
         use_postshuffle_norm=False,
         tp_group: Optional[torch.distributed.ProcessGroup] = None,
     ):
+        # Spatial patch groups can cross SP rank boundaries. Merge the gathered
+        # sequence with ordinary TP, independently of transformer activation SP.
+        config = copy(config)
+        config.sequence_parallel = False
         super().__init__(config=config)
 
         self.hidden_size = config.hidden_size * (config.spatial_merge_size**2)
