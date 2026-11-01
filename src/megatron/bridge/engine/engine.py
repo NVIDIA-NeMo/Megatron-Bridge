@@ -36,17 +36,26 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.engine.batching import (
+    check_microbatches,
+    default_postprocess,
+    default_preprocess,
+    sequence_pad_multiple,
+)
 from megatron.bridge.engine.checkpoint import load_pretrained_weights
 from megatron.bridge.engine.datum import (
     AdamParams,
     CheckpointHandle,
-    Datum,
+    ForwardBackwardOutput,
+    ForwardOutput,
     LoraConfig,
     ModelOutput,
     NormalizationPolicy,
-    validate_datums,
+    PreparedMicrobatch,
+    check_datums,
 )
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
+from megatron.bridge.engine.schedule import run_forward_only
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.config import RerunStateMachineConfig
 from megatron.bridge.training.initialize import init_rerun_state, torch_dist_init
@@ -62,7 +71,7 @@ from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_saf
 logger = logging.getLogger(__name__)
 
 PreWrapHook = Callable[[list[MegatronModule]], list[MegatronModule]]
-LossMethod = Callable[..., tuple[torch.Tensor, dict[str, float]]]
+LossMethod = Callable[[PreparedMicrobatch, ModelOutput], torch.Tensor]
 
 # Public engine attributes that can never be used as a loss method name.
 _RESERVED_METHODS = frozenset(
@@ -72,6 +81,10 @@ _RESERVED_METHODS = frozenset(
         "forward_backward",
         "optim_step",
         "zero_grad",
+        "preprocess",
+        "postprocess",
+        "summarize",
+        "check_microbatches",
         "resolve_loss_method",
         "target_logprobs",
         "target_entropy",
@@ -268,6 +281,11 @@ class TrainingEngine:
         self._closed = False
         self._step = 0
         pg_collection = runtime.pg_collection
+        self._pad_multiple = sequence_pad_multiple(
+            cp_size=runtime.topology.cp,
+            tp_size=runtime.topology.tp,
+            sequence_parallel=bool(getattr(recipe.model, "sequence_parallel", False)),
+        )
 
         for hook in hooks:
             _register_pre_wrap_hook(recipe.model, hook)
@@ -312,32 +330,110 @@ class TrainingEngine:
 
     def forward_only(
         self,
-        datums: list[Datum],
+        data: Any,
         *,
         disable_adapters: bool = False,
         gather_output: bool = True,
         broadcast_output: bool = True,
         return_entropy: bool = False,
-    ) -> ModelOutput:
-        """Score a global logical batch without touching gradients (phase B1)."""
+    ) -> ForwardOutput:
+        """Score a batch and return per-token target logprobs mapped back to each sample.
+
+        ``data`` is whatever this engine's ``preprocess`` accepts; the default accepts the same global
+        ``list[Datum]`` on every rank. ``gather_output=True`` returns every Datum's complete logprobs on
+        every rank in input order; ``False`` returns only what this rank computed (its DP replica's
+        samples, its CP positions) with ``sample_indices`` and ``token_positions``. Gradients and any
+        open accumulation window are untouched.
+        """
         self._require_open()
-        validate_datums(datums)
-        raise NotImplementedError("forward_only is implemented in phase B1.")
+        if return_entropy:
+            raise NotImplementedError("return_entropy is implemented in phase C1 (logits path).")
+        if disable_adapters:
+            raise NotImplementedError("disable_adapters is implemented in phase C3 (LoRA).")
+        if self._runtime.topology.pp > 1:
+            raise NotImplementedError(
+                "forward_only with pipeline parallelism (broadcast_output) is not supported yet."
+            )
+        microbatches = self.preprocess(data, training=False)
+        self.check_microbatches(microbatches)
+        logprobs = run_forward_only(self._model, microbatches, pg_collection=self._runtime.pg_collection)
+        return self.postprocess(microbatches, logprobs, gather_output=gather_output)
 
     def forward_backward(
         self,
-        datums: list[Datum],
+        data: Any,
         *,
         loss_fn: str = "cross_entropy",
         loss_kwargs: dict[str, Any] | None = None,
         broadcast_output: bool = True,
-    ) -> ModelOutput:
+    ) -> ForwardBackwardOutput:
         """Run forward/backward with the named loss and accumulate gradients (phase B2)."""
         self._require_open()
         self._require_trainable("forward_backward")
-        validate_datums(datums)
         self.resolve_loss_method(loss_fn)
+        microbatches = self.preprocess(data, training=True)
+        self.check_microbatches(microbatches)
         raise NotImplementedError("forward_backward is implemented in phase B2.")
+
+    # ---- data pipeline extension points (override in a subclass) -------------------------------
+
+    def preprocess(self, data: Any, *, training: bool) -> list[PreparedMicrobatch]:
+        """Turn caller input into this rank's strict microbatches (boundary B1 -> B2).
+
+        Default: ``data`` is the same global ``list[Datum]`` on every rank; it is grouped, dealt to DP
+        replicas, packed or padded per the recipe's ``batch_layout``, and CP-sharded. Override to read
+        DP-local data, storage handles, or pre-built batches; the result is always validated by
+        ``check_microbatches`` and every DP replica must return the same number of microbatches.
+        """
+        datums = check_datums(data)
+        pg_collection = self._runtime.pg_collection
+        return default_preprocess(
+            datums,
+            layout=self._recipe.batch_layout,
+            seq_length=self._recipe.model.seq_length,
+            pad_multiple=self._pad_multiple,
+            dp_group=pg_collection.dp,
+            cp_group=pg_collection.cp,
+            device=torch.device("cuda", torch.cuda.current_device()),
+            hybrid_model=bool(getattr(self._recipe.model, "is_hybrid_model", False)),
+        )
+
+    def postprocess(
+        self, microbatches: list[PreparedMicrobatch], logprobs: list[torch.Tensor], *, gather_output: bool
+    ) -> ForwardOutput:
+        """Turn per-microbatch ``[T_local]`` logprobs into the scoring result (boundary B3 -> B5).
+
+        Default: drop padding, reassemble across CP, collect across DP when ``gather_output`` is set, and
+        restore the caller's sample order. Override together with ``preprocess`` when the mapping or the
+        delivery (local shards, storage) differs.
+        """
+        pg_collection = self._runtime.pg_collection
+        return default_postprocess(
+            microbatches,
+            logprobs,
+            gather_output=gather_output,
+            cp_group=pg_collection.cp,
+            dp_group=pg_collection.dp,
+        )
+
+    def summarize(self, loss_sum: torch.Tensor, num_loss_tokens: torch.Tensor) -> ForwardBackwardOutput:
+        """Reduce this call's loss sum and active-token count over DP x CP (boundary B3 -> B6)."""
+        pg_collection = self._runtime.pg_collection
+        totals = torch.stack([loss_sum.detach().float(), num_loss_tokens.float()]).cuda()
+        torch.distributed.all_reduce(totals, group=pg_collection.dp_cp)
+        return ForwardBackwardOutput(loss_sum=float(totals[0].item()), num_loss_tokens=int(totals[1].item()))
+
+    def check_microbatches(self, microbatches: list[PreparedMicrobatch]) -> None:
+        """The strict gate before Megatron: shapes, dtypes, devices, vocabulary range, layout metadata,
+        and equal microbatch counts across DP replicas. Always runs, for default and custom pipelines."""
+        if not microbatches:
+            raise ValueError("preprocess returned no microbatches; every DP replica must run at least one.")
+        check_microbatches(
+            microbatches,
+            layout=self._recipe.batch_layout,
+            vocab_size=int(self._recipe.model.vocab_size),
+            dp_group=self._runtime.pg_collection.dp,
+        )
 
     def optim_step(self, adam_params: AdamParams, *, normalize_gradients: bool = True) -> dict[str, float]:
         """Normalize and finalize accumulated gradients, then step the optimizer (phase B2)."""
@@ -369,24 +465,24 @@ class TrainingEngine:
             raise ValueError(f"{type(self).__name__} has no loss method {name!r}.")
         return getattr(self, name)
 
-    def cross_entropy(self, datums: list[Datum], model_output: Any) -> tuple[torch.Tensor, dict[str, float]]:
-        """Weighted negative log-likelihood sum over target tokens (phase B2)."""
+    def cross_entropy(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
+        """Negative log-likelihood summed over active positions (``loss_mask & ~padding_mask``); phase B2."""
         raise NotImplementedError("cross_entropy is implemented in phase B2.")
 
-    def importance_sampling(self, datums: list[Datum], model_output: Any) -> tuple[torch.Tensor, dict[str, float]]:
+    def importance_sampling(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
         """Importance-sampling policy-gradient loss (phase C1)."""
         raise NotImplementedError("importance_sampling is implemented in phase C1.")
 
-    def ppo_clip(self, datums: list[Datum], model_output: Any) -> tuple[torch.Tensor, dict[str, float]]:
+    def ppo_clip(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
         """Clipped PPO objective with optional TIS correction (phase C1)."""
         raise NotImplementedError("ppo_clip is implemented in phase C1.")
 
-    def target_logprobs(self, model_output: Any, datums: list[Datum]) -> list[torch.Tensor]:
-        """Per-Datum slices of the already computed target logprobs (phase B1)."""
-        raise NotImplementedError("target_logprobs is implemented in phase B1.")
+    def target_logprobs(self, batch: PreparedMicrobatch, output: ModelOutput) -> list[torch.Tensor]:
+        """Per-sample slices of the already computed target logprobs (phase B2)."""
+        raise NotImplementedError("target_logprobs is implemented in phase B2.")
 
-    def target_entropy(self, model_output: Any, datums: list[Datum]) -> list[torch.Tensor]:
-        """Per-Datum token entropies from the sharded logits (phase C1)."""
+    def target_entropy(self, batch: PreparedMicrobatch, output: ModelOutput) -> list[torch.Tensor]:
+        """Per-sample token entropies from the sharded logits (phase C1, requires_logits path)."""
         raise NotImplementedError("target_entropy is implemented in phase C1.")
 
     # ---- state --------------------------------------------------------------------------------

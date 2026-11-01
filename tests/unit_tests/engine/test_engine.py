@@ -24,6 +24,7 @@ def _recipe_like() -> SimpleNamespace:
         dist=SimpleNamespace(
             lazy_mpu_init=False, use_megatron_fsdp=False, use_torch_fsdp2=False, use_decentralized_pg=False
         ),
+        batch_layout="thd",
     )
 
 
@@ -31,7 +32,12 @@ def _unbuilt_engine(trainable: bool = True, closed: bool = False) -> TrainingEng
     engine = TrainingEngine.__new__(TrainingEngine)
     engine._trainable = trainable
     engine._closed = closed
+    engine._runtime = SimpleNamespace(topology=Topology(1, 1, 1, None, 1, 1, None, False))
     return engine
+
+
+def _datums() -> list[Datum]:
+    return [Datum(input_ids=torch.arange(3), target_ids=torch.arange(1, 4), loss_mask=torch.ones(3))]
 
 
 def test_check_supported_accepts_baseline_shape():
@@ -46,6 +52,7 @@ def test_check_supported_accepts_baseline_shape():
         (lambda r: setattr(r.ddp, "use_megatron_fsdp", True), "FSDP"),
         (lambda r: setattr(r.model, "vocab_size", None), "vocab_size"),
         (lambda r: setattr(r.model, "seq_length", None), "seq_length"),
+        (lambda r: setattr(r, "batch_layout", "sbhd"), "batch_layout"),
     ],
 )
 def test_check_supported_rejects_each_violation(mutate, message):
@@ -74,35 +81,54 @@ def test_constructor_by_name_is_not_implemented():
 
 def test_loss_dispatch_resolves_predefined_and_subclass_methods():
     class MyEngine(TrainingEngine):
-        def my_loss(self, datums, model_output):
-            return torch.zeros(()), {}
+        def my_loss(self, batch, output):
+            return torch.zeros(())
 
     engine = MyEngine.__new__(MyEngine)
     assert engine.resolve_loss_method("cross_entropy").__func__ is TrainingEngine.cross_entropy
     assert engine.resolve_loss_method("ppo_clip").__func__ is TrainingEngine.ppo_clip
-    assert engine.resolve_loss_method("my_loss")([], None)[0].item() == 0.0
+    assert engine.resolve_loss_method("my_loss")(None, None).item() == 0.0
 
 
-@pytest.mark.parametrize("name", ["optim_step", "close", "recipe", "_build", "", "does_not_exist", "normalization"])
+@pytest.mark.parametrize(
+    "name",
+    ["optim_step", "close", "recipe", "preprocess", "postprocess", "_build", "", "does_not_exist", "normalization"],
+)
 def test_loss_dispatch_rejects_reserved_private_and_unknown_names(name):
     engine = _unbuilt_engine()
     with pytest.raises(ValueError):
         engine.resolve_loss_method(name)
 
 
-def test_forward_backward_validates_before_raising_not_implemented():
+def test_forward_backward_checks_loss_name_then_runs_pipeline_then_raises_placeholder():
     engine = _unbuilt_engine()
-    datums = [Datum(input_ids=torch.arange(3))]
     with pytest.raises(ValueError, match="loss method"):
-        engine.forward_backward(datums, loss_fn="nope")
+        engine.forward_backward(_datums(), loss_fn="nope")
+    calls = []
+    engine.preprocess = lambda data, training: calls.append(("preprocess", training)) or ["mb"]
+    engine.check_microbatches = lambda microbatches: calls.append(("check", microbatches))
     with pytest.raises(NotImplementedError, match="phase B2"):
-        engine.forward_backward(datums)
+        engine.forward_backward(_datums())
+    assert calls == [("preprocess", True), ("check", ["mb"])]
+
+
+def test_forward_only_runs_preprocess_check_then_postprocess(monkeypatch):
+    engine = _unbuilt_engine()
+    calls = []
+    engine.preprocess = lambda data, training: calls.append(("preprocess", training)) or ["mb"]
+    engine.check_microbatches = lambda microbatches: calls.append(("check", microbatches))
+    engine.postprocess = lambda microbatches, logprobs, gather_output: calls.append(("post", gather_output)) or "out"
+    engine._runtime.pg_collection = None
+    engine._model = []
+    monkeypatch.setattr("megatron.bridge.engine.engine.run_forward_only", lambda model, mbs, pg_collection: ["lp"])
+    assert engine.forward_only(_datums(), gather_output=False) == "out"
+    assert calls == [("preprocess", False), ("check", ["mb"]), ("post", False)]
 
 
 def test_frozen_engine_rejects_training_apis():
     engine = _unbuilt_engine(trainable=False)
     with pytest.raises(RuntimeError, match="trainable=False"):
-        engine.forward_backward([Datum(input_ids=torch.arange(3))])
+        engine.forward_backward(_datums())
     with pytest.raises(RuntimeError, match="trainable=False"):
         engine.optim_step(None)
 
@@ -110,7 +136,7 @@ def test_frozen_engine_rejects_training_apis():
 def test_closed_engine_rejects_calls():
     engine = _unbuilt_engine(closed=True)
     with pytest.raises(RuntimeError, match="closed"):
-        engine.forward_only([Datum(input_ids=torch.arange(3))])
+        engine.forward_only(_datums())
 
 
 def test_shared_runtime_tracks_attached_engines():

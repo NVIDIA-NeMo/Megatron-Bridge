@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from typing import Literal
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import _enable_safe_hybridep_dispatch
@@ -58,6 +59,9 @@ class TrainingRecipe:
         rng: Seeds and RNG tracker options.
         comm_overlap: Optional communication-overlap settings.
         env_vars: Environment defaults applied before initialization; existing values win.
+        batch_layout: How the engine lays out Datums for the kernels. ``"thd"`` packs several Datums
+            along the sequence axis (batch 1, ``PackedSeqParams`` boundaries); ``"bshd"`` runs one Datum
+            per forward pass as a padded ``[1, S]`` row with dense causal attention.
     """
 
     model: ModelProviderMixin
@@ -68,6 +72,10 @@ class TrainingRecipe:
     rng: RNGConfig = field(default_factory=RNGConfig)
     comm_overlap: CommOverlapConfig | None = None
     env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
+    batch_layout: Literal["thd", "bshd"] = "thd"
+
+
+SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")
 
 
 def data_parallel_size(recipe: TrainingRecipe) -> int:
@@ -97,6 +105,8 @@ def check_supported(recipe: TrainingRecipe) -> None:
         problems.append("model.vocab_size must be set (the engine does not build a tokenizer)")
     if getattr(recipe.model, "seq_length", None) is None:
         problems.append("model.seq_length must be set (packed token budget per microbatch)")
+    if getattr(recipe, "batch_layout", "thd") not in SUPPORTED_BATCH_LAYOUTS:
+        problems.append(f"batch_layout must be one of {SUPPORTED_BATCH_LAYOUTS}")
     if problems:
         raise ValueError("Recipe is not supported by TrainingEngine:\n  - " + "\n  - ".join(problems))
 
@@ -127,7 +137,11 @@ def finalize_recipe(recipe: TrainingRecipe) -> None:
 
     model.calculate_per_token_loss = True
     recipe.ddp.average_in_collective = False
-    _enable_safe_hybridep_dispatch(model, uses_thd=True)
+    if recipe.batch_layout == "thd":
+        _enable_safe_hybridep_dispatch(model, uses_thd=True)
+    else:
+        # TODO(bshd): validate dense-layout requirements (CP alignment per Datum, no PackedSeqParams consumers).
+        pass
 
     if hasattr(recipe.ddp, "finalize"):
         recipe.ddp.finalize()

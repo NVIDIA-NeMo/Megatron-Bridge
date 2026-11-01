@@ -11,7 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Data contracts for the TrainingEngine: Datum, ModelOutput, AdamParams, NormalizationPolicy."""
+"""Data contracts for the TrainingEngine (see ``trainingengine-data-contract.md``).
+
+Boundaries: the caller hands the engine loose input (default: a global ``list[Datum]``); preprocessing
+produces strict ``PreparedMicrobatch`` tensors for Megatron; the model adapter returns ``ModelOutput``
+per microbatch; postprocessing delivers ``ForwardOutput`` (scoring) or ``ForwardBackwardOutput``
+(training) to the caller.
+"""
 
 from __future__ import annotations
 
@@ -20,44 +26,135 @@ from enum import Enum
 from typing import Any
 
 import torch
+from megatron.core.packed_seq_params import PackedSeqParams
+
+
+# Token-aligned RL fields every pipeline understands; packed, padded and CP-sliced like the targets.
+COMMON_FIELDS = ("advantages", "old_logprobs", "reference_logprobs", "rollout_logprobs")
 
 
 @dataclass
 class Datum:
-    """One logical training or scoring sequence.
+    """One logical, unpadded sample.
+
+    ``input_ids[i]`` is the model input at position ``i`` and ``target_ids[i]`` the token it must predict
+    (the sequence shifted by one; never shift across a packed boundary). ``loss_mask`` is a binary 0/1
+    selection of the positions that enter the primary objective.
 
     Attributes:
-        input_ids: Full token sequence (prompt + response), shape ``[T]``, dtype int64.
-        loss_inputs: Token-aligned per-position fields consumed by loss methods, each of shape ``[T]``
-            (for example ``target_tokens``, ``weights``, ``old_logprobs``, ``advantages``).
-        sample_id: Logical identity of this Datum within a call; assigned by the engine when ``None``.
+        input_ids: ``[L]`` int64 model inputs.
+        target_ids: ``[L]`` int64 targets aligned with ``input_ids``.
+        loss_mask: ``[L]`` float32 binary objective selection.
+        advantages: ``[L]`` float32 per-target advantage (optional).
+        old_logprobs: ``[L]`` float32 target logprobs under the old policy (optional).
+        reference_logprobs: ``[L]`` float32 target logprobs under a reference model (optional).
+        rollout_logprobs: ``[L]`` float32 target logprobs recorded by the generation backend (optional).
+        loss_inputs: Custom token-aligned ``[L]`` float tensors; they follow the standard transform with
+            padding value 0.
+        sample_inputs: Custom per-sample values passed through untouched (never sliced).
     """
 
     input_ids: torch.Tensor
+    target_ids: torch.Tensor
+    loss_mask: torch.Tensor
+
+    advantages: torch.Tensor | None = None
+    old_logprobs: torch.Tensor | None = None
+    reference_logprobs: torch.Tensor | None = None
+    rollout_logprobs: torch.Tensor | None = None
+
     loss_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
-    sample_id: int | None = None
+    sample_inputs: dict[str, Any] = field(default_factory=dict)
 
     @property
     def num_tokens(self) -> int:
-        """Number of tokens in ``input_ids``."""
+        """Number of model-input positions."""
         return int(self.input_ids.shape[0])
 
 
 @dataclass
-class ModelOutput:
-    """Application-facing result of ``forward_only`` / ``forward_backward``.
+class PreparedMicrobatch:
+    """Strict execution input for one microbatch, CP-partitioned, on the executing rank's device.
 
-    Scoring lists (``logprobs``, ``entropy``, ``values``) are indexed by entry; ``sample_ids[i]`` names the
-    Datum of entry ``i`` and ``token_positions[i]`` maps that entry to the Datum's original target positions.
+    Token tensors are ``[1, T_local]`` for the packed (THD) layout and ``[B, S_local]`` for the padded
+    layout. ``padding_mask`` is True at artificial padding. ``packed_seq_params`` is present exactly for
+    the packed layout. ``mapping`` is opaque bookkeeping a preprocessor leaves for its matching
+    postprocessor; the engine never interprets it.
     """
 
-    loss: torch.Tensor | None = None
-    logprobs: list[torch.Tensor] | None = None
+    input_ids: torch.Tensor
+    target_ids: torch.Tensor
+    position_ids: torch.Tensor
+    loss_mask: torch.Tensor
+    padding_mask: torch.Tensor
+    packed_seq_params: PackedSeqParams | None
+
+    advantages: torch.Tensor | None = None
+    old_logprobs: torch.Tensor | None = None
+    reference_logprobs: torch.Tensor | None = None
+    rollout_logprobs: torch.Tensor | None = None
+
+    loss_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
+    sample_inputs: list[dict[str, Any]] = field(default_factory=list)
+    mapping: Any = None
+
+    def token_tensors(self) -> dict[str, torch.Tensor]:
+        """Every token-aligned tensor by name (standard, common optional, and custom fields)."""
+        tensors = {
+            "input_ids": self.input_ids,
+            "target_ids": self.target_ids,
+            "position_ids": self.position_ids,
+            "loss_mask": self.loss_mask,
+            "padding_mask": self.padding_mask,
+        }
+        for name in COMMON_FIELDS:
+            value = getattr(self, name)
+            if value is not None:
+                tensors[name] = value
+        tensors.update(self.loss_inputs)
+        return tensors
+
+    @property
+    def active_mask(self) -> torch.Tensor:
+        """Positions that enter the primary objective: ``loss_mask & ~padding_mask``."""
+        return self.loss_mask.bool() & ~self.padding_mask
+
+
+@dataclass
+class ModelOutput:
+    """Native per-microbatch model output on the output stage, aligned with the prepared token axis.
+
+    ``logprobs`` is always present (``-nll`` of ``target_ids`` from the configured kernel, TP-reduced).
+    ``logits`` is the TP-sharded vocabulary slice and exists only when the selected loss declares
+    ``requires_logits``; the vocabulary interval then describes this rank's slice.
+    """
+
+    logprobs: torch.Tensor
+    logits: torch.Tensor | None = None
+    vocab_start_index: int | None = None
+    vocab_end_index: int | None = None
+
+
+@dataclass
+class ForwardOutput:
+    """Scoring result. Gathered: one entry per input Datum, in input order, all positions.
+
+    Local (``gather_output=False``): entries for this rank's Datums and CP positions only, with
+    ``sample_indices`` (position in the caller's list) and ``token_positions`` populated.
+    """
+
+    logprobs: list[torch.Tensor]
     entropy: list[torch.Tensor] | None = None
-    values: list[torch.Tensor] | None = None
-    sample_ids: list[int] | None = None
+    sample_indices: list[int] | None = None
     token_positions: list[torch.Tensor] | None = None
-    metrics: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class ForwardBackwardOutput:
+    """Detached per-call training summary, reduced over DP x CP."""
+
+    loss_sum: float
+    num_loss_tokens: int
 
 
 @dataclass
@@ -74,7 +171,7 @@ class AdamParams:
 class NormalizationPolicy(str, Enum):
     """How the accumulated primary loss gradient is normalized at ``optim_step``."""
 
-    TOKEN_MEAN = "token_mean"  # 1 / sum(weights > 0) over the whole update
+    TOKEN_MEAN = "token_mean"  # 1 / active tokens over the whole update
     SAMPLE_MEAN = "sample_mean"  # 1 / number of Datums over the whole update
     NONE = "none"  # caller already normalized
 
@@ -105,49 +202,43 @@ class CheckpointHandle:
             self._waiter = None
 
 
-def validate_datums(datums: list[Datum]) -> list[Datum]:
-    """Check Datum contracts and assign missing ``sample_id`` values in input order.
-
-    Args:
-        datums: The global logical batch supplied to an engine call.
-
-    Returns:
-        The same list, with ``sample_id`` filled in where it was ``None``.
+def check_datums(datums: list[Datum]) -> list[Datum]:
+    """Validate the default engine input: a non-empty global list of consistent Datums.
 
     Raises:
         TypeError: If an entry is not a ``Datum`` or a field is not a tensor.
-        ValueError: If the batch is empty, ``None`` (designated-rank submission is not supported yet),
-            ``input_ids`` is not a 1-D int64 tensor, or a ``loss_inputs`` field is not token-aligned.
+        ValueError: If the list is ``None``/empty, shapes or dtypes violate the contract, or a common
+            optional field is present for some Datums but not all.
     """
     if datums is None:
-        raise ValueError("datums=None (designated-rank submission) is not supported; every rank passes the batch.")
+        raise ValueError("data=None is not supported by the default preprocess; every rank passes the global list.")
     if len(datums) == 0:
         raise ValueError("datums must contain at least one Datum.")
-    used_ids = {d.sample_id for d in datums if isinstance(d, Datum) and d.sample_id is not None}
-    if len(used_ids) != sum(1 for d in datums if isinstance(d, Datum) and d.sample_id is not None):
-        raise ValueError("Datum.sample_id values must be unique within a call.")
-    next_id = 0
+    present = {name: datums[0] is not None and getattr(datums[0], name, None) is not None for name in COMMON_FIELDS}
     for index, datum in enumerate(datums):
         if not isinstance(datum, Datum):
             raise TypeError(f"datums[{index}] is {type(datum).__name__}, expected Datum.")
-        ids = datum.input_ids
-        if not isinstance(ids, torch.Tensor):
-            raise TypeError(f"datums[{index}].input_ids must be a tensor.")
-        if ids.ndim != 1 or ids.dtype != torch.int64 or ids.numel() == 0:
-            raise ValueError(
-                f"datums[{index}].input_ids must be a non-empty 1-D int64 tensor, got {ids.shape} {ids.dtype}."
-            )
+        n = datum.num_tokens
+        _check_tensor(f"datums[{index}].input_ids", datum.input_ids, n, torch.int64)
+        _check_tensor(f"datums[{index}].target_ids", datum.target_ids, n, torch.int64)
+        _check_tensor(f"datums[{index}].loss_mask", datum.loss_mask, n, None)
+        if n == 0:
+            raise ValueError(f"datums[{index}] is empty.")
+        for name in COMMON_FIELDS:
+            value = getattr(datum, name)
+            if (value is not None) != present[name]:
+                raise ValueError(f"{name} must be set for every Datum or for none (datums[{index}] differs).")
+            if value is not None:
+                _check_tensor(f"datums[{index}].{name}", value, n, None)
         for name, value in datum.loss_inputs.items():
-            if not isinstance(value, torch.Tensor):
-                raise TypeError(f"datums[{index}].loss_inputs[{name!r}] must be a tensor.")
-            if value.shape[:1] != ids.shape:
-                raise ValueError(
-                    f"datums[{index}].loss_inputs[{name!r}] has shape {tuple(value.shape)}; "
-                    f"its first dimension must match input_ids length {ids.shape[0]}."
-                )
-        if datum.sample_id is None:
-            while next_id in used_ids:
-                next_id += 1
-            datum.sample_id = next_id
-            used_ids.add(next_id)
+            _check_tensor(f"datums[{index}].loss_inputs[{name!r}]", value, n, None)
     return datums
+
+
+def _check_tensor(label: str, value: Any, length: int, dtype: torch.dtype | None) -> None:
+    if not isinstance(value, torch.Tensor):
+        raise TypeError(f"{label} must be a tensor.")
+    if value.ndim != 1 or value.shape[0] != length:
+        raise ValueError(f"{label} must have shape [{length}], got {tuple(value.shape)}.")
+    if dtype is not None and value.dtype != dtype:
+        raise ValueError(f"{label} must be {dtype}, got {value.dtype}.")

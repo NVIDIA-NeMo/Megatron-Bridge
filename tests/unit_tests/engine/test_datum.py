@@ -1,44 +1,55 @@
 import pytest
 import torch
 
-from megatron.bridge.engine import Datum, validate_datums
+from megatron.bridge.engine import Datum, check_datums
 
 
-def _datum(n: int, sample_id: int | None = None, **loss_inputs: torch.Tensor) -> Datum:
-    return Datum(input_ids=torch.arange(n, dtype=torch.int64), loss_inputs=dict(loss_inputs), sample_id=sample_id)
+def _datum(n: int, **extra) -> Datum:
+    ids = torch.arange(n + 1, dtype=torch.int64)
+    return Datum(input_ids=ids[:-1], target_ids=ids[1:], loss_mask=torch.ones(n), **extra)
 
 
-def test_assigns_missing_sample_ids_in_order_and_skips_used_ones():
-    datums = [_datum(4), _datum(3, sample_id=1), _datum(5)]
-    validate_datums(datums)
-    assert [d.sample_id for d in datums] == [0, 1, 2]
-    assert datums[0].num_tokens == 4
-
-
-def test_rejects_duplicate_sample_ids():
-    with pytest.raises(ValueError, match="unique"):
-        validate_datums([_datum(2, sample_id=7), _datum(2, sample_id=7)])
+def test_accepts_consistent_batch_and_counts_tokens():
+    datums = [_datum(4), _datum(2)]
+    assert check_datums(datums) is datums
+    assert [d.num_tokens for d in datums] == [4, 2]
 
 
 @pytest.mark.parametrize("datums", [None, []])
 def test_rejects_none_and_empty(datums):
     with pytest.raises(ValueError):
-        validate_datums(datums)
+        check_datums(datums)
 
 
-def test_rejects_non_datum_and_bad_input_ids():
+def test_rejects_non_datum_and_bad_dtypes_and_shapes():
     with pytest.raises(TypeError):
-        validate_datums([torch.zeros(3, dtype=torch.int64)])
+        check_datums([torch.zeros(3, dtype=torch.int64)])
+    bad = _datum(3)
+    bad.input_ids = bad.input_ids.to(torch.int32)
     with pytest.raises(ValueError, match="int64"):
-        validate_datums([Datum(input_ids=torch.zeros(3, dtype=torch.int32))])
-    with pytest.raises(ValueError, match="1-D"):
-        validate_datums([Datum(input_ids=torch.zeros(2, 3, dtype=torch.int64))])
+        check_datums([bad])
+    bad = _datum(3)
+    bad.target_ids = torch.zeros(2, dtype=torch.int64)
+    with pytest.raises(ValueError, match="shape \\[3\\]"):
+        check_datums([bad])
+    bad = _datum(3)
+    bad.loss_mask = torch.zeros(2, 3)
+    with pytest.raises(ValueError, match="shape"):
+        check_datums([bad])
 
 
-def test_loss_inputs_must_be_token_aligned_tensors():
-    ok = _datum(4, weights=torch.ones(4), old_logprobs=torch.zeros(4))
-    validate_datums([ok])
-    with pytest.raises(ValueError, match="first dimension"):
-        validate_datums([_datum(4, weights=torch.ones(3))])
+def test_common_fields_all_or_none_and_token_aligned():
+    ok = [_datum(3, advantages=torch.zeros(3)), _datum(2, advantages=torch.ones(2))]
+    check_datums(ok)
+    with pytest.raises(ValueError, match="advantages must be set for every Datum"):
+        check_datums([_datum(3, advantages=torch.zeros(3)), _datum(2)])
+    with pytest.raises(ValueError, match="old_logprobs must have shape"):
+        check_datums([_datum(3, old_logprobs=torch.zeros(2))])
+
+
+def test_custom_loss_inputs_must_be_token_aligned_tensors():
+    check_datums([_datum(3, loss_inputs={"teacher": torch.zeros(3)}, sample_inputs={"group": 7})])
+    with pytest.raises(ValueError, match="loss_inputs\\['teacher'\\]"):
+        check_datums([_datum(3, loss_inputs={"teacher": torch.zeros(4)})])
     with pytest.raises(TypeError):
-        validate_datums([Datum(input_ids=torch.zeros(4, dtype=torch.int64), loss_inputs={"weights": [1.0] * 4})])
+        check_datums([_datum(3, loss_inputs={"teacher": [0.0, 0.0, 0.0]})])
