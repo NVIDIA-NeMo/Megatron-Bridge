@@ -73,6 +73,8 @@ from megatron.bridge.models.exaone.exaone4 import (
 from megatron.bridge.models.exaone.exaone45 import (
     Exaone45Bridge,
     Exaone45Model,
+    Exaone45ModelBuilder,
+    Exaone45ModelConfig,
     Exaone45ModelProvider,
 )
 from megatron.bridge.models.exaone.exaone_moe import (
@@ -389,6 +391,8 @@ __all__ = [
     "Exaone4Bridge",
     "Exaone45Bridge",
     "Exaone45Model",
+    "Exaone45ModelBuilder",
+    "Exaone45ModelConfig",
     "Exaone45ModelProvider",
     "ExaoneMoeBridge",
     "ExaoneMoeModelProvider",
