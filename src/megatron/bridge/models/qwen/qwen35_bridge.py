@@ -36,11 +36,11 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.models.qwen.modeling_qwen35.hybrid import (
     configure_qwen35_hybrid,
     qwen35_hybrid_mappings,
 )
+from megatron.bridge.models.qwen.modeling_qwen35.model_config import Qwen35HybridModelConfig
 
 
 def _qwen35_common_config_kwargs(text_config) -> dict[str, Any]:
@@ -141,7 +141,7 @@ def _moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed, tran
 
 
 class _Qwen35HybridBridge(MegatronModelBridge):
-    MODEL_CONFIG_CLASS = BridgeHybridModelConfig
+    MODEL_CONFIG_CLASS = Qwen35HybridModelConfig
     PROVIDER_CLASS = HybridModelProvider
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
@@ -204,7 +204,7 @@ class Qwen35MoEBridge(_Qwen35HybridBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = BridgeHybridModelConfig
+    MODEL_CONFIG_CLASS = Qwen35HybridModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @staticmethod
@@ -540,7 +540,7 @@ class Qwen35Bridge(_Qwen35HybridBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = BridgeHybridModelConfig
+    MODEL_CONFIG_CLASS = Qwen35HybridModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @staticmethod

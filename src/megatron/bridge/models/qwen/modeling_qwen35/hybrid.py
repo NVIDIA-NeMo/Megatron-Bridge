@@ -19,7 +19,10 @@ from typing import Any
 
 from megatron.core.extensions.transformer_engine_spec_provider import TESpecProvider
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
+from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_block import get_num_layers_to_build
+from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer
 from transformers import PretrainedConfig
 
@@ -34,6 +37,36 @@ class Qwen35HybridAttentionLayer(TransformerLayer):
     inherited autocast wrapper on uncaptured MTP layers after graph creation.
     A sibling attention class preserves those layers' quantization contexts.
     """
+
+
+def qwen35_pipeline_pattern(config: TransformerConfig, pattern: str, *, layer_width: int = 2) -> str:
+    """Assign Hybrid positions to PP/VPP stages using the config's layer units.
+
+    VL configs count HF blocks (two Hybrid positions); text Hybrid configs count
+    individual positions and pass ``layer_width=1``.
+    """
+    pp_size = config.pipeline_model_parallel_size
+    vp_size = config.virtual_pipeline_model_parallel_size
+    if pp_size * (vp_size or 1) == 1:
+        return pattern
+
+    layout = config.pipeline_model_parallel_layout
+    segments, offset = [], 0
+    # Hybrid orders segments by vp_stage * pp_size + pp_rank, just like GPT.
+    for vp_stage in range(vp_size or 1):
+        for pp_rank in range(pp_size):
+            if layout is not None:
+                count = layout.layout[pp_rank][vp_stage].count(LayerType.decoder)
+            else:
+                count = get_num_layers_to_build(config, vp_stage if vp_size else None, pp_rank)
+            width = count * layer_width
+            if width % 2:
+                raise ValueError("Qwen3.5 pipeline stages must contain whole mixer/feed-forward pairs.")
+            segments.append(pattern[offset : offset + width])
+            offset += width
+    if offset != len(pattern):
+        raise ValueError(f"Pipeline stages hold {offset} Hybrid positions, but the model has {len(pattern)}.")
+    return "|".join(segments)
 
 
 def qwen35_hybrid_pattern(text_config: PretrainedConfig) -> str:

@@ -29,6 +29,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hybrid_stack_spec
+from megatron.bridge.models.qwen.modeling_qwen35.model_config import Qwen35HybridModelConfig
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
 
 
@@ -952,7 +953,7 @@ class TestQwen35BuilderConfig:
 
     @pytest.mark.parametrize("bridge_class", [Qwen35Bridge, Qwen35MoEBridge])
     def test_conversion_uses_builder_config(self, bridge_class):
-        assert bridge_class.MODEL_CONFIG_CLASS is BridgeHybridModelConfig
+        assert bridge_class.MODEL_CONFIG_CLASS is Qwen35HybridModelConfig
         assert bridge_class.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     @pytest.mark.parametrize(
