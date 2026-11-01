@@ -628,7 +628,14 @@ class CheckpointConfig(MTrainCheckpointConfig):
     Only effective when ``hf_distributed_save=True``."""
 
     def finalize(self) -> None:
-        """Post-initialization checks for checkpoint config."""
+        """Post-initialization checks for checkpoint config.
+
+        The checks on the Bridge-only fields and on Bridge's stricter async policy run first; the
+        checkpoint rules shared with Megatron-LM (format prerequisites, retention, conversion,
+        local non-persistent checkpoints, load_main_params_from_ckpt, ...) are the base class's
+        ``validate()``, run last. A save directory without a periodic interval (``save_interval``
+        None or 0) is accepted by both.
+        """
         if self.pretrained_checkpoint is not None:
             from megatron.bridge.training.utils.checkpoint_utils import file_exists
 
@@ -636,25 +643,12 @@ class CheckpointConfig(MTrainCheckpointConfig):
                 f"Pretrained checkpoint {self.pretrained_checkpoint} does not exist"
             )
 
-        if self.load_main_params_from_ckpt:
-            assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
-
         if self.stage_precision_aware_optimizer_state_on_cpu and self.ckpt_format != "torch_dist":
             raise ValueError("stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'.")
 
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
-
-        if self.save_retain_interval is not None:
-            if self.save_retain_interval <= 0:
-                raise ValueError("save_retain_interval must be positive.")
-            if self.save_interval is None or self.save_interval <= 0:
-                raise ValueError("save_retain_interval requires a positive save_interval.")
-            if self.save_retain_interval % self.save_interval != 0:
-                raise ValueError("save_retain_interval must be divisible by save_interval.")
-            if self.most_recent_k != -1:
-                raise ValueError("save_retain_interval and most_recent_k cannot be enabled together.")
 
         if self.also_save_hf_checkpoint:
             if self.ckpt_format == "fsdp_dtensor":
@@ -675,6 +669,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
                     f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
                     f"Please set checkpoint.load to the base checkpoint directory."
                 )
+
+        # The checkpoint rules shared with Megatron-LM.
+        super().validate()
 
 
 @dataclass(kw_only=True)
