@@ -15,12 +15,15 @@
 # Nemotron 3 Nano and Nemotron 3.5 Lightning models
 from megatron.bridge.recipes.nemotronh.gb200 import (
     nemotron_3_5_lightning_pretrain_8k_config,
+    nemotron_3_5_lightning_pretrain_8k_deterministic_config,
     nemotron_3_5_lightning_pretrain_8k_fsdp_config,
     nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config,
     nemotron_3_nano_gb200_pretrain_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config,
+    nemotron_3_super_peft_16gpu_gb200_bf16_config,
     nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+    nemotron_3_super_sft_64gpu_gb200_bf16_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config,
 )
@@ -57,6 +60,7 @@ __all__ = [
     # Nemotron 3 Nano and Nemotron 3.5 Lightning models
     "nemotron_3_5_lightning_peft_config",
     "nemotron_3_5_lightning_pretrain_8k_config",
+    "nemotron_3_5_lightning_pretrain_8k_deterministic_config",
     "nemotron_3_5_lightning_pretrain_8k_fsdp_config",
     "nemotron_3_5_lightning_pretrain_config",
     "nemotron_3_5_lightning_sft_config",
@@ -75,6 +79,8 @@ __all__ = [
     "nemotron_3_nano_4b_peft_config",
     # Nemotron 3 Super models
     "nemotron_3_super_pretrain_64gpu_gb200_bf16_config",
+    "nemotron_3_super_sft_64gpu_gb200_bf16_config",
+    "nemotron_3_super_peft_16gpu_gb200_bf16_config",
     "nemotron_3_super_pretrain_config",
     "nemotron_3_super_sft_config",
     "nemotron_3_super_peft_config",

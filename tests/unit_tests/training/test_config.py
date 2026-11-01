@@ -4466,8 +4466,9 @@ class TestRuntimeConfigUpdate:
 
             # Verify configs are finalized
             if isinstance(full_cfg.dataset, GPTDatasetConfig):
-                # Computed fields should now be set
-                assert getattr(full_cfg.dataset, "split", None) is not None
+                # Megatron Core leaves ``split`` as given and derives the split matrix;
+                # mock data always uses an even split.
+                assert full_cfg.dataset.split_matrix is not None
 
             # Verify model config is finalized (computed fields set)
             assert full_cfg.model.num_query_groups is not None
@@ -5608,6 +5609,25 @@ def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
                 cfg._validate_and_apply_megatron_fsdp_v1_configs()
         else:
             cfg._validate_and_apply_megatron_fsdp_v1_configs()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+@pytest.mark.parametrize("dense", ["no_shard", "optim", "optim_grads", "optim_grads_params"])
+@pytest.mark.parametrize("expert", [None, "no_shard", "optim_grads_params"])
+def test_fsdp_v2_preserves_sharding_strategies(dense, expert):
+    # MFSDP V2 maps every strategy to DTensor placements, so ZeRO-2 dense with ZeRO-3
+    # experts (as in the DeepSeek-V3 HSDP recipe) must reach Megatron-Core unchanged.
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config())
+    try:
+        cfg.checkpoint.save = cfg.checkpoint.load = None
+        cfg.ddp.megatron_fsdp_version = 2
+        cfg.ddp.data_parallel_sharding_strategy = dense
+        cfg.ddp.expert_data_parallel_sharding_strategy = expert
+        cfg._validate_and_apply_megatron_fsdp_configs()
+        assert cfg.ddp.data_parallel_sharding_strategy == dense
+        assert cfg.ddp.expert_data_parallel_sharding_strategy == expert
+        assert not cfg.ddp.use_distributed_optimizer and not cfg.optimizer.use_distributed_optimizer
     finally:
         restore_get_world_size_safe(original, module)
 

@@ -501,7 +501,7 @@ def test_library_only_canonical_name_applies_runtime_environment_without_restart
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
-@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"])
+@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP", "PYTHONHASHSEED"])
 def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch, env_name):
     module, handles = _load_module()
     monkeypatch.delenv(env_name, raising=False)
@@ -517,7 +517,7 @@ def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch, en
     handles.recipe_runner.apply_runtime_environment.assert_not_called()
 
 
-@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"])
+@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP", "PYTHONHASHSEED"])
 def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch, env_name):
     module, handles = _load_module()
     monkeypatch.setenv(env_name, "0")

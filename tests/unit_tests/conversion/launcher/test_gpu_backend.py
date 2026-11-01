@@ -415,6 +415,69 @@ class TestExportMegatronToHf:
             (("/hf-export",), {"overwrite": False, "source_paths": [str(checkpoint_path), "hf"]})
         ]
 
+    @pytest.mark.parametrize(
+        ("pattern", "expected_pattern"), [("WEWECE|HE/WE", "WEWECE|HE/WE"), ("WEWECEHE/WE", None)]
+    )
+    def test_export_passes_hybrid_segments_with_the_pipeline_layout(
+        self, cli, monkeypatch, tmp_path, pattern, expected_pattern
+    ):
+        calls = []
+        layout = [["embedding"] + ["decoder"] * 6, ["decoder"] * 2 + ["mtp", "loss"]]
+
+        class FakeBridge:
+            _model_bridge = object()
+            hf_pretrained = _FakeHfPretrained()
+
+            def to_megatron_provider(self, *args, **kwargs):
+                return _FakeProvider(calls)
+
+            def load_megatron_model(self, *args, **kwargs):
+                calls.append(("load_megatron_model", args, kwargs))
+                return ["megatron-model"]
+
+            def save_hf_pretrained(self, *args, **kwargs):
+                calls.append(("save_hf_pretrained", args, kwargs))
+
+        def fake_restore(bridge, model_provider, megatron_path, pp):
+            model_provider.pipeline_model_parallel_layout = layout
+            model_provider.hybrid_layer_pattern = pattern
+
+        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
+        monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli, "resolve_hf_model_revision", lambda model, revision, **kwargs: model)
+        monkeypatch.setattr(cli, "_maybe_restore_pipeline_layout", fake_restore)
+        monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", lambda *args, **kwargs: FakeBridge())
+        monkeypatch.setattr(
+            cli.AutoBridge,
+            "from_auto_config",
+            lambda *args, **kwargs: types.SimpleNamespace(hf_pretrained=_FakeHfPretrained.config),
+        )
+
+        cli.export_checkpoint.__wrapped__(
+            hf_model="hf",
+            hf_revision=None,
+            megatron_path=str(tmp_path),
+            hf_path=str(tmp_path / "hf-export"),
+            tp=1,
+            pp=2,
+            ep=1,
+            etp=1,
+            torch_dtype="bfloat16",
+            trust_remote_code=False,
+            strict=True,
+            show_progress=False,
+            distributed_save=False,
+            save_every_n_ranks=1,
+            distributed_timeout_minutes=None,
+            export_weight_dtype=None,
+            overwrite=False,
+        )
+
+        # load_megatron_model strips the checkpoint's own segments, so they must travel with the layout.
+        overrides = next(call for call in calls if call[0] == "load_megatron_model")[2]["mp_overrides"]
+        assert overrides["pipeline_model_parallel_layout"] == layout
+        assert overrides.get("hybrid_layer_pattern") == expected_pattern
+
 
 class TestPipelineLayout:
     def test_restore_uses_latest_checkpoint_iteration(self, cli, tmp_path):
@@ -468,6 +531,102 @@ class TestPipelineLayout:
             ["decoder"],
             ["loss"],
         ]
+
+    def test_restore_reads_fields_nested_in_a_builder_model_config(self, cli, tmp_path):
+        # Builder-backed checkpoints save Megatron-Core fields under model.transformer.
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  _builder_: megatron.bridge.models.gpt.BridgeGPTModelBuilder\n"
+            "  transformer:\n"
+            "    mtp_num_layers: 1\n"
+            "    pipeline_model_parallel_size: 3\n"
+            "    pipeline_model_parallel_layout:\n"
+            "      - [embedding, decoder, decoder]\n"
+            "      - [decoder]\n"
+            "      - [decoder, mtp, loss]\n"
+        )
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                raise AssertionError("a saved layout for the requested topology must be restored")
+
+        provider = _FakeProvider([])
+        provider.mtp_num_layers = None
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=3)
+
+        assert provider.mtp_num_layers == 1
+        assert provider.pipeline_model_parallel_layout == [
+            ["embedding", "decoder", "decoder"],
+            ["decoder"],
+            ["decoder", "mtp", "loss"],
+        ]
+
+    @pytest.mark.parametrize(
+        ("bridge_generates_layout", "expected_layout"),
+        [
+            # The bridge regenerates the layout, sized from the checkpoint's MTP depth.
+            (True, [["embedding", "decoder", "decoder"], ["decoder", "decoder", "mtp", "loss"]]),
+            # The bridge keeps the default split, so the saved custom layout is redistributed.
+            (False, [["embedding", "decoder", "decoder", "decoder"], ["decoder", "mtp", "loss"]]),
+        ],
+        ids=["regenerated", "rebalanced"],
+    )
+    def test_restore_reads_nested_builder_fields_for_a_different_pp(
+        self, cli, tmp_path, bridge_generates_layout, expected_layout
+    ):
+        # A builder checkpoint saved with a custom PP=4 layout and exported at PP=2. Its four stages would also fit
+        # PP=2 as two virtual stages each, so only the saved PP size shows that the topology changed.
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  _builder_: megatron.bridge.models.gpt.BridgeGPTModelBuilder\n"
+            "  transformer:\n"
+            "    mtp_num_layers: 1\n"
+            "    pipeline_model_parallel_size: 4\n"
+            "    pipeline_model_parallel_layout:\n"
+            "      - [embedding, decoder]\n"
+            "      - [decoder, decoder]\n"
+            "      - [decoder]\n"
+            "      - [mtp, loss]\n"
+        )
+        requested = []
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                requested.append((pp, mtp_layers))
+                if not bridge_generates_layout:
+                    return None
+                return [["embedding", "decoder", "decoder"], ["decoder", "decoder", *["mtp"] * mtp_layers, "loss"]]
+
+        # The bridge disables MTP for conversion, but the trained checkpoint has an MTP layer.
+        provider = _FakeProvider([])
+        provider.mtp_num_layers = None
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=2)
+
+        assert provider.mtp_num_layers == 1
+        assert requested == [(2, 1)]
+        assert provider.pipeline_model_parallel_layout == expected_layout
+
+    def test_restore_keeps_hybrid_segments_saved_with_the_layout(self, cli, tmp_path):
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  pipeline_model_parallel_size: 2\n"
+            "  hybrid_layer_pattern: 'WEWECE|HE/WE'\n"
+            "  pipeline_model_parallel_layout:\n"
+            "    - [embedding, decoder, decoder, decoder, decoder, decoder, decoder]\n"
+            "    - [decoder, decoder, mtp, loss]\n"
+        )
+        provider = _FakeProvider([])
+        provider.hybrid_layer_pattern = "WEWECEHE"
+        bridge = types.SimpleNamespace(_model_bridge=object(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=2)
+
+        assert provider.hybrid_layer_pattern == "WEWECE|HE/WE"
+        assert [stage.count("decoder") for stage in provider.pipeline_model_parallel_layout] == [6, 2]
 
     def test_restore_rebalances_pipeline_layout_to_pp_one(self, cli, tmp_path):
         (tmp_path / "run_config.yaml").write_text(
@@ -538,6 +697,27 @@ class TestPipelineLayout:
 
         assert requested == [(2, 2, expected_mtp_layers)]
         assert model_config.pipeline_model_parallel_layout == [["embedding", "decoder"], ["decoder", "loss"]]
+
+    def test_generate_prefers_in_place_bridge_configuration(self, cli):
+        configured = []
+
+        class ModelBridge:
+            def configure_pipeline_layout(self, model_config):
+                configured.append(model_config)
+                model_config.pipeline_model_parallel_layout = [
+                    ["embedding", "decoder", "decoder"],
+                    ["decoder", "loss"],
+                ]
+
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                raise AssertionError("the in-place hook sets every field the stages depend on")
+
+        provider = _FakeProvider([])
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        assert cli._maybe_generate_pipeline_layout(bridge, provider, pp=1) is False
+        assert cli._maybe_generate_pipeline_layout(bridge, provider, pp=2) is True
+        assert configured == [provider]
 
     def test_restore_sizes_regenerated_layout_from_checkpoint_mtp(self, cli, tmp_path):
         # Training checkpoints save string layouts, which export regenerates through the bridge hook.

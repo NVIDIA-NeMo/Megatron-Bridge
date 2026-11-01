@@ -43,6 +43,7 @@ from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import TransformerConfig
 from packaging.version import Version as PkgVersion
 
 
@@ -557,7 +558,7 @@ def _provide_qwen35_language_model(provider, pre_process, post_process, vp_stage
 
 
 def _qwen35_build_language_block_spec(
-    provider: GPTModelProvider,
+    config: TransformerConfig,
     vp_stage: Optional[int],
     pp_rank: Optional[int] = None,
 ) -> TransformerBlockSubmodules | ModuleSpec:
