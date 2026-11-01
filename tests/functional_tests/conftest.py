@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def ensure_test_data(tmp_path_factory):
     """Ensure test data is available in a temporary directory by downloading if necessary."""
     data_path = tmp_path_factory.mktemp("test_data")
