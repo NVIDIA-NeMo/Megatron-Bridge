@@ -12,17 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 import torch
+from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensor
+from megatron.core.models.hybrid.hybrid_layer_allocation import select_pipeline_segment
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from transformers import Qwen3_5MoeTextConfig, Qwen3_5TextConfig
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hybrid.gpt_checkpoint_compat import gpt_checkpoint_key
-from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hybrid_mappings
+from megatron.bridge.models.hybrid.gpt_checkpoint_compat import gpt_checkpoint_key, read_gpt_layout_keys
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hybrid_mappings, qwen35_pipeline_pattern
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
-from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import qwen35_pipeline_pattern
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import Qwen35VLHybridLanguageModel
 
 
 @pytest.mark.parametrize("moe", [False, True])
@@ -137,3 +144,102 @@ def test_pipeline_pattern_keeps_gpt_stage_assignment(pipeline):
         vp_stage, pp_rank = divmod(index, pp_size)
         offset = get_transformer_layer_offset(config, vp_stage if vp_size else None, pp_rank)
         assert sum(map(len, segments[:index])) == 2 * offset
+
+
+@pytest.mark.parametrize("multimodal", [False, True])
+def test_gpt_checkpoint_rewrite_preserves_other_decoders(multimodal):
+    language = HybridModel.__new__(HybridModel)
+    torch.nn.Module.__init__(language)
+    language.hybrid_layer_pattern = "G-G-*-/-"
+    model = torch.nn.Module() if multimodal else language
+    prefix = "language_model." if multimodal else ""
+    if multimodal:
+        model.add_module("language_model", language)
+        model.add_module("vision_model", torch.nn.Module())
+
+    keys = [
+        prefix + "decoder.layers.4.self_attention.linear_qkv.weight",
+        prefix + "decoder.layers.5.mlp.linear_fc1.weight",
+        prefix + "decoder.final_norm.weight",
+        prefix + "mtp.layers.0.transformer_layer.layers.1.mlp.linear_fc1.weight",
+    ]
+    vision_keys = [f"vision_model.decoder.layers.{i}.self_attention.linear_qkv.weight" for i in (1, 2, 3)]
+    if multimodal:
+        keys += vision_keys
+    entries = {key: ShardedTensor.from_rank_offsets(key, torch.ones(2)) for key in keys}
+    extra_key = prefix + "output_layer._extra_state"
+    entries[extra_key] = ShardedObject(extra_key, None, (1,), (0,))
+    if multimodal:
+        entries["vision_model.output_layer._extra_state"] = None
+    state = {"model": entries}
+
+    read_gpt_layout_keys(state, [model])
+
+    for key in keys:
+        expected = key if multimodal and key in vision_keys else gpt_checkpoint_key(key)
+        assert entries[key].key == expected
+    assert extra_key not in entries
+    if multimodal:
+        assert "vision_model.output_layer._extra_state" in entries
+        assert len({entries[key].key for key in vision_keys}) == len(vision_keys)
+
+
+@pytest.mark.parametrize("pre_process", [False, True])
+def test_vl_tied_mtp_checkpoint_uses_embedding_on_last_pipeline_stage(pre_process):
+    model = Qwen35VLHybridLanguageModel.__new__(Qwen35VLHybridLanguageModel)
+    torch.nn.Module.__init__(model)
+    model.mtp_process = True
+    model.pre_process = pre_process
+    model.post_process = True
+    embedding_key = "language_model.embedding.word_embeddings.weight"
+    output_key = "language_model.output_layer.weight"
+    embedding = ShardedTensor.from_rank_offsets(embedding_key, torch.ones(2, 2))
+    state = {
+        embedding_key: embedding,
+        output_key: ShardedTensor.from_rank_offsets(output_key, torch.ones(2, 2)),
+    }
+
+    model.tie_embeddings_and_output_weights_state_dict(state, output_key, embedding_key)
+
+    assert state[embedding_key] is embedding
+    assert (output_key in state) is pre_process
+
+
+@pytest.mark.parametrize("config_class", [Qwen3_5TextConfig, Qwen3_5MoeTextConfig])
+@pytest.mark.parametrize("explicit_pattern", [False, True])
+def test_text_builder_assigns_all_virtual_pipeline_stages(monkeypatch, config_class, explicit_pattern):
+    config = AutoBridge.from_hf_config(config_class(num_hidden_layers=8)).get_model_config()
+    config.pipeline_model_parallel_size = 2
+    config.virtual_pipeline_model_parallel_size = 2
+    config.pipeline_dtype = torch.bfloat16
+    config.mtp_num_layers = 1
+    if explicit_pattern:
+        pattern = config.hybrid_layer_pattern
+        config.hybrid_layer_pattern = "|".join(pattern[i : i + 4] for i in range(0, len(pattern), 4))
+    config.finalize()
+    original_pattern = config.hybrid_layer_pattern
+    builder = config.get_builder_cls()(config)
+    constructor = Mock()
+    monkeypatch.setattr("megatron.training.models.hybrid.HybridModel", constructor)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    group = Mock()
+    group.size.return_value = 2
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda group=None: 2)
+    pg_collection = SimpleNamespace(pp=group)
+
+    for vp_stage in range(2):
+        for pp_rank in range(2):
+            group.rank.return_value = pp_rank
+            monkeypatch.setattr(torch.distributed, "get_rank", lambda group=None: pp_rank)
+            builder.build_model(pg_collection, vp_stage=vp_stage)
+            kwargs = constructor.call_args.kwargs
+            main, mtp = kwargs["hybrid_layer_pattern"].split("/", 1)
+            assert mtp == config.mtp_hybrid_override_pattern
+            layers, offset = select_pipeline_segment(
+                main, kwargs["config"], pg_collection.pp, vp_stage, tp_group=group, dp_cp_group=group
+            )
+            assert len(layers) == 4
+            assert offset == 4 * (vp_stage * 2 + pp_rank)
+            assert kwargs["pre_process"] is (vp_stage == 0 and pp_rank == 0)
+            assert kwargs["post_process"] is (vp_stage == 1 and pp_rank == 1)
+    assert config.hybrid_layer_pattern == original_pattern

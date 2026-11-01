@@ -2253,7 +2253,7 @@ def generate_state_dict(
         model, model_sd_kwargs, ckpt_cfg.ckpt_format, pg_collection=pg_collection
     )
     if gpt_layout_checkpoint:
-        read_gpt_layout_keys(model_state_dict)
+        read_gpt_layout_keys(model_state_dict, model)
     state_dict.update(model_state_dict)
 
     # Optimizer stuff. During load, optimizer sharded-state scaffolding is
@@ -2487,7 +2487,7 @@ def _load_model_weights_from_checkpoint(
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
     if _is_gpt_layout_checkpoint_for(model, checkpoint_path):
         print_rank_0("Reading GPTModel-layout checkpoint keys into the paired HybridModel decoder")
-        read_gpt_layout_keys(sharded_state_dict)
+        read_gpt_layout_keys(sharded_state_dict, model)
 
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:

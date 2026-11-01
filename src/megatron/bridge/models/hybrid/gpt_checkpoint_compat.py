@@ -75,24 +75,32 @@ def is_gpt_layout_checkpoint(checkpoint_keys: Collection[str]) -> bool:
     )
 
 
-def read_gpt_layout_keys(sharded_state_dict: ShardedStateDict) -> None:
-    """Point every sharded entry of a paired HybridModel state dict at its GPTModel checkpoint key.
+def read_gpt_layout_keys(sharded_state_dict: ShardedStateDict, models: list[torch.nn.Module]) -> None:
+    """Point paired Hybrid submodules at their GPTModel checkpoint keys.
 
     Only the keys used to locate data in the checkpoint change; the state dict
     still loads into the HybridModel's own parameters. Optimizer state built
     from this state dict follows the same keys. GPTModel never saves the output
-    layer's (empty) extra state, so that entry is dropped.
+    layer's (empty) extra state, so that entry is dropped. Prefixes come from
+    the unwrapped models, leaving other decoders (such as vision) unchanged.
     """
-    for value in nested_values(sharded_state_dict):
-        if isinstance(value, ShardedBase):
-            value.key = gpt_checkpoint_key(value.key)
-    _drop_output_layer_extra_state(sharded_state_dict)
+    for index, model in enumerate(models):
+        prefixes = tuple(
+            name + "." if name else ""
+            for name, module in model.named_modules()
+            if isinstance(module, HybridModel) and _has_paired_layers(module.hybrid_layer_pattern)
+        )
+        model_state = sharded_state_dict["model" if len(models) == 1 else f"model{index}"]
+        for value in nested_values(model_state):
+            if isinstance(value, ShardedBase) and value.key.startswith(prefixes):
+                value.key = gpt_checkpoint_key(value.key)
+        _drop_output_layer_extra_state(model_state, {prefix + "output_layer._extra_state" for prefix in prefixes})
 
 
-def _drop_output_layer_extra_state(node: dict | list) -> None:
+def _drop_output_layer_extra_state(node: dict | list, keys: set[str]) -> None:
     items = node.items() if isinstance(node, dict) else enumerate(node)
     for name, value in list(items):
         if isinstance(value, (dict, list)):
-            _drop_output_layer_extra_state(value)
-        elif isinstance(name, str) and name.endswith("output_layer._extra_state"):
+            _drop_output_layer_extra_state(value, keys)
+        elif name in keys:
             del node[name]

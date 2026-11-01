@@ -19,14 +19,17 @@ from copy import copy
 from typing import Any
 
 import torch
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.models.hybrid.hybrid_model import HybridModel
-from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_block import get_num_layers_to_build
 from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import PretrainedConfig
 
-from megatron.bridge.models.qwen.modeling_qwen35.hybrid import configure_qwen35_hybrid, qwen35_hybrid_stack_spec
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import (
+    configure_qwen35_hybrid,
+    qwen35_hybrid_stack_spec,
+    qwen35_pipeline_pattern,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
@@ -42,35 +45,6 @@ class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
         if position_ids is None:
             raise RuntimeError("Qwen3.5 Hybrid mRoPE requires the current forward's position_ids.")
         return super().forward(position_ids, self.mrope_section)
-
-
-def qwen35_pipeline_pattern(config: TransformerConfig, pattern: str) -> str:
-    """Place each HF block on the PP/VPP stage that the GPT decoder assigned it to.
-
-    The VL config keeps pipeline settings in HF block units. Each block owns two
-    Hybrid positions, so the GPT stage boundaries become pipe separators.
-    """
-    pp_size = config.pipeline_model_parallel_size
-    vp_size = config.virtual_pipeline_model_parallel_size
-    if pp_size * (vp_size or 1) == 1:
-        return pattern
-
-    blocks = [pattern[index : index + 2] for index in range(0, len(pattern), 2)]
-    layout = config.pipeline_model_parallel_layout
-    segments, offset = [], 0
-    # Hybrid numbers segments as vp_stage * pp_size + pp_rank, which is also the
-    # order in which the GPT decoder assigns consecutive layers to stages.
-    for vp_stage in range(vp_size or 1):
-        for pp_rank in range(pp_size):
-            if layout is not None:
-                count = layout.layout[pp_rank][vp_stage].count(LayerType.decoder)
-            else:
-                count = get_num_layers_to_build(config, vp_stage if vp_size else None, pp_rank)
-            segments.append("".join(blocks[offset : offset + count]))
-            offset += count
-    if offset != len(blocks):
-        raise ValueError(f"Pipeline stages hold {offset} layers, but the language model has {len(blocks)}.")
-    return "|".join(segments)
 
 
 def qwen35_vl_hybrid_stack_spec() -> ModuleSpec:
@@ -138,6 +112,24 @@ class Qwen35VLHybridLanguageModel(HybridModel):
 
         if self.mtp_process:
             self.mtp.register_forward_pre_hook(self._mtp_token_embedding_inputs, with_kwargs=True)
+
+    def tie_embeddings_and_output_weights_state_dict(
+        self,
+        sharded_state_dict: ShardedStateDict,
+        output_layer_weight_key: str,
+        first_stage_word_emb_key: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """Store tied MTP weights only in the embedding entry on the last stage."""
+        if self.mtp_process and not self.pre_process:
+            sharded_state_dict.pop(output_layer_weight_key, None)
+
+        super().tie_embeddings_and_output_weights_state_dict(
+            sharded_state_dict,
+            output_layer_weight_key,
+            first_stage_word_emb_key,
+            metadata if metadata is not None else {},
+        )
 
     @staticmethod
     def _mtp_token_embedding_inputs(
