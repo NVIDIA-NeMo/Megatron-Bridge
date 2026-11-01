@@ -101,13 +101,52 @@ def _resolve_hf_tokenizer_revision(config: TokenizerConfig) -> TokenizerConfig:
         return config
 
     from huggingface_hub import snapshot_download
+    from huggingface_hub.constants import HF_HUB_OFFLINE
 
-    snapshot_path = snapshot_download(
-        repo_id=tokenizer_model,
-        revision=revision,
-        allow_patterns=list(_HF_TOKENIZER_SNAPSHOT_ALLOW_PATTERNS),
-        ignore_patterns=list(_HF_MODEL_WEIGHT_IGNORE_PATTERNS),
-    )
+    local_files_only = bool(hf_tokenizer_kwargs.get("local_files_only", HF_HUB_OFFLINE))
+
+    try:
+        from huggingface_hub.errors import HfHubHTTPError, OfflineModeIsEnabled
+    except ImportError:
+        try:
+            from huggingface_hub.utils import HfHubHTTPError, OfflineModeIsEnabled
+        except ImportError:
+            HfHubHTTPError = Exception
+            OfflineModeIsEnabled = Exception
+
+    # huggingface_hub >= 1.x raises httpx transport errors (ConnectError,
+    # ReadTimeout, ...) for network failures; these are not builtin
+    # ConnectionError subclasses, so catch the httpx base transport error too.
+    try:
+        from httpx import TransportError as _HttpxTransportError
+    except ImportError:
+        # Nothing can raise it when httpx is absent; a placeholder that no
+        # raised exception inherits keeps the handler valid either way.
+        class _HttpxTransportError(Exception):
+            pass
+
+    try:
+        snapshot_path = snapshot_download(
+            repo_id=tokenizer_model,
+            revision=revision,
+            allow_patterns=list(_HF_TOKENIZER_SNAPSHOT_ALLOW_PATTERNS),
+            ignore_patterns=list(_HF_MODEL_WEIGHT_IGNORE_PATTERNS),
+            local_files_only=local_files_only,
+        )
+    except (OfflineModeIsEnabled, HfHubHTTPError, ConnectionError, _HttpxTransportError) as err:
+        if not local_files_only:
+            try:
+                snapshot_path = snapshot_download(
+                    repo_id=tokenizer_model,
+                    revision=revision,
+                    allow_patterns=list(_HF_TOKENIZER_SNAPSHOT_ALLOW_PATTERNS),
+                    ignore_patterns=list(_HF_MODEL_WEIGHT_IGNORE_PATTERNS),
+                    local_files_only=True,
+                )
+            except Exception:
+                raise err
+        else:
+            raise
 
     resolved_config = copy(config)
     resolved_config.tokenizer_model = snapshot_path
