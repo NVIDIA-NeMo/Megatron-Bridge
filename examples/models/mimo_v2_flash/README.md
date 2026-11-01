@@ -4,6 +4,35 @@ This directory contains example scripts for [MiMo-V2-Flash](https://huggingface.
 
 The HF checkpoint depends on custom modeling code, so all commands below pass `--trust-remote-code`.
 
+## MiMo-V2.6-Flash-RL
+
+[`XiaomiMiMo/MiMo-V2.6-Flash-RL`](https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL)
+(309B total / 15B active) uses `MiMoV2Bridge` for its **text backbone**, reusing
+the MiMo-V2-Flash provider and attention layers:
+
+```python
+from megatron.bridge import AutoBridge
+
+bridge = AutoBridge.from_hf_pretrained(
+    "XiaomiMiMo/MiMo-V2.6-Flash-RL", trust_remote_code=True
+)
+provider = bridge.to_megatron_provider()
+# Configure TP/PP/EP/ETP before constructing the model, as below.
+```
+
+The published checkpoint mixes FP8 attention weights with packed MXFP4 expert
+weights. Import dequantizes both to BF16 and reads `metadata.tp_size` from the
+safetensors index to reconstruct fused QKV rows. Keep that index with the shards.
+Export restores the source quantization and QKV layout, preserves the source
+configuration, and copies untouched vision, audio, speech-embedding, and MTP
+tensors. Requantization is lossy; quantized bytes need not round-trip exactly.
+Export dtype overrides are unsupported for quantized source checkpoints.
+
+Use `to_megatron_provider()`; the generic `get_model_config()` builder is not
+supported. The same CP and TP restrictions below apply. Vision/audio execution
+and MTP training are outside this text-backbone implementation. Adapter export
+does not establish support for serving LoRA adapters in vLLM or SGLang.
+
 ## Hardware Requirements
 
 MiMo-V2-Flash requires **at least 2 nodes (16 GPUs)** for inference and conversion. Although the source checkpoint is FP8, conversion dequantizes its weights to BF16 before loading them into Megatron. The 47 MoE layers contain about 302.8B expert parameters, or about 605.6 GB in BF16, so the parallel layout must shard the target expert weights with enough headroom for the rest of the model and communication workspaces.
