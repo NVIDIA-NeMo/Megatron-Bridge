@@ -24,15 +24,17 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # with their default settings to ensure they can run basic training without crashes.
 
 # Keep recipe coverage in one session to reuse imports and distributed startup.
+# Process group memory stays on the GPU across tests until the process exits.
+# Run the largest models first so that this growth does not add to their peak memory.
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 \
   -m coverage run --data-file="${REPO_ROOT}/.coverage" \
   --source="${REPO_ROOT}" --parallel-mode \
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x \
   -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/recipes/test_qwen_vl_recipes_finetune.py \
+  tests/functional_tests/test_groups/recipes/test_qwen35_vl_recipes_finetune.py \
+  tests/functional_tests/test_groups/recipes/test_qwen35_vl_recipes_pretrain.py \
   tests/functional_tests/test_groups/recipes/test_qwen3_vl_recipes_finetune.py \
   tests/functional_tests/test_groups/recipes/test_qwen3_vl_recipes_pretrain.py \
-  tests/functional_tests/test_groups/recipes/test_qwen35_vl_recipes_finetune.py \
-  tests/functional_tests/test_groups/recipes/test_qwen35_vl_recipes_pretrain.py
+  tests/functional_tests/test_groups/recipes/test_qwen_vl_recipes_finetune.py
 
 coverage combine -q
