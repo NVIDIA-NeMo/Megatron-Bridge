@@ -14,7 +14,7 @@ The checkpoints have important differences:
 - **Tokenizer and generation defaults:** `tokenizer.json`, `tokenizer_config.json`, and `generation_config.json` are identical at those revisions, including token IDs and sampling defaults.
 - **Chat formatting:** GLM-5.3's template adds low reasoning effort, retains historical reasoning by default, always opens a thinking response (it does not honor `enable_thinking=False`), and changes structured tool-result handling and ordering. Load the template from the GLM-5.3 checkpoint; do not substitute GLM-5.2's template.
 
-For config/provider loading without weights:
+For config loading without weights:
 
 ```python
 from megatron.bridge import AutoBridge
@@ -22,7 +22,7 @@ from megatron.bridge import AutoBridge
 bridge = AutoBridge.from_hf_pretrained(
     "zai-org/GLM-5.3", revision="aca966e4e02791568aa6a4ced368624b3d897f42"  # pragma: allowlist secret (public HF revision)
 )
-provider = bridge.to_megatron_provider(load_weights=False)
+model_config = bridge.get_model_config()
 ```
 
 For **BF16 export** using the FP8 source as the reference, explicitly select `--export-weight-dtype bfloat16` with the GPU or distributed-CPU conversion backend (API: `weight_dtype=torch.bfloat16`). This removes FP8 scale tensors from strict source-key validation and writes a BF16 artifact rather than claiming a bitwise FP8 round trip. The serial-CPU backend does not support this option. MTP is disabled by default; the appended MTP layer is outside that default inference graph.
@@ -36,7 +36,7 @@ The recorded commands and results below belong to the checkpoint named in each v
 ## HybridModel migration
 
 The shared GLM-5/5.1/5.2/5.3 bridge constructs `HybridModel` through
-`GLM5ModelProvider`. The outer language model is Core's native `HybridModel`;
+`GLM5ModelConfig` and `GLM5ModelBuilder`. The outer language model is Core's native `HybridModel`;
 GLM-specific runtime adaptations are supplied through the stack specification.
 Each HF block becomes a `D-` (dense) or `DE` (MoE) pair;
 78 HF blocks therefore become 156 physical Hybrid layers. A thin `GLMDSAttention`
@@ -47,8 +47,9 @@ original layer count, and MTP uses a separate `/DE` pattern when enabled.
 
 Import the pinned HF checkpoint into a **new** Hybrid checkpoint directory.
 The generic Core GPT-to-Hybrid converter does not support this DSA architecture;
-old GPT optimizer/checkpoint resume is outside this migration. `get_model_config()`
-is not supported for this family yet; use `to_megatron_provider()`.
+old GPT optimizer/checkpoint resume is outside this migration. Recipes and checkpoint
+conversion build the model from `get_model_config()`; the deprecated `to_megatron_provider()`
+returns the equivalent `GLM5ModelProvider`.
 
 The initial recipes use BF16 and non-VPP pipeline segments. Pattern boundaries
 must begin on DSA compute layers. Full recomputation replays an entire pipeline

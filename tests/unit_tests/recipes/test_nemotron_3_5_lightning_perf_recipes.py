@@ -22,6 +22,7 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config,
@@ -99,8 +100,12 @@ _GB300_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
 )
-# GB300 perf recipes covered by nemo-ci dispatch through NCCL EP (no HybridEP topology in their environment).
+# BF16 and MXFP8 B200/B300 recipes and the selected GB300 recipes dispatch through NCCL EP.
 _NCCLEP_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
 )
@@ -323,13 +328,14 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.mtp_num_layers == 2
     assert cfg.model.mtp_hybrid_override_pattern == "*E"
     assert cfg.model.mtp_use_repeated_layer is True
-    assert cfg.model.keep_mtp_spec_in_bf16 is True
     assert cfg.model.mtp_loss_scaling_factor == 0.3
     assert cfg.model.moe_router_force_load_balancing is True
     expected_backend = "ncclep" if recipe_factory in _NCCLEP_RECIPES else "hybridep"
     assert cfg.model.moe_flex_dispatcher_backend == expected_backend
-    assert cfg.model.hf_model_id == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.model.extra_checkpoint_metadata == {
+        "hf_model_id": _NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+        "hf_model_revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+    }
     assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
 
@@ -347,8 +353,12 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     cfg = recipe_factory()
     base_cfg = base_recipe_factory()
 
-    if recipe_factory in _B_MXFP8_RECIPES:
-        assert cfg.env_vars == {**base_cfg.env_vars, "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1}
+    if recipe_factory in _NCCLEP_RECIPES and recipe_factory in (*_B200_RECIPES, *_B300_RECIPES):
+        expected_env = {name: value for name, value in base_cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
+        expected_env["NCCL_EP_HT_EM_PULL_PUSH"] = 1
+        if recipe_factory in _B_MXFP8_RECIPES:
+            expected_env["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
+        assert cfg.env_vars == expected_env
     elif recipe_factory in _FULL_ITERATION_MXFP8_RECIPES:
         assert cfg.env_vars == {
             **base_cfg.env_vars,
@@ -568,8 +578,16 @@ def test_b200_b300_perf_recipe_topology(
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
     assert cfg.model.moe_hybridep_num_sms == expected_hybridep_sms
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
-    assert cfg.env_vars["USE_MNNVL"] == 0
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    if recipe_factory in _NCCLEP_RECIPES:
+        assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+        assert cfg.model.moe_use_grouped_tensor is True
+        assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+        assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    else:
+        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+        assert cfg.env_vars["USE_MNNVL"] == 0
     assert ("NCCL_IGNORE_CPU_AFFINITY" in cfg.env_vars) is expect_b300_affinity
 
 

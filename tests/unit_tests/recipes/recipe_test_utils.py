@@ -142,6 +142,8 @@ class _OfflineModelProvider:
         self.dsa_indexer_topk_freq = 1
         self.delay_wgrad_compute = False
         self.experimental_attention_variant = "dsa"
+        # Builder-backed configs record their Hugging Face source here.
+        self.extra_checkpoint_metadata = {}
         self.fp16 = False
         # Preconditions of the MXFP8 CuTe DSL fused grouped MLP, asserted by the
         # perf recipe tests: SwiGLU, and FC1/FC2 dims divisible by 64. Absent here
@@ -152,6 +154,8 @@ class _OfflineModelProvider:
         self.gradient_accumulation_fusion = True
         self.hidden_size = 2048
         self.make_vocab_size_divisible_by = 128
+        self.moe_combine_bwd_dtype = "bf16"
+        self.moe_dispatch_fwd_dtype = "bf16"
         self.moe_flex_dispatcher_backend = None
         self.moe_ffn_hidden_size = 768
         self.mtp_num_layers = 1
@@ -218,8 +222,280 @@ class _OfflineAutoBridge:
         return provider
 
     def get_model_config(self) -> _OfflineModelProvider:
-        """Return a mutable stand-in for builder-backed recipe construction."""
-        return _OfflineModelProvider()
+        """Return the same mutable stand-in for builder-backed recipe construction."""
+        return self.to_megatron_provider()
+
+
+# A small Nemotron-H architecture with Mamba, attention, dense MLP and MoE layers.
+_NEMOTRON_H_HF_CONFIG = {
+    "hidden_size": 256,
+    "intermediate_size": 512,
+    "num_attention_heads": 8,
+    "num_key_value_heads": 2,
+    "head_dim": 32,
+    "mamba_num_heads": 8,
+    "mamba_head_dim": 32,
+    "ssm_state_size": 16,
+    "n_groups": 2,
+    "n_routed_experts": 8,
+    "num_experts_per_tok": 2,
+    "moe_intermediate_size": 128,
+    "moe_shared_expert_intermediate_size": 256,
+    "n_group": 1,
+    "topk_group": 1,
+    "routed_scaling_factor": 2.5,
+    "vocab_size": 1024,
+    "max_position_embeddings": 8192,
+    "hybrid_override_pattern": "MEM*EM-E",
+    "dtype": "bfloat16",
+}
+
+
+def nemotron_h_model_config(model_id: str = "", **hf_overrides: object):
+    """Build a strict builder-backed Nemotron-H model config from a small Hugging Face config.
+
+    Args:
+        model_id: Source id recorded in the config's checkpoint metadata.
+        **hf_overrides: Hugging Face ``NemotronHConfig`` fields to override.
+
+    Returns:
+        The ``BridgeHybridModelConfig`` that ``AutoBridge.get_model_config()`` returns.
+    """
+    from transformers import NemotronHConfig
+
+    from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+    values = {**_NEMOTRON_H_HF_CONFIG, **hf_overrides}
+    values.setdefault("num_hidden_layers", len(values["hybrid_override_pattern"]))
+    hf_config = NemotronHConfig(**values)
+    hf_config.architectures = ["NemotronHForCausalLM"]
+    hf_config._name_or_path = model_id
+    return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+
+class NemotronHBuilderOnlyBridge:
+    """Stand-in for ``AutoBridge`` that returns strict Nemotron-H model configs offline.
+
+    Subclasses set ``hf_config_overrides`` to select another architecture. The
+    legacy provider API fails, so recipes must use ``get_model_config()``.
+    """
+
+    hf_config_overrides: dict[str, object] = {}
+
+    def __init__(self, model_id: str, revision: str | None = None) -> None:
+        self.model_id = model_id
+        self.hf_model_revision = revision
+
+    @classmethod
+    def from_hf_pretrained(cls, model_id: object, **kwargs: object) -> "NemotronHBuilderOnlyBridge":
+        return cls(str(model_id), kwargs.get("revision"))
+
+    def get_model_config(self):
+        model_config = nemotron_h_model_config(self.model_id, **self.hf_config_overrides)
+        if self.hf_model_revision:
+            model_config.extra_checkpoint_metadata["hf_model_revision"] = self.hf_model_revision
+        return model_config
+
+    def to_megatron_provider(self, *args: object, **kwargs: object):
+        raise AssertionError("Nemotron-H recipes must use get_model_config(), not the legacy provider API")
+
+
+class NemotronHUltraBuilderOnlyBridge(NemotronHBuilderOnlyBridge):
+    """Builder-only stand-in with Nemotron 3 Ultra's decoder pattern and shared MTP block."""
+
+    hf_config_overrides = {
+        "hybrid_override_pattern": NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
+        "num_nextn_predict_layers": 1,
+        "mtp_hybrid_override_pattern": "*E",
+    }
+
+
+# GLM-5.2's architecture from its Hugging Face config.
+_GLM5_HF_CONFIG = {
+    "num_hidden_layers": 78,
+    "first_k_dense_replace": 3,
+    "hidden_size": 6144,
+    "intermediate_size": 12288,
+    "moe_intermediate_size": 2048,
+    "num_attention_heads": 64,
+    "num_key_value_heads": 64,
+    "n_routed_experts": 256,
+    "n_shared_experts": 1,
+    "num_experts_per_tok": 8,
+    "q_lora_rank": 2048,
+    "kv_lora_rank": 512,
+    "qk_head_dim": 256,
+    "qk_nope_head_dim": 192,
+    "qk_rope_head_dim": 64,
+    "v_head_dim": 256,
+    "index_head_dim": 128,
+    "index_n_heads": 32,
+    "index_topk": 2048,
+    "index_topk_freq": 4,
+    "index_skip_topk_offset": 3,
+    "indexer_rope_interleave": True,
+    "rope_parameters": {"rope_theta": 8_000_000, "rope_type": "default"},
+    "vocab_size": 154880,
+    "max_position_embeddings": 1048576,
+    "num_nextn_predict_layers": 1,
+    "dtype": "bfloat16",
+}
+
+# GLM-5 and GLM-5.1 compute DSA top-k indices on every layer.
+GLM5_1_HF_CONFIG_OVERRIDES = {
+    "index_topk_freq": 1,
+    "index_skip_topk_offset": 0,
+    "rope_parameters": {"rope_theta": 1_000_000, "rope_type": "default"},
+    "max_position_embeddings": 202752,
+}
+
+
+def glm5_model_config(model_id: str = "", **hf_overrides: object):
+    """Build a strict builder-backed GLM-5 model config from GLM-5.2's architecture.
+
+    Args:
+        model_id: Source id recorded in the config's checkpoint metadata.
+        **hf_overrides: Hugging Face ``GlmMoeDsaConfig`` fields to override.
+
+    Returns:
+        The ``GLM5ModelConfig`` that ``AutoBridge.get_model_config()`` returns.
+    """
+    from transformers import GlmMoeDsaConfig
+
+    from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+    hf_config = GlmMoeDsaConfig(**{**_GLM5_HF_CONFIG, **hf_overrides})
+    hf_config.architectures = ["GlmMoeDsaForCausalLM"]
+    hf_config._name_or_path = model_id
+    return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+
+class GLM5BuilderOnlyBridge:
+    """Stand-in for ``AutoBridge`` that returns strict GLM-5 model configs offline.
+
+    GLM-5 and GLM-5.1 sources get their DSA and RoPE settings. The legacy provider API
+    fails, so recipes must use ``get_model_config()``.
+    """
+
+    def __init__(self, model_id: str, revision: str | None = None) -> None:
+        self.model_id = model_id
+        self.hf_model_revision = revision
+
+    @classmethod
+    def from_hf_pretrained(cls, model_id: object, **kwargs: object) -> "GLM5BuilderOnlyBridge":
+        return cls(str(model_id), kwargs.get("revision"))
+
+    def get_model_config(self):
+        overrides = GLM5_1_HF_CONFIG_OVERRIDES if self.model_id in ("zai-org/GLM-5", "zai-org/GLM-5.1") else {}
+        model_config = glm5_model_config(self.model_id, **overrides)
+        if self.hf_model_revision:
+            model_config.extra_checkpoint_metadata["hf_model_revision"] = self.hf_model_revision
+        return model_config
+
+    def to_megatron_provider(self, *args: object, **kwargs: object):
+        raise AssertionError("GLM-5 recipes must use get_model_config(), not the legacy provider API")
+
+
+# DeepSeek-V4-Flash's architecture from its Hugging Face config.
+_DEEPSEEK_V4_HF_CONFIG = {
+    "hidden_size": 4096,
+    "moe_intermediate_size": 2048,
+    "num_hidden_layers": 43,
+    "num_attention_heads": 64,
+    "num_key_value_heads": 1,
+    "head_dim": 512,
+    "q_lora_rank": 1024,
+    "qk_rope_head_dim": 64,
+    "n_routed_experts": 256,
+    "n_shared_experts": 1,
+    "num_experts_per_tok": 6,
+    "scoring_func": "sqrtsoftplus",
+    "norm_topk_prob": True,
+    "routed_scaling_factor": 1.5,
+    "vocab_size": 129280,
+    "max_position_embeddings": 1048576,
+    "rope_theta": 10000,
+    "compress_rope_theta": 160000,
+    "rope_scaling": {
+        "type": "yarn",
+        "factor": 16,
+        "original_max_position_embeddings": 65536,
+        "beta_fast": 32,
+        "beta_slow": 1,
+    },
+    # Per-layer compression ratios plus the MTP layer.
+    "compress_ratios": [0, 0] + [4, 128] * 20 + [4, 0],
+    "num_hash_layers": 3,
+    "hc_mult": 4,
+    "hc_sinkhorn_iters": 20,
+    "swiglu_limit": 10.0,
+    "sliding_window": 128,
+    "o_groups": 8,
+    "o_lora_rank": 1024,
+    "index_n_heads": 64,
+    "index_head_dim": 128,
+    "index_topk": 512,
+    "num_nextn_predict_layers": 1,
+    "rms_norm_eps": 1e-6,
+    "tie_word_embeddings": False,
+    "dtype": "bfloat16",
+}
+
+# DeepSeek-V4-Pro's fields that differ from DeepSeek-V4-Flash.
+DEEPSEEK_V4_PRO_HF_CONFIG_OVERRIDES = {
+    "hidden_size": 7168,
+    "moe_intermediate_size": 3072,
+    "num_hidden_layers": 61,
+    "num_attention_heads": 128,
+    "q_lora_rank": 1536,
+    "n_routed_experts": 384,
+    "routed_scaling_factor": 2.5,
+    "o_groups": 16,
+    "index_topk": 1024,
+    "compress_ratios": [128, 128] + [4, 128] * 29 + [4, 0],
+}
+
+
+def deepseek_v4_model_config(model_id: str = "", **hf_overrides: object):
+    """Build a strict builder-backed DeepSeek-V4 model config from DeepSeek-V4-Flash's architecture.
+
+    Args:
+        model_id: Source id recorded in the config's checkpoint metadata.
+        **hf_overrides: Hugging Face ``DeepseekV4Config`` fields to override.
+
+    Returns:
+        The ``DeepSeekV4ModelConfig`` that ``AutoBridge.get_model_config()`` returns.
+    """
+    from transformers import DeepseekV4Config
+
+    from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+    hf_config = DeepseekV4Config(**{**_DEEPSEEK_V4_HF_CONFIG, **hf_overrides})
+    hf_config.architectures = ["DeepseekV4ForCausalLM"]
+    hf_config._name_or_path = model_id
+    return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+
+class DeepSeekV4BuilderOnlyBridge:
+    """Stand-in for ``AutoBridge`` that returns strict DeepSeek-V4 model configs offline.
+
+    DeepSeek-V4-Pro sources get Pro's architecture. The legacy provider API fails, so
+    recipes must use ``get_model_config()``.
+    """
+
+    def __init__(self, model_id: str) -> None:
+        self.model_id = model_id
+
+    @classmethod
+    def from_hf_pretrained(cls, model_id: object, **kwargs: object) -> "DeepSeekV4BuilderOnlyBridge":
+        return cls(str(model_id))
+
+    def get_model_config(self):
+        overrides = DEEPSEEK_V4_PRO_HF_CONFIG_OVERRIDES if "deepseek-v4-pro" in self.model_id.lower() else {}
+        return deepseek_v4_model_config(self.model_id, **overrides)
+
+    def to_megatron_provider(self, *args: object, **kwargs: object):
+        raise AssertionError("DeepSeek-V4 recipes must use get_model_config(), not the legacy provider API")
 
 
 class _OfflineTokenizer:

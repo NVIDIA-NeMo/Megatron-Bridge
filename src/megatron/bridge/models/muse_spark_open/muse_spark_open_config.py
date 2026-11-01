@@ -19,10 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from megatron.bridge.models.common import ModelConfig, ModelConfigOverrideMixin, deserialize_model_config
-from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.models.muse_glimmer.muse_glimmer_config import MuseGlimmerTransformerConfig
-from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
 
 
 @dataclass
@@ -33,19 +31,16 @@ class MuseSparkTransformerConfig(MuseGlimmerTransformerConfig):
 
 
 @dataclass(kw_only=True)
-class MuseSparkModelConfig(ModelConfigOverrideMixin, HybridModelConfig):
+class MuseSparkModelConfig(BridgeHybridModelConfig):
     """HF perception modules and an MCore Hybrid language model."""
 
     builder: ClassVar[str] = "megatron.bridge.models.muse_spark_open.MuseSparkModelBuilder"
     transformer_config_class: ClassVar[type] = MuseSparkTransformerConfig
     hf_config: dict[str, Any] = field(default_factory=dict)
-    hf_model_text_only: bool = False
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_audio_model: bool = False
     freeze_vision_projection: bool = False
-
-    get_builder_cls = ModelConfig.get_builder_cls
 
     @property
     def special_token_ids(self) -> dict[str, int]:
@@ -95,25 +90,3 @@ class MuseSparkModelConfig(ModelConfigOverrideMixin, HybridModelConfig):
         if config.residual_gate_temperature <= 0:
             raise ValueError("residual_gate_temperature must be positive.")
         super().finalize()
-
-    def as_dict(self) -> dict[str, Any]:
-        """Serialize callable activations using Bridge's existing registry."""
-        data = super().as_dict()
-        activation = self.transformer.activation_func
-        name = activation if isinstance(activation, str) else callable_to_str(activation)
-        if name is None:
-            raise ValueError(f"Cannot serialize activation {activation!r}.")
-        data["transformer"]["activation_func"] = name
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MuseSparkModelConfig:
-        """Restore a serialized config without importing the Transformers model code."""
-        data = {**data, "transformer": dict(data["transformer"])}
-        activation = data["transformer"].get("activation_func")
-        if isinstance(activation, str):
-            data["transformer"]["activation_func"] = str_to_callable(activation)
-        result = deserialize_model_config(data)
-        if not isinstance(result, cls):
-            raise TypeError(f"Expected {cls.__name__}, got {type(result).__name__}.")
-        return result

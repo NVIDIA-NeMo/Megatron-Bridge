@@ -17,11 +17,12 @@ import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 import yaml
 from megatron.core import parallel_state
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
@@ -29,9 +30,12 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import save_megatron_mimo_model
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
 from megatron.bridge.training import model_load_save
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.model_load_save import (
@@ -460,6 +464,10 @@ class TestLoadMegatronModel:
             moe_grouped_gemm=True,
             moe_expert_rank_capacity_factor=1.5,
             moe_paged_stash=True,
+            # Paged stash on the non-op-fuser GroupedTensor path requires fused SwiGLU.
+            gated_linear_unit=True,
+            activation_func=F.silu,
+            bias_activation_fusion=True,
         )
         provider.finalize()
         kwargs = dict(
@@ -592,6 +600,42 @@ class TestLoadMegatronModel:
 
         assert loaded_provider.pipeline_model_parallel_layout == expected_layout
 
+    def test_load_model_config_preserves_finalized_builder_pipeline_layout(self, tmp_path):
+        """Verify builder-backed checkpoints retain a finalized custom pipeline layout."""
+        model_config = BridgeGPTModelConfig(
+            transformer=BridgeTransformerConfig(
+                num_layers=2,
+                hidden_size=16,
+                num_attention_heads=2,
+                pipeline_model_parallel_size=2,
+                pipeline_model_parallel_layout=[["embedding", "decoder"], ["decoder", "loss"]],
+            ),
+            vocab_size=128,
+        )
+        model_config.finalize()
+
+        assert isinstance(model_config.pipeline_model_parallel_layout, PipelineParallelLayerLayout)
+        expected_layout = model_config.pipeline_model_parallel_layout.input_data
+
+        config = ConfigContainer(
+            model=model_config,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        loaded_model_config, _ = load_model_config(str(tmp_path))
+
+        assert isinstance(loaded_model_config, BridgeGPTModelConfig)
+        assert loaded_model_config.pipeline_model_parallel_layout == expected_layout
+        loaded_model_config.finalize()
+        assert loaded_model_config.pipeline_model_parallel_layout.input_data == expected_layout
+
     def test_read_saved_builder_model_targets(self, tmp_path):
         """The checkpoint target scan preserves serialized builder model targets."""
         model = GPTModelConfig(
@@ -623,6 +667,44 @@ class TestLoadMegatronModel:
             f"{TransformerConfig.__module__}.{TransformerConfig.__qualname__}"
         )
         assert loaded["model"]["transformer"]["hidden_size"] == 128
+
+    def test_load_model_config_preserves_finalized_hybrid_pipeline_layout(self, tmp_path):
+        """Verify builder-backed Hybrid checkpoints retain a finalized custom pipeline layout."""
+        model_config = BridgeHybridModelConfig(
+            transformer=BridgeTransformerConfig(
+                num_layers=4,
+                hidden_size=16,
+                num_attention_heads=2,
+                pipeline_model_parallel_size=2,
+                pipeline_model_parallel_layout=[["embedding", "decoder", "decoder"], ["decoder", "decoder", "loss"]],
+            ),
+            hybrid_layer_pattern="*-|*-",
+            vocab_size=128,
+        )
+        model_config.finalize()
+
+        assert isinstance(model_config.pipeline_model_parallel_layout, PipelineParallelLayerLayout)
+        expected_layout = model_config.pipeline_model_parallel_layout.input_data
+
+        config = ConfigContainer(
+            model=model_config,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        loaded_model_config, _ = load_model_config(str(tmp_path))
+
+        assert isinstance(loaded_model_config, BridgeHybridModelConfig)
+        assert loaded_model_config.pipeline_model_parallel_layout == expected_layout
+        assert loaded_model_config.hybrid_layer_pattern == "*-|*-"
+        loaded_model_config.finalize()
+        assert loaded_model_config.pipeline_model_parallel_layout.input_data == expected_layout
 
     @pytest.mark.parametrize(
         "target",
@@ -854,9 +936,11 @@ class TestLoadMegatronModel:
         mock_model_cfg.get_builder_cls.assert_called_once()
         mock_get_pg_collection.assert_called_once_with(mock_model_cfg)
         mock_builder_cls.assert_called_once_with(mock_model_cfg)
+        # The shared builder helper supplies the FP32-preserving mixed-precision wrapper.
         mock_builder.build_distributed_models.assert_called_once_with(
-            mock_mpu_pgs,
+            pg_collection=mock_mpu_pgs,
             wrap_with_ddp=False,
+            mixed_precision_wrapper=ANY,
         )
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
@@ -864,6 +948,48 @@ class TestLoadMegatronModel:
         result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+
+    @patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_gpu_load_of_cpu_imported_builder_config_builds_on_gpu(
+        self,
+        mock_from_dict,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_load_weights,
+        mock_get_pg_collection,
+        tmp_path,
+    ):
+        """A builder config saved by a CPU import must not make a GPU load build on CPU."""
+        mock_run_config_fname.return_value = tmp_path / "run_config.yaml"
+        mock_run_config.return_value = {
+            "model": {"tensor_model_parallel_size": 1, "_builder_": "import.path.to.SomeModelBuilder"}
+        }
+
+        mock_model = Mock()
+        mock_model_cfg = Mock(spec=GPTModelConfig)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = False
+        mock_model_cfg.fp16 = False
+        # A CPU import saves this flag in the checkpoint's builder config.
+        mock_model_cfg.use_cpu_initialization = True
+        mock_model_cfg.finalize = Mock()
+        cpu_init_at_build = []
+        mock_builder = Mock()
+        mock_builder.build_distributed_models.side_effect = lambda *args, **kwargs: (
+            cpu_init_at_build.append(mock_model_cfg.use_cpu_initialization) or [mock_model]
+        )
+        mock_model_cfg.get_builder_cls.return_value = Mock(return_value=mock_builder)
+        mock_from_dict.return_value = mock_model_cfg
+        (tmp_path / "run_config.yaml").touch()
+
+        result = load_megatron_model(tmp_path, use_cpu_init=False, skip_temp_dist_context=True)
+
+        assert result == [mock_model]
+        assert cpu_init_at_build == [False]
 
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
@@ -1338,6 +1464,72 @@ class TestLoadMegatronModel:
         assert cfg.pipeline_model_parallel_size == 3
         assert cfg.sequence_parallel is True
         assert cfg.virtual_pipeline_model_parallel_size == 4
+
+
+class TestBuilderCheckpointConfigRetention:
+    """Builder config ownership across standalone load and save."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("wrapped", [False, True])
+    @pytest.mark.parametrize("num_chunks", [1, 2])
+    def test_load_builder_model_can_be_saved(self, tmp_path, wrapped, num_chunks):
+        """Loading retains the reconstructable config on every returned model chunk."""
+        model_config = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=16,
+                num_attention_heads=2,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=64,
+            seq_length=128,
+            share_embeddings_and_output_weights=False,
+        )
+        chunks = []
+        for _ in range(num_chunks):
+            module = torch.nn.Linear(16, 16)
+            module.config = model_config.transformer
+            if wrapped:
+                wrapper = torch.nn.Module()
+                wrapper.module = module
+                module = wrapper
+            chunks.append(module)
+        builder = Mock()
+        builder.build_distributed_models.return_value = chunks
+
+        with (
+            patch.object(model_load_save, "load_model_config", return_value=(model_config, None)),
+            patch.object(model_load_save, "_get_or_initialize_pg_collection"),
+            patch.object(type(model_config), "get_builder_cls", return_value=Mock(return_value=builder)),
+            patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state", return_value=False),
+            patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint") as load_weights,
+        ):
+            models = load_megatron_model("/checkpoint", use_cpu_init=True, skip_temp_dist_context=True)
+
+        assert models is chunks
+        load_weights.assert_called_once_with("/checkpoint", models, return_state_dict=False)
+
+        def save_config(**kwargs):
+            # Exercise the real config serializer; distributed tensor I/O is mocked.
+            kwargs["state"].cfg.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        with patch.object(model_load_save, "save_checkpoint", side_effect=save_config) as save_checkpoint:
+            save_megatron_model(models, str(tmp_path))
+
+        save_checkpoint.assert_called_once()
+        assert save_checkpoint.call_args.kwargs["model"] is models
+        for model in models:
+            assert model.model_config is model_config
+            inner_model = model.module if wrapped else model
+            assert inner_model.config is model_config.transformer
+        reloaded_config, _ = load_model_config(str(tmp_path))
+        assert type(reloaded_config) is type(model_config)
+        assert reloaded_config.get_builder_cls() is model_config.get_builder_cls()
+        assert reloaded_config.vocab_size == 64
+        assert reloaded_config.seq_length == 128
+        assert reloaded_config.share_embeddings_and_output_weights is False
+        assert reloaded_config.transformer.hidden_size == 16
+        assert reloaded_config.transformer.attention_backend is model_config.transformer.attention_backend
 
 
 class TestSaveMegatronModel:

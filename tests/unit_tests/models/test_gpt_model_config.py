@@ -172,8 +172,8 @@ def test_model_config_is_opt_in_per_family() -> None:
     assert MegatronModelBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
     for bridge_class in (LlamaBridge, Qwen3Bridge):
         assert bridge_class.__dict__["MODEL_CONFIG_CLASS"] is BridgeGPTModelConfig
+        assert bridge_class.__dict__["USE_MODEL_CONFIG_FOR_CONVERSION"] is True
     assert MuseGlimmerBridge.__dict__["MODEL_CONFIG_CLASS"] is not None
-    assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
     assert BridgeGPTModelConfig.transformer_config_class is TransformerConfig
     assert not hasattr(MegatronModelBridge, "TRANSFORMER_CONFIG_CLASS")
 

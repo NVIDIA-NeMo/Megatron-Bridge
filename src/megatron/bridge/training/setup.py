@@ -46,7 +46,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin, build_distributed_models
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.peft.utils import (
     enable_expert_parallel_grad_sync_in_finalize,
@@ -82,6 +82,7 @@ from megatron.bridge.training.tensor_inspect import (
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.bridge.training.utils.optimizer_utils import uses_layer_wise_optimizer
 from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
@@ -622,15 +623,17 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             model_config, _freeze_base_model_for_mtp, setup_hook_name="freeze_base_model_for_mtp"
         )
     if isinstance(model_config, ModelConfig):
-        builder_cls = model_config.get_builder_cls()
-        builder = builder_cls(model_config)
-        model = builder.build_distributed_models(
-            pg_collection=pg_collection,
+        # PEFT loads base weights in a pre-wrap hook; the helper keeps FP32 router tensors through the cast.
+        model = build_distributed_models(
+            model_config,
+            pg_collection,
             ddp_config=cfg.ddp,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
         )
     else:
         model = model_config.provide_distributed_model(
@@ -638,6 +641,8 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
+            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
         )

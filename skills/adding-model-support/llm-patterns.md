@@ -71,6 +71,15 @@ the base mapping.
   the builder config, so the callable must read only fields that config declares. If the same
   callable also serves the legacy provider, branch on `isinstance(config, GPTModelProvider)` before
   calling provider-only helpers such as `default_layer_spec`.
+- Custom decoder layers read their per-layer fields from the nested transformer config, so declare
+  those fields on a `TransformerConfig` subclass named by the model config's
+  `transformer_config_class`. A callable that edits a copy of the config must copy
+  `config.transformer`: a shallow copy of the builder config shares it.
+- With MTP, the GPT builder passes the block spec's `layer_specs[-1]` to `get_gpt_mtp_block_spec`,
+  which accepts a bare layer spec only when its module is `TransformerLayer` itself. If the MTP
+  layers use a `TransformerLayer` subclass, return a one-layer `TransformerBlockSubmodules` from
+  `layer_specs[-1]` for builder configs, as `build_exaone_moe_layer_spec` and
+  `build_step35_layer_spec` do.
 
 ### YaRN
 
@@ -79,6 +88,30 @@ base mapping sets `position_embedding_type="yarn"` and the `yarn_*` fields from 
 dict whose type is `"yarn"`. Hugging Face YaRN configs often omit `beta_fast`, `beta_slow` and
 `truncate`; check that the mapped config carries Hugging Face's defaults (32, 1 and `True`) for
 them. Megatron Core passes `None` through to its YaRN embedding and fails at model construction.
+
+### HybridModel families
+
+A `HybridModel` LLM built from a Mamba, attention, MLP and MoE layer pattern, such as Nemotron-H,
+sets `MODEL_CONFIG_CLASS = BridgeHybridModelConfig` from `megatron.bridge.models.hybrid`, the hybrid
+counterpart of `BridgeGPTModelConfig`. It keeps the `HybridModelProvider` contract:
+`hybrid_layer_pattern` and `mamba_chunk_size` are declared fields, a separate
+`mtp_hybrid_override_pattern` is appended to the pattern once per MTP depth in `finalize()`, and
+stack-spec factories resolve as on the provider path. Map the provider's defaults that differ from
+the builder config's (for example `normalization`, `apply_rope_fusion` and `attention_backend`)
+explicitly. Follow Nemotron-H (`src/megatron/bridge/models/nemotronh/nemotron_h_bridge.py`).
+
+A HybridModel family with Multi-Latent Attention (MLA) subclasses `BridgeHybridMLAModelConfig`, whose
+nested transformer config is an `MLATransformerConfig`. Megatron Core declares `rotary_base` and
+`rotary_percent` on both configs, and MLA attention reads the nested values, so only the nested config
+stores and serializes them. The outer names are constructor arguments and views of the nested values;
+a constructor value that conflicts with a nested value raises. With an MLA model config, the base
+mapping maps a YaRN `rope_scaling` dict to the MLA fields (`rotary_scaling_factor`, `mscale`,
+`beta_fast`, ...) and selects `position_embedding_type="rope"`. Put checks in the config's
+`validate()`, which must not change the config, and the derived settings in `finalize()`, which runs
+`validate()` first. Follow GLM-5 (`src/megatron/bridge/models/glm_moe_dsa/glm5_config.py`), whose config
+shares its DSA-aware checks and updates with the provider and whose builder resolves a custom stack spec,
+and DeepSeek-V4 (`src/megatron/bridge/models/deepseek/deepseek_v4_config.py`), which adds a transformer
+field that recipes set.
 
 ### When you need a custom config class
 

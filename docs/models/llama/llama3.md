@@ -89,6 +89,7 @@ See: [bridge.recipes.llama.llama3](../../apidocs/bridge/bridge.recipes.llama.lla
   - `llama3_8b_pretrain_2gpu_h100_fp8cs_config`, `llama3_8b_pretrain_2gpu_h100_fp8mx_config`, `llama3_8b_pretrain_2gpu_h100_nvfp4_config`: Llama 3 8B H100 low precision (FP8/MXFP8/NVFP4)
   - `llama3_70b_pretrain_config`, `llama3_70b_16k_pretrain_config`, `llama3_70b_64k_pretrain_config`: Llama 3 70B (8K/16K/64K context)
   - `llama31_8b_pretrain_config`, `llama31_70b_pretrain_config`, `llama31_405b_pretrain_config`: Llama 3.1 (8B/70B/405B, 128K context)
+  - `llama31_405b_pretrain_64gpu_gb200_fp8mx_config`: Llama 3.1 405B on 64 GB200 GPUs, 8K context, MXFP8, no recompute
 
 - **SFT recipes**:
   - `llama32_1b_sft_config`, `llama32_3b_sft_config`: Llama 3.2 full SFT
@@ -129,6 +130,7 @@ See: [bridge.recipes.llama.llama3](../../apidocs/bridge/bridge.recipes.llama.lla
 | Model | Mode | TP | PP | VP | CP | Total GPUs | Use Case |
 |-------|------|----|----|----|----|------------|----------|
 | **405B** | Pretrain | 8 | 8 | 2 | 4 | 512 | Pre-training (64 nodes) |
+| **405B** | Pretrain MXFP8, 8K | 8 | 8 | 8 | 1 | 64 | GB200, 16 four-GPU nodes |
 | **405B** | Full SFT | 8 | 16 | - | 1 | 2048 | Full supervised finetuning (256 nodes) |
 | **405B** | LoRA/DoRA | 4 | 8 | 8 | 1 | 256 | PEFT finetuning (32 nodes) |
 
@@ -139,6 +141,56 @@ See: [bridge.recipes.llama.llama3](../../apidocs/bridge/bridge.recipes.llama.lla
 - **Virtual Pipeline**: VP parallelism for 70B and 405B models
 
 ### Pre-training Example
+
+#### Llama 3.1 405B on 64 GB200 GPUs
+
+`llama31_405b_pretrain_64gpu_gb200_fp8mx_config()` configures the full 126-layer
+model at sequence length 8192 with TP8, PP8, VPP8, CP1, and sequence parallelism.
+Place all 16 four-GPU nodes within one NVLink domain. At 64 GPUs, data
+parallelism is one; global batch 1536 and microbatch one accumulate 1536
+microbatches per optimizer update. Keep this global batch fixed when launching.
+
+The recipe uses MXFP8 with FP8 parameter gather and gradient-buffer reuse,
+BF16 gradient accumulation, and FP32 optimizer master parameters and Adam
+moments. Activation recomputation and CUDA graphs are disabled. Tensor-parallel
+communication overlap and the Transformer Engine RNG tracker are enabled.
+There is no optimizer or activation offload. Training schedule, checkpointing,
+and numerical checks retain their base training defaults.
+
+Validation in NeMo 26.10.rc10 on 64 GB200 GPUs completed 10 updates on real
+WikiText-103 tokenized with the native Llama 3.1 tokenizer. All ranks exited
+successfully with finite losses and gradients and no skipped updates. Median
+update time after warmup was 289 seconds, approximately 1718 model TFLOP/s/GPU.
+Peak allocated/reserved GPU memory across all ranks was 154.6/157.1 GiB.
+This validates short-run capacity and stability; long-term convergence and
+MXFP8 checkpoint save/resume were not tested. Enabling CUDA graphs exceeded
+memory in the tested configuration.
+
+The default dataset is synthetic. For real-text training, supply an indexed
+dataset produced with the native Llama 3.1 tokenizer (128256 vocabulary entries):
+
+```python
+from megatron.bridge.recipes.llama import llama31_405b_pretrain_64gpu_gb200_fp8mx_config
+from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
+
+cfg = llama31_405b_pretrain_64gpu_gb200_fp8mx_config()
+cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
+cfg.tokenizer.tokenizer_model = "meta-llama/Meta-Llama-3.1-405B"
+cfg.dataset.blend = (["/path/to/llama-tokenized-data"], [1.0])
+cfg.dataset.split = "9998,1,1"
+cfg.checkpoint.save = "/path/to/checkpoints"
+cfg.checkpoint.load = cfg.checkpoint.save
+pretrain(cfg, forward_step)
+```
+
+Launch this script with 64 distributed processes, one per GPU. Dataset prefixes
+refer to the corresponding `.bin` and `.idx` files without their extensions.
+The recipe is also exported as
+`--recipe llama31_405b_pretrain_64gpu_gb200_fp8mx_config` for
+`scripts/training/run_recipe.py`.
+
+#### Llama 3 8B
 
 ```python
 from megatron.bridge.recipes.llama import llama3_8b_pretrain_config

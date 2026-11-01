@@ -16,16 +16,13 @@
 """Beam model configuration: a ``HybridModel`` config plus the Beam architecture fields."""
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Optional
+from typing import ClassVar, Optional
 
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 
 from megatron.bridge.models.beam.modeling_beam import validate_beam_config
-from megatron.bridge.models.common import ModelConfigOverrideMixin, deserialize_model_config
-from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
-from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
-from megatron.bridge.utils.instantiate_utils import _resolve_target
 
 
 @dataclass
@@ -90,7 +87,7 @@ def beam_pipeline_layer_pattern(pattern: str, num_stages: int) -> str:
 
 
 @dataclass(kw_only=True)
-class BeamModelConfig(ModelConfigOverrideMixin, HybridModelConfig):
+class BeamModelConfig(BridgeHybridModelConfig):
     """``HybridModel`` config whose builder uses the Beam stack spec and soft-caps the output layer.
 
     ``hybrid_layer_pattern`` holds two hybrid layers per Beam layer: ``*`` attention followed
@@ -115,43 +112,3 @@ class BeamModelConfig(ModelConfigOverrideMixin, HybridModelConfig):
         ):
             self.hybrid_layer_pattern = beam_pipeline_layer_pattern(self.hybrid_layer_pattern, num_stages)
         super().finalize()
-
-    def get_builder_cls(self) -> type:
-        """Resolve the Beam builder through Bridge's target allowlist."""
-        builder_cls = _resolve_target(self.builder, full_key="_builder_")
-        if not isinstance(builder_cls, type):
-            raise TypeError(f"Builder target '{self.builder}' did not resolve to a class.")
-        return builder_cls
-
-    def as_dict(self) -> dict[str, Any]:
-        """Serialize the config with a symbolic activation function."""
-        data = super().as_dict()
-        transformer_data = data.get("transformer")
-        if not isinstance(transformer_data, dict):
-            raise TypeError("Serialized Beam config must contain a transformer mapping.")
-        activation_func = self.transformer.activation_func
-        if isinstance(activation_func, str):
-            str_to_callable(activation_func)
-            activation_name = activation_func
-        else:
-            activation_name = callable_to_str(activation_func)
-        if activation_name is None:
-            raise ValueError(f"Cannot serialize unregistered activation callable: {activation_func!r}.")
-        transformer_data["activation_func"] = activation_name
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BeamModelConfig":
-        """Deserialize a Beam config and restore its activation callable."""
-        restored_data = dict(data)
-        transformer_data = restored_data.get("transformer")
-        if isinstance(transformer_data, dict):
-            restored_transformer = dict(transformer_data)
-            activation_name = restored_transformer.get("activation_func")
-            if isinstance(activation_name, str):
-                restored_transformer["activation_func"] = str_to_callable(activation_name)
-            restored_data["transformer"] = restored_transformer
-        result = deserialize_model_config(restored_data)
-        if not isinstance(result, cls):
-            raise TypeError(f"Expected {cls.__name__}, got {type(result).__name__}.")
-        return result

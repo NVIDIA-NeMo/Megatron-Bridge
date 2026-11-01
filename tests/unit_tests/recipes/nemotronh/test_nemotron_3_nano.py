@@ -31,8 +31,10 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano import (
+    nemotron_3_5_lightning_pretrain_8k_config,
+    nemotron_3_5_lightning_pretrain_8k_deterministic_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config,
 )
@@ -48,6 +50,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
 from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+from tests.unit_tests.recipes.recipe_test_utils import nemotron_h_model_config
 
 
 @pytest.mark.unit
@@ -63,7 +66,7 @@ class TestNemotron3NanoPretrain:
         config = nemotron_3_nano_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, BridgeHybridModelConfig)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 1
@@ -107,13 +110,15 @@ class TestNemotron3NanoPretrain:
         assert config.model.mtp_num_layers == 2
         assert config.model.mtp_hybrid_override_pattern == "*E"
         assert config.model.mtp_use_repeated_layer is True
-        assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
         assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
         assert config.model.use_te_rng_tracker == base_config.model.use_te_rng_tracker
         assert recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16")
-        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID
-        assert config.model.hf_model_revision == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+        assert config.model.extra_checkpoint_metadata["hf_model_id"] == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID
+        assert (
+            config.model.extra_checkpoint_metadata["hf_model_revision"]
+            == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+        )
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID
         assert config.tokenizer.hf_tokenizer_kwargs == {
             "revision": recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
@@ -191,7 +196,7 @@ class TestNemotron3NanoSft:
         config = nemotron_3_nano_sft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, BridgeHybridModelConfig)
 
         # Check default parallelism for SFT
         assert config.model.tensor_model_parallel_size == 1
@@ -282,27 +287,29 @@ class TestNemotron3NanoSft:
         mtp_num_layers,
         tokenizer_model,
     ):
-        """SFT and PEFT derive the provider from Nemotron 3 before applying MTP."""
-        provider = HybridModelProvider()
-        provider.hf_model_id = recipe_module._NEMOTRON_3_NANO_MODEL_ID
+        """SFT and PEFT derive the model config from Nemotron 3 before applying MTP."""
+        model_config = nemotron_h_model_config(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
         bridge = Mock()
-        bridge.to_megatron_provider.return_value = provider
+        bridge.get_model_config.return_value = model_config
 
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
             config = recipe_factory()
 
         from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
-        bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
-        assert config.model is provider
+        bridge.get_model_config.assert_called_once_with()
+        bridge.to_megatron_provider.assert_not_called()
+        assert config.model is model_config
         assert config.model.mtp_num_layers == mtp_num_layers
         assert config.model.mtp_hybrid_override_pattern == ("*E" if mtp_num_layers else None)
         assert config.model.mtp_use_repeated_layer is bool(mtp_num_layers)
-        assert config.model.keep_mtp_spec_in_bf16 is bool(mtp_num_layers)
         assert config.model.mtp_loss_scaling_factor == (0.3 if mtp_num_layers else 0.1)
-        assert config.model.hf_model_id == tokenizer_model
+        assert config.model.extra_checkpoint_metadata["hf_model_id"] == tokenizer_model
         assert config.tokenizer.tokenizer_model == tokenizer_model
         if mtp_num_layers:
-            assert config.model.hf_model_revision == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+            assert (
+                config.model.extra_checkpoint_metadata["hf_model_revision"]
+                == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+            )
             assert config.tokenizer.hf_tokenizer_kwargs == {
                 "revision": recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
             }
@@ -333,7 +340,7 @@ class TestNemotron3NanoSft:
     ):
         """Nemotron 3.5 SFT and PEFT mutate their corresponding Nemotron 3 config."""
         base_config = Mock()
-        base_config.model = HybridModelProvider()
+        base_config.model = nemotron_h_model_config(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
         base_config.tokenizer = Mock()
 
         with patch.object(recipe_module, base_factory_name, return_value=base_config) as base_factory:
@@ -344,10 +351,11 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_num_layers == 2
         assert config.model.mtp_hybrid_override_pattern == "*E"
         assert config.model.mtp_use_repeated_layer is True
-        assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
-        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID
-        assert config.model.hf_model_revision == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+        assert config.model.extra_checkpoint_metadata == {
+            "hf_model_id": recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+            "hf_model_revision": recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+        }
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID
         assert config.tokenizer.hf_tokenizer_kwargs == {
             "revision": recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
@@ -362,10 +370,8 @@ class TestNemotron3NanoSft:
 
     def test_nemotron_3_5_openmath_sft_recipe_owns_verified_h100_defaults(self):
         """The dedicated H100 recipe makes the standard packed SFT command concise."""
-        provider = HybridModelProvider()
-        provider.hf_model_id = recipe_module._NEMOTRON_3_NANO_MODEL_ID
         bridge = Mock()
-        bridge.to_megatron_provider.return_value = provider
+        bridge.get_model_config.return_value = nemotron_h_model_config(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
 
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
             config = recipe_module.nemotron_3_5_lightning_sft_openmathinstruct2_packed_config()
@@ -374,10 +380,11 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_num_layers == 2
         assert config.model.mtp_hybrid_override_pattern == "*E"
         assert config.model.mtp_use_repeated_layer is True
-        assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
-        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID
-        assert config.model.hf_model_revision == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+        assert config.model.extra_checkpoint_metadata == {
+            "hf_model_id": recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID,
+            "hf_model_revision": recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION,
+        }
         assert config.tokenizer.hf_tokenizer_kwargs == {
             "revision": recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
         }
@@ -451,7 +458,7 @@ class TestNemotron3NanoPeft:
         config = nemotron_3_nano_peft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, BridgeHybridModelConfig)
 
         # Check default parallelism for LoRA/DoRA
         assert config.model.tensor_model_parallel_size == 1
@@ -584,7 +591,7 @@ class TestNemotron3NanoCommon:
         config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, BridgeHybridModelConfig)
 
         # Check required sections exist
         assert config.train is not None
@@ -648,5 +655,33 @@ def test_gb200_8gpu_deterministic_pretrain_applies_determinism():
     assert cfg.train.global_batch_size == base.train.global_batch_size
     for key, value in DETERMINISM_ENV_VARS.items():
         assert cfg.env_vars[key] == value
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.unit
+def test_gb200_lightning_8k_deterministic_pretrain_applies_determinism():
+    """The deterministic Lightning recipe keeps the 8K contract and layout and adds determinism settings."""
+    from megatron.bridge.recipes.nemotronh import (
+        nemotron_3_5_lightning_pretrain_8k_deterministic_config as exported_config,
+    )
+
+    base = nemotron_3_5_lightning_pretrain_8k_config()
+    cfg = nemotron_3_5_lightning_pretrain_8k_deterministic_config()
+
+    assert exported_config is nemotron_3_5_lightning_pretrain_8k_deterministic_config
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    assert cfg.comm_overlap.tp_comm_overlap is False
+    for field in ("seq_length", "expert_model_parallel_size", "mtp_num_layers", "moe_flex_dispatcher_backend"):
+        assert getattr(cfg.model, field) == getattr(base.model, field)
+    assert cfg.train.global_batch_size == base.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == base.train.micro_batch_size == 2
+    assert cfg.optimizer.lr == base.optimizer.lr
+    for key, value in DETERMINISM_ENV_VARS.items():
+        assert cfg.env_vars[key] == value
+    for key in ("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN", "NVLINK_DOMAIN_SIZE", "USE_MNNVL"):
+        assert cfg.env_vars[key] == base.env_vars[key]
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1

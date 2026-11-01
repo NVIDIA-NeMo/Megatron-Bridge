@@ -103,7 +103,7 @@ RUN pip install "fastapi==0.139.1" \
     "jupyterlab>=4.5.10" \
     "jupyter-server>=2.20.0" \
     "mistune>=3.3.0" \
-    "GitPython>=3.1.62,<4" && \
+    "GitPython>=3.2.1,<4" && \
     # pip targets system Python; explicitly remove the virtualenv copy too.
     uv pip uninstall --python /opt/venv/bin/python opencv-python-headless && \
     uv pip uninstall --python /usr/bin/python3 --system --break-system-packages \

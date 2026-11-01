@@ -299,9 +299,15 @@ def test_mimo_runtime_update_normalizes_zero_worker_provider_before_loader_const
     runtime_cfg.validation.eval_micro_batch_size = None
     runtime_cfg.profiling = None
     runtime_cfg.ddp.use_distributed_optimizer = False
+    runtime_cfg.ddp.num_distributed_optimizer_instances = 1
     runtime_cfg.optimizer.use_distributed_optimizer = False
+    runtime_cfg.optimizer.use_layer_wise_distributed_optimizer = False
+    runtime_cfg.optimizer.optimizer = "adam"
+    runtime_cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     runtime_cfg.ddp.overlap_param_gather = False
     runtime_cfg.optimizer.overlap_param_gather = False
+    runtime_cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+    runtime_cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
 
     megatron_mimo_runtime_config_update(runtime_cfg)
 

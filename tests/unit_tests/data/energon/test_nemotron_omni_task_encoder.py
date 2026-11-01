@@ -19,7 +19,7 @@ import torch
 from transformers.video_utils import VideoMetadata
 
 import megatron.bridge.models.nemotron_omni.data.collate_fn as omni_collate
-from megatron.bridge.data.energon.hf_task_encoder import HFEnergonBatch, HFEnergonSample
+from megatron.bridge.data.energon.hf_task_encoder import HFEnergonBatch, HFEnergonSample, HFTaskEncoder
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
 from megatron.bridge.data.energon.nemotron_omni_task_encoder import (
     NemotronOmniTaskBatch,
@@ -135,6 +135,15 @@ class _AspectVideoImageProcessor:
             pixels.append(torch.ones(3, height, width))
             token_counts.append((height // 16) * (width // 16) // 4)
         return {"pixel_values": pixels, "imgs_sizes": sizes, "num_tokens": token_counts}
+
+
+class _SizedImageProcessor(_Processor):
+    """Return one ``[3, H, W]`` pixel tensor per image at that image's own size."""
+
+    def __call__(self, **kwargs):
+        output = super().__call__(text=kwargs["text"])
+        output["pixel_values"] = [torch.ones(3, image.height, image.width) for image in kwargs["images"] or ()]
+        return output
 
 
 def _sample(conversation, *, key="sample", imgs=None, videos=None, audio=None):
@@ -298,6 +307,50 @@ def test_energon_batch_preserves_real_tokens_when_pad_id_equals_turn_end(monkeyp
     ]
     assert not bool((batch.input_ids == 0).any())
     assert encoded["input_ids"] is batch.input_ids
+
+
+def test_hf_task_encoder_preserves_super_vl_image_metadata(monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    # The 32x32 and 32x64 images expand to one and two pixel-shuffled image tokens.
+    row = [
+        1,
+        IMG_START_ID,
+        IMAGE_TOKEN_ID,
+        IMG_END_ID,
+        IMG_START_ID,
+        IMAGE_TOKEN_ID,
+        IMAGE_TOKEN_ID,
+        IMG_END_ID,
+        21,
+        PAD_AND_END_ID,
+    ]
+    processor_type = type("NemotronH_Omni_Reasoning_V3Processor", (_SizedImageProcessor,), {})
+    # No explicit collator: the generic encoder resolves the Omni collator from the processor type.
+    encoder = HFTaskEncoder(processor=processor_type([row]), seq_length=32, pad_to_multiple_of=1)
+    sample = encoder.encode_sample(
+        _sample(
+            [
+                {
+                    "role": "user",
+                    "content": [{"type": "image"}, {"type": "image"}, {"type": "text", "text": "compare"}],
+                },
+                {"role": "assistant", "content": "answer"},
+            ],
+            imgs=[Image.new("RGB", (32, 32)), Image.new("RGB", (64, 32))],
+        )
+    )
+
+    encoded = encoder.encode_batch(encoder.batch([sample]))
+    expected = omni_collate.nemotron_omni_expanded_collate_fn(
+        [sample.example], processor_type([row]), sequence_length=32, pad_to_multiple_of=1
+    )
+
+    assert encoded["visual_inputs"].pixel_values.shape == (1, 12, 768)
+    assert encoded["imgs_sizes"].tolist() == [[32, 32], [32, 64]]
+    assert encoded["num_frames"].tolist() == [1, 1]
+    assert torch.equal(encoded["media_token_validity_mask"], expected["media_token_validity_mask"])
 
 
 def test_energon_audio_uses_shared_collator_token_expansion(monkeypatch):
