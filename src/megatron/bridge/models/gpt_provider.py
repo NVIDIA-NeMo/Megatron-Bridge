@@ -394,6 +394,10 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
             transform = getattr(config, "mtp_layer_spec_transform", None)
             if transform is not None:
                 spec = transform(config, spec)
-        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
+        kwargs = {}
+        pg_collection = getattr(config, "_pg_collection", None)
+        if pg_collection is not None:
+            kwargs["pp_rank"] = get_pg_rank(pg_collection.pp)
+        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage, **kwargs)
     else:
         return None
