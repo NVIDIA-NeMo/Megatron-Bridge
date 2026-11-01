@@ -556,6 +556,66 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_mfsdpv2_config() -> ConfigContainer:
+    """DeepSeek V3 benchmark: 256× GB300, MXFP8, MFSDP v2 HSDP with NCCL EP.
+
+    Retain the v1 HSDP recipe's EP=64, four optimizer instances, and outer
+    sharding. Use dense ZeRO-3 as required by Bridge's v2 validation, with
+    outer optimizer sharding and expert ZeRO-3 with outer replication.
+    Requires a Megatron-Core build with MFSDP v2 MXFP8, hybrid-DP support,
+    and row-width-aware MXFP8 buffer grouping to bound large-mesh padding.
+    Forced balanced routing and disabled checkpointing make this a throughput
+    benchmark rather than a convergence recipe.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config()
+    cfg.ddp.megatron_fsdp_version = 2
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    _enable_ncclep(cfg)
+    cfg.optimizer.use_distributed_optimizer = False
+    cfg.ddp.use_distributed_optimizer = False
+
+    # V2 owns communication through its module hooks, including gradient finalization.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.overlap_grad_reduce = False
+    cfg.comm_overlap.overlap_param_gather = False
+    cfg.comm_overlap.align_param_gather = False
+
+    # A four-GPU MXFP8 hybrid-DP probe hit an illegal memory access with combined
+    # MoE 1F1B, even with kwargs-aware fused-expert hooks. Keep the schedule off
+    # while retaining fused experts and full-iteration graphs.
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.comm_overlap.delay_wgrad_compute = False
+
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # Suppress per-layer C++ deprecation warnings during graph capture.
+        "TORCH_CPP_LOG_LEVEL": "ERROR",
+        "NVTE_CUDNN_MXFP8_NORM_OUTPUT_IN_INPUT_DTYPE": 0,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, large-scale proxy (PP=4, VP=4, EP=64)."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
