@@ -2,7 +2,7 @@
 
 import copy
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -146,3 +146,62 @@ def test_native_provider_checkpoint_config_roundtrip(rope_type):
     actual = Ministral3RotaryEmbedding.from_megatron_config(restored)
     torch.testing.assert_close(actual.inv_freq, expected.inv_freq)
     assert actual.attention_scaling == expected.attention_scaling
+
+
+@pytest.mark.parametrize("use_factory", [False, True])
+@pytest.mark.parametrize("build_fails", [False, True])
+def test_provide_preserves_layer_spec_checkpoint_config(use_factory, build_fails):
+    from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
+    from megatron.core.transformer.dot_product_attention import DotProductAttention
+    from megatron.core.transformer.spec_utils import ModuleSpec
+    from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
+
+    from megatron.bridge.models import Ministral3ModelProvider
+    from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+    from megatron.bridge.utils.instantiate_utils import instantiate
+
+    spec = ModuleSpec(
+        module=TransformerLayer,
+        submodules=TransformerLayerSubmodules(
+            self_attention=ModuleSpec(
+                module=SelfAttention,
+                submodules=SelfAttentionSubmodules(
+                    linear_qkv=torch.nn.Identity,
+                    core_attention=DotProductAttention,
+                    linear_proj=torch.nn.Identity,
+                ),
+            )
+        ),
+    )
+    provider = NemotronLabsDiffusionBridge().provider_bridge(SimpleNamespace(config=source_config("yarn")))
+    original_spec = (lambda config: spec) if use_factory else spec
+    provider.transformer_layer_spec = original_spec
+    serialized_spec = _ConfigContainerBase._convert_value_to_dict(spec)
+    model = object()
+
+    def build(config, pre_process, post_process, vp_stage):
+        assert (pre_process, post_process, vp_stage) == (True, False, 0)
+        runtime_spec = config.transformer_layer_spec
+        assert runtime_spec is not spec
+        core_attention = runtime_spec.submodules.self_attention.submodules.core_attention
+        assert core_attention.func is NemotronLabsDiffusionAttention
+        assert isinstance(core_attention.keywords["rope_module"], Ministral3RotaryEmbedding)
+        if build_fails:
+            raise RuntimeError("model construction failed")
+        return model
+
+    with patch.object(Ministral3ModelProvider, "provide_language_model", autospec=True, side_effect=build):
+        if build_fails:
+            with pytest.raises(RuntimeError, match="model construction failed"):
+                provider.provide(pre_process=True, post_process=False, vp_stage=0)
+        else:
+            assert provider.provide(pre_process=True, post_process=False, vp_stage=0) is model
+
+    assert provider.transformer_layer_spec is original_spec
+    assert spec.submodules.self_attention.submodules.core_attention is DotProductAttention
+    assert _ConfigContainerBase._convert_value_to_dict(spec) == serialized_spec
+    if not use_factory:
+        restored = instantiate(_ConfigContainerBase._convert_value_to_dict(provider))
+        assert (
+            restored.transformer_layer_spec.submodules.self_attention.submodules.core_attention is DotProductAttention
+        )

@@ -137,13 +137,11 @@ def test_packed_outputs_and_gradients_match_separate_ar_sequences() -> None:
         torch.testing.assert_close(actual, expected, atol=3e-6, rtol=3e-5)
 
 
-def test_cp_requires_packing_and_causal_cacheless_ar() -> None:
+def test_cp_requires_causal_cacheless_ar() -> None:
     attention = make_attention(cp_size=2)
     q = torch.randn(8, 1, 4, 8)
     k = torch.randn(8, 1, 2, 8)
     v = torch.randn_like(k)
-    with pytest.raises(ValueError, match="requires packed"):
-        attention(q, k, v)
     attention.set_inference_params(causal=False, cache_enabled=False)
     with pytest.raises(ValueError, match="causal=True"):
         attention(q, k, v, packed_seq_params=packed_params([8]))

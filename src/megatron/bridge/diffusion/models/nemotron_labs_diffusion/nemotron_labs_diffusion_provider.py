@@ -14,6 +14,7 @@
 
 """NemotronLabsDiffusion model provider: text-only GPTModel + NemotronLabsDiffusionAttention for sbd_block_diff."""
 
+import copy
 import functools
 import inspect
 from dataclasses import dataclass
@@ -53,6 +54,8 @@ class NemotronLabsDiffusionModelProvider(Ministral3ModelProvider):
             else:
                 transformer_layer_spec = transformer_layer_spec(self)
 
+        # Keep runtime RoPE modules out of caller-owned specs and checkpoint config.
+        transformer_layer_spec = copy.deepcopy(transformer_layer_spec)
         if hasattr(transformer_layer_spec, "submodules"):
             rope_module = Ministral3RotaryEmbedding.from_megatron_config(self)
             transformer_layer_spec.submodules.self_attention.submodules.core_attention = functools.partial(
@@ -61,6 +64,7 @@ class NemotronLabsDiffusionModelProvider(Ministral3ModelProvider):
 
         original_spec = self.transformer_layer_spec
         self.transformer_layer_spec = transformer_layer_spec
-        result = super().provide_language_model(pre_process, post_process, vp_stage)
-        self.transformer_layer_spec = original_spec
-        return result
+        try:
+            return super().provide_language_model(pre_process, post_process, vp_stage)
+        finally:
+            self.transformer_layer_spec = original_spec
