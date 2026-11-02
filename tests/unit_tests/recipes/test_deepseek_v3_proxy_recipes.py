@@ -23,7 +23,7 @@ from megatron.core.pipeline_parallel.schedules import forward_backward_no_pipeli
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.perf_recipes import deepseek
-from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3 import _build_deepseek_v3_gb300_fp8mx
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -62,15 +62,15 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("precision", "parent_pipeline", "parent_mesh", "backend"),
+    ("precision", "parent_pipeline", "parent_mesh"),
     [
-        # The MXFP8 recipes follow the MLPerf execution settings: PP=4 x VP=4 on NCCL EP.
-        ("fp8mx", (4, 4), (64, 2, 64), "ncclep"),
-        ("nvfp4", (2, 8), (128, 4, 32), "hybridep"),
+        # The MXFP8 recipes follow the MLPerf execution settings, including PP=4 x VP=4.
+        ("fp8mx", (4, 4), (64, 2, 64)),
+        ("nvfp4", (2, 8), (128, 4, 32)),
     ],
 )
 def test_proxy_preserves_parent_except_depth_and_layout(
-    precision: str, parent_pipeline: tuple[int, int], parent_mesh: tuple[int, int, int], backend: str
+    precision: str, parent_pipeline: tuple[int, int], parent_mesh: tuple[int, int, int]
 ) -> None:
     parent_fn: Callable[[], ConfigContainer] = getattr(
         deepseek, f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config"
@@ -135,7 +135,8 @@ def test_proxy_preserves_parent_except_depth_and_layout(
     assert proxy.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert proxy.comm_overlap.delay_wgrad_compute is True
     assert proxy.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert model.moe_flex_dispatcher_backend == backend
+    assert model.moe_flex_dispatcher_backend == "ncclep"
+    assert proxy.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert model.mtp_num_layers == 1
     assert model.recompute_modules == []
 
@@ -148,28 +149,25 @@ def test_proxy_preserves_parent_except_depth_and_layout(
     )
 
 
-def test_gb300_mxfp8_proxy_stays_on_hybridep() -> None:
-    # The VRNVL72 MXFP8 proxy follows the MLPerf execution settings on NCCL EP; the GB300 proxy keeps the
-    # shared HybridEP base.
+def test_gb300_mxfp8_proxy_uses_nccl_ep() -> None:
+    # The GB300 proxy shrinks its NCCL EP parent. It no longer matches the VRNVL72 MXFP8 proxy, which follows
+    # the MLPerf execution settings.
     gb300 = deepseek.deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config()
 
     assert gb300.model.moe_token_dispatcher_type == "flex"
-    assert gb300.model.moe_flex_dispatcher_backend == "hybridep"
-    assert not getattr(gb300.model, "moe_use_grouped_tensor", False)
-    assert "NCCL_EP_HT_EM_PULL_PUSH" not in gb300.env_vars
-    assert gb300.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-    assert gb300.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
-    assert gb300.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert gb300.env_vars["USE_MNNVL"] == 1
+    assert gb300.model.moe_flex_dispatcher_backend == "ncclep"
+    assert gb300.model.moe_use_grouped_tensor is True
+    assert gb300.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert gb300.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
     assert gb300.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
 
 
 @pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
 def test_4gpu_proxy_only_resizes_its_parent(precision: str) -> None:
-    # The MXFP8 proxy resizes the shared HybridEP base, since the 256-GPU VRNVL72 MXFP8 recipe follows the
-    # MLPerf execution settings instead.
+    # The MXFP8 proxy resizes the 256-GPU GB300 MXFP8 recipe, which shares the VRNVL72 model without the
+    # MLPerf execution settings that the 256-GPU VRNVL72 MXFP8 recipe adds.
     if precision == "fp8mx":
-        parent = _build_deepseek_v3_gb300_fp8mx()
+        parent = deepseek.deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
     else:
         parent = deepseek.deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config()
     proxy = getattr(deepseek, f"deepseek_v3_pretrain_4gpu_vrnvl72_{precision}_proxy_config")()

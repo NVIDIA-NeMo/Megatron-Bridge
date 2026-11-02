@@ -204,13 +204,13 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer:
 
     Three leading dense layers, ten MoE layers, one MTP layer, EP=32 and
     GBS=4096/MBS=1. PP=1 without virtual pipelining gives dense DP=64, expert
-    DP=2 and 64 microbatches. Retain HybridEP, full-iteration graphs, cuTeDSL
-    and combined-1F1B MoE overlap. This reduced-depth benchmark does not
-    establish at-scale throughput, memory fit or convergence; GPU validation
-    is required.
+    DP=2 and 64 microbatches. Retain the 256-GPU parent's NCCL EP dispatch with
+    grouped tensors, full-iteration graphs, cuTeDSL and combined-1F1B MoE
+    overlap. This reduced-depth benchmark does not establish at-scale
+    throughput, memory fit or convergence; GPU validation is required.
     """
-    # Use the shared HybridEP base, without the GB300 parent's NCCL EP/grouped-tensor overrides.
-    cfg = _build_deepseek_v3_gb300_fp8mx()
+    # Shrink the 256-GPU GB300 parent; the VRNVL72 MXFP8 proxy follows the MLPerf execution settings instead.
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
     cfg.model.num_layers = 13
     cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
     cfg.model.pipeline_model_parallel_size = 1
@@ -226,10 +226,8 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,

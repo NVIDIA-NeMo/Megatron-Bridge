@@ -26,7 +26,7 @@ def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.1 SFT: 416x H100, BF16, 128K packed THD, TP=1, PP=13, CP=32."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.1").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.1").get_model_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -115,7 +115,7 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.2 SFT: 416x H100, BF16, 128K packed THD, TP=1, PP=13, CP=32."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.2").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.2").get_model_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
