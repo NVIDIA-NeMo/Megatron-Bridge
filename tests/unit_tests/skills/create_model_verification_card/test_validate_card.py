@@ -152,6 +152,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3.6-35b-a3b", "peft", "GB200"): (4096, 32, 8),
     ("qwen3.8-27b", "pretrain", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "sft", "GB200"): (4096, 32, 16),
+    ("qwen3.8-27b", "sft", "H100"): (4096, 32, 16),
     ("qwen3.8-27b", "sft_long_context", "GB200"): (8192, 32, 16),
     ("qwen3.8-27b", "peft", "GB200"): (4096, 32, 4),
     ("qwen3.8-27b", "checkpoint_resume", "GB200"): (4096, 32, 16),
