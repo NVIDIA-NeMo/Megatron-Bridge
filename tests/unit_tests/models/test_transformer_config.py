@@ -512,3 +512,90 @@ class TestTransformerConfigYarnFields:
 
         expected = yarn_module._yarn_get_concentration_factor(4.0, 1.0, 1.0)
         assert attention_module._yarn_get_concentration_factor_from_config(cfg) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(
+    TransformerConfig.__dataclass_fields__["linear_cp_layout"].default is not None,
+    reason="MCore main uses explicit CP defaults",
+)
+class TestInferredContextParallelInputs:
+    @pytest.mark.parametrize("config_cls", [TransformerConfig, MLATransformerConfig])
+    def test_repeated_finalize_and_serialization_preserve_inference(self, config_cls):
+        from megatron.bridge.models.common.base import ModelConfig
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        cfg = config_cls(num_layers=2, hidden_size=64, num_attention_heads=4, is_hybrid_model=True)
+        for _ in range(3):
+            cfg.finalize()
+            assert cfg.linear_cp_mode == "chunkwise"
+            assert cfg.linear_cp_layout == "zigzag"
+            assert cfg._linear_cp_mode_was_default
+            assert not cfg._linear_cp_layout_explicit
+
+        data = cfg.asdict()
+        assert data["linear_cp_layout"] is None
+        assert data["linear_cp_mode"] is None
+        model = BridgeGPTModelConfig(transformer=cfg)
+        serialized = model.as_dict()
+        assert serialized["transformer"]["linear_cp_layout"] is None
+        assert serialized["transformer"]["linear_cp_mode"] is None
+        restored = ModelConfig.from_dict(serialized).transformer
+        restored.finalize()
+        assert restored.linear_cp_mode == cfg.linear_cp_mode == "chunkwise"
+        assert restored.linear_cp_layout == cfg.linear_cp_layout == "zigzag"
+        assert restored._linear_cp_mode_was_default
+        assert not restored._linear_cp_layout_explicit
+
+    def test_explicit_invalid_layout_still_rejected(self):
+        cfg = _make_config(linear_cp_mode="chunkwise", linear_cp_layout="zigzag")
+        with pytest.raises(ValueError, match="requires linear_cp_layout='contiguous'"):
+            cfg.finalize()
+        cfg.linear_cp_layout = "contiguous"
+        cfg.finalize()
+        cfg.finalize()
+        assert cfg._linear_cp_layout_explicit
+        assert cfg.asdict()["linear_cp_layout"] == "contiguous"
+        assert cfg.asdict()["linear_cp_mode"] == "chunkwise"
+
+    def test_changed_inferred_layout_becomes_explicit(self):
+        cfg = _make_config(is_hybrid_model=True)
+        cfg.finalize()
+        cfg.linear_cp_layout = "contiguous"
+        cfg.finalize()
+        assert cfg._linear_cp_layout_explicit
+        assert cfg.asdict()["linear_cp_layout"] == "contiguous"
+
+    def test_mode_recomputed_after_model_kind_changes(self):
+        cfg = _make_config()
+        cfg.finalize()
+        assert cfg.linear_cp_mode == "headwise"
+        cfg.is_hybrid_model = True
+        cfg.finalize()
+        assert cfg.linear_cp_mode == "chunkwise"
+        assert cfg._linear_cp_mode_was_default
+
+    def test_inferred_inputs_retained_after_failed_finalize(self):
+        cfg = _make_config(is_hybrid_model=True, attn_logit_softcapping=-1.0)
+        with pytest.raises(ValueError, match="attn_logit_softcapping"):
+            cfg.finalize()
+        cfg.attn_logit_softcapping = None
+        cfg.finalize()
+        assert cfg.linear_cp_layout == "zigzag"
+        assert not cfg._linear_cp_layout_explicit
+
+    def test_dsv4_explicit_layout_survives_forced_inferred_flag(self):
+        cfg = MLATransformerConfig(
+            num_layers=1,
+            hidden_size=128,
+            num_attention_heads=4,
+            csa_compress_ratios=[4],
+            dsa_kernel_backend="none",
+            experimental_attention_variant="dsv4_hybrid",
+            linear_cp_layout="contiguous",
+            attention_cp_layout="contiguous",
+        )
+        cfg.finalize()
+        cfg.finalize()
+        assert not cfg._linear_cp_layout_explicit
+        assert cfg.asdict()["linear_cp_layout"] == "contiguous"

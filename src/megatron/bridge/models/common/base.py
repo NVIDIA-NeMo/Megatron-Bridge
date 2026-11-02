@@ -179,6 +179,22 @@ class MLAModelConfigMixin:
 class ModelConfig(_MegatronModelConfig):
     """Bridge compatibility wrapper for Megatron-LM model configs."""
 
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize nested configs without turning inferred CP defaults into overrides."""
+        data = super().as_dict()
+
+        def restore_cp_inputs(config: Any, serialized: Any) -> None:
+            if not is_dataclass(config) or not isinstance(serialized, dict):
+                return
+            if isinstance(config, TransformerConfig):
+                serialized.update(config._inferred_cp_inputs())
+            for f in dataclass_fields(config):
+                if f.name in serialized:
+                    restore_cp_inputs(getattr(config, f.name), serialized[f.name])
+
+        restore_cp_inputs(self, data)
+        return data
+
     def get_builder_cls(self) -> type:
         """Get the appropriate builder type for this config."""
         builder_cls = _resolve_target(self.builder, full_key="_builder_")
