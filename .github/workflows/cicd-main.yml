@@ -1217,8 +1217,15 @@ jobs:
 
   Nemo_CICD_Test:
     needs:
+      - ephemeral-runner-routing
       - pre-flight
       - configure
+      - lint-check
+      - cicd-wait-in-queue
+      - cicd-compute-build-matrix
+      - cicd-container-build
+      - generate-test-matrix
+      - generate-gb200-test-matrix
       - cicd-import-check
       - cicd-unit-tests-core
       - cicd-unit-tests-diffusion
@@ -1241,8 +1248,7 @@ jobs:
         id: result
         shell: bash -e -u -o pipefail {0}
         env:
-          GH_TOKEN:  ${{ github.token }}
-          GH_REPO:   ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
