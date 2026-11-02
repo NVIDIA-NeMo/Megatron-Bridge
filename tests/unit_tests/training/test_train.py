@@ -16,6 +16,7 @@
 
 import signal
 import time
+import weakref
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -33,6 +34,7 @@ from megatron.bridge.training.train import (
     _finish_train,
     _handle_mxfp8_param_buffer_copy,
     _maybe_register_fsdp_buffers,
+    _release_cuda_graph_references,
     _should_skip_and_handle_iteration,
     checkpoint_and_decide_exit,
     force_param_sync,
@@ -348,6 +350,33 @@ class TestCudaGraphCleanup:
 
         mock_delete_runners.assert_called_once_with(model)
         assert calls == ["runners", "global"]
+
+
+@pytest.mark.parametrize("depth", [0, 1, 2])
+def test_optimizer_cleanup_releases_retained_graph_for_repeated_runs(depth):
+    class Graph:
+        pass
+
+    child = SimpleNamespace(_cudagraphed_grad_copy=None)
+    untouched = SimpleNamespace()
+    optimizer = child
+    parents = []
+    for _ in range(depth):
+        optimizer = SimpleNamespace(chained_optimizers=[optimizer, untouched], _cudagraphed_grad_copy=object())
+        parents.append(optimizer)
+    for _ in range(2):
+        graph = Graph()
+        reference = weakref.ref(graph)
+        child._cudagraphed_grad_copy = SimpleNamespace(forward_backward_graph=graph)
+        del graph
+        assert reference() is not None
+        _release_cuda_graph_references(optimizer)
+        assert reference() is None
+        assert child._cudagraphed_grad_copy is None
+        assert all(parent._cudagraphed_grad_copy is None for parent in parents)
+        assert not hasattr(untouched, "_cudagraphed_grad_copy")
+        _release_cuda_graph_references(optimizer)
+    _release_cuda_graph_references(None)
 
 
 class TestFSDPRegistration:

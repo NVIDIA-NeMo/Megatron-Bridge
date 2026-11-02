@@ -15,11 +15,109 @@
 """Unit tests for pretrain module process group cleanup."""
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from megatron.bridge.training.pretrain import _maybe_destroy_process_group, _pretrain
+
+
+@pytest.mark.parametrize("coefficient", [None, 0.0, 1.0])
+@pytest.mark.parametrize("has_initializer", [False, True])
+def test_dsa_tracker_initialized_before_training(coefficient, has_initializer):
+    """Forward the whole model and owning groups, including a rank without writers."""
+    initializer = MagicMock()
+    dsa_logging = SimpleNamespace()
+    if has_initializer:
+        dsa_logging.initialize_dsa_metric_tracker = initializer
+    state = MagicMock()
+    state.cfg.model.dsa_indexer_loss_coeff = coefficient
+    state.cfg.validation.skip_train = False
+    state.cfg.train.train_iters = 1
+    state.train_state.do_valid = False
+    state.train_state.do_test = False
+    output = MagicMock(state=state)
+    output.model = []  # A PP rank without a local DSA writer must still participate.
+
+    def check_initialized(*_args, **_kwargs):
+        if coefficient and has_initializer:
+            initializer.assert_called_once_with(output.model, output.pg_collection)
+        else:
+            initializer.assert_not_called()
+
+    with (
+        patch.dict(
+            "sys.modules", {"megatron.core.transformer.experimental_attention_variant.dsa_logging": dsa_logging}
+        ),
+        patch("megatron.bridge.training.pretrain.dist"),
+        patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+        patch("megatron.bridge.training.pretrain.setup", return_value=output),
+        patch("megatron.bridge.training.pretrain.train", side_effect=check_initialized) as train,
+        patch("megatron.bridge.training.pretrain.barrier_and_log"),
+        patch("megatron.bridge.training.pretrain._finish_train"),
+    ):
+        _pretrain(state, MagicMock())
+    train.assert_called_once()
+
+
+@pytest.mark.parametrize("failure_stage", [None, "train", "evaluate_and_print_results", "_finish_train"])
+@pytest.mark.parametrize("inprocess", [False, True])
+def test_pretrain_releases_optimizer_graphs_before_teardown(failure_stage, inprocess):
+    from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+
+    state = MagicMock()
+    state.cfg.model.dsa_indexer_loss_coeff = None
+    state.cfg.validation.skip_train = False
+    state.cfg.train.train_iters = 1
+    state.train_state.do_valid = True
+    state.train_state.do_test = False
+    optimizer = SimpleNamespace(_cudagraphed_grad_copy=object())
+    output = MagicMock(state=state, optimizer=optimizer)
+    error = RuntimeError("training lifecycle failed")
+
+    def assert_released():
+        assert optimizer._cudagraphed_grad_copy is None
+        for stage in ("training", "validation"):
+            assert FullCudaGraphWrapper.cuda_graph[stage] is None
+            assert FullCudaGraphWrapper.result[stage] is None
+            assert FullCudaGraphWrapper.curr_iteration[stage] == 0
+
+    def finish(*_args, **_kwargs):
+        assert_released()
+        if failure_stage == "_finish_train":
+            raise error
+
+    def cleanup(*_args, **_kwargs):
+        assert_released()
+
+    with (
+        patch.object(FullCudaGraphWrapper, "cuda_graph", {"training": object(), "validation": object()}),
+        patch.object(FullCudaGraphWrapper, "result", {"training": object(), "validation": object()}),
+        patch.object(FullCudaGraphWrapper, "curr_iteration", {"training": 10, "validation": 5}),
+        patch("megatron.bridge.training.pretrain.dist"),
+        patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+        patch("megatron.bridge.training.pretrain.setup", return_value=output),
+        patch("megatron.bridge.training.pretrain.train", side_effect=error if failure_stage == "train" else None),
+        patch(
+            "megatron.bridge.training.pretrain.evaluate_and_print_results",
+            side_effect=error if failure_stage == "evaluate_and_print_results" else None,
+        ),
+        patch("megatron.bridge.training.pretrain.barrier_and_log"),
+        patch("megatron.bridge.training.pretrain._finish_train", side_effect=finish),
+        patch("megatron.bridge.training.pretrain._cleanup_after_pretrain_failure", side_effect=cleanup),
+        patch("megatron.bridge.training.train.torch.cuda.synchronize") as synchronize,
+    ):
+        kwargs = {"inprocess_call_wrapper": MagicMock()} if inprocess else {}
+        if failure_stage:
+            with pytest.raises(RuntimeError) as raised:
+                _pretrain(state, MagicMock(), **kwargs)
+            assert raised.value is error
+        else:
+            _pretrain(state, MagicMock(), **kwargs)
+        synchronize.assert_not_called()
+        assert_released()
+    assert optimizer._cudagraphed_grad_copy is None
 
 
 class TestDestroyProcessGroupIfNeeded:

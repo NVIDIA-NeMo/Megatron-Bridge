@@ -330,6 +330,15 @@ def destroy_global_state() -> None:
     """
     from megatron.core.rerun_state_machine import destroy_rerun_state_machine
 
+    try:
+        from megatron.core.transformer.experimental_attention_variant import dsa_logging
+    except ImportError:
+        pass  # The main pin does not have DSA metric tracking.
+    else:
+        # Fixed DSA tracker capacity and PP-group identity belong to one model
+        # lifecycle. A later pretrain call may use different layers or groups.
+        if hasattr(dsa_logging, "initialize_dsa_metric_tracker"):
+            dsa_logging.DSAIndexerLossLoggingHelper.tracker.clear()
     destroy_num_microbatches_calculator()
     parallel_state.destroy_global_memory_buffer()
     parallel_state.destroy_model_parallel()

@@ -22,6 +22,7 @@ overrides = [
     { name = "fast-hadamard-transform", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=v1.1.0" },
     { name = "fastapi", specifier = "<0.139.2" },
     { name = "filelock", specifier = ">=4.2.1" },
+    { name = "flashinfer-python", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/" },
     { name = "gitpython", specifier = ">=3.2.1,<4" },
     { name = "imageio", marker = "sys_platform == 'never'" },
     { name = "imageio-ffmpeg", marker = "sys_platform == 'never'" },
