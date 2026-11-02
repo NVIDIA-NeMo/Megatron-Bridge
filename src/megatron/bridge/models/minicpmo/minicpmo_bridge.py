@@ -50,6 +50,8 @@ class MiniCPMOBridge(Qwen3Bridge):
         config_path = path / "config.json"
         if config_path.is_file():
             model_config = json.loads(config_path.read_text())
+            # Exported understanding weights intentionally omit the TTS module.
+            model_config["init_tts"] = False
             # HF 5 moves these fields; the checkpoint's native HF 4 loader
             # otherwise silently falls back to a different rotary base/dtype.
             rotary = model_config.get("rope_parameters", {})

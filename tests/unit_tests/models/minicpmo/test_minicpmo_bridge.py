@@ -126,7 +126,8 @@ def test_inherited_dense_mlp_mapping_keeps_gate_before_up_in_each_direction():
 
 
 @pytest.mark.unit
-def test_export_preserves_remote_tokenizer_schema_without_reverting_model_config(tmp_path):
+@pytest.mark.parametrize("init_tts", [True, False])
+def test_export_preserves_remote_tokenizer_schema_without_reverting_model_config(tmp_path, init_tts):
     from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
     source = tmp_path / "source"
@@ -161,28 +162,42 @@ def test_export_preserves_remote_tokenizer_schema_without_reverting_model_config
 
     wrapper = PreTrainedCausalLM(str(source), device="cpu")
     wrapper.config = PretrainedConfig(
-        init_tts=False, rope_parameters={"rope_type": "default", "rope_theta": 1000000}, dtype="bfloat16"
+        architectures=["MiniCPMO"],
+        init_tts=init_tts,
+        rope_parameters={"rope_type": "default", "rope_theta": 1000000},
+        dtype="bfloat16",
     )
     wrapper.tokenizer = NewerArtifactSerializer()
     wrapper.processor = NewerArtifactSerializer()
     wrapper.generation_config = None
     wrapper.image_processor = None
     output = tmp_path / "exported"
-    wrapper.save_artifacts(
-        output,
-        original_source_path=source,
-        additional_files=MiniCPMOBridge.ADDITIONAL_FILE_PATTERNS,
-    )
+    auto_bridge = AutoBridge(wrapper)
+    with patch.object(auto_bridge, "save_hf_weights"):
+        auto_bridge.save_hf_pretrained([], output, source_path=source)
     bridge = MiniCPMOBridge()
-    bridge.postprocess_hf_export_artifacts(output)
     for name in original:
         assert (output / name).read_bytes() == (source / name).read_bytes()
     assert isinstance(json.loads((output / "tokenizer_config.json").read_text())["extra_special_tokens"], dict)
     config = json.loads((output / "config.json").read_text())
     assert config["init_tts"] is False
+    assert wrapper.config.init_tts is init_tts
+    assert json.loads((source / "config.json").read_text())["init_tts"] is True
     assert config["rope_theta"] == config["rope_parameters"]["rope_theta"] == 1000000
     assert config["torch_dtype"] == config["dtype"] == "bfloat16"
     expected = {"audio_pool_step": 5, "processor_class": "MiniCPMOProcessor"}
     assert json.loads((output / "processor_config.json").read_text()) == expected
     bridge.postprocess_hf_export_artifacts(output)
     assert json.loads((output / "processor_config.json").read_text()) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tts_config", [{"init_tts": True}, {"init_tts": False}, {}])
+def test_config_only_python_export_disables_tts(tmp_path, tts_config):
+    config = PretrainedConfig(architectures=["MiniCPMO"], **tts_config)
+    original = deepcopy(config.to_dict())
+    bridge = AutoBridge.from_hf_config(config)
+    with patch.object(bridge, "save_hf_weights"):
+        bridge.save_hf_pretrained([], tmp_path)
+    assert json.loads((tmp_path / "config.json").read_text())["init_tts"] is False
+    assert config.to_dict() == original
