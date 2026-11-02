@@ -764,6 +764,27 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.optimizer.lr == 2e-5
 
 
+def test_qwen35_vl_27b_sft_fits_16_h100(monkeypatch: pytest.MonkeyPatch):
+    """The dense 27B SFT recipe should carry the layout that fits 80 GB H100s at its own batch."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_h100_module.qwen35_vl_27b_sft_16gpu_h100_bf16_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.sequence_parallel is True
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 4
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out", "mlp"]
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    # No CUDA graph scope can split a recomputed module.
+    assert cfg.model.cuda_graph_impl == "none"
+
+
 def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Shared Qwen3.5/Qwen3.6 long-context SFT should own packing and CP defaults."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
