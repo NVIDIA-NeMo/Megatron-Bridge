@@ -17,6 +17,14 @@ The full NeMo-FW stack is built in order: **fw-base → megatron-bridge → fw-f
 
 `Dockerfile.ci` builds the Megatron-Bridge development and CI container. It installs the
 package and all dependencies using [uv](https://github.com/astral-sh/uv).
+The default base is `nvcr.io/nvidian/nemo:fw-base-26.12.rc0`, which requires NGC
+registry access. Authenticate before building with credentials authorized to pull
+that image:
+
+```bash
+printf '%s' "$NGC_API_KEY" | docker login nvcr.io --username "$NGC_API_USER" --password-stdin
+```
+
 Run from the repository root:
 
 ```bash

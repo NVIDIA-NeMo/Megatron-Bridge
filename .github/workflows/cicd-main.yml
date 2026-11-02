@@ -456,6 +456,13 @@ jobs:
         with:
           python-version: 3.12
 
+      - name: Login to NGC
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: nvcr.io
+          username: ${{ secrets.NGC_API_USER }}
+          password: ${{ secrets.NGC_API_KEY }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -544,7 +551,7 @@ jobs:
           # concurrently (the Dockerfile default keeps TE's serial nvcc --threads 1). CI-Events'
           # megatron-bridge build profile passes the same value to keep hitting this cache.
           build-args: |
-            FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            BASE_IMAGE=nvcr.io/nvidian/nemo:fw-base-26.12.rc0
             DEEPEP_NVCC_THREADS=3
             MAMBA_NVCC_THREADS=9
             BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}
