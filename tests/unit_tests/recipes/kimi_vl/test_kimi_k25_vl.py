@@ -28,11 +28,12 @@ import importlib
 import pytest
 import torch
 
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.kimi_vl.kimi_k25_vl import (
     _get_kimi_k25_vl_pipeline_layout,
     kimi_k25_vl_sft_config,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, _validate_and_sync_distributed_optimizer_settings
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
@@ -71,6 +72,40 @@ def _patch_autobridge(monkeypatch):
     """Monkeypatch AutoBridge in the kimi_k25_vl recipe module to avoid HF I/O."""
     mod = importlib.import_module("megatron.bridge.recipes.kimi_vl.kimi_k25_vl")
     patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("use_context_parallel", [False, True])
+def test_kimi_vl_resolved_overlap_preserves_legacy_execution(monkeypatch, use_context_parallel):
+    """Exercise shared overlap setup without downloading a pretrained provider."""
+    monkeypatch.setattr(
+        _FakeAutoBridge,
+        "to_megatron_provider",
+        lambda *args, **kwargs: GPTModelProvider(
+            num_layers=64, hidden_size=128, num_attention_heads=4, vocab_size=163840, apply_rope_fusion=False
+        ),
+    )
+    cfg = kimi_k25_vl_sft_config()
+    assert cfg.ddp.bucket_size is None
+    tp_size = cfg.model.tensor_model_parallel_size
+    expert_mp_size = cfg.model.expert_tensor_parallel_size * cfg.model.expert_model_parallel_size
+    assert expert_mp_size % tp_size == 0
+    replica_size = expert_mp_size // tp_size
+    dp_size, cp_size = (1, max(16, replica_size)) if use_context_parallel else (max(16, replica_size), 1)
+    cfg.model.context_parallel_size = cp_size
+    world_size = tp_size * cfg.model.pipeline_model_parallel_size * cp_size * dp_size
+    assert world_size % (expert_mp_size * cfg.model.pipeline_model_parallel_size) == 0
+    cfg.comm_overlap.data_parallel_size = cfg.get_data_parallel_size(world_size)
+    cfg.comm_overlap.finalize()
+    cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+    _validate_and_sync_distributed_optimizer_settings(cfg)
+    assert cfg.ddp.bucket_size is None
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather is False
+    assert cfg.optimizer.use_layer_wise_param_layout is False
+    assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+    assert cfg.ddp.use_distributed_optimizer is False
 
 
 class TestKimiK25VLPipelineLayout:
@@ -203,17 +238,19 @@ class TestKimiK25VLSftConfig:
         assert cfg.model.pipeline_model_parallel_layout == _get_kimi_k25_vl_pipeline_layout(4, 1)
 
     def test_sft_config_ddp_settings_for_muon(self):
-        """DDP settings respect Muon's constraints (no dist optimizer, no param overlap)."""
+        """The existing Kimi-VL recipe retains compact, non-overlapped LayerWise Muon."""
         cfg = kimi_k25_vl_sft_config()
 
         assert cfg.ddp.use_distributed_optimizer is False
         assert cfg.ddp.overlap_param_gather is False
+        assert cfg.comm_overlap.overlap_param_gather is False
         assert cfg.ddp.overlap_grad_reduce is True
         assert cfg.ddp.grad_reduce_in_fp32 is True
         assert cfg.ddp.check_for_nan_in_grad is True
         assert cfg.ddp.use_megatron_fsdp is False
         assert cfg.ddp.average_in_collective is True
         assert cfg.ddp.data_parallel_sharding_strategy == "no_shard"
+        assert cfg.optimizer.use_layer_wise_param_layout is False
 
     def test_sft_config_dataset_configuration(self):
         """Dataset uses sequence length 4096 and the model's HF processor path."""

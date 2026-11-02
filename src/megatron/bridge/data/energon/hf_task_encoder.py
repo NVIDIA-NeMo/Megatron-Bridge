@@ -67,6 +67,10 @@ class HFEnergonBatch(Batch):
     max_seqlen_q: torch.Tensor | None = None
     max_seqlen_kv: torch.Tensor | None = None
     total_tokens: int | None = None
+    # Dynamic-resolution image geometry and media ownership from collators that emit them (Nemotron Omni).
+    imgs_sizes: torch.Tensor | None = None  # [num_images, 2]
+    num_frames: torch.Tensor | None = None  # [num_images]
+    media_token_validity_mask: torch.Tensor | None = None  # [B, seq_len]
 
 
 class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonBatch, dict]):
@@ -224,6 +228,9 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             max_seqlen_q=collated.get("max_seqlen_q"),
             max_seqlen_kv=collated.get("max_seqlen_kv"),
             total_tokens=collated.get("total_tokens"),
+            imgs_sizes=collated.get("imgs_sizes"),
+            num_frames=collated.get("num_frames"),
+            media_token_validity_mask=collated.get("media_token_validity_mask"),
         )
         return collated, batch_kwargs
 

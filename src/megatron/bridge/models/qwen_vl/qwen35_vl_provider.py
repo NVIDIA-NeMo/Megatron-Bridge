@@ -44,6 +44,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
 )
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import TransformerConfig
 from packaging.version import Version as PkgVersion
 
 
@@ -546,13 +547,13 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
 
 def _qwen35_build_language_block_spec(
-    provider: GPTModelProvider,
+    config: TransformerConfig,
     vp_stage: Optional[int],
     pp_rank: Optional[int] = None,
 ) -> TransformerBlockSubmodules | ModuleSpec:
-    """Build the language transformer-block spec."""
+    """Build the language transformer-block spec from a provider or a builder's transformer config."""
     block_spec = get_transformer_block_with_experimental_attention_variant_spec(
-        provider,
+        config,
         vp_stage=vp_stage,
         pp_rank=pp_rank,
     )

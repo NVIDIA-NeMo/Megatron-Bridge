@@ -60,7 +60,12 @@ from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, _existing_safetensors_files
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
-from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
+from megatron.bridge.models.model_provider import (
+    GetModelKwargs,
+    ModelParallelKwargs,
+    ModelProviderMixin,
+    build_distributed_models,
+)
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
 
@@ -1697,6 +1702,12 @@ class AutoBridge(Generic[MegatronModelT]):
             ignored_source_key_prefixes = (
                 _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ()
             ) or None
+            ignored_source_key_suffixes = tuple(
+                dict.fromkeys(
+                    (("_scale_inv",) if weight_dtype is not None else ())
+                    + tuple(getattr(type(bridge), "DEQUANTIZED_SOURCE_KEY_SUFFIXES", ()))
+                )
+            )
             saved_filenames = source.save_generator(
                 generator,
                 path,
@@ -1704,7 +1715,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 distributed_save=distributed_save,
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
-                ignored_source_key_suffixes=("_scale_inv",) if weight_dtype is not None else None,
+                ignored_source_key_suffixes=ignored_source_key_suffixes or None,
             )
         else:
             # Config-only path: shard and write safetensors directly
@@ -2309,6 +2320,10 @@ class AutoBridge(Generic[MegatronModelT]):
             pg_collection: Existing process groups. Standalone single-process
                 groups are initialized when omitted.
             **kwargs: Arguments for ``ModelBuilder.build_distributed_models``.
+                Its ``mixed_precision_wrapper`` (``Float16Module`` when omitted,
+                ``None`` to skip wrapping) keeps router expert biases and
+                parameters named in ``_keep_in_float32_parameter_names`` in FP32,
+                as :meth:`to_megatron_model` does.
 
         Returns:
             Distributed model stages created by the configured builder.
@@ -2361,11 +2376,10 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.gtp import classify_gtp_remat_chains, configure_gtp_remat
 
             configure_gtp_remat(model_config)
-            builder = model_config.get_builder_cls()(model_config)
             if pg_collection is None:
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
             kwargs.setdefault("data_parallel_random_init", False)
-            models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            models = build_distributed_models(model_config, pg_collection, **kwargs)
             classify_gtp_remat_chains(models, model_config)
             for model in models:
                 model.model_config = model_config

@@ -32,6 +32,7 @@ from omegaconf import OmegaConf
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.hybrid import BridgeHybridModelConfig
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.training import checkpointing
 from megatron.bridge.training.utils.omegaconf_utils import (
     OverridesError,
@@ -361,7 +362,6 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
         "context_parallel_size",
         "expert_tensor_parallel_size",
         "expert_model_parallel_size",
-        "moe_flex_dispatcher_backend",
         "moe_hybridep_num_sms",
         "moe_token_dispatcher_type",
         "moe_shared_expert_overlap",
@@ -374,7 +374,22 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
 
     assert training_cfg.train.global_batch_size == benchmark_cfg.train.global_batch_size == 512
     assert training_cfg.train.micro_batch_size == benchmark_cfg.train.micro_batch_size == 1
-    assert training_cfg.env_vars == benchmark_cfg.env_vars
+
+    # Both the GB200 benchmark and the training recipe dispatch through NCCL EP with device-side expert
+    # token counts, and neither carries HybridEP NVLink-domain variables. Apart from the dispatcher mode,
+    # both declare the same process environment.
+    assert training_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert benchmark_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert training_cfg.model.moe_use_grouped_tensor is True
+    assert benchmark_cfg.model.moe_use_grouped_tensor is True
+    assert training_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert benchmark_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert HYBRID_EP_ENV_NAMES.isdisjoint(training_cfg.env_vars)
+    assert HYBRID_EP_ENV_NAMES.isdisjoint(benchmark_cfg.env_vars)
+    dispatcher_env_names = {"NCCL_EP_HT_EM_PULL_PUSH"}
+    assert {name: value for name, value in training_cfg.env_vars.items() if name not in dispatcher_env_names} == {
+        name: value for name, value in benchmark_cfg.env_vars.items() if name not in dispatcher_env_names
+    }
 
     assert training_cfg.model.moe_router_force_load_balancing is False
     assert benchmark_cfg.model.moe_router_force_load_balancing is True

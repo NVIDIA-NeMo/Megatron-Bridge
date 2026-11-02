@@ -191,8 +191,7 @@ class TestPerfConfigIntegration:
                 ),
                 {
                     "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-                    "NVLINK_DOMAIN_SIZE": 72,
-                    "USE_MNNVL": 1,
+                    "NCCL_EP_HT_EM_PULL_PUSH": 1,
                     "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
                 },
             ),
