@@ -304,6 +304,10 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContaine
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
+    # HybridEP dispatch/combine is exposed at 16 SMs on VRNVL72; 32 SMs shortens the step.
+    cfg.model.moe_hybridep_num_sms = 32
+    # Fused top-k/score routing further shortens the VRNVL72 step.
+    cfg.model.moe_router_fusion = True
     # Offload MoE expert activations to host memory: the current Rubin base image ships a Transformer
     # Engine without TE PR #3273, whose fused cross entropy holds an extra fp32 gradient per loss head.
     # Revert this offload once the Rubin image picks up TE PR #3273:

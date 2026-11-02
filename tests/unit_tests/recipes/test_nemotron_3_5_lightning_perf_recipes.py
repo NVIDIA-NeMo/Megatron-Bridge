@@ -674,9 +674,9 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
 ) -> None:
     """VRNVL72 Nemotron 3.5 recipes match their GB300 baselines apart from the launch environment.
 
-    Both platforms dispatch through NCCL EP with device-side expert counts. The VRNVL72 BF16 recipe
-    also offloads expert activations, and the VRNVL72 MXFP8 recipe gives the dispatcher 32 SMs and
-    fuses the router. Everything else must be identical.
+    Both platforms dispatch through NCCL EP with device-side expert counts. The VRNVL72 recipes give
+    the dispatcher 32 SMs and fuse the router, and the VRNVL72 BF16 recipe also offloads expert
+    activations. Everything else must be identical.
     """
     vrnvl72_cfg = vrnvl72_factory()
     gb300_cfg = gb300_factory()
@@ -685,6 +685,13 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
     assert vrnvl72_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert vrnvl72_cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
 
+    assert vrnvl72_cfg.model.moe_hybridep_num_sms == 32
+    assert gb300_cfg.model.moe_hybridep_num_sms == 16
+    vrnvl72_cfg.model.moe_hybridep_num_sms = gb300_cfg.model.moe_hybridep_num_sms
+    assert vrnvl72_cfg.model.moe_router_fusion is True
+    assert gb300_cfg.model.moe_router_fusion is False
+    vrnvl72_cfg.model.moe_router_fusion = gb300_cfg.model.moe_router_fusion
+
     if vrnvl72_factory is nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config:
         assert vrnvl72_cfg.model.fine_grained_activation_offloading is True
         assert vrnvl72_cfg.model.offload_modules == ["expert_fc1", "moe_act"]
@@ -692,13 +699,6 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
         assert "graph_capture_record_stream_reuse:True" in vrnvl72_cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
         vrnvl72_cfg.model.fine_grained_activation_offloading = gb300_cfg.model.fine_grained_activation_offloading
         vrnvl72_cfg.model.offload_modules = gb300_cfg.model.offload_modules
-    else:
-        assert vrnvl72_cfg.model.moe_hybridep_num_sms == 32
-        assert gb300_cfg.model.moe_hybridep_num_sms == 16
-        vrnvl72_cfg.model.moe_hybridep_num_sms = gb300_cfg.model.moe_hybridep_num_sms
-        assert vrnvl72_cfg.model.moe_router_fusion is True
-        assert gb300_cfg.model.moe_router_fusion is False
-        vrnvl72_cfg.model.moe_router_fusion = gb300_cfg.model.moe_router_fusion
 
     vrnvl72_cfg.env_vars = gb300_cfg.env_vars
     assert vrnvl72_cfg == gb300_cfg
