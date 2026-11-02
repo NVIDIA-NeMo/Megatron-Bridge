@@ -35,7 +35,7 @@ class SarvamMLABridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> SarvamMLAModelProvider:
         hf_config = hf_pretrained.config
-        config = get_common_config(hf_pretrained)
+        config = get_common_config(hf_config)
 
         config["fp16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16
         config["bf16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16

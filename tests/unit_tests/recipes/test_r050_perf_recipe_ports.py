@@ -43,8 +43,10 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: bool = True) -> None:
-    """Check the normalized r0.5.0 full-iteration HybridEP settings."""
+def _assert_full_iteration_hybridep_mxfp8(
+    cfg, *, fp8_dot_product_attention: bool = True, dispatcher_backend: str = "hybridep"
+) -> None:
+    """Check the normalized r0.5.0 full-iteration settings; NCCL EP recipes keep the rest of the stack."""
     assert cfg.model.cuda_graph_impl == "full_iteration"
     assert cfg.model.cuda_graph_scope == []
     assert cfg.model.use_te_rng_tracker is True
@@ -56,7 +58,7 @@ def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: boo
     assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
     assert cfg.model.moe_shared_expert_overlap is False
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == dispatcher_backend
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.high_priority_a2a_comm_stream is True
@@ -131,7 +133,11 @@ def test_qwen_large_scale_recipes_only_override_global_batch_size(recipe) -> Non
 def test_deepseek_v3_gb200_large_scale_matches_r050_fp8mx_base() -> None:
     cfg = deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config()
 
-    _assert_full_iteration_hybridep_mxfp8(cfg, fp8_dot_product_attention=False)
+    # GB200 keeps the r0.5.0 full-iteration MXFP8 stack but dispatches through NCCL EP.
+    _assert_full_iteration_hybridep_mxfp8(cfg, fp8_dot_product_attention=False, dispatcher_backend="ncclep")
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     assert cfg.train.global_batch_size == 256
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.virtual_pipeline_model_parallel_size == 4

@@ -29,6 +29,8 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import (
     Qwen35VLBridge,
     Qwen35VLMoEBridge,
 )
+from megatron.bridge.models.qwen_vl.qwen35_vl_builder import Qwen35VLModelBuilder
+from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig, Qwen35VLTransformerConfig
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
@@ -47,9 +49,12 @@ __all__ = [
     "Qwen3VLModelProvider",
     "Qwen3VLMoEModelProvider",
     "Qwen35VLBridge",
+    "Qwen35VLModelBuilder",
+    "Qwen35VLModelConfig",
     "Qwen35VLModelProvider",
     "Qwen35VLMoEBridge",
     "Qwen35VLMoEModelProvider",
+    "Qwen35VLTransformerConfig",
     "Qwen35TokenClassificationBridge",
     "Qwen35TokenClassificationModelProvider",
 ]
