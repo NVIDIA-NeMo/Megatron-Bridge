@@ -98,8 +98,20 @@ counterpart of `BridgeGPTModelConfig`. It keeps the `HybridModelProvider` contra
 `mtp_hybrid_override_pattern` is appended to the pattern once per MTP depth in `finalize()`, and
 stack-spec factories resolve as on the provider path. Map the provider's defaults that differ from
 the builder config's (for example `normalization`, `apply_rope_fusion` and `attention_backend`)
-explicitly. A family that also needs MLA subclasses it and sets `transformer_config_class` to an MLA
-transformer config. Follow Nemotron-H (`src/megatron/bridge/models/nemotronh/nemotron_h_bridge.py`).
+explicitly. Follow Nemotron-H (`src/megatron/bridge/models/nemotronh/nemotron_h_bridge.py`).
+
+A HybridModel family with Multi-Latent Attention (MLA) subclasses `BridgeHybridMLAModelConfig`, whose
+nested transformer config is an `MLATransformerConfig`. Megatron Core declares `rotary_base` and
+`rotary_percent` on both configs, and MLA attention reads the nested values, so only the nested config
+stores and serializes them. The outer names are constructor arguments and views of the nested values;
+a constructor value that conflicts with a nested value raises. With an MLA model config, the base
+mapping maps a YaRN `rope_scaling` dict to the MLA fields (`rotary_scaling_factor`, `mscale`,
+`beta_fast`, ...) and selects `position_embedding_type="rope"`. Put checks in the config's
+`validate()`, which must not change the config, and the derived settings in `finalize()`, which runs
+`validate()` first. Follow GLM-5 (`src/megatron/bridge/models/glm_moe_dsa/glm5_config.py`), whose config
+shares its DSA-aware checks and updates with the provider and whose builder resolves a custom stack spec,
+and DeepSeek-V4 (`src/megatron/bridge/models/deepseek/deepseek_v4_config.py`), which adds a transformer
+field that recipes set.
 
 ### When you need a custom config class
 

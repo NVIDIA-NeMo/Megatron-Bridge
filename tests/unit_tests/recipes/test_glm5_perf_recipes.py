@@ -17,10 +17,10 @@
 import importlib
 import inspect
 from collections.abc import Callable
-from types import SimpleNamespace
 
 import pytest
 
+from megatron.bridge.models.glm_moe_dsa.glm5_config import GLM5ModelConfig
 from megatron.bridge.perf_recipes.glm_moe_dsa import (
     glm51_sft_192gpu_gb200_bf16_config,
     glm51_sft_416gpu_h100_bf16_config,
@@ -28,6 +28,7 @@ from megatron.bridge.perf_recipes.glm_moe_dsa import (
     glm52_sft_416gpu_h100_bf16_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from tests.unit_tests.recipes.recipe_test_utils import GLM5BuilderOnlyBridge
 
 
 pytestmark = pytest.mark.unit
@@ -56,33 +57,19 @@ _BRIDGE_DSA_VALUES = {
 }
 
 
-class _FakeAutoBridge:
-    def __init__(self, model_id: str) -> None:
-        self.model_id = model_id
+class _BuilderOnlyBridge(GLM5BuilderOnlyBridge):
+    """Return strict GLM-5 configs whose bridge-owned DSA fields carry distinctive values."""
 
-    @classmethod
-    def from_hf_pretrained(cls, model_id: str) -> "_FakeAutoBridge":
-        return cls(model_id)
-
-    def to_megatron_provider(self, load_weights: bool = False) -> SimpleNamespace:
-        del load_weights
-        is_glm52 = self.model_id.endswith("GLM-5.2")
-        return SimpleNamespace(
-            model_id=self.model_id,
-            num_layers=156,
-            hybrid_layer_pattern="D-" * 3 + "DE" * 75,
-            experimental_attention_variant="dsa",
-            dsa_indexer_topk_freq=4 if is_glm52 else 1,
-            dsa_indexer_skip_topk_offset=3 if is_glm52 else 0,
-            use_transformer_engine_op_fuser=False,
-            use_te_rng_tracker=False,
-            **_BRIDGE_DSA_VALUES,
-        )
+    def get_model_config(self) -> GLM5ModelConfig:
+        model_config = super().get_model_config()
+        for field, value in _BRIDGE_DSA_VALUES.items():
+            setattr(model_config, field, value)
+        return model_config
 
 
 def _build_recipe(recipe_func: Callable[[], ConfigContainer], monkeypatch: pytest.MonkeyPatch) -> ConfigContainer:
     recipe_module = importlib.import_module(recipe_func.__module__)
-    monkeypatch.setattr(recipe_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(recipe_module, "AutoBridge", _BuilderOnlyBridge)
     return recipe_func()
 
 
@@ -109,6 +96,7 @@ def test_glm5_perf_recipes_are_flat_and_preserve_bridge_dsa_fields(
 
     cfg = _build_recipe(recipe_func, monkeypatch)
 
+    assert isinstance(cfg.model, GLM5ModelConfig)
     assert cfg.model.moe_token_dispatcher_type == "flex"
     expected_dispatcher_backend = "hybridep" if "_gb200_" in recipe_func.__name__ else "deepep"
     assert cfg.model.moe_flex_dispatcher_backend == expected_dispatcher_backend
