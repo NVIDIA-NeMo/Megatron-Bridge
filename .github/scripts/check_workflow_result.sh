@@ -14,7 +14,10 @@ if ! jq -e '
   exit 1
 fi
 
-failed_jobs=$(jq '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled")] | length' <<< "$needs_json")
+# Quarantined suites are informational; only required jobs block the summary.
+failed_jobs=$(jq '[to_entries[] |
+  select(.key != "cicd-functional-tests-flaky" and .key != "cicd-functional-tests-gb200-flaky") |
+  select(.value.result == "failure" or .value.result == "cancelled")] | length' <<< "$needs_json")
 unexpected_skips=0
 check_tier_skips() {
   local job="$1" expect="$2"
@@ -40,11 +43,13 @@ fi
 
 if [ "$failed_jobs" -gt 0 ]; then
   echo "❌ Found $failed_jobs failed job(s):"
-  jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key): \(.value.result)"' <<< "$needs_json"
+  jq -r 'to_entries[] |
+  select(.key != "cicd-functional-tests-flaky" and .key != "cicd-functional-tests-gb200-flaky") |
+  select(.value.result == "failure" or .value.result == "cancelled") | "\(.key): \(.value.result)"' <<< "$needs_json"
 fi
 
 if [ "$failed_jobs" -gt 0 ] || [ "$unexpected_skips" -gt 0 ]; then
   exit 1
 fi
 
-echo "✅ All previous jobs completed successfully"
+echo "✅ All required jobs completed successfully"

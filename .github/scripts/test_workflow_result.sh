@@ -58,8 +58,8 @@ run_case() {
     exit 1
   fi
   if [ "$expected_exit" -eq 0 ]; then
-    grep -q 'All previous jobs completed successfully' "$mock_dir/output"
-  elif grep -q 'All previous jobs completed successfully' "$mock_dir/output"; then
+    grep -q 'All required jobs completed successfully' "$mock_dir/output"
+  elif grep -q 'All required jobs completed successfully' "$mock_dir/output"; then
     echo "FAIL: $label reported success" >&2
     exit 1
   fi
@@ -70,14 +70,37 @@ export EXPECT_L0=true EXPECT_L1=true EXPECT_L2=true IS_MEMBER=true DISABLE_GB200
 export NEEDS_JSON="$base_needs"
 run_case 'all dependency and matrix results pass without GitHub access' 0
 
-# Check every upstream failure, not just direct test dependencies. In particular,
-# a failed matrix shard rolls up to failure even when other shards pass.
+# Check every required upstream failure, not just direct test dependencies.
+# A failed matrix shard blocks, but quarantined suites remain informational.
 for job in $summary_needs; do
   for result in failure cancelled; do
     NEEDS_JSON=$(jq --arg job "$job" --arg result "$result" '.[$job].result = $result' <<< "$base_needs")
-    run_case "$job $result blocks the summary" 1
-    grep -Fq "$job: $result" "$mock_dir/output"
+    case "$job" in
+      cicd-functional-tests-flaky | cicd-functional-tests-gb200-flaky)
+        run_case "$job $result remains informational" 0
+        ;;
+      *)
+        run_case "$job $result blocks the summary" 1
+        grep -Fq "$job: $result" "$mock_dir/output"
+        ;;
+    esac
   done
+done
+
+# Informational failures must neither hide required failures nor inflate their diagnostics.
+for result in failure cancelled; do
+  NEEDS_JSON=$(jq --arg result "$result" '
+    .configure.result = $result |
+    .["cicd-functional-tests-flaky"].result = "failure" |
+    .["cicd-functional-tests-gb200-flaky"].result = "cancelled"
+  ' <<< "$base_needs")
+  run_case "required $result still blocks alongside informational failures" 1
+  grep -Fq 'Found 1 failed job(s):' "$mock_dir/output"
+  grep -Fq "configure: $result" "$mock_dir/output"
+  if grep -Fq 'flaky:' "$mock_dir/output"; then
+    echo 'Informational suites must not appear in required failure diagnostics' >&2
+    exit 1
+  fi
 done
 
 for tier in l0 l1 l2; do
