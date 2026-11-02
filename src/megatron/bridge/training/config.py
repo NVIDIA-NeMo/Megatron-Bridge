@@ -485,6 +485,15 @@ class TrainingConfig(MTrainTrainingConfig):
     skip_sync_grad_norm_across_mp: bool = False
     """Skips syncing the grad norm across the model parallel group."""
 
+    cuda_memory_fraction: float | None = None
+    """Cap PyTorch's caching allocator at this fraction of each GPU's memory, in (0, 1].
+
+    The rest stays available to allocations outside PyTorch. NCCL creates some communicators lazily, for example
+    the model-parallel group's at the end of the first training step or a new group size under dynamic context
+    parallelism, after the allocator may have grown to nearly all device memory; variable-length batches fragment
+    its cache further. With a cap, the allocator releases cached blocks instead of growing, so those allocations
+    succeed. ``None`` leaves the allocator uncapped."""
+
     # ---------------- Validation config. ----------------
 
     eval_iters: int | None = None
@@ -498,6 +507,8 @@ class TrainingConfig(MTrainTrainingConfig):
 
     def finalize(self) -> None:
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
+        if self.cuda_memory_fraction is not None and not 0 < self.cuda_memory_fraction <= 1:
+            raise ValueError(f"cuda_memory_fraction must be in (0, 1], got {self.cuda_memory_fraction}.")
         has_train_iters = self.train_iters is not None
         has_train_samples = self.train_samples is not None
         has_num_epochs = self.num_epochs is not None

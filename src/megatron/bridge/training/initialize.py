@@ -146,6 +146,8 @@ def initialize_megatron(
         use_inprocess_restart=use_inprocess_restart,
     )
 
+    _apply_cuda_memory_fraction(train_config.cuda_memory_fraction)
+
     # Compile dataset helpers after distributed initialization
     # Use local rank to ensure each node compiles independently (multi-node without shared filesystem)
     if torch.distributed.is_initialized():
@@ -162,6 +164,13 @@ def initialize_megatron(
         torch.distributed.barrier()
 
     return result
+
+
+def _apply_cuda_memory_fraction(fraction: float | None) -> None:
+    """Cap PyTorch's caching allocator on this rank's device, once distributed init has selected the device."""
+    if fraction is None or not torch.cuda.is_available() or not torch.distributed.is_initialized():
+        return
+    torch.cuda.set_per_process_memory_fraction(fraction, torch.cuda.current_device())
 
 
 def torch_dist_init(
