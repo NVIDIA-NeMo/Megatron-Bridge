@@ -20,6 +20,11 @@ REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
 
 export CUDA_VISIBLE_DEVICES="0,1"
 
+# Native checkpoint code imports minicpmo even with init_tts=False. Keep the
+# container's compatible media stack instead of the package's older dependency pins.
+PYTHON_EXECUTABLE=$(uv run python -c 'import sys; sys.stdout.write(sys.executable)')
+uv pip install --python "$PYTHON_EXECUTABLE" --no-deps "minicpmo-utils==1.0.7"
+
 # The test launches its own two-worker save and reload processes.
 uv run python -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \

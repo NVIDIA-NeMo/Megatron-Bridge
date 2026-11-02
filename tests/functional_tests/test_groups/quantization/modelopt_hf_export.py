@@ -25,6 +25,7 @@ import re
 import modelopt.torch.quantization as mtq
 import torch
 from megatron.core.utils import unwrap_model
+from modelopt.torch.export.unified_export_megatron import export_mcore_gpt_to_hf
 from modelopt.torch.quantization.nn import TensorQuantizer
 
 from megatron.bridge import AutoBridge
@@ -77,7 +78,9 @@ def _pin_input_ranges(chunk: torch.nn.Module) -> None:
 
 
 @torchrun_main
-def main(hf_model_path: str, out: str, config: str, tp: int, pp: int, ep: int, etp: int) -> None:
+def main(
+    hf_model_path: str, out: str, config: str, tp: int, pp: int, ep: int, etp: int, offline_out: str | None
+) -> None:
     bridge = AutoBridge.from_hf_pretrained(hf_model_path, torch_dtype=torch.bfloat16)
     provider = bridge.to_megatron_provider(load_weights=True)
     provider.tensor_model_parallel_size = tp
@@ -85,6 +88,7 @@ def main(hf_model_path: str, out: str, config: str, tp: int, pp: int, ep: int, e
     provider.expert_model_parallel_size = ep
     provider.expert_tensor_parallel_size = etp
     provider.moe_grouped_gemm = False
+    provider.gradient_accumulation_fusion = False
     provider.pipeline_dtype = torch.bfloat16
     provider.finalize()
     provider.initialize_model_parallel(seed=0)
@@ -96,6 +100,8 @@ def main(hf_model_path: str, out: str, config: str, tp: int, pp: int, ep: int, e
         mtq.quantize(chunk, quant_cfg)  # Without a forward loop, "max" calibrates the weights only.
         _pin_input_ranges(chunk)
     bridge.save_hf_pretrained_modelopt(model, out)
+    if offline_out is not None:
+        export_mcore_gpt_to_hf(unwrap_model(model[0]), hf_model_path, export_dir=offline_out)
 
 
 if __name__ == "__main__":
@@ -103,9 +109,10 @@ if __name__ == "__main__":
     parser.add_argument("--hf-model-path", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--config", choices=sorted(CONFIGS), required=True)
+    parser.add_argument("--offline-out", default=None)
     parser.add_argument("--tp", type=int, default=1)
     parser.add_argument("--pp", type=int, default=1)
     parser.add_argument("--ep", type=int, default=1)
     parser.add_argument("--etp", type=int, default=1)
     args = parser.parse_args()
-    main(args.hf_model_path, args.out, args.config, args.tp, args.pp, args.ep, args.etp)
+    main(args.hf_model_path, args.out, args.config, args.tp, args.pp, args.ep, args.etp, args.offline_out)

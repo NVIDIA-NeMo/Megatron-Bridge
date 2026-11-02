@@ -23,6 +23,20 @@ native encoder's legacy return contract and delegates attention math to HF.
 
 ## Model construction
 
+The checkpoint's custom code also requires the `minicpmo` Python module from
+`minicpmo-utils`, even with TTS disabled. In the NeMo container, install the
+understanding-stage utility package without replacing the container's media
+libraries with its older dependency pins:
+
+```bash
+uv pip install --no-deps "minicpmo-utils==1.0.7"
+```
+
+The H100 and GB200 functional launchers install this dependency in the same
+Python environment as the test. Hugging Face config/code/tokenizer cache files
+and this Python package are separate requirements; no pretrained weights or
+TTS assets are needed by the toy checkpoint test.
+
 Use the builder API, with explicit permission to execute the checkpoint's custom
 code:
 
@@ -62,7 +76,7 @@ and `audio_bounds`.
 
 ## Checkpoint conversion
 
-See the [conversion example](../../../examples/models/minicpmo/README.md) for
+See the [conversion example](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/minicpmo/README.md) for
 shared CLI import/export commands. Keep the original checkpoint's remote code,
 tokenizer, and processor available when exporting. The exported checkpoint
 contains the understanding stage only. Strict export excludes only the declared
