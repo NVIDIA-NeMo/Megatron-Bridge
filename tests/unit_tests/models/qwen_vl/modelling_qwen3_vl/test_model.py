@@ -160,10 +160,7 @@ def test_builder_model_config_supplies_construction_settings(monkeypatch):
     language_model.config.cuda_graph_impl = "none"
     language_model.share_embeddings_and_output_weights = True
     language_model_constructor = Mock(return_value=language_model)
-    monkeypatch.setattr(
-        "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.Qwen3VLGPTModel",
-        language_model_constructor,
-    )
+    monkeypatch.setattr(Qwen3VLModel, "language_model_class", language_model_constructor)
     model_config = Qwen35VLModelConfig(
         transformer=Qwen35VLTransformerConfig(num_layers=2, hidden_size=64, num_attention_heads=4),
         vocab_size=1000,
@@ -517,10 +514,7 @@ class TestQwen3VLModel:
         language_model.config.cuda_graph_impl = "none"
         language_model.share_embeddings_and_output_weights = False
         language_model_constructor = Mock(return_value=language_model)
-        monkeypatch.setattr(
-            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.Qwen3VLGPTModel",
-            language_model_constructor,
-        )
+        monkeypatch.setattr(Qwen3VLModel, "language_model_class", language_model_constructor)
 
         Qwen3VLModel(
             vision_transformer_config=self.get_vision_transformer_config(hf_config),

@@ -74,6 +74,11 @@ from modelopt.torch.opt.plugins import (
 )
 from torch.distributed.tensor import DTensor
 
+from megatron.bridge.models.hybrid.gpt_checkpoint_compat import (
+    has_paired_hybrid_layers,
+    is_gpt_layout_checkpoint,
+    read_gpt_layout_keys,
+)
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
@@ -2218,6 +2223,7 @@ def generate_state_dict(
     rerun_state: Optional[dict[str, Any]] = None,
     *,
     pg_collection: ProcessGroupCollection | None = None,
+    gpt_layout_checkpoint: bool = False,
 ) -> dict[str, Any]:
     """Generate the state dictionary to be saved in a checkpoint.
 
@@ -2231,6 +2237,8 @@ def generate_state_dict(
         optim_sd_kwargs: Additional keyword arguments for optimizer state dict generation.
         model_sd_kwargs: Metadata for model state dict generation.
         rerun_state: State dictionary from the rerun state machine.
+        gpt_layout_checkpoint: Whether a paired HybridModel loads a GPTModel-layout checkpoint. Model and
+            optimizer entries then read the GPTModel keys.
 
     Returns:
         A dictionary containing the complete state to be saved.
@@ -2241,9 +2249,12 @@ def generate_state_dict(
     if iteration is not None:
         state_dict["iteration"] = iteration
 
-    state_dict.update(
-        _generate_model_state_dict(model, model_sd_kwargs, ckpt_cfg.ckpt_format, pg_collection=pg_collection)
+    model_state_dict = _generate_model_state_dict(
+        model, model_sd_kwargs, ckpt_cfg.ckpt_format, pg_collection=pg_collection
     )
+    if gpt_layout_checkpoint:
+        read_gpt_layout_keys(model_state_dict, model)
+    state_dict.update(model_state_dict)
 
     # Optimizer stuff. During load, optimizer sharded-state scaffolding is
     # required even if the next checkpoint should not save optimizer state.
@@ -2399,6 +2410,13 @@ def _create_fsdp_dtensor_storage_writer(checkpoint_path: str) -> Any:
     return torch.distributed.checkpoint.FileSystemWriter(checkpoint_path)
 
 
+def _is_gpt_layout_checkpoint_for(model: list[MegatronModule], checkpoint_path: str) -> bool:
+    """Whether ``model`` is a paired HybridModel and the torch_dist checkpoint was saved by its GPTModel form."""
+    if not has_paired_hybrid_layers(model):
+        return False
+    return is_gpt_layout_checkpoint(_get_filesystem_reader(checkpoint_path).read_metadata().state_dict_metadata)
+
+
 def _load_model_weights_from_checkpoint(
     checkpoint_path: str,
     model: list[MegatronModule],
@@ -2467,6 +2485,9 @@ def _load_model_weights_from_checkpoint(
     sharded_sd_metadata["dp_cp_group"] = checkpoint_data_group
     model_sd_kwargs = dict(metadata=sharded_sd_metadata)
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
+    if _is_gpt_layout_checkpoint_for(model, checkpoint_path):
+        print_rank_0("Reading GPTModel-layout checkpoint keys into the paired HybridModel decoder")
+        read_gpt_layout_keys(sharded_state_dict, model)
 
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
@@ -3161,6 +3182,24 @@ def _load_checkpoint_from_path(
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
         model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
+        gpt_layout_checkpoint = ckpt_type != CheckpointType.LOCAL and _is_gpt_layout_checkpoint_for(
+            unwrap_model(model), checkpoint_name
+        )
+        if gpt_layout_checkpoint:
+            print_rank_0("Reading GPTModel-layout checkpoint keys into the paired HybridModel decoder")
+            sharding_type = sharded_sd_metadata.get("distrib_optim_sharding_type", "fully_sharded_model_space")
+            if (
+                gen_sd_optim is not None
+                and use_distributed_optimizer
+                and sharding_type not in DistributedOptimizer.checkpoint_fully_reshardable_formats
+            ):
+                # dp_reshardable state is a flat buffer ordered by the GPTModel's parameters.
+                raise RuntimeError(
+                    f"Optimizer state saved as {sharding_type!r} by a GPTModel cannot be restored into the "
+                    "HybridModel decoder. Set checkpoint.load_optim=False (or checkpoint.finetune=True) to load "
+                    "only the model weights."
+                )
+
         # Build sharded state dict for loading
         with contextlib.ExitStack() as stack:
             if cfg.checkpoint.finetune and hasattr(model[0], "hide_loss_modules"):
@@ -3176,6 +3215,7 @@ def _load_checkpoint_from_path(
                 model_sd_kwargs=model_sd_kwargs,
                 rerun_state=gen_sd_rerun_state,
                 pg_collection=pg_collection,
+                gpt_layout_checkpoint=gpt_layout_checkpoint,
             )
 
     elif ckpt_format == "fsdp_dtensor":

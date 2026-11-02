@@ -47,9 +47,12 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hybrid_mappings
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import (
+    Qwen35HybridForTokenClassification,
+    Qwen35VLHybridModel,
+)
 from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35TokenClassificationModelProvider,
@@ -182,7 +185,7 @@ def _get_vision_mappings():
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_MOE_HF_CLASS_NAME,
-    target=Qwen3VLModel,
+    target=Qwen35VLHybridModel,
     provider=Qwen35VLMoEModelProvider,
     model_type="qwen3_5_moe",
 )
@@ -222,7 +225,7 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
 
         The language-model fields are the MoE text bridge's, read from ``text_config``.
         """
-        config_kwargs = Qwen35MoEBridge().hf_config_to_model_config_kwargs(hf_config.text_config)
+        config_kwargs = Qwen35MoEBridge().hf_config_to_block_config_kwargs(hf_config.text_config)
         config_kwargs.update(
             _qwen35_vl_config_kwargs(hf_config, params_dtype=config_kwargs["params_dtype"], eos_token_id=248046)
         )
@@ -281,13 +284,14 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
                 megatron_prefix="language_model.", mtp_experts_packed=mtp_experts_packed
             )
         )
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         return MegatronMappingRegistry(*mapping_list)
 
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_DENSE_HF_CLASS_NAME,
-    target=Qwen3VLModel,
+    target=Qwen35VLHybridModel,
     provider=Qwen35VLModelProvider,
     model_type="qwen3_5",
 )
@@ -324,7 +328,7 @@ class Qwen35VLBridge(MegatronModelBridge):
 
         The language-model fields are the dense text bridge's, read from ``text_config``.
         """
-        config_kwargs = Qwen35Bridge().hf_config_to_model_config_kwargs(hf_config.text_config)
+        config_kwargs = Qwen35Bridge().hf_config_to_block_config_kwargs(hf_config.text_config)
         config_kwargs.update(
             _qwen35_vl_config_kwargs(hf_config, params_dtype=config_kwargs["params_dtype"], eos_token_id=248044)
         )
@@ -350,13 +354,14 @@ class Qwen35VLBridge(MegatronModelBridge):
             Qwen35Bridge._get_dense_lm_mappings(hf_prefix="model.language_model.", megatron_prefix="language_model.")
         )
         mapping_list.extend(Qwen35Bridge._get_dense_mtp_mappings(megatron_prefix="language_model."))
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         return MegatronMappingRegistry(*mapping_list)
 
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_TOKEN_CLASSIFICATION_HF_CLASS_NAME,
-    target=Qwen3VLForTokenClassification,
+    target=Qwen35HybridForTokenClassification,
     provider=Qwen35TokenClassificationModelProvider,
     model_type="qwen3_5",
 )
@@ -413,6 +418,7 @@ class Qwen35TokenClassificationBridge(Qwen35VLBridge):
             megatron_prefix="language_model.",
             output_layer_hf_param=None,
         )
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         mapping_list.append(
             ReplicatedMapping(

@@ -19,15 +19,16 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec,
-)
 
 from megatron.bridge.models.common.heads import LinearForLastLayer
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import ModelConfigNotSupportedError, WeightConversionTask
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import (
+    Qwen35HybridForTokenClassification,
+    qwen35_vl_hybrid_stack_spec,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import (
     Qwen3VLForTokenClassification,
@@ -153,7 +154,9 @@ def _make_mock_pretrained(text_config, vision_config, tie_word_embeddings=False)
 class TestQwen35VLBridgeProviderBridge:
     @pytest.fixture
     def bridge(self):
-        return Qwen35VLBridge()
+        bridge = Qwen35VLBridge()
+        bridge.hf_config = SimpleNamespace(text_config=_make_dense_text_config())
+        return bridge
 
     @pytest.fixture
     def mock_pretrained(self):
@@ -230,7 +233,9 @@ class TestQwen35VLBridgeProviderBridge:
 class TestQwen35VLBridgeMappingRegistry:
     @pytest.fixture
     def bridge(self):
-        return Qwen35VLBridge()
+        bridge = Qwen35VLBridge()
+        bridge.hf_config = SimpleNamespace(text_config=_make_dense_text_config())
+        return bridge
 
     def _get_mapping_names(self, registry):
         names = []
@@ -330,6 +335,7 @@ class TestQwen35TokenClassificationBridge:
         assert restored.classifier_dropout == 0.2
 
     def test_provider_reconstructs_classification_head(self, mock_pretrained):
+        mock_pretrained.config.text_config.vocab_size = 32
         provider = Qwen35TokenClassificationBridge().provider_bridge(mock_pretrained)
         restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
         restored.init_method = lambda weight: torch.nn.init.constant_(weight, 0.125)
@@ -347,7 +353,7 @@ class TestQwen35TokenClassificationBridge:
             result = restored.provide(pre_process=False, post_process=True)
 
         assert result is model
-        assert restored.MODEL_CLASS is Qwen3VLForTokenClassification
+        assert restored.MODEL_CLASS is Qwen35HybridForTokenClassification
         assert isinstance(model.language_model.output_layer, LinearForLastLayer)
         assert model.language_model.output_layer.out_features == 3
         assert model.language_model.output_layer.bias is not None
@@ -372,6 +378,7 @@ class TestQwen35TokenClassificationBridge:
 
     def test_mapping_registry_uses_score_and_omits_lm_and_mtp(self, mock_pretrained):
         bridge = Qwen35TokenClassificationBridge()
+        bridge.hf_config = mock_pretrained.config
 
         names = []
         for mapping in bridge.mapping_registry().mappings:
@@ -388,6 +395,7 @@ class TestQwen35TokenClassificationBridge:
     def test_mapping_registry_always_includes_hf_score_bias(self, mock_pretrained):
         mock_pretrained.config.token_classification_bias = False
         bridge = Qwen35TokenClassificationBridge()
+        bridge.hf_config = mock_pretrained.config
 
         hf_params = [str(mapping.hf_param) for mapping in bridge.mapping_registry().mappings]
 
@@ -395,7 +403,9 @@ class TestQwen35TokenClassificationBridge:
         assert "score.bias" in hf_params
 
     def test_classification_head_mappings_roundtrip_exactly(self) -> None:
-        registry = Qwen35TokenClassificationBridge().mapping_registry()
+        bridge = Qwen35TokenClassificationBridge()
+        bridge.hf_config = SimpleNamespace(text_config=_make_dense_text_config())
+        registry = bridge.mapping_registry()
         head = LinearForLastLayer(
             input_size=4,
             output_size=3,
@@ -489,7 +499,9 @@ def test_token_classification_model_injects_output_processor() -> None:
 class TestQwen35VLMoEBridgeProviderBridge:
     @pytest.fixture
     def bridge(self):
-        return Qwen35VLMoEBridge()
+        bridge = Qwen35VLMoEBridge()
+        bridge.hf_config = SimpleNamespace(text_config=_make_moe_text_config())
+        return bridge
 
     @pytest.fixture
     def mock_pretrained(self):
@@ -540,7 +552,9 @@ class TestQwen35VLMoEBridgeProviderBridge:
 class TestQwen35VLMoEBridgeMappingRegistry:
     @pytest.fixture
     def bridge(self):
-        return Qwen35VLMoEBridge()
+        bridge = Qwen35VLMoEBridge()
+        bridge.hf_config = SimpleNamespace(text_config=_make_moe_text_config())
+        return bridge
 
     def _get_mapping_names(self, registry):
         names = []
@@ -952,7 +966,7 @@ class TestQwen35VLBridgeModelConfig:
             assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
 
         # The provider builds its own hybrid block spec; the builder resolves the same one.
-        assert provider.transformer_layer_spec is get_transformer_block_with_experimental_attention_variant_spec
+        assert provider.transformer_layer_spec is qwen35_vl_hybrid_stack_spec
         assert model_config.transformer_layer_spec is None
 
     @pytest.mark.parametrize(("bridge_class", "moe"), _BRIDGE_CASES, ids=_BRIDGE_IDS)

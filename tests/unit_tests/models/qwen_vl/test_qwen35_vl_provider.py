@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 from megatron.core.transformer.attention import SelfAttention
@@ -333,50 +332,15 @@ class TestQwen35VLMoEModelProvider:
         )
         assert isinstance(provider.vision_config, Qwen3_5MoeVisionConfig)
 
-    def test_provide_patches_mtp_attention_spec(self, monkeypatch):
-        block_attn_spec = ModuleSpec(module=SelfAttention, submodules=SimpleNamespace())
-        mtp_attn_spec = ModuleSpec(module=SelfAttention, submodules=SimpleNamespace())
-        block_spec = SimpleNamespace(
-            layer_specs=[ModuleSpec(module=object, submodules=SimpleNamespace(self_attention=block_attn_spec))]
-        )
-        mtp_spec = SimpleNamespace(
-            layer_specs=[
-                ModuleSpec(
-                    module=object,
-                    submodules=SimpleNamespace(
-                        mtp_model_layer=ModuleSpec(
-                            module=object,
-                            submodules=SimpleNamespace(self_attention=mtp_attn_spec),
-                        )
-                    ),
-                )
-            ]
-        )
-        model_ctor = Mock(return_value=Mock())
+    def test_hybrid_stack_shares_multimodal_attention_with_mtp(self):
+        from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import Qwen35VLHybridLanguageModel
 
-        monkeypatch.setattr(
-            "megatron.bridge.models.qwen_vl.qwen35_vl_provider.get_transformer_block_with_experimental_attention_variant_spec",
-            lambda *args, **kwargs: block_spec,
-        )
-        monkeypatch.setattr("megatron.bridge.models.gpt_provider.mtp_block_spec", lambda *args, **kwargs: mtp_spec)
-        monkeypatch.setattr("megatron.bridge.models.qwen_vl.qwen35_vl_provider.Qwen3VLModel", model_ctor)
-
-        provider = Qwen35VLMoEModelProvider(
-            num_layers=60,
-            hidden_size=4096,
-            num_attention_heads=32,
-            mtp_num_layers=1,
-        )
-        provider.provide()
-
-        kwargs = model_ctor.call_args.kwargs
-        assert kwargs["language_transformer_layer_spec"].layer_specs[0].submodules.self_attention.module is (
-            Qwen3VLSelfAttention
-        )
-        assert (
-            kwargs["mtp_block_spec"].layer_specs[0].submodules.mtp_model_layer.submodules.self_attention.module
-            is Qwen3VLSelfAttention
-        )
+        provider = Qwen35VLMoEModelProvider(num_layers=4, hidden_size=512, num_attention_heads=4, mtp_num_layers=1)
+        spec = provider.build_language_model_spec()
+        assert spec.module is Qwen35VLHybridLanguageModel
+        stack = spec.params["transformer_layer_spec"]
+        assert stack.submodules.attention_layer.submodules.self_attention.module is Qwen3VLSelfAttention
+        assert provider.build_mtp_spec(vp_stage=None) is None
 
 
 @pytest.mark.parametrize("provider_cls", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])

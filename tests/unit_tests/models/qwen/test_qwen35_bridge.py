@@ -22,29 +22,15 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec,
-)
 from transformers import Qwen3_5Config, Qwen3_5MoeConfig, Qwen3_5MoeTextConfig, Qwen3_5TextConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hybrid_stack_spec
+from megatron.bridge.models.qwen.modeling_qwen35.model_config import Qwen35HybridModelConfig
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
-
-
-_NULL_ATTRS = (
-    "q_lora_rank",
-    "kv_lora_rank",
-    "qk_nope_head_dim",
-    "qk_rope_head_dim",
-    "v_head_dim",
-    "n_routed_experts",
-    "num_local_experts",
-    "num_nextn_predict_layers",
-    "mtp_num_hidden_layers",
-)
 
 
 class TestQwen35DenseBridge:
@@ -86,11 +72,10 @@ class TestQwen35DenseBridge:
     @pytest.fixture
     def mock_qwen3_5_config(self, qwen3_5_27b_config_dict):
         """Create a mock Qwen3.5 dense configuration."""
-        config = Mock()
+        config = Qwen3_5TextConfig(**qwen3_5_27b_config_dict)
         for key, value in qwen3_5_27b_config_dict.items():
             setattr(config, key, value)
-        for null_attr in _NULL_ATTRS:
-            setattr(config, null_attr, None)
+        config.mtp_num_hidden_layers = None
         return config
 
     @pytest.fixture
@@ -112,8 +97,8 @@ class TestQwen35DenseBridge:
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
-        assert isinstance(result, GPTModelProvider)
-        assert result.num_layers == mock_qwen3_5_config.num_hidden_layers
+        assert isinstance(result, HybridModelProvider)
+        assert result.num_layers == 2 * mock_qwen3_5_config.num_hidden_layers
         assert result.hidden_size == mock_qwen3_5_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_5_config.num_attention_heads
         assert result.seq_length == mock_qwen3_5_config.max_position_embeddings
@@ -146,15 +131,8 @@ class TestQwen35DenseBridge:
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
-        if isinstance(result.linear_attention_freq, int):
-            assert result.linear_attention_freq == mock_qwen3_5_config.full_attention_interval
-        else:
-            assert isinstance(result.linear_attention_freq, list)
-            for i in range(result.num_layers):
-                if (i + 1) % mock_qwen3_5_config.full_attention_interval == 0:
-                    assert result.linear_attention_freq[i] == 0
-                else:
-                    assert result.linear_attention_freq[i] == 1
+        expected = [int(i % 2 == 0 and (i // 2 + 1) % 4 != 0) for i in range(result.num_layers)]
+        assert result.linear_attention_freq == expected
         assert result.linear_conv_kernel_dim == mock_qwen3_5_config.linear_conv_kernel_dim
         assert result.linear_key_head_dim == mock_qwen3_5_config.linear_key_head_dim
         assert result.linear_value_head_dim == mock_qwen3_5_config.linear_value_head_dim
@@ -202,11 +180,10 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_dtype_handling(self, qwen3_5_27b_config_dict):
         """Test dtype handling in provider_bridge."""
-        config = Mock()
+        config = Qwen3_5TextConfig(**qwen3_5_27b_config_dict)
         for key, value in qwen3_5_27b_config_dict.items():
             setattr(config, key, value)
-        for null_attr in _NULL_ATTRS:
-            setattr(config, null_attr, None)
+        config.mtp_num_hidden_layers = None
         config.torch_dtype = "bfloat16"
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
@@ -252,11 +229,10 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_27b_config(self, qwen3_5_27b_config_dict):
         """Test provider_bridge with Qwen3.5-27B dense configuration."""
-        config = Mock()
+        config = Qwen3_5TextConfig(**qwen3_5_27b_config_dict)
         for key, value in qwen3_5_27b_config_dict.items():
             setattr(config, key, value)
-        for null_attr in _NULL_ATTRS:
-            setattr(config, null_attr, None)
+        config.mtp_num_hidden_layers = None
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
@@ -264,7 +240,7 @@ class TestQwen35DenseBridge:
         bridge = Qwen35Bridge()
         result = bridge.provider_bridge(mock_pretrained)
 
-        assert result.num_layers == 64
+        assert result.num_layers == 128
         assert result.hidden_size == 5120
         assert result.num_attention_heads == 24
         assert result.ffn_hidden_size == 17408
@@ -274,6 +250,11 @@ class TestQwen35DenseBridge:
         """Test mapping_registry returns valid mappings."""
         bridge = Qwen35Bridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Check that registry is not None and has mappings
@@ -292,6 +273,11 @@ class TestQwen35DenseBridge:
         """Test that mapping_registry contains expected parameter mappings."""
         bridge = Qwen35Bridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Extract all AutoMapping instances
@@ -311,12 +297,17 @@ class TestQwen35DenseBridge:
 
         # Should have layer norm mappings
         assert "model.norm.weight" in hf_params
-        assert "decoder.final_layernorm.weight" in megatron_params
+        assert "decoder.final_norm.weight" in megatron_params
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
         bridge = Qwen35Bridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Extract MTP mappings
@@ -344,6 +335,11 @@ class TestQwen35DenseBridge:
         """Test that mapping_registry contains QKV mapping."""
         bridge = Qwen35Bridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Extract QKVMapping instances
@@ -365,6 +361,11 @@ class TestQwen35DenseBridge:
         """Test that mapping_registry contains GDN linear mapping."""
         bridge = Qwen35Bridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Extract GDNLinearMappingSeparate instances
@@ -385,6 +386,11 @@ class TestQwen35DenseBridge:
         """Test that dense bridge does not contain MoE-specific mappings."""
         bridge = Qwen35Bridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
@@ -442,11 +448,10 @@ class TestQwen35MoEBridge:
     @pytest.fixture
     def mock_qwen3_5_moe_config(self, qwen3_5_397b_a17b_config_dict):
         """Create a mock Qwen3.5 MoE configuration."""
-        config = Mock()
+        config = Qwen3_5MoeTextConfig(**qwen3_5_397b_a17b_config_dict)
         for key, value in qwen3_5_397b_a17b_config_dict.items():
             setattr(config, key, value)
-        for null_attr in _NULL_ATTRS:
-            setattr(config, null_attr, None)
+        config.mtp_num_hidden_layers = None
         return config
 
     @pytest.fixture
@@ -468,8 +473,8 @@ class TestQwen35MoEBridge:
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
-        assert isinstance(result, GPTModelProvider)
-        assert result.num_layers == mock_qwen3_5_moe_config.num_hidden_layers
+        assert isinstance(result, HybridModelProvider)
+        assert result.num_layers == 2 * mock_qwen3_5_moe_config.num_hidden_layers
         assert result.hidden_size == mock_qwen3_5_moe_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_5_moe_config.num_attention_heads
         assert result.seq_length == mock_qwen3_5_moe_config.max_position_embeddings
@@ -502,10 +507,8 @@ class TestQwen35MoEBridge:
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
-        if isinstance(result.linear_attention_freq, int):
-            assert result.linear_attention_freq == mock_qwen3_5_moe_config.full_attention_interval
-        else:
-            assert isinstance(result.linear_attention_freq, list)
+        expected = [int(i % 2 == 0 and (i // 2 + 1) % 4 != 0) for i in range(result.num_layers)]
+        assert result.linear_attention_freq == expected
         assert result.linear_conv_kernel_dim == mock_qwen3_5_moe_config.linear_conv_kernel_dim
         assert result.linear_key_head_dim == mock_qwen3_5_moe_config.linear_key_head_dim
         assert result.linear_value_head_dim == mock_qwen3_5_moe_config.linear_value_head_dim
@@ -556,11 +559,10 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_dtype_handling(self, qwen3_5_397b_a17b_config_dict):
         """Test dtype handling in provider_bridge."""
-        config = Mock()
+        config = Qwen3_5MoeTextConfig(**qwen3_5_397b_a17b_config_dict)
         for key, value in qwen3_5_397b_a17b_config_dict.items():
             setattr(config, key, value)
-        for null_attr in _NULL_ATTRS:
-            setattr(config, null_attr, None)
+        config.mtp_num_hidden_layers = None
         config.torch_dtype = "bfloat16"
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
@@ -606,11 +608,10 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_397b_a17b_config(self, qwen3_5_397b_a17b_config_dict):
         """Test provider_bridge with Qwen3.5-397B-A17B MoE configuration."""
-        config = Mock()
+        config = Qwen3_5MoeTextConfig(**qwen3_5_397b_a17b_config_dict)
         for key, value in qwen3_5_397b_a17b_config_dict.items():
             setattr(config, key, value)
-        for null_attr in _NULL_ATTRS:
-            setattr(config, null_attr, None)
+        config.mtp_num_hidden_layers = None
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
@@ -618,7 +619,7 @@ class TestQwen35MoEBridge:
         bridge = Qwen35MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
-        assert result.num_layers == 60
+        assert result.num_layers == 120
         assert result.hidden_size == 4096
         assert result.num_attention_heads == 32
         assert result.moe_ffn_hidden_size == 1024
@@ -628,6 +629,11 @@ class TestQwen35MoEBridge:
         """Test mapping_registry returns valid mappings."""
         bridge = Qwen35MoEBridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         assert registry is not None
@@ -647,6 +653,11 @@ class TestQwen35MoEBridge:
         """Test that mapping_registry contains expected parameter mappings."""
         bridge = Qwen35MoEBridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
@@ -661,12 +672,17 @@ class TestQwen35MoEBridge:
         assert "output_layer.weight" in megatron_params
 
         assert "model.norm.weight" in hf_params
-        assert "decoder.final_layernorm.weight" in megatron_params
+        assert "decoder.final_norm.weight" in megatron_params
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
         bridge = Qwen35MoEBridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Extract MTP mappings
@@ -694,6 +710,11 @@ class TestQwen35MoEBridge:
         """Every MTP sub-layer mapping is registered under both Megatron-Core spellings."""
         bridge = Qwen35MoEBridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         megatron_params = [mapping.megatron_param for mapping in registry.mappings]
@@ -707,7 +728,8 @@ class TestQwen35MoEBridge:
                 "self_attention.linear_proj.weight",
                 "mlp.shared_experts.gate_weight",
             ):
-                assert f"mtp.layers.0.{layer_attr}.{suffix}" in megatron_params
+                position = int(suffix.startswith(("mlp.", "pre_mlp_layernorm.")))
+                assert f"mtp.layers.0.{layer_attr}.layers.{position}.{suffix}" in megatron_params
             for suffix in (
                 "self_attention.linear_qkv.weight",
                 "mlp.shared_experts.linear_fc1.weight",
@@ -715,12 +737,18 @@ class TestQwen35MoEBridge:
                 "mlp.experts.linear_fc1.weight*",
                 "mlp.experts.linear_fc2.weight*",
             ):
-                assert f"mtp.layers.*.{layer_attr}.{suffix}" in megatron_params
+                position = int(suffix.startswith(("mlp.", "pre_mlp_layernorm.")))
+                assert f"mtp.layers.*.{layer_attr}.layers.{position}.{suffix}" in megatron_params
 
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""
         bridge = Qwen35MoEBridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Extract QKVMapping instances
@@ -742,6 +770,11 @@ class TestQwen35MoEBridge:
         """Test that mapping_registry contains GDN linear mapping."""
         bridge = Qwen35MoEBridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Extract GDNLinearMappingSeparate instances
@@ -762,6 +795,11 @@ class TestQwen35MoEBridge:
         """Test that mapping_registry contains MoE-specific mappings."""
         bridge = Qwen35MoEBridge()
 
+        bridge.hf_config = (
+            Qwen3_5MoeTextConfig(num_hidden_layers=4)
+            if isinstance(bridge, Qwen35MoEBridge)
+            else Qwen3_5TextConfig(num_hidden_layers=4)
+        )
         registry = bridge.mapping_registry()
 
         # Extract all mappings
@@ -770,10 +808,10 @@ class TestQwen35MoEBridge:
 
         # Check for MoE router mapping
         hf_params = [mapping.hf_param for mapping in auto_mappings]
-        assert "model.layers.*.mlp.gate.weight" in hf_params
+        assert "model.layers.0.mlp.gate.weight" in hf_params
         # shared_expert_gate is represented via ReplicatedMapping in bridge
         replicated_hf_params = [mapping.hf_param for mapping in replicated_mappings]
-        assert "model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
+        assert "model.layers.0.mlp.shared_expert_gate.weight" in replicated_hf_params
 
         # Routed-expert mappings exist for both the grouped-GEMM (experts.linear_fc*.weight*) and
         # SequentialMLP (local_experts.*.linear_fc*) layouts. Their fused-vs-per-expert form depends
@@ -915,7 +953,7 @@ class TestQwen35BuilderConfig:
 
     @pytest.mark.parametrize("bridge_class", [Qwen35Bridge, Qwen35MoEBridge])
     def test_conversion_uses_builder_config(self, bridge_class):
-        assert bridge_class.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert bridge_class.MODEL_CONFIG_CLASS is Qwen35HybridModelConfig
         assert bridge_class.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     @pytest.mark.parametrize(
@@ -931,14 +969,14 @@ class TestQwen35BuilderConfig:
         ):
             model_config = bridge.hf_config_to_model_config(config)
 
-        assert isinstance(model_config, BridgeGPTModelConfig)
-        assert model_config.num_layers == 8
+        assert isinstance(model_config, BridgeHybridModelConfig)
+        assert model_config.num_layers == 16
         assert model_config.normalization == "RMSNorm"
         assert model_config.qk_layernorm is True
         assert model_config.layernorm_zero_centered_gamma is True
         assert model_config.attention_output_gate is True
         assert model_config.experimental_attention_variant == "gdn"
-        assert model_config.linear_attention_freq == [1, 1, 1, 0, 1, 1, 1, 0]
+        assert model_config.linear_attention_freq == [1, 0, 1, 0, 1, 0, 0, 0] * 2
         assert model_config.linear_num_key_heads == 2
         assert model_config.linear_num_value_heads == 4
         assert model_config.rotary_percent == 0.25
@@ -947,8 +985,8 @@ class TestQwen35BuilderConfig:
         assert model_config.mtp_num_layers == 1
         assert model_config.mtp_loss_scaling_factor == 0.1
         assert model_config.hetereogenous_dist_checkpoint is True
-        # The builder derives the hybrid block spec from experimental_attention_variant.
-        assert model_config.transformer_layer_spec is None
+        # The builder receives an explicit Hybrid stack with Qwen Q/K normalization.
+        assert model_config.hybrid_stack_spec is qwen35_hybrid_stack_spec
         if bridge_class is Qwen35MoEBridge:
             assert model_config.num_moe_experts == 4
             assert model_config.moe_router_topk == 2
@@ -977,9 +1015,8 @@ class TestQwen35BuilderConfig:
         for field_name in sorted(shared):
             assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
 
-        # The provider's default layer spec builds homogeneous layers, so it keeps the hybrid block spec.
-        assert provider.transformer_layer_spec is get_transformer_block_with_experimental_attention_variant_spec
-        assert model_config.transformer_layer_spec is None
+        assert provider.hybrid_stack_spec is qwen35_hybrid_stack_spec
+        assert model_config.hybrid_stack_spec is qwen35_hybrid_stack_spec
 
     @pytest.mark.parametrize(
         ("bridge_class", "make_config"),
@@ -998,17 +1035,13 @@ class TestQwen35BuilderConfig:
         [(Qwen35Bridge, _qwen35_text_config()), (Qwen35MoEBridge, _qwen35_moe_text_config())],
         ids=["dense", "moe"],
     )
-    def test_builder_default_layer_spec_builds_gated_delta_net_block(self, bridge_class, config, monkeypatch):
-        from megatron.training.models import gpt as mcore_gpt
+    def test_builder_default_layer_spec_builds_gated_delta_net_block(self, bridge_class, config):
+        from megatron.core.extensions.transformer_engine_spec_provider import TESpecProvider
+        from megatron.core.ssm.gated_delta_net import GatedDeltaNet
 
-        calls = []
-
-        def block_spec(config, vp_stage=None):
-            calls.append((config, vp_stage))
-            return "hybrid-block-spec"
-
-        monkeypatch.setattr(mcore_gpt, "get_transformer_block_with_experimental_attention_variant_spec", block_spec)
         model_config = bridge_class().hf_config_to_model_config(config)
-
-        assert mcore_gpt.default_layer_spec(model_config, vp_stage=None) == "hybrid-block-spec"
-        assert calls == [(model_config.transformer, None)]
+        spec = model_config.hybrid_stack_spec()
+        assert spec.submodules.gdn_layer.submodules.self_attention.module is GatedDeltaNet
+        attention = spec.submodules.attention_layer.submodules.self_attention.submodules
+        assert attention.q_layernorm is TESpecProvider().layer_norm(for_qk=True)
+        assert attention.k_layernorm is TESpecProvider().layer_norm(for_qk=True)

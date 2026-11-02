@@ -23,7 +23,7 @@ import pytest
 from transformers import Qwen3_5Config, Qwen3_5MoeConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35MoEBridge
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.recipes.qwen.gb200 import qwen35
@@ -57,7 +57,7 @@ class _DynamicCPTransformerConfig(TransformerConfig):
 
 
 @dataclass(kw_only=True)
-class _DynamicCPModelConfig(BridgeGPTModelConfig):
+class _DynamicCPModelConfig(BridgeHybridModelConfig):
     transformer_config_class: ClassVar[type[TransformerConfig]] = _DynamicCPTransformerConfig
 
 
@@ -83,7 +83,7 @@ def test_each_qwen35_text_recipe_uses_strict_builder_config(recipe_func: Callabl
     """Recipes only set fields that the builder-backed model config declares."""
     cfg = recipe_func()
 
-    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert isinstance(cfg.model, BridgeHybridModelConfig)
     assert cfg.model.experimental_attention_variant == "gdn"
     assert cfg.model.mtp_num_layers == 1
     assert cfg.model.share_embeddings_and_output_weights is False
@@ -95,7 +95,7 @@ def test_dynamic_cp_recipe_uses_strict_builder_config(builder_only: None, monkey
 
     cfg = _DYNAMIC_CP_RECIPE()
 
-    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert isinstance(cfg.model, BridgeHybridModelConfig)
     assert cfg.model.dynamic_context_parallel is True
     assert cfg.model.min_dynamic_context_parallel_size == 1
     assert cfg.model.num_moe_experts == 256

@@ -277,6 +277,8 @@ class Qwen3VLModel(MegatronModule):
             ``language_transformer_config``. Defaults to None, which reads them from ``language_transformer_config``.
     """
 
+    language_model_class = Qwen3VLGPTModel
+
     def __init__(
         self,
         language_transformer_config: Qwen3VLTransformerConfig,
@@ -297,7 +299,7 @@ class Qwen3VLModel(MegatronModule):
         # construction settings below are read from it.
         settings = language_transformer_config if model_config is None else model_config
 
-        if hasattr(language_transformer_layer_spec, "submodules"):
+        if hasattr(getattr(language_transformer_layer_spec, "submodules", None), "self_attention"):
             language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.vision_transformer_config = vision_transformer_config
@@ -389,7 +391,7 @@ class Qwen3VLModel(MegatronModule):
             else:
                 language_model_vocab_size = settings.vocab_size
 
-            self.language_model = Qwen3VLGPTModel(
+            self.language_model = self.language_model_class(
                 config=language_transformer_config,
                 transformer_layer_spec=language_transformer_layer_spec,
                 vocab_size=language_model_vocab_size,
