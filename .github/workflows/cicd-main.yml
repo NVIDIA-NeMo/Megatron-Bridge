@@ -551,7 +551,7 @@ jobs:
           # concurrently (the Dockerfile default keeps TE's serial nvcc --threads 1). CI-Events'
           # megatron-bridge build profile passes the same value to keep hitting this cache.
           build-args: |
-            BASE_IMAGE=nvcr.io/nvidian/nemo:fw-base-26.12.rc0
+            FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
             DEEPEP_NVCC_THREADS=3
             MAMBA_NVCC_THREADS=9
             BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}

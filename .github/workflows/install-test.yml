@@ -126,13 +126,12 @@ jobs:
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-container
-    name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NeMo FW base
+    name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC PyTorch
     container:
       # Keep the basic install environment aligned with docker/Dockerfile.ci.
-      image: nvcr.io/nvidian/nemo:fw-base-26.12.rc0
-      credentials:
-        username: ${{ secrets.NGC_API_USER }}
-        password: ${{ secrets.NGC_API_KEY }}
+      # TransformerEngine's current NCCL-EP build requires NCCL device headers
+      # that are not present in the legacy 25.05 image.
+      image: nvcr.io/nvidia/pytorch:26.06-py3
     strategy:
       fail-fast: false
       matrix:
