@@ -150,7 +150,9 @@ from megatron.bridge.models.minimax_m2 import (
 )
 from megatron.bridge.models.minimax_m3 import (
     MiniMaxM3Bridge,
+    MiniMaxM3ModelConfig,
     MiniMaxM3VLModel,
+    MiniMaxM3VLModelConfig,
     MiniMaxM3VLModelProvider,
 )
 from megatron.bridge.models.ministral3 import (
@@ -300,7 +302,9 @@ __all__ = [
     "Ministral3ModelProvider",
     "MiniMaxM2Bridge",
     "MiniMaxM3Bridge",
+    "MiniMaxM3ModelConfig",
     "MiniMaxM3VLModel",
+    "MiniMaxM3VLModelConfig",
     "MiniMaxM3VLModelProvider",
     # Muse Glimmer
     "MuseGlimmerBridge",
