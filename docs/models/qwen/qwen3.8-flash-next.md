@@ -16,6 +16,39 @@ not establish HF/backward/parallelism parity, checkpoint roundtrip correctness,
 or held-out quality. The historical 8,192-sample, 5,349-step image SFT loss curve
 remains separate evidence.
 
+## Frozen PLE table sharding
+
+`model.ple_embedding_sharding="ep"` distributes the frozen n-gram table over
+the expert-parallel group, independently of attention tensor parallelism.
+Enable it together with `model.ple_freeze_ngram_embeddings=True` and
+`model.expert_tensor_parallel_size=1`. The default `"tp"` preserves the
+existing tensor-parallel table layout. Only the lookup table is frozen;
+the PLE projections, normalization, and convolution remain trainable.
+The shared decoder implements this option for both text-only and VL models.
+
+The owner-routed lookup is adapted from BestJuly's
+[Megatron-LM PR #7553](https://github.com/NVIDIA/Megatron-LM/pull/7553), specifically
+[`distributed_embedding.py` at `1ce7e86a`](https://github.com/BestJuly/Megatron-LM/blob/1ce7e86a073c18bcb6ea2ca5542c91e270d06a12/megatron/core/models/engram/distributed_embedding.py).
+Bridge retains its single padded table and HF checkpoint keys rather than
+adopting upstream's separate table per hash head. Each EP rank owns an equal
+contiguous row range; the padded row count must be divisible by EP.
+Lookup requests and embeddings travel by all-to-all. Hashing precedes SP
+slicing so n-grams retain context across tensor-parallel boundaries.
+
+HF import reads the checkpoint shards overlapping each destination's row
+range. Default-dtype HF export streams one shard at a time over the table's
+TP or EP group. Requesting an explicit export dtype may materialize multiple
+shards through the shared conversion layer. Start a fresh optimizer when
+freezing a previously trainable table; this option does not migrate optimizer
+state from trainable PLE checkpoints. Trainable EP tables, ETP greater than
+one, CP, and CUDA graph capture are outside this initial implementation.
+
+This is a memory-layout optimization, not a throughput guarantee. The
+approximately 95 GiB BF16 n-gram table occupies about 3 GiB per rank at EP32,
+making lower attention TP practical to evaluate. The 384–430 TFLOP/s/GPU
+numbers in #7553 use a reduced 8-layer, 32K-token GB300 proxy with additional
+kernel and graph optimizations; they are not verified results for this port.
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations

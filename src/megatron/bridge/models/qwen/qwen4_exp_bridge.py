@@ -36,7 +36,6 @@ from typing import Callable, Dict, Iterator, Mapping, Optional
 
 import torch
 import torch.nn as nn
-from megatron.core import parallel_state
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -54,6 +53,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
+from megatron.bridge.models.qwen.modeling_qwen4_exp.ep_ngram_embedding import FrozenEPNgramEmbedding
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpHybridModel
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import (
     Qwen4ExpModelConfig,
@@ -102,7 +102,7 @@ def ple_local_rows_from_shards(
     tp_rank: int,
     tp_size: int,
 ) -> torch.Tensor:
-    """Assemble one tensor-parallel rank's rows of a row-sharded HF table.
+    """Assemble one TP or EP rank's rows of a row-sharded HF table.
 
     Rank ``r`` owns rows ``[r * rows_per_rank, (r + 1) * rows_per_rank)`` (the
     ``VocabParallelEmbedding`` layout); only the HF shards overlapping that range are loaded.
@@ -112,7 +112,7 @@ def ple_local_rows_from_shards(
         num_shards: Number of HF shards.
         num_rows_total: Total (padded) row count of the table.
         shard_rows: Rows per HF shard (all but possibly the last shard).
-        tp_rank / tp_size: Tensor-parallel coordinates.
+        tp_rank / tp_size: Row-sharding coordinates (TP or EP).
     """
     if num_rows_total % tp_size != 0:
         raise ValueError(f"PLE table rows ({num_rows_total}) are not divisible by tp_size={tp_size}")
@@ -131,18 +131,18 @@ def ple_local_rows_from_shards(
     return rows
 
 
-class PLENGramEmbeddingMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
-    """Vocab-parallel PLE n-gram table <-> ``split_ngram_parts`` HF shards.
+class PLENGramEmbeddingMapping(MegatronParamMapping[Mapping[str, torch.Tensor]]):
+    """TP- or EP-sharded PLE n-gram table <-> ``split_ngram_parts`` HF shards.
 
     The HF checkpoint stores the table row-split into ``ngram_embedding.shard_<i>.weight`` tensors
     (concatenated along dim 0 they form the padded table). Megatron keeps the table as a
     :class:`~megatron.core.tensor_parallel.layers.VocabParallelEmbedding`, i.e. row-sharded across
-    the tensor-parallel group.
+    the tensor-parallel group, or a frozen table row-sharded across the expert-parallel group.
 
-    Import is rank-local: :meth:`Qwen4ExpBridge.maybe_modify_loaded_hf_weight` loads only the shards
-    that overlap this rank's row range (:func:`ple_local_rows_from_shards`), so the 51B-parameter
+    Import is rank-local: the lazy HF source reads only the shards
+    that overlap the destination's row range (:func:`ple_local_rows_from_shards`), so the 51B-parameter
     table is never materialized in full on any rank. Export streams the table back out one HF shard
-    at a time (:class:`_PLEShardExport`): each shard is assembled from the TP ranks' rows when the
+    at a time (:class:`_PLEShardExport`): each shard is assembled from the TP or EP ranks' rows when the
     export loop reaches it, so peak memory is one shard (~0.8 GB for Qwen3.8-Flash-Next), not the
     ~100 GB table.
     """
@@ -163,19 +163,35 @@ class PLENGramEmbeddingMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         super().__init__(megatron_param, hf_param)
         self.num_shards = len(hf_param)
 
-    def hf_to_megatron(self, hf_weights: Dict[str, torch.Tensor], megatron_module: nn.Module) -> torch.Tensor:
+    def _row_sharding(
+        self, megatron_module: nn.Module | None
+    ) -> tuple[torch.distributed.ProcessGroup | None, int, int]:
+        if isinstance(megatron_module, FrozenEPNgramEmbedding):
+            return megatron_module.sharding_group, megatron_module.ep_rank, megatron_module.ep_size
+        return self.tp_group, self.tp_rank, self.tp_size
+
+    def hf_to_megatron(self, hf_weights: Mapping[str, torch.Tensor], megatron_module: nn.Module) -> torch.Tensor:
         """Return this rank's rows.
 
-        ``hf_weights`` is either the rank-local ``{"local_rows": Tensor}`` produced by
-        :meth:`Qwen4ExpBridge.maybe_modify_loaded_hf_weight`, or (fallback) the full shard dict.
+        ``hf_weights`` is a lazy shard mapping, a full shard dict, or a preloaded
+        rank-local ``{"local_rows": Tensor}``.
         """
         if "local_rows" in hf_weights:
             rows = hf_weights["local_rows"]
         else:
-            shards = [hf_weights[f"shard_{i}"] for i in range(self.num_shards)]
-            total = sum(s.shape[0] for s in shards)
+            _, rank, size = self._row_sharding(megatron_module)
+            # Resolve ownership from the actual destination module, not global TP state.
+            # The lazy source loads only overlapping shards plus the first/last metadata.
+            first = hf_weights["shard_0"]
+            last = hf_weights[f"shard_{self.num_shards - 1}"] if self.num_shards > 1 else first
+            total = first.shape[0] * (self.num_shards - 1) + last.shape[0]
             rows = ple_local_rows_from_shards(
-                lambda i: shards[i], self.num_shards, total, shards[0].shape[0], self.tp_rank, self.tp_size
+                lambda i: first if i == 0 else last if i == self.num_shards - 1 else hf_weights[f"shard_{i}"],
+                self.num_shards,
+                total,
+                first.shape[0],
+                rank,
+                size,
             )
         target = megatron_module.weight
         return rows.to(device=target.device, dtype=target.dtype)
@@ -183,52 +199,73 @@ class PLENGramEmbeddingMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     def megatron_to_hf(
         self, megatron_weights: Optional[torch.Tensor], megatron_module: Optional[nn.Module]
     ) -> Mapping[str, torch.Tensor]:
-        """Re-split the TP row shards into the checkpoint's shard layout, one shard at a time.
+        """Re-split the TP/EP rows into the checkpoint's shard layout, one shard at a time.
 
-        Returns a lazy mapping: shard ``i`` is assembled (a tensor-parallel collective) when the
-        export loop iterates to it, so all TP ranks must consume the shards in the same order --
+        Returns a lazy mapping: shard ``i`` is assembled over the row-sharding group when the
+        export loop iterates to it, so all owners must consume the shards in the same order --
         which the export does, and which a ``dict(...)`` / ``.items()`` traversal preserves.
         """
         megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.megatron_param))
         if megatron_weights is None:
             return {}
-        return _PLEShardExport(self, megatron_weights)
+        return _PLEShardExport(self, megatron_weights, megatron_module)
 
-    def gather_shard(self, local_rows: torch.Tensor, shard_index: int) -> torch.Tensor:
-        """Assemble HF shard ``shard_index`` from the tensor-parallel row shards.
+    def gather_shard(
+        self, local_rows: torch.Tensor, shard_index: int, *, megatron_module: nn.Module | None = None
+    ) -> torch.Tensor:
+        """Assemble one HF shard over the table's TP or EP group.
 
         Rank ``r`` owns rows ``[r * rows_per_rank, (r + 1) * rows_per_rank)``; each rank writes
         its overlap with the shard's row range into a zero buffer and the buffers are summed over
         the TP group (exact: every row has exactly one owner).
         """
+        group, rank, size = self._row_sharding(megatron_module)
         rows_per_rank = local_rows.shape[0]
-        total_rows = rows_per_rank * self.tp_size
+        total_rows = rows_per_rank * size
         shard_rows = -(-total_rows // self.num_shards)
         start = shard_index * shard_rows
         end = min(total_rows, start + shard_rows)
-        if self.tp_size == 1:
+        if size == 1:
             return local_rows[start:end]
-        rank_start = self.tp_rank * rows_per_rank
+        rank_start = rank * rows_per_rank
         lo = max(start, rank_start)
         hi = min(end, rank_start + rows_per_rank)
         shard = torch.zeros(end - start, local_rows.shape[1], dtype=local_rows.dtype, device=local_rows.device)
         if hi > lo:
             shard[lo - start : hi - start] = local_rows[lo - rank_start : hi - rank_start]
-        torch.distributed.all_reduce(shard, group=self.tp_group)
+        torch.distributed.all_reduce(shard, group=group)
         return shard
 
 
 class _PLEShardExport(Mapping[str, torch.Tensor]):
-    """Lazy ``{hf_shard_name: tensor}`` view over a TP-sharded PLE table (see ``gather_shard``)."""
+    """Lazy ``{hf_shard_name: tensor}`` view over a TP/EP-sharded PLE table."""
 
-    def __init__(self, mapping: PLENGramEmbeddingMapping, local_rows: torch.Tensor):
+    def __init__(self, mapping: PLENGramEmbeddingMapping, local_rows: torch.Tensor, module: nn.Module | None = None):
         self._mapping = mapping
         self._local_rows = local_rows
+        self._module = module
         self._names = [mapping.hf_param[f"shard_{i}"] for i in range(mapping.num_shards)]
         self._index = {name: i for i, name in enumerate(self._names)}
 
     def __getitem__(self, name: str) -> torch.Tensor:
-        return self._mapping.gather_shard(self._local_rows, self._index[name])
+        return self._mapping.gather_shard(self._local_rows, self._index[name], megatron_module=self._module)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._names)
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+
+class _PLEHFShards(Mapping[str, torch.Tensor]):
+    """Lazy shard aliases so import can resolve TP/EP ownership at the destination."""
+
+    def __init__(self, names: dict[str, str], source: Mapping[str, torch.Tensor]):
+        self._names = names
+        self._source = source
+
+    def __getitem__(self, name: str) -> torch.Tensor:
+        return self._source[self._names[name]]
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._names)
@@ -587,9 +624,9 @@ class Qwen4ExpBridge(MegatronModelBridge):
                 )
             else:
                 mappings.append(
-                    AutoMapping(
+                    PLENGramEmbeddingMapping(
                         megatron_param=f"{ple_m}ple_embedding.ngram_embedding.weight",
-                        hf_param=f"{ple_h}ple_embedding.ngram_embedding.weight",
+                        hf_param={"shard_0": f"{ple_h}ple_embedding.ngram_embedding.weight"},
                     )
                 )
         return mappings
@@ -630,29 +667,10 @@ class Qwen4ExpBridge(MegatronModelBridge):
     # ------------------------------------------------------------------ rank-local PLE import
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
-    ) -> torch.Tensor | dict[str, torch.Tensor]:
-        """Load only the PLE table shards overlapping this tensor-parallel rank's row range."""
+    ) -> torch.Tensor | Mapping[str, torch.Tensor]:
+        """Defer PLE shard reads until the destination's TP/EP ownership is known."""
         if isinstance(hf_param, dict) and hf_param and all(k.startswith("shard_") for k in hf_param):
-            num_shards = len(hf_param)
-            shard_names = [hf_param[f"shard_{i}"] for i in range(num_shards)]
-            if parallel_state.is_initialized():
-                tp_rank = parallel_state.get_tensor_model_parallel_rank()
-                tp_size = parallel_state.get_tensor_model_parallel_world_size()
-            else:
-                tp_rank, tp_size = 0, 1
-            cache: dict[int, torch.Tensor] = {0: hf_state_dict[shard_names[0]]}
-            shard_rows = cache[0].shape[0]
-            if num_shards > 1:
-                cache[num_shards - 1] = hf_state_dict[shard_names[-1]]
-                total = shard_rows * (num_shards - 1) + cache[num_shards - 1].shape[0]
-            else:
-                total = shard_rows
-
-            def load_shard(i: int) -> torch.Tensor:
-                return cache[i] if i in cache else hf_state_dict[shard_names[i]]
-
-            rows = ple_local_rows_from_shards(load_shard, num_shards, total, shard_rows, tp_rank, tp_size)
-            return {"local_rows": rows}
+            return _PLEHFShards(hf_param, hf_state_dict)
         return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
 
 
