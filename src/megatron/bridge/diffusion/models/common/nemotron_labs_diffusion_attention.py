@@ -137,11 +137,6 @@ class Ministral3RotaryEmbedding(nn.Module):
     @classmethod
     def from_megatron_config(cls, config: TransformerConfig) -> "Ministral3RotaryEmbedding":
         """Build RoPE from resolved native fields, without reading or mutating HF metadata."""
-        if getattr(config, "hf_config", None) is not None:
-            raise ValueError(
-                "Legacy NemotronLabsDiffusion provider contains hf_config. Reconvert HF initializers; "
-                "existing training checkpoints need their provider config migrated before resuming."
-            )
         if config.rope_type not in ("default", "yarn"):
             raise ValueError(f"Unsupported NemotronLabsDiffusion RoPE type: {config.rope_type}")
         rope = {"rope_type": config.rope_type, "rope_theta": config.rotary_base}

@@ -69,7 +69,7 @@ def test_checkpoint_rope_matches_hf_without_retaining_config(nested, rope_type, 
     original = copy.deepcopy(source.to_dict())
     wrapper = SimpleNamespace(text_config=source) if nested else source
     provider = NemotronLabsDiffusionBridge().provider_bridge(SimpleNamespace(config=wrapper))
-    assert provider.hf_config is None
+    assert not hasattr(provider, "hf_config")
     assert provider.rope_type == rope_type
     assert provider.num_query_groups == 2
     assert provider.block_size == 16
@@ -123,12 +123,13 @@ def test_unsupported_rope_fails_at_conversion():
         NemotronLabsDiffusionBridge().provider_bridge(SimpleNamespace(config=source))
 
 
-def test_legacy_provider_cannot_silently_use_native_defaults():
-    source = source_config("yarn")
-    provider = NemotronLabsDiffusionBridge().provider_bridge(SimpleNamespace(config=source))
-    provider.hf_config = source
-    with pytest.raises(ValueError, match="Legacy.*hf_config"):
-        Ministral3RotaryEmbedding.from_megatron_config(provider)
+def test_provider_does_not_accept_hf_config():
+    from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+        NemotronLabsDiffusionModelProvider,
+    )
+
+    with pytest.raises(TypeError, match="hf_config"):
+        NemotronLabsDiffusionModelProvider(hf_config=source_config("yarn"))
 
 
 @pytest.mark.parametrize("rope_type", ["default", "yarn"])
@@ -138,7 +139,7 @@ def test_native_provider_checkpoint_config_roundtrip(rope_type):
 
     provider = NemotronLabsDiffusionBridge().provider_bridge(SimpleNamespace(config=source_config(rope_type)))
     serialized = _ConfigContainerBase._convert_value_to_dict(provider)
-    assert serialized["hf_config"] is None
+    assert "hf_config" not in serialized
     restored = instantiate(serialized)
     assert restored.rope_type == provider.rope_type
     assert restored.llama4_scaling_beta == provider.llama4_scaling_beta
@@ -156,7 +157,7 @@ def test_provide_preserves_layer_spec_checkpoint_config(use_factory, build_fails
     from megatron.core.transformer.spec_utils import ModuleSpec
     from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
 
-    from megatron.bridge.models import Ministral3ModelProvider
+    from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
     from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
     from megatron.bridge.utils.instantiate_utils import instantiate
 
@@ -190,7 +191,7 @@ def test_provide_preserves_layer_spec_checkpoint_config(use_factory, build_fails
             raise RuntimeError("model construction failed")
         return model
 
-    with patch.object(Ministral3ModelProvider, "provide_language_model", autospec=True, side_effect=build):
+    with patch.object(MistralModelProvider, "provide", autospec=True, side_effect=build):
         if build_fails:
             with pytest.raises(RuntimeError, match="model construction failed"):
                 provider.provide(pre_process=True, post_process=False, vp_stage=0)

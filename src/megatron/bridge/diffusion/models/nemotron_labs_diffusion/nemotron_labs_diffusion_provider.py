@@ -23,13 +23,25 @@ from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention i
     Ministral3RotaryEmbedding,
     NemotronLabsDiffusionAttention,
 )
-from megatron.bridge.models import Ministral3ModelProvider
 from megatron.bridge.models.gpt_provider import ModuleSpec
+from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
 
 
 @dataclass
-class NemotronLabsDiffusionModelProvider(Ministral3ModelProvider):
+class NemotronLabsDiffusionModelProvider(MistralModelProvider):
     """Text-only diffusion LM with NemotronLabsDiffusionAttention (sbd_block_diff) for dLLM training."""
+
+    # Preserve the text architecture defaults without inheriting VLM configuration.
+    num_attention_heads: int = 32
+    num_query_groups: int = 8
+    kv_channels: int = 128
+    yarn_rotary_scaling_factor: float = 16.0
+    yarn_original_max_position_embeddings: int = 16384
+    yarn_beta_fast: float = 32.0
+    yarn_beta_slow: float = 1.0
+    yarn_correction_range_round_to_int: bool = False
+    yarn_mscale: float | None = 1.0
+    yarn_mscale_all_dim: float | None = 1.0
 
     mask_token_id: int = 100
     dlm_paradigm: str = "sbd_block_diff"
@@ -65,6 +77,6 @@ class NemotronLabsDiffusionModelProvider(Ministral3ModelProvider):
         original_spec = self.transformer_layer_spec
         self.transformer_layer_spec = transformer_layer_spec
         try:
-            return super().provide_language_model(pre_process, post_process, vp_stage)
+            return super().provide(pre_process, post_process, vp_stage)
         finally:
             self.transformer_layer_spec = original_spec

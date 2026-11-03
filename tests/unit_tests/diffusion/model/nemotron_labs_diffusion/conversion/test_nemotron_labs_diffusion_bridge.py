@@ -261,7 +261,7 @@ class TestHFConfigIsNotRetained:
         )
         original = source.to_dict()
         provider = NemotronLabsDiffusionBridge().provider_bridge(DummyHFPretrained(source))
-        assert provider.hf_config is None
+        assert not hasattr(provider, "hf_config")
         assert not hasattr(_MockConfig, "to_cfg_dict")
         assert source.to_dict() == original
         assert provider.rotary_base == 10000.0
