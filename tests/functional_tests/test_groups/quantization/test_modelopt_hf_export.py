@@ -40,6 +40,9 @@ from transformers import (
     Qwen3MoeForCausalLM,
 )
 
+from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
+from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2ForCausalLM
+
 
 REPO_ROOT = Path(__file__).parents[4]
 TOY_CONFIG = {
@@ -107,6 +110,23 @@ def toy_models(tmp_path_factory) -> dict[str, Path]:
                 )
             ),
         ),
+        (
+            # Fused [Q|K|V] attention.query_key_value (ConcatenatedQKVMapping); dense layers only, since the
+            # bridge maps grouped-GEMM experts only.
+            "bailing_moe2",
+            BailingMoeV2ForCausalLM(
+                BailingMoeV2Config(
+                    num_experts=4,
+                    num_experts_per_tok=2,
+                    n_group=1,
+                    topk_group=1,
+                    first_k_dense_replace=TOY_CONFIG["num_hidden_layers"],
+                    pad_token_id=0,
+                    eos_token_id=0,
+                    **TOY_CONFIG,
+                )
+            ),
+        ),
     ):
         paths[name] = tmp_path_factory.mktemp(name)
         model.to(torch.bfloat16).save_pretrained(paths[name])
@@ -150,6 +170,7 @@ def _bits(tensor: torch.Tensor) -> torch.Tensor:
         ("qwen3_moe", "mixed", [("--ep", "2"), ("--etp", "2"), ("--pp", "2")]),
         ("qwen3_5", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
         ("nemotron_h", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
+        ("bailing_moe2", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
     ],
 )
 def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, model, config, parallelisms):
@@ -172,12 +193,15 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
             "backbone.layers.2.mixer.gate",
         },
     }.get(model, set())
-    embedding = "backbone.embeddings" if model == "nemotron_h" else "model.embed_tokens"
+    embedding = {"nemotron_h": "backbone.embeddings", "bailing_moe2": "model.word_embeddings"}.get(
+        model, "model.embed_tokens"
+    )
     assert set(quantization["ignore"]) == {"lm_head", embedding, *unquantized}
     projection = {
         "qwen3_moe": "model.layers.0.mlp.experts.0.down_proj",
         "qwen3_5": "model.layers.0.linear_attn.in_proj_qkv",
         "nemotron_h": "backbone.layers.0.mixer.in_proj",
+        "bailing_moe2": "model.layers.0.attention.query_key_value",
     }.get(model, "model.layers.0.mlp.down_proj")
     packed_dtype = torch.float8_e4m3fn if config == "fp8" else torch.uint8
     assert weights[f"{projection}.weight"].dtype == packed_dtype

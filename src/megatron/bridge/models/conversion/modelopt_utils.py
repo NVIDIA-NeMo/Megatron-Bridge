@@ -30,6 +30,7 @@ from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, Weight
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    ConcatenatedQKVMapping,
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
@@ -102,7 +103,7 @@ def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
         return "gated"
     if isinstance(mapping, MambaInProjMapping):
         return "column"
-    if isinstance(mapping, (QKVMapping, GDNLinearMappingSeparate)):
+    if isinstance(mapping, (QKVMapping, ConcatenatedQKVMapping, GDNLinearMappingSeparate)):
         return mapping._tp_mapping._detect_parallelism_type(module)
     if isinstance(mapping, AutoMapping):
         return mapping._detect_parallelism_type(module)
@@ -116,7 +117,7 @@ def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
 
 
 def _qkv_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, int, bool] | None:
-    if not isinstance(mapping, QKVMapping):
+    if not isinstance(mapping, (QKVMapping, ConcatenatedQKVMapping)):
         return None
     config = mapping._get_config(module)
     return (
@@ -193,6 +194,11 @@ def _validate_quantized_task(task: WeightConversionTask) -> None:
     if isinstance(task.mapping, QKVMapping) and (
         type(task.mapping).megatron_to_hf is not QKVMapping.megatron_to_hf
         or type(task.mapping)._megatron_to_hf is not QKVMapping._megatron_to_hf
+    ):
+        raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
+    if (
+        isinstance(task.mapping, ConcatenatedQKVMapping)
+        and type(task.mapping).megatron_to_hf is not ConcatenatedQKVMapping.megatron_to_hf
     ):
         raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
     if isinstance(task.mapping, MambaInProjMapping) and (
@@ -452,7 +458,7 @@ def _transform_source_state(
         else:
             raise NotImplementedError(f"Unsupported ModelOpt topology {parallelism!r} for {task.global_param_name}")
 
-        if isinstance(task.mapping, QKVMapping):
+        if isinstance(task.mapping, (QKVMapping, ConcatenatedQKVMapping)):
             if source.qkv_layout is None:
                 raise RuntimeError(f"Missing QKV layout for {task.global_param_name}")
             heads, groups, channels, hidden, output_gate = source.qkv_layout
@@ -467,11 +473,19 @@ def _transform_source_state(
                 config,
                 torch.arange(full_shape[0]),
             )
-            transformed = {
-                names["q"]: _select_state(transformed_state, 0, q_indices),
-                names["k"]: _select_state(transformed_state, 0, k_indices),
-                names["v"]: _select_state(transformed_state, 0, v_indices),
-            }
+            if isinstance(task.mapping, ConcatenatedQKVMapping):
+                # One HF tensor holding Q, K and V in that order, as the mapping writes it.
+                transformed = {
+                    task.mapping.hf_param: _select_state(
+                        transformed_state, 0, torch.cat((q_indices, k_indices, v_indices))
+                    )
+                }
+            else:
+                transformed = {
+                    names["q"]: _select_state(transformed_state, 0, q_indices),
+                    names["k"]: _select_state(transformed_state, 0, k_indices),
+                    names["v"]: _select_state(transformed_state, 0, v_indices),
+                }
         elif isinstance(task.mapping, GDNLinearMappingSeparate):
             if source.gdn_layout is None:
                 raise RuntimeError(f"Missing GatedDeltaNet layout for {task.global_param_name}")

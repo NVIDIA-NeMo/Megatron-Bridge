@@ -35,6 +35,7 @@ from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, Megatr
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    ConcatenatedQKVMapping,
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
@@ -44,6 +45,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
     _fuse_gdn_separate_to_grouped,
     merge_gdn_linear_weights,
+    merge_qkv_weights,
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
@@ -680,6 +682,110 @@ def test_qkv_state_uses_megatron_interleaving(monkeypatch):
     }
     assert [len(indices) for _, _, indices in selections] == [8, 4, 4]
     assert sorted(index for _, _, indices in selections for index in indices) == list(range(16))
+
+
+def _qkv_config(output_gate=False):
+    return SimpleNamespace(
+        num_attention_heads=4, num_query_groups=2, kv_channels=4, hidden_size=16, attention_output_gate=output_gate
+    )
+
+
+def _quantized_qkv(weight, quantization, global_amax):
+    module = (_fp8_linear if quantization == "fp8" else _nvfp4_linear)(*weight.shape)
+    with torch.no_grad():
+        module.weight.copy_(weight)
+    module.weight_quantizer.reset_amax()
+    if quantization == "fp8":
+        # Per-row scales, so the exported scales show whether rows were reordered with the weight.
+        module.weight_quantizer.axis = 0
+        module.weight_quantizer.amax = weight.abs().amax(dim=1, keepdim=True)
+    else:
+        module.weight_quantizer.amax = global_amax
+    return module
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("quantization", ["fp8", "nvfp4"])
+@pytest.mark.parametrize("output_gate", [False, True])
+@pytest.mark.parametrize("tp_size", [1, 2])
+def test_concatenated_qkv_scales_follow_the_existing_weight_mapping(monkeypatch, tp_size, output_gate, quantization):
+    hf_name = "model.layers.0.attention.query_key_value.weight"
+    mapping = ConcatenatedQKVMapping("decoder.layers.0.self_attention.linear_qkv.weight", hf_name)
+    config = _qkv_config(output_gate)
+    q_rows = 16 * (2 if output_gate else 1)
+    hf_weight = torch.arange((q_rows + 16) * 16, dtype=torch.float32).reshape(-1, 16) / 128 - 3
+    megatron_weight = merge_qkv_weights(config, *hf_weight.split([q_rows, 8, 8]))
+    module = torch.nn.Linear(16, megatron_weight.shape[0], bias=False)
+    module.tensor_model_parallel, module.partition_dim, module.config = True, 0, config
+    converted = mapping.megatron_to_hf(megatron_weight, module)
+    assert torch.equal(converted[hf_name], hf_weight)
+
+    global_amax = hf_weight.abs().amax()
+    shards = [
+        modelopt_utils._SourceState(
+            weight_export.capture_quantized_weight_export_state(
+                _quantized_qkv(weight, quantization, global_amax), "weight", cpu=False
+            ),
+            tuple(weight.shape),
+            "column",
+            (4, 2, 4, 16, output_gate),
+        )
+        for weight in megatron_weight.chunk(tp_size)
+    ]
+    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda *_args: shards)
+    task = SimpleNamespace(mapping=mapping, global_param_name="linear_qkv.weight")
+    state = modelopt_utils._transform_source_state(task, shards[0])[hf_name]
+    exported = weight_export.export_quantized_weight_tensors(hf_weight, state, torch.float32)
+    reference_state = weight_export.capture_quantized_weight_export_state(
+        _quantized_qkv(hf_weight, quantization, global_amax), "weight", cpu=False
+    )
+    reference = weight_export.export_quantized_weight_tensors(hf_weight, reference_state, torch.float32)
+    assert exported.keys() == reference.keys()
+    for key in exported:
+        assert torch.equal(
+            exported[key].contiguous().reshape(-1).view(torch.uint8),
+            reference[key].contiguous().reshape(-1).view(torch.uint8),
+        ), key
+
+
+@pytest.mark.unit
+def test_concatenated_qkv_plan_exports_one_quantized_projection():
+    hf_name = "model.layers.0.attention.query_key_value.weight"
+    mapping = ConcatenatedQKVMapping("decoder.layers.0.self_attention.linear_qkv.weight", hf_name)
+    module = _nvfp4_linear(out_features=32, in_features=16)
+    module.tensor_model_parallel, module.partition_dim, module.config = True, 0, _qkv_config()
+    plan = modelopt_utils.build_modelopt_export_plan(
+        [_task(mapping, module, global_name=mapping.megatron_param)], model=[module]
+    )
+    assert plan.quantization_config["quant_algo"] == "NVFP4"
+    assert plan.quantized_params == {mapping.megatron_param}
+
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    exported = dict(export_task.export_hook(hf_name, mapping.megatron_to_hf(module.weight, module)[hf_name]))
+    prefix = hf_name.removesuffix(".weight")
+    assert exported.keys() == {
+        hf_name,
+        *(f"{prefix}.{name}" for name in ("weight_scale", "weight_scale_2", "input_scale")),
+    }
+    assert exported[hf_name].dtype == torch.uint8
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("custom", [False, True])
+def test_concatenated_qkv_rejects_custom_row_layout(custom):
+    class Mapping(ConcatenatedQKVMapping):
+        pass
+
+    if custom:
+        Mapping.megatron_to_hf = lambda self, weight, module: {}
+    task = SimpleNamespace(
+        mapping=Mapping("linear_qkv.weight", "model.qkv.weight"), global_param_name="linear_qkv.weight"
+    )
+    if custom:
+        with pytest.raises(NotImplementedError, match="QKV mappings with a custom row layout"):
+            modelopt_utils._validate_quantized_task(task)
+    else:
+        modelopt_utils._validate_quantized_task(task)
 
 
 @pytest.mark.parametrize("tp_size", [1, 2])
