@@ -150,6 +150,58 @@ def test_get_cp_local_vision_embed_indices_allows_zero_vision_tokens(monkeypatch
     assert indices.shape == (0,)
 
 
+def test_builder_model_config_supplies_construction_settings(monkeypatch):
+    """A builder-backed model config owns the settings a provider carries on its language config."""
+    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5VisionConfig
+
+    from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig, Qwen35VLTransformerConfig
+
+    language_model = Mock()
+    language_model.config.cuda_graph_impl = "none"
+    language_model.share_embeddings_and_output_weights = True
+    language_model_constructor = Mock(return_value=language_model)
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.Qwen3VLGPTModel",
+        language_model_constructor,
+    )
+    model_config = Qwen35VLModelConfig(
+        transformer=Qwen35VLTransformerConfig(num_layers=2, hidden_size=64, num_attention_heads=4),
+        vocab_size=1000,
+        should_pad_vocab=True,
+        make_vocab_size_divisible_by=128,
+        language_max_sequence_length=512,
+        rotary_percent=0.25,
+        rotary_base=1_000_000,
+        share_embeddings_and_output_weights=True,
+        image_token_id=7,
+        video_token_id=8,
+        vision_start_token_id=9,
+    )
+    group = SimpleNamespace(rank=lambda: 0, size=lambda: 1)
+
+    model = Qwen3VLModel(
+        language_transformer_config=model_config.transformer,
+        language_transformer_layer_spec=SimpleNamespace(layer_specs=[]),
+        vision_transformer_config=Qwen3_5VisionConfig(),
+        pre_process=False,
+        post_process=True,
+        add_encoder=False,
+        add_decoder=True,
+        pg_collection=SimpleNamespace(cp=group, tp=group, pp=group, embd=None),
+        model_config=model_config,
+    )
+
+    kwargs = language_model_constructor.call_args.kwargs
+    assert model.config is model_config.transformer
+    assert kwargs["config"] is model_config.transformer
+    assert kwargs["vocab_size"] == 1024
+    assert kwargs["max_sequence_length"] == 512
+    assert (kwargs["rotary_percent"], kwargs["rotary_base"]) == (0.25, 1_000_000)
+    assert kwargs["share_embeddings_and_output_weights"] is True
+    assert (model.image_token_id, model.video_token_id, model.vision_start_token_id) == (7, 8, 9)
+    assert model.share_embeddings_and_output_weights is True
+
+
 @pytest.fixture(scope="module")
 def hf_config():
     """Create a local HuggingFace config once for all tests."""

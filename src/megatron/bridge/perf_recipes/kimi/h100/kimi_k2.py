@@ -47,7 +47,8 @@ def kimi_k2_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = "Et|(tt|)*30L"
     cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap.overlap_grad_reduce = False
+    # Preserve the effective gradient overlap used before LayerWise honored this override.
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -93,7 +94,8 @@ def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = "Et|(tt|)*30L"
     cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap.overlap_grad_reduce = False
+    # Preserve the effective gradient overlap used before LayerWise honored this override.
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.

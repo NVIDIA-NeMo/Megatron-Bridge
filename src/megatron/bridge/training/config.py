@@ -77,6 +77,11 @@ from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispa
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
+from megatron.bridge.training.utils.optimizer_utils import (
+    normalize_optimizer_config,
+    uses_distributed_optimizer,
+    uses_layer_wise_optimizer,
+)
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
     print_rank_0,
@@ -130,6 +135,15 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    use_layer_wise_param_layout: bool = False
+    """Use the precomputed shard-aligned layout for the LayerWise optimizer.
+
+    The default retains compact DDP buffers, LayerWise's variable-size parameter
+    synchronization, and the optimizer representation used by existing checkpoints.
+    Shard-aligned buffers are opt-in and require compatible parameter routing.
+    This setting has no effect unless ``use_layer_wise_distributed_optimizer`` is enabled.
+    """
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -143,6 +157,7 @@ class OptimizerConfig(MCoreOptimizerConfig):
         This method calls the original Megatron Core OptimizerConfig.__post_init__()
         to compute derived fields based on the current field values.
         """
+        normalize_optimizer_config(self)
         super().__post_init__()
 
 
@@ -1428,6 +1443,12 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        _validate_and_sync_distributed_optimizer_settings(self)
+        if self.optimizer.optimizer not in ("adam", "sgd") and (
+            self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
+        ):
+            raise ValueError("Emerging optimizers such as Muon do not support Megatron-FSDP or Torch-FSDP2.")
+
         if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
                 "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
@@ -1807,7 +1828,7 @@ class ConfigContainer(Container):
 
         # Make sure all functionality that requires Gloo process groups is disabled.
         if not self.dist.use_gloo_process_groups:
-            if self.optimizer.use_distributed_optimizer:
+            if uses_distributed_optimizer(self.optimizer):
                 # If using distributed optimizer, must use distributed checkpointing.
                 # Legacy checkpointing uses Gloo process groups to collect full distributed
                 # optimizer state in the CPU memory of DP rank 0.
@@ -2284,7 +2305,8 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
         cfg.comm_overlap.finalize()
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
-    # Validate configuration after all modifications
+    # Normalize distribution and validate only after explicit overlap overrides
+    # have replaced inherited recipe settings, and before model construction.
     cfg.validate()
 
 
@@ -2351,8 +2373,18 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
             configure_nvtx_profiling(enabled=True)
 
-    # Safe validations
     _validate_and_sync_distributed_optimizer_settings(cfg)
+
+    # The component training loop does not stage reused gradient buffers before
+    # overlapped parameter gathering.
+    if cfg.ddp.overlap_param_gather and (
+        cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag or cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag
+    ):
+        raise ValueError(
+            "overlap_param_gather with reuse_grad_buf_for_mxfp8_param_ag is not supported for MegatronMIMO"
+        )
+
+    # Safe validations
     cfg._validate_and_apply_deterministic_mode()
 
 
@@ -2360,8 +2392,8 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
 
     This function ensures that distributed optimizer settings are consistent across
-    DDP and optimizer configurations. If either setting is enabled, both will be
-    enabled to maintain consistency.
+    DDP and optimizer configurations. Emerging optimizers use layer-wise
+    distribution; Adam and SGD use the ordinary distributed optimizer.
 
     Args:
         config: The configuration container to validate and potentially modify.
@@ -2369,7 +2401,15 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     ddp_setting = config.ddp.use_distributed_optimizer
     optimizer_setting = config.optimizer.use_distributed_optimizer
 
-    if ddp_setting or optimizer_setting:
+    normalize_optimizer_config(config.optimizer, ddp_use_distributed_optimizer=ddp_setting)
+    if uses_layer_wise_optimizer(config.optimizer):
+        if config.ddp.num_distributed_optimizer_instances != 1:
+            raise ValueError("Layer-wise optimizers require num_distributed_optimizer_instances=1.")
+        # This flag selects the ordinary DistributedOptimizer DDP layout. The
+        # model wrapper enables it only when a shard-aligned LayerWise layout is
+        # requested; compact LayerWise mode intentionally leaves it disabled.
+        config.ddp.use_distributed_optimizer = False
+    elif ddp_setting or optimizer_setting:
         if ddp_setting != optimizer_setting:
             warn_rank_0(
                 f"Distributed optimizer settings were not in sync: "
