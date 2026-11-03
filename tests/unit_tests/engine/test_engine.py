@@ -5,6 +5,7 @@ import torch
 
 from megatron.bridge.engine import AdamParams, Datum, ForwardBackwardOutput, TrainingEngine, topology_from_recipe
 from megatron.bridge.engine.accumulation import AccumulationWindow
+from megatron.bridge.engine.datum import NormalizationPolicy, PreparedMicrobatch
 from megatron.bridge.engine.engine import Topology, _SharedRuntime
 from megatron.bridge.engine.recipes import check_supported, data_parallel_size
 
@@ -40,6 +41,19 @@ def _unbuilt_engine(trainable: bool = True, closed: bool = False) -> TrainingEng
 
 def _datums() -> list[Datum]:
     return [Datum(input_ids=torch.arange(3), target_ids=torch.arange(1, 4), loss_mask=torch.ones(3))]
+
+
+def _prepared(mapping) -> PreparedMicrobatch:
+    ids = torch.arange(4).unsqueeze(0)
+    return PreparedMicrobatch(
+        input_ids=ids,
+        target_ids=ids,
+        position_ids=ids,
+        loss_mask=torch.ones(1, 4),
+        padding_mask=torch.zeros(1, 4, dtype=torch.bool),
+        packed_seq_params=None,
+        mapping=mapping,
+    )
 
 
 def test_check_supported_accepts_baseline_shape():
@@ -116,7 +130,7 @@ def test_forward_backward_runs_pipeline_and_opens_window(monkeypatch):
     engine.summarize = lambda loss_sum, tokens: ForwardBackwardOutput(
         loss_sum=float(loss_sum), num_loss_tokens=int(tokens)
     )
-    engine._count_samples = lambda microbatches: 2
+    engine.count_samples = lambda microbatches: 2
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
         lambda model, mbs, loss_method, pg_collection: (torch.tensor(6.0), torch.tensor(3)),
@@ -125,6 +139,35 @@ def test_forward_backward_runs_pipeline_and_opens_window(monkeypatch):
     assert out == ForwardBackwardOutput(loss_sum=6.0, num_loss_tokens=3)
     assert calls == [("preprocess", True), ("check", ["mb"])]
     assert engine._window.is_open and engine._window.num_loss_tokens == 3 and engine._window.num_samples == 2
+
+
+def test_default_count_samples_is_unknown_for_foreign_mappings():
+    engine = _unbuilt_engine()
+    mb = _prepared(mapping=object())
+    assert engine.count_samples([mb]) is None
+
+
+def test_unknown_sample_count_is_rejected_under_sample_mean_before_compute(monkeypatch):
+    engine = _unbuilt_engine()
+    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(overlap_grad_reduce=False))
+    engine._runtime.pg_collection = None
+    engine._model = []
+    engine._window = AccumulationWindow()
+    engine.preprocess = lambda data, training: [_prepared(mapping=object())]
+    engine.check_microbatches = lambda microbatches: None
+    engine.summarize = lambda loss_sum, tokens: ForwardBackwardOutput(loss_sum=float(loss_sum), num_loss_tokens=int(tokens))
+    ran = []
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.run_forward_backward",
+        lambda model, mbs, loss_method, pg_collection: ran.append(1) or (torch.tensor(6.0), torch.tensor(3)),
+    )
+    engine.normalization = NormalizationPolicy.SAMPLE_MEAN
+    with pytest.raises(ValueError, match="count_samples returned None"):
+        engine.forward_backward(_datums())
+    assert ran == [] and not engine._window.is_open
+    engine.normalization = NormalizationPolicy.TOKEN_MEAN
+    engine.forward_backward(_datums())
+    assert ran == [1] and engine._window.num_samples == 0
 
 
 def test_overlap_grad_reduce_is_an_explicit_placeholder():

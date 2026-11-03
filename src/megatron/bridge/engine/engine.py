@@ -96,6 +96,7 @@ _RESERVED_METHODS = frozenset(
         "preprocess",
         "postprocess",
         "summarize",
+        "count_samples",
         "check_microbatches",
         "resolve_loss_method",
         "target_logprobs",
@@ -387,13 +388,19 @@ class TrainingEngine:
             raise NotImplementedError("forward_backward with ddp.overlap_grad_reduce=True is not supported yet.")
         microbatches = self.preprocess(data, training=True)
         self.check_microbatches(microbatches)
+        num_samples = self.count_samples(microbatches)
+        if num_samples is None and self.normalization == NormalizationPolicy.SAMPLE_MEAN:
+            raise ValueError(
+                "NormalizationPolicy.SAMPLE_MEAN needs the Datum count, but count_samples returned None; "
+                "override count_samples together with preprocess when the mapping is not MicrobatchMapping."
+            )
         loss_sum, num_loss_tokens = run_forward_backward(
             self._model, microbatches, loss_method, pg_collection=self._runtime.pg_collection
         )
         summary = self.summarize(loss_sum, num_loss_tokens)
         self._window.add(
             num_loss_tokens=summary.num_loss_tokens,
-            num_samples=self._count_samples(microbatches),
+            num_samples=0 if num_samples is None else num_samples,
             loss_sum=summary.loss_sum,
         )
         return summary
@@ -520,13 +527,16 @@ class TrainingEngine:
         """Number of successful optimizer updates since construction."""
         return self._step
 
-    def _count_samples(self, microbatches: list[PreparedMicrobatch]) -> int:
-        """Datums in this call across DP replicas (CP ranks share the same samples)."""
-        local = sum(
-            len(mb.mapping.segments)
-            for mb in microbatches
-            if isinstance(mb.mapping, MicrobatchMapping) and not mb.mapping.filler
-        )
+    def count_samples(self, microbatches: list[PreparedMicrobatch]) -> int | None:
+        """Datums in this call across DP replicas (``N`` for ``SAMPLE_MEAN``), or ``None`` when unknown.
+
+        Default: read the default ``MicrobatchMapping`` (fillers count zero) and reduce over DP; any other
+        mapping makes the count unknown. Override together with ``preprocess`` when the mapping differs;
+        the result must be the global count, identical on every rank.
+        """
+        if not all(isinstance(mb.mapping, MicrobatchMapping) for mb in microbatches):
+            return None
+        local = sum(len(mb.mapping.segments) for mb in microbatches if not mb.mapping.filler)
         count = torch.tensor([local], device="cuda")
         torch.distributed.all_reduce(count, group=self._runtime.pg_collection.dp)
         return int(count.item())
