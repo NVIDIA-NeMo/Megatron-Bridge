@@ -72,6 +72,18 @@ def test_lazy_ep_import_uses_destination_and_only_overlapping_shards():
     assert source.reads == [mapping.hf_param[f"shard_{i}"] for i in (0, 7, 2, 3)]
 
 
+@pytest.mark.parametrize("num_shards", [0, 4])
+def test_registry_selects_destination_aware_mapping_for_split_and_single_table(num_shards):
+    mappings = bridge.Qwen4ExpBridge.get_lm_mappings("model.", False, SimpleNamespace(ple_layer_ids=[1]), num_shards)
+    tables = [mapping for mapping in mappings if mapping.megatron_param.endswith("ngram_embedding.weight")]
+    assert len(tables) == 1 and isinstance(tables[0], bridge.PLENGramEmbeddingMapping)
+    resolved = tables[0].resolve(("0",))
+    assert not resolved.is_expert
+    assert resolved.num_shards == (num_shards or 1)
+    suffix = "shard_0.weight" if num_shards else "weight"
+    assert resolved.hf_param["shard_0"] == "model.layers.0.ple.ple_embedding.ngram_embedding." + suffix
+
+
 @pytest.mark.parametrize("rank", range(4))
 def test_single_hf_tensor_retains_original_key_and_ep_rows(rank):
     full = torch.arange(48, dtype=torch.float32).view(24, 2)
