@@ -20,10 +20,13 @@ from typing import Any
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.module import mark_keep_in_fp32
 from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelConfig
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -34,7 +37,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.minimax_m3.minimax_m3_config import (
+    MiniMaxM3ModelConfig,
+    MiniMaxM3VLModelConfig,
+)
 from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3VLModel
 
 
@@ -61,15 +67,24 @@ class MiniMaxM3TopKRouter(TopKRouter):
 
 
 def minimax_m3_block_spec(
-    config: TransformerConfig,
-    use_transformer_engine: bool = True,
+    config: TransformerConfig | GPTModelConfig,
+    use_transformer_engine: bool | None = None,
     normalization: str | None = None,
     qk_l2_norm: bool | None = False,
     vp_stage: int | None = None,
     pp_rank: int | None = None,
     **kwargs: object,
 ) -> TransformerBlockSubmodules:
-    """Build a GPT block spec that uses MiniMax-M3's FP32 router projection."""
+    """Build a GPT block spec that uses MiniMax-M3's FP32 router projection.
+
+    A builder passes its model config; the spec is then built from the nested transformer config.
+    Without ``use_transformer_engine``, the backend is the one the transformer config selects, as
+    in Megatron Core's default GPT spec.
+    """
+    if isinstance(config, GPTModelConfig):
+        config = config.transformer
+    if use_transformer_engine is None:
+        use_transformer_engine = config.transformer_impl == "transformer_engine"
     block_spec = get_gpt_decoder_block_spec(
         config,
         use_transformer_engine=use_transformer_engine,
@@ -102,7 +117,9 @@ def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[tor
     Megatron initializes router parameters in ``params_dtype`` even when
     ``moe_router_dtype="fp32"``. Promoting them immediately after construction
     prevents truncation when loading either HF weights or a native Megatron
-    checkpoint.
+    checkpoint. The router weights and expert biases are also marked so that
+    Megatron Core's ``Float16Module`` leaves them in FP32 wherever a builder
+    wraps the model without Bridge's FP32-preserving wrapper.
     """
     for model_chunk in model:
         for module in model_chunk.modules():
@@ -110,6 +127,10 @@ def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[tor
                 module.weight.data = module.weight.data.float()
             if isinstance(module, TopKRouter):
                 module._keep_in_float32_parameter_names = ("weight",)
+                mark_keep_in_fp32(module.weight)
+                expert_bias = getattr(module, "expert_bias", None)
+                if expert_bias is not None:
+                    mark_keep_in_fp32(expert_bias)
     return model
 
 
@@ -275,8 +296,12 @@ class MiniMaxM3Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M3", trust_remote_code=True)
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
+        >>> text_model_config = model_config.to_text_config()
     """
+
+    MODEL_CONFIG_CLASS = MiniMaxM3VLModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
@@ -293,84 +318,102 @@ class MiniMaxM3Bridge(MegatronModelBridge):
             return quick_gelu
         return super().hf_to_megatron_activation(hidden_act)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MiniMaxM3VLModelProvider:
-        """Convert the Hugging Face MiniMax-M3 config to a full VLM provider."""
-        hf_config = hf_pretrained.config
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert the Hugging Face MiniMax-M3 config to builder config kwargs.
+
+        The language-model fields are read from ``text_config``, the vision-language fields from
+        the top-level config and its ``vision_config``.
+        """
         text_config = getattr(hf_config, "text_config", hf_config)
-
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        provider_kwargs.pop("_mla_rope_params", None)
-        valid_fields = MiniMaxM3VLModelProvider.__dataclass_fields__
-        provider = MiniMaxM3VLModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
-
-        # Use decoder block spec to properly handle moe_layer_freq (mixed dense/MoE layers)
-        provider.transformer_layer_spec = partial(minimax_m3_block_spec, use_transformer_engine=HAVE_TE)
-
-        # Gemma-style RMSNorm: weights stored zero-centered, applied as x * (1 + w)
-        provider.normalization = "RMSNorm"
-        provider.layernorm_zero_centered_gamma = bool(getattr(text_config, "use_gemma_norm", True))
-        provider.qk_layernorm = bool(getattr(text_config, "use_qk_norm", True))
-
-        provider.position_embedding_type = "rope"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False
-        provider.hidden_dropout = 0.0
-
-        # tie_word_embeddings lives on text_config for MiniMax-M3 and is False
-        # for the released checkpoint (distinct lm_head and embed_tokens tensors)
-        provider.share_embeddings_and_output_weights = bool(
-            getattr(hf_config, "tie_word_embeddings", getattr(text_config, "tie_word_embeddings", False))
+        config_kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        config_kwargs.pop("_mla_rope_params", None)
+        config_kwargs.update(
+            # Use decoder block spec to properly handle moe_layer_freq (mixed dense/MoE layers)
+            transformer_layer_spec=minimax_m3_block_spec,
+            # Gemma-style RMSNorm: weights stored zero-centered, applied as x * (1 + w)
+            normalization="RMSNorm",
+            layernorm_zero_centered_gamma=bool(getattr(text_config, "use_gemma_norm", True)),
+            qk_layernorm=bool(getattr(text_config, "use_qk_norm", True)),
+            position_embedding_type="rope",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            # tie_word_embeddings lives on text_config for MiniMax-M3 and is False
+            # for the released checkpoint (distinct lm_head and embed_tokens tensors)
+            share_embeddings_and_output_weights=bool(
+                getattr(hf_config, "tie_word_embeddings", getattr(text_config, "tie_word_embeddings", False))
+            ),
+            # SwiGLU-OAI activation (same as GPT-OSS, but non-interleaved weights):
+            # gate = clamp(gate, max=limit); up = clamp(up, +-limit)
+            # out = (up + 1) * gate * sigmoid(alpha * gate), alpha = 1.702 (quick-GELU)
+            activation_func=quick_gelu,
+            activation_func_clamp_value=float(getattr(text_config, "swiglu_limit", 7.0)),
+            glu_linear_offset=1.0,
+            # Dense layers use dense_intermediate_size; text_config.intermediate_size
+            # is the per-expert FFN size (CONFIG_MAPPING would put it in ffn_hidden_size)
+            moe_ffn_hidden_size=text_config.intermediate_size,
+            # MoE settings — sigmoid routing with expert bias correction and
+            # normalized top-k weights scaled by routed_scaling_factor (DeepSeek-V3 style)
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_flex_dispatcher_num_sms=16,
+            moe_permute_fusion_into_hybridep=False,
+            moe_permute_fusion=True,
+            moe_router_pre_softmax=False,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            # HF exposes a token-global Switch auxiliary loss. MCore's closest
+            # equivalent uses normalized sigmoid scores rather than HF's softmax
+            # scores, but preserves the global (rather than per-sequence) scope.
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=getattr(text_config, "router_aux_loss_coef", 1e-3),
+            moe_router_topk_scaling_factor=getattr(text_config, "routed_scaling_factor", 1.0),
+            # The overlapped shared-expert path applies a generic GLU and does not
+            # honor activation_func_clamp_value or glu_linear_offset. Keep it off so
+            # the shared expert uses MiniMax-M3's clamped (up + 1) SwiGLU-OAI math.
+            moe_shared_expert_overlap=False,
+            # The released checkpoint advertises num_nextn_predict_layers in its
+            # config but ships no mtp.* weights — keep MTP disabled so conversion
+            # does not look for weights that do not exist.
+            mtp_num_layers=None,
+            persist_layer_norm=True,
+            # The fused bias-activation path only supports quick-GELU when MoE
+            # routing probabilities are supplied. MiniMax-M3 also uses the same
+            # activation in dense layers and the shared expert, so use the
+            # unfused path that applies the clamp and linear offset in both cases.
+            bias_activation_fusion=False,
+            bias_dropout_fusion=True,
+            # Released checkpoints are bf16; text_config carries no dtype of its own
+            fp16=False,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            autocast_dtype=torch.bfloat16,
+            # max_position_embeddings is 1M; keep the default conservative
+            # (recipes override seq_length explicitly)
+            seq_length=4096,
+            # Provider defaults the builder config does not share.
+            masked_softmax_fusion=True,
+            rope_scaling_factor=1.0,
         )
-
-        # SwiGLU-OAI activation (same as GPT-OSS, but non-interleaved weights):
-        # gate = clamp(gate, max=limit); up = clamp(up, +-limit)
-        # out = (up + 1) * gate * sigmoid(alpha * gate), alpha = 1.702 (quick-GELU)
-        provider.activation_func = quick_gelu
-        provider.activation_func_clamp_value = float(getattr(text_config, "swiglu_limit", 7.0))
-        provider.glu_linear_offset = 1.0
 
         # Partial RoPE: only rotary_dim of head_dim channels are rotated
         rotary_dim = getattr(text_config, "rotary_dim", None)
         head_dim = getattr(text_config, "head_dim", None)
         if rotary_dim is not None and head_dim:
-            provider.rotary_percent = rotary_dim / head_dim
+            config_kwargs["rotary_percent"] = rotary_dim / head_dim
 
-        # Dense layers use dense_intermediate_size; text_config.intermediate_size
-        # is the per-expert FFN size (CONFIG_MAPPING would put it in ffn_hidden_size)
-        provider.moe_ffn_hidden_size = text_config.intermediate_size
         dense_ffn_hidden_size = getattr(text_config, "dense_intermediate_size", None)
         if dense_ffn_hidden_size is not None:
-            provider.ffn_hidden_size = dense_ffn_hidden_size
-
-        # MoE settings — sigmoid routing with expert bias correction and
-        # normalized top-k weights scaled by routed_scaling_factor (DeepSeek-V3 style)
-        provider.moe_grouped_gemm = True
-        provider.moe_token_dispatcher_type = "flex"
-        provider.moe_flex_dispatcher_backend = "hybridep"
-        provider.moe_flex_dispatcher_num_sms = 16
-        provider.moe_permute_fusion_into_hybridep = False
-        provider.moe_permute_fusion = True
-        provider.moe_router_pre_softmax = False
-        provider.moe_router_score_function = "sigmoid"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_dtype = "fp32"
-        # HF exposes a token-global Switch auxiliary loss. MCore's closest
-        # equivalent uses normalized sigmoid scores rather than HF's softmax
-        # scores, but preserves the global (rather than per-sequence) scope.
-        provider.moe_router_load_balancing_type = "aux_loss"
-        provider.moe_aux_loss_coeff = getattr(text_config, "router_aux_loss_coef", 1e-3)
-        provider.moe_router_topk_scaling_factor = getattr(text_config, "routed_scaling_factor", 1.0)
-        # The overlapped shared-expert path applies a generic GLU and does not
-        # honor activation_func_clamp_value or glu_linear_offset. Keep it off so
-        # the shared expert uses MiniMax-M3's clamped (up + 1) SwiGLU-OAI math.
-        provider.moe_shared_expert_overlap = False
+            config_kwargs["ffn_hidden_size"] = dense_ffn_hidden_size
 
         n_shared_experts = getattr(text_config, "n_shared_experts", None)
         shared_intermediate_size = getattr(text_config, "shared_intermediate_size", 0) or 0
         if n_shared_experts is None:
             n_shared_experts = 1 if shared_intermediate_size else 0
-        provider.moe_shared_expert_intermediate_size = (n_shared_experts * shared_intermediate_size) or None
+        config_kwargs["moe_shared_expert_intermediate_size"] = (n_shared_experts * shared_intermediate_size) or None
 
         # Per-layer dense/MoE pattern. The checkpoint config carries a 0/1
         # moe_layer_freq list; the native transformers config converts it into
@@ -381,113 +424,107 @@ class MiniMaxM3Bridge(MegatronModelBridge):
             if mlp_layer_types is not None:
                 moe_layer_freq = [1 if layer_type == "sparse" else 0 for layer_type in mlp_layer_types]
         if moe_layer_freq is not None:
-            provider.moe_layer_freq = [int(f) for f in moe_layer_freq]
+            config_kwargs["moe_layer_freq"] = [int(f) for f in moe_layer_freq]
 
-        # The released checkpoint advertises num_nextn_predict_layers in its
-        # config but ships no mtp.* weights — keep MTP disabled so conversion
-        # does not look for weights that do not exist.
-        provider.mtp_num_layers = None
+        config_kwargs.update(self._vision_language_config_kwargs(hf_config, text_config, config_kwargs["hidden_size"]))
+        return config_kwargs
 
-        provider.persist_layer_norm = True
-        # The fused bias-activation path only supports quick-GELU when MoE
-        # routing probabilities are supplied. MiniMax-M3 also uses the same
-        # activation in dense layers and the shared expert, so use the
-        # unfused path that applies the clamp and linear offset in both cases.
-        provider.bias_activation_fusion = False
-        provider.bias_dropout_fusion = True
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        provider_kwargs["transformer_layer_spec"] = partial(minimax_m3_block_spec, use_transformer_engine=HAVE_TE)
+        return provider_kwargs
 
-        # Released checkpoints are bf16; text_config carries no dtype of its own
-        provider.fp16 = False
-        provider.bf16 = True
-        provider.params_dtype = torch.bfloat16
-        provider.autocast_dtype = torch.bfloat16
-
-        # max_position_embeddings is 1M; keep the provider default conservative
-        # (recipes override seq_length explicitly)
-        provider.seq_length = 4096
-
-        # Multimodal configuration. The legacy public config stores temporal
-        # and spatial merge sizes in img_token_compression_config, while the
-        # native Transformers config exposes them directly on vision_config.
-        provider.vision_config = getattr(hf_config, "vision_config", None)
-        provider.hf_config_dict = _config_to_dict(hf_config)
+    @staticmethod
+    def _vision_language_config_kwargs(hf_config: Any, text_config: Any, hidden_size: int) -> dict[str, Any]:
+        """Read the multimodal and Lightning Indexer fields of the model config."""
+        # The legacy public config stores temporal and spatial merge sizes in
+        # img_token_compression_config, while the native Transformers config
+        # exposes them directly on vision_config.
+        vision_config = getattr(hf_config, "vision_config", None)
+        hf_config_dict = _config_to_dict(hf_config)
         compression_config = _config_value(hf_config, "img_token_compression_config", None)
-        if compression_config is None and provider.vision_config is not None:
-            compression_config = _config_value(provider.vision_config, "img_token_compression_config", None)
+        if compression_config is None and vision_config is not None:
+            compression_config = _config_value(vision_config, "img_token_compression_config", None)
         compression_config = compression_config or {}
-        provider.spatial_merge_size = int(
+        spatial_merge_size = int(
             _config_value(
-                provider.vision_config,
+                vision_config,
                 "spatial_merge_size",
                 _config_value(compression_config, "spatial_merge_size", 2),
             )
         )
-        provider.temporal_patch_size = int(
+        temporal_patch_size = int(
             _config_value(
-                provider.vision_config,
+                vision_config,
                 "temporal_patch_size",
                 _config_value(compression_config, "temporal_patch_size", 2),
             )
         )
         # Normalize the legacy schema for the local vision implementation.
-        if provider.vision_config is not None:
-            if isinstance(provider.vision_config, dict):
-                provider.vision_config.setdefault("spatial_merge_size", provider.spatial_merge_size)
-                provider.vision_config.setdefault("temporal_patch_size", provider.temporal_patch_size)
+        if vision_config is not None:
+            if isinstance(vision_config, dict):
+                vision_config.setdefault("spatial_merge_size", spatial_merge_size)
+                vision_config.setdefault("temporal_patch_size", temporal_patch_size)
             else:
-                if not hasattr(provider.vision_config, "spatial_merge_size"):
-                    provider.vision_config.spatial_merge_size = provider.spatial_merge_size
-                if not hasattr(provider.vision_config, "temporal_patch_size"):
-                    provider.vision_config.temporal_patch_size = provider.temporal_patch_size
+                if not hasattr(vision_config, "spatial_merge_size"):
+                    vision_config.spatial_merge_size = spatial_merge_size
+                if not hasattr(vision_config, "temporal_patch_size"):
+                    vision_config.temporal_patch_size = temporal_patch_size
 
         image_token_id = _config_value(hf_config, "image_token_id")
         if image_token_id is None:
             image_token_id = _config_value(hf_config, "image_token_index", 200025)
-        provider.image_token_id = int(image_token_id)
-
         video_token_id = _config_value(hf_config, "video_token_id")
         if video_token_id is None:
             video_token_id = _config_value(hf_config, "video_token_index", 200026)
-        provider.video_token_id = int(video_token_id)
-        provider.projector_hidden_size = int(_config_value(hf_config, "projector_hidden_size", provider.hidden_size))
-        provider.multimodal_projector_bias = bool(_config_value(hf_config, "multimodal_projector_bias", True))
 
         sparse_config = _config_value(text_config, "sparse_attention_config", {}) or {}
         layer_types = _config_value(text_config, "layer_types")
         if layer_types is not None:
-            provider.lightning_indexer_layers = [
+            lightning_indexer_layers = [
                 layer_idx for layer_idx, layer_type in enumerate(layer_types) if layer_type == "minimax_m3_sparse"
             ]
         else:
             sparse_attention_freq = _config_value(sparse_config, "sparse_attention_freq", []) or []
-            provider.lightning_indexer_layers = [
+            lightning_indexer_layers = [
                 layer_idx for layer_idx, enabled in enumerate(sparse_attention_freq) if enabled
             ]
-        provider.index_n_heads = int(
-            _config_value(
-                text_config,
-                "index_n_heads",
-                _config_value(sparse_config, "sparse_num_index_heads", provider.index_n_heads),
-            )
-        )
-        provider.index_head_dim = int(
-            _config_value(
-                text_config,
-                "index_head_dim",
-                _config_value(sparse_config, "sparse_index_dim", provider.index_head_dim),
-            )
-        )
 
-        return provider
+        return {
+            "vision_config": vision_config,
+            "hf_config_dict": hf_config_dict,
+            "spatial_merge_size": spatial_merge_size,
+            "temporal_patch_size": temporal_patch_size,
+            "image_token_id": int(image_token_id),
+            "video_token_id": int(video_token_id),
+            "projector_hidden_size": int(_config_value(hf_config, "projector_hidden_size", hidden_size)),
+            "multimodal_projector_bias": bool(_config_value(hf_config, "multimodal_projector_bias", True)),
+            "lightning_indexer_layers": lightning_indexer_layers,
+            "index_n_heads": int(
+                _config_value(
+                    text_config,
+                    "index_n_heads",
+                    _config_value(sparse_config, "sparse_num_index_heads", 4),
+                )
+            ),
+            "index_head_dim": int(
+                _config_value(
+                    text_config,
+                    "index_head_dim",
+                    _config_value(sparse_config, "sparse_index_dim", 128),
+                )
+            ),
+        }
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict[str, Any]:
-        """Build the nested MiniMax-M3 VLM config used for Hugging Face export."""
-        hf_config = (
-            copy.deepcopy(provider.hf_config_dict)
-            if isinstance(provider, MiniMaxM3VLModelProvider) and provider.hf_config_dict
-            else {}
-        )
+    def megatron_to_hf_config(cls, provider: GPTModelProvider | MiniMaxM3ModelConfig) -> dict[str, Any]:
+        """Build the nested MiniMax-M3 VLM config used for Hugging Face export.
+
+        Accepts the providers and the builder configs, text-only or vision-language.
+        """
+        is_vision_language = isinstance(provider, (MiniMaxM3VLModelProvider, MiniMaxM3VLModelConfig))
+        hf_config = copy.deepcopy(provider.hf_config_dict) if is_vision_language and provider.hf_config_dict else {}
         text_config = copy.deepcopy(hf_config.get("text_config", {}))
         generated_text_config = super().megatron_to_hf_config(provider)
         standard_text_config_keys = (
@@ -538,7 +575,7 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         )
         text_config.setdefault("max_position_embeddings", provider.seq_length)
 
-        if isinstance(provider, MiniMaxM3VLModelProvider):
+        if is_vision_language:
             sparse_layer_indices = set(provider.lightning_indexer_layers)
             sparse_attention_freq = [
                 int(layer_idx in sparse_layer_indices) for layer_idx in range(provider.num_layers)

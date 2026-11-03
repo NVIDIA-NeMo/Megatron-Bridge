@@ -76,6 +76,11 @@ class Step35DecoderLayer(TransformerLayer):
     All lookups are bounds-checked rather than raising. The spec-builder
     must keep these lists (and ``rotary_base_per_layer``) indexed by the
     global 0-indexed layer id.
+
+    ``rope_settings`` carries the model-level RoPE settings of a builder-backed
+    config, which keeps them on the outer GPT config. Megatron Core's per-layer
+    rotary embeddings (``rotary_base_per_layer``) read them from the layer's
+    config, as a provider carries them, so they are copied onto it.
     """
 
     def __init__(
@@ -90,6 +95,7 @@ class Step35DecoderLayer(TransformerLayer):
         add_layer_offset: bool = True,
         pp_layer_offset: Optional[int] = None,
         name: str | None = None,
+        rope_settings: Optional[dict[str, Any]] = None,
     ):
         pp_rank = get_pg_rank(pg_collection.pp)
         if is_mtp_layer:
@@ -103,6 +109,8 @@ class Step35DecoderLayer(TransformerLayer):
         # Keep those mutations local instead of rewriting other layers that were
         # constructed from the provider's shared TransformerConfig instance.
         config = copy.deepcopy(config)
+        for field_name, value in (rope_settings or {}).items():
+            setattr(config, field_name, value)
 
         rotary_percents = getattr(config, "rotary_percents", None) or []
         if 0 <= layer_idx < len(rotary_percents):
