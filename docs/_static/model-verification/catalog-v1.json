@@ -10058,11 +10058,11 @@
     },
     {
       "architecture": "Qwen3_5MoeForConditionalGeneration",
-      "base_container": "nvcr.io/nvidia/pytorch:26.09-py3",
-      "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+      "base_container": "nvcr.io/nvidia/nemo:26.10",
+      "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
       "entries": [
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10079,7 +10079,7 @@
           "workflow": "hf_to_megatron_cpu"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10096,7 +10096,7 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10113,7 +10113,7 @@
           "workflow": "megatron_to_hf_cpu"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10130,7 +10130,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10147,7 +10147,7 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10164,7 +10164,7 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10187,7 +10187,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10210,7 +10210,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10227,7 +10227,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10250,7 +10250,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10273,7 +10273,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10296,7 +10296,7 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "e301c817218e4e626c8c264aee9935514559a04b",
+          "bridge_commit": "6452af72ace14f5ba28f54e6373792d8bbd022ee",
           "command_topologies": [
             {
               "gpus_per_node": "4",

@@ -20,8 +20,10 @@ from unittest.mock import Mock
 import pytest
 import torch
 import yaml
+from megatron.core.dist_checkpointing.mapping import ShardedTensor
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import Qwen35VLHybridLanguageModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.qwen35_vl_builder import Qwen35VLModelBuilder
 from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig, Qwen35VLTransformerConfig
@@ -262,3 +264,25 @@ class TestQwen35VLModelBuilder:
 
         with pytest.raises(ValueError, match="transformer_layer_spec"):
             Qwen35VLModelBuilder(config).build_model(_pg_collection())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("pre_process", [False, True])
+def test_vl_tied_mtp_checkpoint_uses_embedding_on_last_pipeline_stage(pre_process):
+    model = Qwen35VLHybridLanguageModel.__new__(Qwen35VLHybridLanguageModel)
+    torch.nn.Module.__init__(model)
+    model.mtp_process = True
+    model.pre_process = pre_process
+    model.post_process = True
+    embedding_key = "language_model.embedding.word_embeddings.weight"
+    output_key = "language_model.output_layer.weight"
+    embedding = ShardedTensor.from_rank_offsets(embedding_key, torch.ones(2, 2))
+    state = {
+        embedding_key: embedding,
+        output_key: ShardedTensor.from_rank_offsets(output_key, torch.ones(2, 2)),
+    }
+
+    model.tie_embeddings_and_output_weights_state_dict(state, output_key, embedding_key)
+
+    assert state[embedding_key] is embedding
+    assert (output_key in state) is pre_process
