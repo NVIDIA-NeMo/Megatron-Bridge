@@ -989,7 +989,7 @@ class AutoBridge(Generic[MegatronModelT]):
         export_plan: Optional["ModelOptExportPlan"] = None,
         merge_adapter_weights: bool = True,
     ) -> Iterable[tuple["HFWeightTuple", ...]]:
-        """Export one materialized ModelOpt output group per conversion task.
+        """Export materialized ModelOpt weight groups.
 
         Args:
             model: Megatron model instance or virtual-pipeline model list.
@@ -1001,7 +1001,8 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Yields:
             One tuple per conversion task. Empty tuples preserve tasks that emit no
-            tensors on a given topology.
+            tensors on a given topology. Bridges may append groups for checkpoint-only
+            tensors after the conversion-task groups.
 
         Note:
             This is a distributed collective stream. Every rank must consume groups
