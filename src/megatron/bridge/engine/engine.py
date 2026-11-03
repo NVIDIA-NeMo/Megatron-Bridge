@@ -457,9 +457,12 @@ class TrainingEngine:
         )
 
     def summarize(self, loss_sum: torch.Tensor, num_loss_tokens: torch.Tensor) -> ForwardBackwardOutput:
-        """Reduce this call's loss sum and active-token count over DP x CP (boundary B3 -> B6)."""
+        """Reduce this call's loss sum and active-token count over DP x CP (boundary B3 -> B6).
+
+        One float64 collective: the count stays exact (float32 would round above 2**24 tokens).
+        """
         pg_collection = self._runtime.pg_collection
-        totals = torch.stack([loss_sum.detach().float(), num_loss_tokens.float()]).cuda()
+        totals = torch.stack([loss_sum.detach().double(), num_loss_tokens.double()])
         torch.distributed.all_reduce(totals, group=pg_collection.dp_cp)
         return ForwardBackwardOutput(loss_sum=float(totals[0].item()), num_loss_tokens=int(totals[1].item()))
 

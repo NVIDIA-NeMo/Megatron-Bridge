@@ -165,6 +165,17 @@ def test_forward_backward_runs_pipeline_and_opens_window(monkeypatch):
     assert engine._window.is_open and engine._window.num_loss_tokens == 3 and engine._window.num_samples == 2
 
 
+def test_summarize_keeps_large_token_counts_exact(monkeypatch):
+    engine = _unbuilt_engine()
+    engine._runtime.pg_collection = SimpleNamespace(dp_cp=None)
+    reduced = []
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda tensor, group=None: reduced.append(tensor.dtype))
+    count = 2**24 + 1
+    out = engine.summarize(torch.tensor(1.5), torch.tensor(count, dtype=torch.int64))
+    assert out == ForwardBackwardOutput(loss_sum=1.5, num_loss_tokens=count)
+    assert reduced == [torch.float64]
+
+
 def test_default_count_samples_is_unknown_for_foreign_mappings():
     engine = _unbuilt_engine()
     mb = _prepared(mapping=object())
