@@ -135,7 +135,11 @@ def _set_cuda_graph_overrides(
         validate_cuda_graph_configuration(recipe.model, config_name="model")
         return recipe
 
-    if cuda_graph_scope is not None:
+    if cuda_graph_impl == "full_iteration":
+        if cuda_graph_scope not in (None, [], ["full_iteration"]):
+            raise ValueError("full_iteration CUDA graph implementation cannot be combined with per-layer scopes.")
+        set_full_iteration_cuda_graph(recipe.model)
+    elif cuda_graph_scope is not None:
         if "full_iteration" in cuda_graph_scope:
             if cuda_graph_scope != ["full_iteration"]:
                 raise ValueError("full_iteration CUDA graph scope cannot be combined with other scopes.")
