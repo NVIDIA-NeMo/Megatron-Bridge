@@ -413,7 +413,8 @@ def test_deepseek_v4_packed_recipes_use_native_contiguous_layouts(recipe_name, m
 
     assert cfg.model.attention_cp_layout == "contiguous"
     assert cfg.model.linear_cp_layout == "contiguous"
-    assert not hasattr(cfg.model, "cp_partition_mode")
+    # The builder config declares the dev-pin cp_partition_mode field; the recipe leaves it at its default.
+    assert getattr(cfg.model, "cp_partition_mode", "zigzag") == "zigzag"
     assert cfg.dataset.enable_offline_packing is True
 
 
