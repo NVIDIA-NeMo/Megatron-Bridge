@@ -18,8 +18,10 @@ Each iteration reads ``--packs-per-step`` packed rows (in file order), expands t
 the recipe's warmup + cosine schedule computed here (the caller owns the schedule).
 
 ``--check-accumulation`` instead builds two engines from the same checkpoint and applies one update to
-each from the same packs, as one call and as four calls, then compares the gradient norms and the
-resulting parameters (the strict accumulation gate). The strict comparison uses ``PackReplayEngine``,
+each from the same packs, as one call and as four calls, then compares the accumulated gradient buffers
+before the step, the gradient norms, and the resulting parameters (the strict accumulation gate). The
+buffer comparison is the decisive one: a first Adam step is sign-only, so parameters alone would not
+tell gradients of equal norm and sign apart. The strict comparison uses ``PackReplayEngine``,
 whose ``preprocess`` keeps each original parquet pack as one microbatch, so both paths run identical
 microbatches and only the accumulation mechanics differ; the default re-packing engine is compared
 too, as an indication of bf16 noise from different packing.
@@ -172,10 +174,33 @@ def _param_delta(a: TrainingEngine, b: TrainingEngine, *, lr: float) -> tuple[fl
     return diff.item(), (differing / total).item()
 
 
+def _grad_delta(a: TrainingEngine, b: TrainingEngine) -> tuple[float, float]:
+    """Over the accumulated FP32 gradient buffers (``main_grad`` of every parameter, dense and expert),
+    reduced over ranks: max |a - b| and that difference relative to the largest gradient entry.
+
+    Both engines run on the same ranks with the same parameter layout, so the unnormalized local sums
+    are comparable element by element before any DP reduction or scaling."""
+    diff = torch.zeros((), device="cuda")
+    scale = torch.zeros((), device="cuda")
+    for chunk_a, chunk_b in zip(a.model, b.model):
+        for pa, pb in zip(chunk_a.parameters(), chunk_b.parameters()):
+            ga, gb = getattr(pa, "main_grad", None), getattr(pb, "main_grad", None)
+            if ga is None or gb is None:
+                assert ga is None and gb is None, "gradient buffers differ in layout"
+                continue
+            diff = torch.maximum(diff, (ga.float() - gb.float()).abs().max())
+            scale = torch.maximum(scale, ga.float().abs().max())
+    torch.distributed.all_reduce(diff, op=torch.distributed.ReduceOp.MAX)
+    torch.distributed.all_reduce(scale, op=torch.distributed.ReduceOp.MAX)
+    return diff.item(), (diff / scale.clamp(min=1e-30)).item()
+
+
 def _compare_one_vs_four(
     args: argparse.Namespace, recipe, engine_cls: type[TrainingEngine], datums: list[Datum], label: str
-) -> tuple[float, float, float]:
-    """Apply one update from identical state as 1 call and as 4 calls; return (grad-norm rel diff, max diff, fraction)."""
+) -> tuple[float, float, float, float]:
+    """Apply one update from identical state as 1 call and as 4 calls.
+
+    Returns (grad rel diff, grad-norm rel diff, max param diff, fraction of params with a different update)."""
     adam = AdamParams(learning_rate=args.max_lr, weight_decay=args.weight_decay)
     one = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
     four = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
@@ -183,8 +208,10 @@ def _compare_one_vs_four(
     assert diff0 == 0.0, f"engines differ before training: {diff0}"
 
     out1 = one.forward_backward(datums)
-    step1 = one.optim_step(adam)
     outs4 = [four.forward_backward(chunk) for chunk in _chunks(datums, 4)]
+    grad_diff, grad_rel = _grad_delta(one, four)
+    print_rank_0(f"[accum:{label}] accumulated grad buffers: max |diff|={grad_diff:.3e} (relative {grad_rel:.3e})")
+    step1 = one.optim_step(adam)
     step4 = four.optim_step(adam)
     tokens4 = sum(o.num_loss_tokens for o in outs4)
     loss4 = sum(o.loss_sum for o in outs4)
@@ -203,13 +230,14 @@ def _compare_one_vs_four(
     )
     one.close()
     four.close()
-    return rel, diff, fraction
+    return grad_rel, rel, diff, fraction
 
 
 def check_accumulation(args: argparse.Namespace, recipe) -> None:
     """Strict gate on identical microbatches (pack replay), plus the re-packing comparison for information."""
     datums = next(iter_pack_batches(args.parquet, args.packs_per_step))
-    rel, diff, fraction = _compare_one_vs_four(args, recipe, PackReplayEngine, datums, "same-packs")
+    grad_rel, rel, diff, fraction = _compare_one_vs_four(args, recipe, PackReplayEngine, datums, "same-packs")
+    assert grad_rel < 1e-4, f"accumulated gradients differ by {grad_rel:.3e} (relative) on identical microbatches"
     assert rel < 1e-4, f"grad norm differs by {rel:.3e} on identical microbatches"
     assert fraction < 1e-5, f"{fraction:.3e} of elements took a different update on identical microbatches"
     _compare_one_vs_four(args, recipe, TrainingEngine, datums, "repacked")
