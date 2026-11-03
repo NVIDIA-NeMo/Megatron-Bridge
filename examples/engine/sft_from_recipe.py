@@ -17,6 +17,10 @@ Each iteration reads ``--packs-per-step`` packed rows (in file order), expands t
 ``forward_backward`` in ``--calls-per-step`` chunks, and calls ``optim_step`` with the learning rate from
 the recipe's warmup + cosine schedule computed here (the caller owns the schedule).
 
+``--save-at N --save-dir ROOT`` saves an engine checkpoint after step N (``--async-save`` for the
+asynchronous path, waited for at the end); ``--resume-from ROOT`` restores it into a fresh engine and
+continues from the next step on the next data batch. The data cursor travels as ``user_state``.
+
 ``--check-accumulation`` instead builds two engines from the same checkpoint and applies one update to
 each from the same packs, as one call and as four calls, then compares the accumulated gradient buffers
 before the step, the gradient norms, and the resulting parameters (the strict accumulation gate). The
@@ -35,6 +39,7 @@ import logging
 import math
 import time
 from collections.abc import Iterator
+from typing import Any
 
 import pyarrow.parquet as pq
 import torch
@@ -102,13 +107,71 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--wandb-name", default=None)
     parser.add_argument("--check-accumulation", action="store_true")
+    parser.add_argument("--save-at", type=int, default=0, help="Save an engine checkpoint after this step (0: never)")
+    parser.add_argument("--save-dir", default=None, help="Checkpoint root for --save-at")
+    parser.add_argument("--async-save", action="store_true", help="Use the asynchronous save for --save-at")
+    parser.add_argument("--resume-from", default=None, help="Engine checkpoint root to resume from")
+    parser.add_argument("--export-dir", default=None, help="After training, export HF weights here and verify")
     return parser.parse_args()
 
 
-def iter_pack_batches(path: str, packs_per_step: int) -> Iterator[list[Datum]]:
-    """Yield ``packs_per_step`` packed rows at a time as Datums, in file order (same on every rank)."""
+def check_export(engine: TrainingEngine, export_dir: str) -> None:
+    """Directory export, then streaming export compared tensor by tensor against the written files (rank 0)."""
+    import json
+    import os
+
+    from safetensors import safe_open
+
+    start = time.time()
+    engine.export(path=export_dir)
+    torch.distributed.barrier()
+    print_rank_0(f"[export] directory {export_dir} written in {time.time() - start:.1f}s")
+    rank0 = torch.distributed.get_rank() == 0
+    weight_map: dict[str, str] = {}
+    if rank0:
+        index = os.path.join(export_dir, "model.safetensors.index.json")
+        if os.path.exists(index):
+            with open(index) as handle:
+                weight_map = json.load(handle)["weight_map"]
+        else:
+            weight_map = {}
+    start = time.time()
+    count, max_diff, missing = 0, 0.0, []
+    files: dict[str, Any] = {}
+    for name, tensor in engine.export(streaming=True):
+        count += 1
+        if not rank0:
+            continue
+        file_name = weight_map.get(name, "model.safetensors")
+        if file_name not in files:
+            files[file_name] = safe_open(os.path.join(export_dir, file_name), framework="pt")
+        if name not in files[file_name].keys():
+            missing.append(name)
+            continue
+        saved = files[file_name].get_tensor(name)
+        max_diff = max(max_diff, (tensor.detach().cpu().float() - saved.float()).abs().max().item())
+    print_rank_0(
+        f"[export] streamed {count} tensors in {time.time() - start:.1f}s; directory holds "
+        f"{len(weight_map) if weight_map else 'n/a'}; max |stream - file|={max_diff:.3e}; missing={missing[:5]}"
+    )
+    if rank0:
+        assert not missing, f"{len(missing)} streamed tensors are not in the directory export"
+        assert max_diff == 0.0, f"streamed and written weights differ by {max_diff}"
+        assert not weight_map or count == len(weight_map), "streamed and written tensor counts differ"
+    print_rank_0("EXPORT CHECK PASSED")
+
+
+def iter_pack_batches(path: str, packs_per_step: int, *, skip_steps: int = 0) -> Iterator[list[Datum]]:
+    """Yield ``packs_per_step`` packed rows at a time as Datums, in file order (same on every rank).
+
+    ``skip_steps`` drops that many leading batches, so a resumed run continues on the data its
+    checkpointed predecessor had not consumed.
+    """
     pack_index = 0
-    for batch in pq.ParquetFile(path).iter_batches(batch_size=packs_per_step):
+    for batch_index, batch in enumerate(pq.ParquetFile(path).iter_batches(batch_size=packs_per_step)):
+        if batch_index < skip_steps:
+            pack_index += batch.num_rows
+            continue
         datums: list[Datum] = []
         for row in batch.to_pylist():
             ids = torch.tensor(row["input_ids"], dtype=torch.int64)
@@ -263,8 +326,16 @@ def train(args: argparse.Namespace, recipe) -> None:
 
         run = wandb.init(project=args.wandb_project, entity=args.wandb_entity, name=args.wandb_name, config=vars(args))
 
-    batches = iter_pack_batches(args.parquet, args.packs_per_step)
-    for step in range(1, args.iters + 1):
+    first_step = 1
+    if args.resume_from:
+        user_state = engine.load_state(args.resume_from)
+        first_step = engine.step + 1
+        expected = {"consumed_steps": engine.step}
+        assert user_state == expected, f"user_state {user_state!r} does not match the restored step {engine.step}"
+        print_rank_0(f"[ckpt] resumed from {args.resume_from}: step {engine.step}, user_state {user_state}")
+    batches = iter_pack_batches(args.parquet, args.packs_per_step, skip_steps=first_step - 1)
+    handle = None
+    for step in range(first_step, args.iters + 1):
         datums = next(batches)
         start = time.time()
         outs = [engine.forward_backward(chunk) for chunk in _chunks(datums, args.calls_per_step)]
@@ -290,6 +361,16 @@ def train(args: argparse.Namespace, recipe) -> None:
         )
         if run is not None:
             run.log(metrics, step=step)
+        if args.save_at and step == args.save_at:
+            start = time.time()
+            handle = engine.save_state(args.save_dir, user_state={"consumed_steps": step}, async_save=args.async_save)
+            print_rank_0(f"[ckpt] save_state({args.save_dir}) at step {step} issued in {time.time() - start:.1f}s")
+    if handle is not None:
+        start = time.time()
+        handle.wait()
+        print_rank_0(f"[ckpt] checkpoint {handle.path} durable; wait took {time.time() - start:.1f}s")
+    if args.export_dir:
+        check_export(engine, args.export_dir)
     if run is not None:
         run.finish()
     engine.close()

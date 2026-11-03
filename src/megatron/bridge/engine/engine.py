@@ -46,7 +46,13 @@ from megatron.bridge.engine.batching import (
     default_preprocess,
     sequence_pad_multiple,
 )
-from megatron.bridge.engine.checkpoint import load_pretrained_weights
+from megatron.bridge.engine.checkpoint import (
+    load_engine_state,
+    load_pretrained_weights,
+    save_engine_state,
+    start_async_checkpoint_worker,
+    stop_async_checkpoint_worker,
+)
 from megatron.bridge.engine.datum import (
     AdamParams,
     CheckpointHandle,
@@ -58,6 +64,7 @@ from megatron.bridge.engine.datum import (
     PreparedMicrobatch,
     check_datums,
 )
+from megatron.bridge.engine.export import ExportState, export_hf_weights, make_export_state
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
@@ -103,6 +110,7 @@ _RESERVED_METHODS = frozenset(
         "target_entropy",
         "save_state",
         "load_state",
+        "wait_for_save",
         "export",
         "cuda",
         "cpu",
@@ -241,6 +249,7 @@ class TrainingEngine:
         trainable: bool = True,
         lora: LoraConfig | None = None,
         hooks: list[PreWrapHook] | None = None,
+        spawn_async_save_worker: bool = True,
     ) -> TrainingEngine:
         """Build an engine from a ``TrainingRecipe``.
 
@@ -254,6 +263,9 @@ class TrainingEngine:
             trainable: Build the optimizer and gradient buffers. ``False`` yields a frozen scoring engine.
             lora: LoRA settings (phase C3).
             hooks: Extra pre-wrap hooks run after the Bridge-registered ones.
+            spawn_async_save_worker: Spawn the asynchronous-save worker (one process per rank with its own
+                CUDA context, alive until ``close``) before the model is built. ``False`` saves that cost
+                but then ``save_state(async_save=True)`` raises; synchronous saves still work.
 
         Returns:
             A constructed engine attached to the shared runtime.
@@ -266,7 +278,14 @@ class TrainingEngine:
         finalize_recipe(recipe)
         runtime = _acquire_runtime(recipe)
         engine = cls.__new__(cls)
-        engine._build(recipe, runtime, checkpoint_path=checkpoint_path, trainable=trainable, hooks=hooks or [])
+        engine._build(
+            recipe,
+            runtime,
+            checkpoint_path=checkpoint_path,
+            trainable=trainable,
+            hooks=hooks or [],
+            spawn_async_save_worker=spawn_async_save_worker,
+        )
         return engine
 
     def _build(
@@ -277,6 +296,7 @@ class TrainingEngine:
         checkpoint_path: str | None,
         trainable: bool,
         hooks: list[PreWrapHook],
+        spawn_async_save_worker: bool,
     ) -> None:
         self._recipe = recipe
         self._runtime = runtime
@@ -284,6 +304,10 @@ class TrainingEngine:
         self._closed = False
         self._step = 0
         self._window = AccumulationWindow()
+        self._pending_save: CheckpointHandle | None = None
+        self._export_state: ExportState | None = None
+        # Before the model: the worker's CUDA context and IPC mappings need a GPU that is not yet full.
+        self._async_checkpoint_state = start_async_checkpoint_worker(recipe) if spawn_async_save_worker else None
         pg_collection = runtime.pg_collection
         self._pad_multiple = sequence_pad_multiple(
             cp_size=runtime.topology.cp,
@@ -608,19 +632,78 @@ class TrainingEngine:
     # ---- state --------------------------------------------------------------------------------
 
     def save_state(self, path: str, *, user_state: Any = None, async_save: bool = False) -> CheckpointHandle:
-        """Save model, optimizer and user state (phase B3)."""
+        """Save model, optimizer, RNG, the update count and per-rank ``user_state`` as ``<path>/iter_<step>``.
+
+        Collective. Only between updates: an open accumulation window raises. A pending asynchronous
+        save is waited for first, so at most one is in flight; ``async_save`` needs the engine's save worker
+        (``spawn_async_save_worker``, on by default). ``user_state`` is any picklable object; each rank's
+        copy is returned to that rank by ``load_state``.
+        """
         self._require_open()
-        raise NotImplementedError("save_state is implemented in phase B3.")
+        # TODO(save-mid-window): allow saving with an open window. The snapshot would be consistent (weights
+        # and optimizer state of the last completed update); only document that the pending gradients are
+        # not part of it, so a resumed engine redoes the interrupted update's forward_backward calls.
+        self._require_closed_window("save_state")
+        self._wait_pending_save()
+        handle = save_engine_state(
+            self._recipe,
+            self._model,
+            self._optimizer,
+            step=self._step,
+            root=path,
+            user_state=user_state,
+            async_save=async_save,
+            async_state=self._async_checkpoint_state,
+            pg_collection=self._runtime.pg_collection,
+        )
+        if async_save:
+            self._pending_save = handle
+        return handle
 
     def load_state(self, path: str) -> Any | None:
-        """Restore model, optimizer and user state (phase B3)."""
+        """Restore a ``save_state`` checkpoint (the save root's latest step, or one ``iter_<step>`` directory).
+
+        Collective. Restores weights, optimizer state when this engine is trainable, RNG state and the
+        update count; returns this rank's ``user_state`` or ``None``. Only between updates.
+        """
         self._require_open()
-        raise NotImplementedError("load_state is implemented in phase B3.")
+        self._require_closed_window("load_state")
+        self._wait_pending_save()
+        step, user_state = load_engine_state(self._recipe, self._model, self._optimizer, path=path)
+        self._step = step
+        return user_state
+
+    def wait_for_save(self) -> None:
+        """Block until the pending asynchronous save, if any, is durable on every rank.
+
+        Collective when a save is pending (all ranks must call it); a no-op otherwise. ``save_state``,
+        ``load_state`` and ``close`` call it implicitly, and the ``CheckpointHandle`` returned by
+        ``save_state`` offers the same through ``wait()``.
+        """
+        self._require_open()
+        self._wait_pending_save()
+
+    def _require_closed_window(self, name: str) -> None:
+        if self._window.is_open:
+            raise RuntimeError(f"{name} needs a completed update: call optim_step or zero_grad first.")
+
+    def _wait_pending_save(self) -> None:
+        if self._pending_save is not None:
+            self._pending_save.wait()
+            self._pending_save = None
 
     def export(self, *, path: str | None = None, streaming: bool = False) -> Iterator[tuple[str, torch.Tensor]] | None:
-        """Export HF weights to a directory or as a stream (phase B3)."""
+        """Export the current weights in the HF layout of ``recipe.hf_path``.
+
+        Collective. ``path`` writes a complete HF checkpoint directory (config, tokenizer files,
+        safetensors; rank 0 writes). ``streaming=True`` instead returns an iterator of
+        ``(hf_name, tensor)`` with full tensors on every rank; every rank must drain it, since the
+        TP/EP/PP gathers run inside. Adapter weights, when present, are merged into the export.
+        """
         self._require_open()
-        raise NotImplementedError("export is implemented in phase B3.")
+        if self._export_state is None:
+            self._export_state = make_export_state(self._recipe)
+        return export_hf_weights(self._export_state, self._model, path=path, streaming=streaming)
 
     # ---- placement ----------------------------------------------------------------------------
 
@@ -693,6 +776,10 @@ class TrainingEngine:
         """Release this engine's model, optimizer and buffers. The shared runtime and other engines survive."""
         if self._closed:
             return
+        self._wait_pending_save()
+        if self._async_checkpoint_state is not None:
+            stop_async_checkpoint_worker(self._async_checkpoint_state)
+            self._async_checkpoint_state = None
         self._closed = True
         self._runtime.detach(self)
         for chunk in self._model:
@@ -713,6 +800,7 @@ class TrainingEngine:
                     setattr(model_config, name, None)
         self._optimizer = None
         self._finalize_model_grads_func = None
+        self._export_state = None
         self._model = []
         gc.collect()
         if torch.cuda.is_available():

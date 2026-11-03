@@ -71,6 +71,8 @@ class TrainingRecipe:
             SFT baseline). ``"all_valid"`` uses every non-padded position, as in pretraining; the MTP
             term then carries more total weight relative to the primary loss (it is still divided by the
             primary denominator). Padding is excluded either way; the user's loss methods are unaffected.
+        hf_path: HF checkpoint directory or model ID matching ``model``; ``export`` reads its config,
+            tokenizer files and weight layout from it. ``None`` disables ``export``.
     """
 
     model: ModelProviderMixin
@@ -84,6 +86,7 @@ class TrainingRecipe:
     batch_layout: Literal["thd", "bshd"] = "thd"
     pad_to_max_length: bool = False
     mtp_target_scope: Literal["primary", "all_valid"] = "primary"
+    hf_path: str | None = None
 
 
 SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")
