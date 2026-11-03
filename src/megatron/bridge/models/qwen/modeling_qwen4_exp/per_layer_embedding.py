@@ -25,7 +25,8 @@ hyper-connection residual stream:
     out    = g + silu( DilatedDepthwiseCausalConv1d( GroupRMSNorm(g) ) )
 
 The hashed n-gram table is the bulk of the parameters (51B for Qwen3.8-Flash-Next) and is stored
-vocab-parallel across the tensor-parallel group with :class:`VocabParallelEmbedding`.
+vocab-parallel across the tensor-parallel group with :class:`VocabParallelEmbedding`, or
+row-sharded across EP when the n-gram table is frozen.
 
 The n-gram ids depend on the raw token ids, which decoder layers do not receive. ``Qwen4ExpHybridModel``
 therefore calls :meth:`PerLayerEmbedding.prepare` with the token ids (and packed-sequence
@@ -51,8 +52,9 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.layers import VocabParallelEmbedding
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import get_pg_size
+from megatron.core.utils import get_pg_rank, get_pg_size
 
+from megatron.bridge.models.qwen.modeling_qwen4_exp.ep_ngram_embedding import FrozenEPNgramEmbedding
 from megatron.bridge.models.qwen.modeling_qwen4_exp.gated_residual import gated_residual_group_rmsnorm
 
 
@@ -222,15 +224,30 @@ class NGramEmbedding(MegatronModule):
         self.register_buffer("ngram_heads_vocab_sizes", torch.tensor(sizes, dtype=torch.long, device=device))
         self.register_buffer("ngram_heads_offsets", torch.tensor(offsets, dtype=torch.long, device=device))
 
-        tp_group = pg_collection.tp
-        self.ngram_embedding = VocabParallelEmbedding(
-            self.padded_vocab_size,
-            self.head_dim,
-            init_method=config.init_method,
-            reduce_scatter_embeddings=config.sequence_parallel,
-            config=config,
-            tp_group=tp_group,
-        )
+        self.tp_group = pg_collection.tp
+        self.ep_sharded = config.ple_embedding_sharding == "ep"
+        if self.ep_sharded:
+            if not config.ple_freeze_ngram_embeddings:
+                raise ValueError("EP-sharded PLE requires frozen n-gram embeddings.")
+            self.ngram_embedding = FrozenEPNgramEmbedding(
+                config,
+                self.padded_vocab_size,
+                self.head_dim,
+                init_method=config.init_method,
+                ep_group=pg_collection.ep,
+                expt_dp_group=pg_collection.expt_dp,
+            )
+        else:
+            self.ngram_embedding = VocabParallelEmbedding(
+                self.padded_vocab_size,
+                self.head_dim,
+                init_method=config.init_method,
+                reduce_scatter_embeddings=config.sequence_parallel,
+                config=config,
+                tp_group=self.tp_group,
+            )
+            if config.ple_freeze_ngram_embeddings:
+                self.ngram_embedding.weight.requires_grad_(False)
 
     def compute_ngram_ids(self, token_ids: Tensor, cu_seqlens: Optional[Tensor] = None) -> Tensor:
         """Hashed table rows for every token and head.
@@ -264,9 +281,20 @@ class NGramEmbedding(MegatronModule):
     def forward(self, ngram_ids: Tensor) -> Tensor:
         """Look up ``[b, s, heads]`` ids -> ``[s_local, b, embedding_dim]`` (sequence-first).
 
-        With sequence parallelism the lookup is reduce-scattered along the sequence, so the output
-        covers this rank's ``s // tp`` tokens only.
+        With sequence parallelism the output covers this rank's ``s // tp`` tokens.
+        TP tables reduce-scatter embeddings; EP tables route only this SP rank's requests.
         """
+        if self.ep_sharded:
+            # Hash on the complete sequence before selecting this SP shard: shard-local
+            # hashing would lose the preceding tokens at every TP boundary.
+            if self.config.sequence_parallel:
+                tp_size = get_pg_size(self.tp_group)
+                if ngram_ids.shape[1] % tp_size:
+                    raise ValueError("PLE sequence length must be divisible by tensor parallelism.")
+                local_tokens = ngram_ids.shape[1] // tp_size
+                ngram_ids = ngram_ids.narrow(1, get_pg_rank(self.tp_group) * local_tokens, local_tokens)
+            emb = self.ngram_embedding(ngram_ids)
+            return emb.transpose(0, 1).flatten(-2).contiguous()
         emb = self.ngram_embedding(ngram_ids)  # [s(/tp), b, heads, d] if SP else [b, s, heads, d]
         if not self.ngram_embedding.reduce_scatter_embeddings:
             emb = emb.transpose(0, 1)

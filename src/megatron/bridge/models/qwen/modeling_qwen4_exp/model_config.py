@@ -51,6 +51,10 @@ class Qwen4ExpTransformerConfig(TransformerConfig):
     ple_seed: int = 1234
     ple_eos_token_id: int | None = None
     ple_unigram_vocab_size: int | None = None
+    ple_freeze_ngram_embeddings: bool = False
+    # TP preserves existing checkpoint layouts; EP distributes the frozen table
+    # independently of attention tensor parallelism.
+    ple_embedding_sharding: str = "tp"
     # Keep the vision builder on the qualified no-recompute path.
     vision_recompute_granularity: str | None = None
 
@@ -71,6 +75,13 @@ class Qwen4ExpModelConfig(ModelConfigOverrideMixin, HybridModelConfig, ModelConf
     hetereogenous_dist_checkpoint: bool = True
 
     def _validate_qwen4_exp(self) -> None:
+        if self.ple_embedding_sharding not in ("tp", "ep"):
+            raise ValueError("PLE embedding sharding must be 'tp' or 'ep'.")
+        if self.ple_embedding_sharding == "ep":
+            if not self.ple_freeze_ngram_embeddings:
+                raise ValueError("EP-sharded PLE currently requires ple_freeze_ngram_embeddings=True.")
+            if self.expert_tensor_parallel_size != 1:
+                raise NotImplementedError("EP-sharded PLE currently requires expert_tensor_parallel_size=1.")
         if self.enable_mhc_connections:
             raise ValueError("Disable Core mHC expansion/contraction for the local Qwen4-Exp model.")
         if self.pipeline_model_parallel_size != 1 or self.context_parallel_size != 1:
