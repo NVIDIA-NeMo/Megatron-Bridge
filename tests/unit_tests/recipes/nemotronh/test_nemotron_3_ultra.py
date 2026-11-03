@@ -20,6 +20,8 @@ import torch
 import megatron.bridge.recipes as recipes
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
+    nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_deterministic_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config,
     nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config,
     nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config,
@@ -189,6 +191,23 @@ def test_gb200_ep16_deterministic_pretrain_applies_determinism() -> None:
 
 
 @pytest.mark.unit
+def test_gb200_fp8mx_deterministic_perf_recipe_keeps_nccl_ep() -> None:
+    """The deterministic GB200 MXFP8 recipe is the NCCL EP base plus determinism overrides only."""
+    base = nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config()
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_deterministic_config()
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    assert cfg.model.moe_token_dispatcher_type == base.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == base.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is base.model.moe_use_grouped_tensor
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    # The inline env copy must stay in sync with the base recipe.
+    assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VARS}
+
+
+@pytest.mark.unit
 def test_vrnvl72_perf_recipe_uses_nvl72_ultra_topology() -> None:
     """VRNVL72 Ultra preserves the GB300 execution layout with explicit NVL72 settings."""
     cfg = nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config()
@@ -229,7 +248,7 @@ def test_vrnvl72_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.model.moe_router_padding_for_quantization is True
     assert cfg.model.cuda_graph_impl == "local"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_preprocess", "moe_router"]
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
     assert cfg.mixed_precision.fp4 == "e2m1"
@@ -279,7 +298,7 @@ def test_nvfp4_perf_recipes_use_gtp_partial_cuda_graphs_and_nccl_ep(
     assert cfg.ddp.num_distributed_optimizer_instances == 1
 
     assert cfg.model.cuda_graph_impl == "local"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_preprocess", "moe_router"]
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
 

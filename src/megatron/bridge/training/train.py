@@ -53,6 +53,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import (
+    CudaGraphManager,
     TECudaGraphHelper,
     VisionTECudaGraphHelper,
     get_vision_cuda_graph_seq_length,
@@ -813,7 +814,7 @@ def train(
                 callback_manager=callback_manager,
             )
 
-    _delete_cuda_graphs(cuda_graph_helper)
+    _delete_cuda_graphs(cuda_graph_helper, model)
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -1751,7 +1752,20 @@ def _handle_mxfp8_param_buffer_copy(
             child._copy_main_params_to_param_buffer()
 
 
-def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
+def _delete_local_cuda_graph_runners(model: list[MegatronModule]) -> None:
+    torch.cuda.synchronize()
+    for model_chunk in model:
+        for module in model_chunk.modules():
+            if isinstance(module, CudaGraphManager):
+                for runner in module.cudagraph_runners:
+                    runner.fwd_graph = None
+                    runner.bwd_graph = None
+                    runner.mempool = None
+                module.cudagraph_runners.clear()
+                module.custom_cudagraphs_lookup_table.clear()
+
+
+def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None, model: list[MegatronModule] | None = None):
     """
     Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
     process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
@@ -1760,7 +1774,7 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
 
     Args:
         cuda_graph_helper: The TECudaGraphHelper object.
-
+        model: The list of model chunks (MegatronModule instances).
     """
 
     print_rank_0("Deleting CUDA graphs")
@@ -1790,6 +1804,9 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
         cuda_graph_helper.delete_cuda_graphs()
 
     # Cleanup per-layer CUDA graphs owned by MCore CudaGraphManager (cuda_graph_impl="local").
+    # TODO: Ideally, we should fix the delete_cuda_graphs() in MCore to maintain the recorded runners and clean them up properly.
+    if model is not None:
+        _delete_local_cuda_graph_runners(model)
     delete_local_cuda_graphs()
 
     # Run GC to collect the freshed object
