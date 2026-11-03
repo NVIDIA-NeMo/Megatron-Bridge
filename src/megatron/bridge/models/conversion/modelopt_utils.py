@@ -152,7 +152,6 @@ def _trace_rows(task: WeightConversionTask, parallelism: str) -> tuple[tuple[str
         if (
             hf_rows is None
             or labels.dtype != dtype
-            or labels.shape[1] != full_cols
             or not torch.equal(
                 labels, hf_rows[:, None] * full_cols + torch.arange(full_cols, dtype=dtype, device=labels.device)
             )
@@ -881,11 +880,23 @@ def build_modelopt_export_plan(
         "ModelOpt export metadata capture failed",
     )
 
-    # TP ranks of a pipeline stage hold the same tasks, so their traces' TP collectives line up.
+    # TP ranks of a pipeline stage hold the same tasks, but they must also agree on which ones are
+    # quantized before entering the mappings' TP collectives.
     trace_error = None
-    for task in planning_tasks:
-        source = local_specs.get(task.global_param_name)
-        if source is None or source.state is None or not _traces_rows(task.mapping):
+    traced_tasks = [
+        task for task in planning_tasks if task.global_param_name in local_specs and _traces_rows(task.mapping)
+    ]
+    quantized = {
+        task.global_param_name for task in traced_tasks if local_specs[task.global_param_name].state is not None
+    }
+    if traced_tasks:
+        quantized_by_rank = _all_gather_objects(quantized, traced_tasks[0].mapping.tp_group)
+        quantized = set.intersection(*quantized_by_rank)
+        if mismatched := set.union(*quantized_by_rank) - quantized:
+            trace_error = f"Inconsistent ModelOpt quantization across TP for {min(mismatched)}"
+    for task in traced_tasks:
+        source = local_specs[task.global_param_name]
+        if trace_error is not None or task.global_param_name not in quantized:
             continue
         try:
             local_specs[task.global_param_name] = replace(source, traced_rows=_trace_rows(task, source.parallelism))

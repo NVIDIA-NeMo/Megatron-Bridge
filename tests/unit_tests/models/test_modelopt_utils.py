@@ -936,9 +936,40 @@ def test_traced_mapping_scales_follow_its_rows(case):
     assert sorted(index for _, indices in plan.traced_rows[mapping.megatron_param] for index in indices) == list(
         range(rows)
     )
-    ignored = {name.removesuffix(".weight") for name in modelopt_utils._unquantized_outputs(mapping)}
-    assert ignored <= set(plan.quantization_config["ignore"])
+    ignored = {
+        name.removesuffix(".weight")
+        for name, _ in plan.traced_rows[mapping.megatron_param]
+        if any(fnmatchcase(name.removesuffix(".weight"), pattern) for pattern in plan.quantization_config["ignore"])
+    }
+    assert ignored == ({"model.layers.0.linear_attn.in_proj_ba"} if case == "gdn" else set())
     _assert_exports_follow_the_mapping_rows(plan, mapping, module)
+
+
+@pytest.mark.unit
+def test_unquantized_traced_mapping_is_not_traced(monkeypatch):
+    mapping, config, rows = _traced_weight_cases()["mimo"]
+    module = _quantized_qkv(torch.randn(rows, 16), "fp8", None)
+    module.weight_quantizer.disable()
+    module.tensor_model_parallel, module.partition_dim, module.config = True, 0, SimpleNamespace(**config)
+    dense = _fp8_linear()
+    dense_mapping = ColumnParallelMapping(
+        "decoder.layers.0.mlp.linear_fc1.weight", "model.layers.0.mlp.up_proj.weight"
+    )
+    monkeypatch.setattr(
+        modelopt_utils, "_trace_rows", lambda *_args: pytest.fail("unquantized weights are not traced")
+    )
+    plan = modelopt_utils.build_modelopt_export_plan(
+        [
+            _task(mapping, module, global_name=mapping.megatron_param),
+            _task(dense_mapping, dense, global_name=dense_mapping.megatron_param),
+        ],
+        model=[module, dense],
+    )
+    assert plan.traced_rows == {}
+    ignore = plan.quantization_config["ignore"]
+    for name in mapping.hf_param.values():
+        assert any(fnmatchcase(name.removesuffix(".weight"), pattern) for pattern in ignore), name
+    assert not any(fnmatchcase("model.layers.0.mlp.up_proj", pattern) for pattern in ignore)
 
 
 @pytest.mark.parametrize("tp_size", [1, 2])
@@ -1311,6 +1342,36 @@ def test_custom_quantized_expert_mapping_is_rejected_before_ep_gather():
         )
 
 
+def _check_traced_tensor_parallel_rows(rank, world_size):
+    local_group = [torch.distributed.new_group([member]) for member in range(world_size)][rank]
+    pg_collection = SimpleNamespace(
+        pp=local_group, tp=torch.distributed.group.WORLD, ep=local_group, expt_tp=local_group
+    )
+
+    def traced_plan(case, disable_on_rank=None):
+        mapping, config, rows = _traced_weight_cases()[case]
+        mapping.set_process_groups_from_pg_collection(pg_collection)
+        weight = torch.arange(rows * 16, dtype=torch.float32).reshape(rows, 16) / 128 - 3
+        module = _quantized_qkv(weight.chunk(world_size)[rank], "fp8", None)
+        if rank == disable_on_rank:
+            module.weight_quantizer.disable()
+        module.tensor_model_parallel, module.partition_dim, module.config = True, 0, SimpleNamespace(**config)
+        module.pg_collection = pg_collection
+        task = _task(mapping, module, global_name=mapping.megatron_param)
+        return modelopt_utils.build_modelopt_export_plan([task], model=[module]), mapping, module
+
+    for case in ("mimo", "gdn", "kda"):
+        _assert_exports_follow_the_mapping_rows(*traced_plan(case))
+    # A rank-local mismatch must fail on every rank before one of them enters the mapping's TP gather.
+    original_trace_rows = modelopt_utils._trace_rows
+    modelopt_utils._trace_rows = lambda *_args: pytest.fail("mismatched TP quantization must not be traced")
+    try:
+        with pytest.raises(RuntimeError, match="Inconsistent ModelOpt quantization across TP"):
+            traced_plan("mimo", disable_on_rank=0)
+    finally:
+        modelopt_utils._trace_rows = original_trace_rows
+
+
 def _distributed_topology_worker(rank, world_size, init_file):
     torch.distributed.init_process_group(
         "gloo",
@@ -1404,6 +1465,8 @@ def _distributed_topology_worker(rank, world_size, init_file):
             module.weight_quantizer[0].disable()
         with pytest.raises(RuntimeError, match="ModelOpt export plan validation failed"):
             modelopt_utils.prepare_modelopt_export_tasks(plan)
+
+        _check_traced_tensor_parallel_rows(rank, world_size)
     finally:
         torch.distributed.destroy_process_group()
 
@@ -1412,38 +1475,6 @@ def test_two_rank_planning_and_expert_collectives(tmp_path):
     torch.multiprocessing.spawn(
         _distributed_topology_worker,
         args=(2, str(tmp_path / "modelopt-dist-init")),
-        nprocs=2,
-        join=True,
-    )
-
-
-def _traced_tensor_parallel_worker(rank, world_size, init_file):
-    torch.distributed.init_process_group("gloo", init_method=f"file://{init_file}", rank=rank, world_size=world_size)
-    try:
-        local_group = [torch.distributed.new_group([member]) for member in range(world_size)][rank]
-        pg_collection = SimpleNamespace(
-            pp=local_group, tp=torch.distributed.group.WORLD, ep=local_group, expt_tp=local_group
-        )
-        for case in ("mimo", "gdn", "kda"):
-            mapping, config, rows = _traced_weight_cases()[case]
-            mapping.set_process_groups_from_pg_collection(pg_collection)
-            weight = torch.arange(rows * 16, dtype=torch.float32).reshape(rows, 16) / 128 - 3
-            module = _quantized_qkv(weight.chunk(world_size)[rank], "fp8", None)
-            module.tensor_model_parallel, module.partition_dim, module.config = True, 0, SimpleNamespace(**config)
-            module.pg_collection = pg_collection
-            plan = modelopt_utils.build_modelopt_export_plan(
-                [_task(mapping, module, global_name=mapping.megatron_param)], model=[module]
-            )
-            _assert_exports_follow_the_mapping_rows(plan, mapping, module)
-    finally:
-        torch.distributed.destroy_process_group()
-
-
-@pytest.mark.unit
-def test_traced_mapping_rows_follow_the_tensor_parallel_gather(tmp_path):
-    torch.multiprocessing.spawn(
-        _traced_tensor_parallel_worker,
-        args=(2, str(tmp_path / "modelopt-trace-init")),
         nprocs=2,
         join=True,
     )
