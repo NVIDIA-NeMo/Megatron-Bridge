@@ -32,6 +32,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
 )
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from tests.unit_tests.recipes.recipe_test_utils import deepseek_v4_model_config
 from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
@@ -201,6 +202,77 @@ def test_finalize_checks_segments_after_hybrid_finalize(monkeypatch):
     with pytest.raises(ValueError, match="has 8 pipeline segments"):
         cfg.finalize()
     assert calls == [cfg]
+
+
+def _builder_config(pp, vp=None):
+    """The builder-backed config that DSv4 recipes build, with the recipe's native layout."""
+    cfg = deepseek_v4_model_config()
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    return cfg
+
+
+def _segment_lengths(cfg):
+    return [len(segment) for segment in cfg.hybrid_layer_pattern.split("/")[0].split("|")]
+
+
+@pytest.mark.parametrize(("pp", "vp"), [(1, None), (8, None), (4, 2)])
+def test_cli_topology_override_rebuilds_builder_config(pp, vp):
+    # Recipes build DeepSeekV4ModelConfig, so the runner hook must be on the config, not only the provider.
+    cfg = _builder_config(4)
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    runner, _ = _load_recipe_runner_module()
+
+    runner.sync_model_pipeline_layout(
+        SimpleNamespace(model=cfg),
+        cli_overrides=[
+            f"model.pipeline_model_parallel_size={pp}",
+            f"model.virtual_pipeline_model_parallel_size={vp}",
+        ],
+    )
+
+    expected = _builder_config(pp, vp)
+    assert cfg.hybrid_layer_pattern == expected.hybrid_layer_pattern
+    assert cfg.pipeline_model_parallel_layout == expected.pipeline_model_parallel_layout
+    cfg.validate()
+
+
+@pytest.mark.parametrize(("pp", "vp"), [(1, None), (2, None), (8, None), (4, 2)])
+def test_builder_config_rejects_segments_left_from_another_topology(pp, vp):
+    cfg = _builder_config(4)
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    cfg.pipeline_model_parallel_layout = None
+
+    with pytest.raises(ValueError, match="has 4 pipeline segments"):
+        cfg.validate()
+
+
+def test_builder_config_rejects_layout_that_disagrees_with_segments():
+    cfg = _builder_config(4)
+    layout = [list(stage) for stage in cfg.pipeline_model_parallel_layout]
+    # Move one attention/MoE pair to the first stage: same totals, different split from the segments.
+    layout[0].extend(["decoder"] * 2)
+    del layout[1][:2]
+    cfg.pipeline_model_parallel_layout = layout
+
+    with pytest.raises(ValueError, match="decoder layers per stage"):
+        cfg.validate()
+
+
+def test_builder_config_checks_a_command_line_layout_string():
+    cfg = _builder_config(4)
+    lengths = _segment_lengths(cfg)
+    stages = "|".join(f"t*{count}" for count in lengths)
+    cfg.pipeline_model_parallel_layout = f"E{stages}mL"
+    cfg.validate()
+
+    shifted = [lengths[0] + 2, lengths[1] - 2, *lengths[2:]]
+    cfg.pipeline_model_parallel_layout = "E" + "|".join(f"t*{count}" for count in shifted) + "mL"
+    with pytest.raises(ValueError, match="decoder layers per stage"):
+        cfg.validate()
 
 
 @pytest.mark.parametrize("counts", [[4] * 16, [4] * 14 + [5], [4] * 15 + [-1]])

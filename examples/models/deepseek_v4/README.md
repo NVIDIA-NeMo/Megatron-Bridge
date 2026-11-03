@@ -52,7 +52,8 @@ offload, which remains unsupported by the main-based runtime above.
 
 When `train.sh` overrides `model.pipeline_model_parallel_size` or
 `model.virtual_pipeline_model_parallel_size`, the pattern segments and layout
-are rebuilt with an even split of attention/MoE pairs. This replaces a recipe's
+are rebuilt with the default split of attention/MoE pairs: even, except that the
+first stage grows to hold the hash-routed MoE layers. This replaces a recipe's
 uneven split and keeps the MTP suffix. If the command also sets
 `model.pipeline_model_parallel_layout`, nothing is rebuilt, so pass a matching
 `model.hybrid_layer_pattern` as well. Python code that changes PP or VPP on a
