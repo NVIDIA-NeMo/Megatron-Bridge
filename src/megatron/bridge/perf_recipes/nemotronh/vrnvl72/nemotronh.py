@@ -304,7 +304,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContaine
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-    # HybridEP dispatch/combine is exposed at 16 SMs on VRNVL72; 32 SMs shortens the step.
+    # Expert dispatch/combine is exposed at 16 SMs on VRNVL72; 32 SMs shortens the step.
     cfg.model.moe_hybridep_num_sms = 32
     # Fused top-k/score routing further shortens the VRNVL72 step.
     cfg.model.moe_router_fusion = True
@@ -342,7 +342,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContain
     cfg.mixed_precision.fp8_dot_product_attention = True
     _enable_ncclep(cfg)
     _enable_nemotron_3_5_lightning_full_iteration(cfg)
-    # HybridEP dispatch/combine is exposed at 16 SMs on VRNVL72; 32 SMs shortens the step.
+    # Expert dispatch/combine is exposed at 16 SMs on VRNVL72; 32 SMs shortens the step.
     cfg.model.moe_hybridep_num_sms = 32
     # Fused top-k/score routing further shortens the VRNVL72 step.
     cfg.model.moe_router_fusion = True
