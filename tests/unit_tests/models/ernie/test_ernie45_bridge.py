@@ -23,12 +23,12 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.ernie.ernie_45_bridge import (
     Ernie45Bridge,
-    _ernie45_decoder_block_spec,
     _PPSafeAutoMapping,
     _PPSafeGatedMLPMapping,
     _PPSafeReplicatedMapping,
     _SqueezeBiasMapping,
 )
+from megatron.bridge.models.ernie.ernie_router import Ernie45TopKRouter, ernie45_decoder_block_spec
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -254,8 +254,8 @@ class TestErnie45BuilderConfig:
         assert model_config.moe_router_score_function == "sigmoid"
         assert model_config.moe_layer_freq == [0] + [1] * 27
         assert model_config.mtp_num_layers is None
-        # The builder's default MoE spec already honors moe_layer_freq.
-        assert model_config.transformer_layer_spec is None
+        # The ERNIE block spec honors moe_layer_freq and swaps in the softmax-gate router.
+        assert model_config.transformer_layer_spec is ernie45_decoder_block_spec
 
     @pytest.mark.parametrize("config_fixture", ["ernie45_config", "ernie45_config_list_format"])
     def test_model_config_matches_provider_runtime_config(self, config_fixture, request):
@@ -274,7 +274,7 @@ class TestErnie45BuilderConfig:
         shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
         for field_name in sorted(shared):
             assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
-        assert provider.transformer_layer_spec is _ernie45_decoder_block_spec
+        assert provider.transformer_layer_spec is ernie45_decoder_block_spec
 
     def test_provider_era_checkpoint_spec_target_resolves(self):
         """Checkpoints imported through the provider path serialized the private decoder block spec."""
@@ -282,7 +282,7 @@ class TestErnie45BuilderConfig:
 
         target = "megatron.bridge.models.ernie.ernie_45_bridge._ernie45_decoder_block_spec"
 
-        assert _resolve_target(target, full_key="model.transformer_layer_spec") is _ernie45_decoder_block_spec
+        assert _resolve_target(target, full_key="model.transformer_layer_spec") is ernie45_decoder_block_spec
 
     def test_megatron_to_hf_config_from_model_config(self, ernie45_config):
         model_config = Ernie45Bridge().hf_config_to_model_config(ernie45_config)
@@ -441,3 +441,38 @@ class TestPPSafeMappings:
             hf_param="model.layers.*.mlp.gate.weight",
         )
         assert mapping is not None
+
+
+class TestErnie45TopKRouter:
+    """The router's log-odds gate reproduces ERNIE's softmax + expert-bias routing."""
+
+    def test_gating_returns_softmax_log_odds(self):
+        torch.manual_seed(0)
+        logits = torch.randn(16, 64, dtype=torch.float32) * 3
+        router = Ernie45TopKRouter.__new__(Ernie45TopKRouter)
+        with patch("megatron.core.transformer.moe.router.TopKRouter.gating", return_value=logits):
+            log_odds = Ernie45TopKRouter.gating(router, torch.empty(0))
+        torch.testing.assert_close(torch.sigmoid(log_odds), torch.softmax(logits, dim=-1), rtol=0, atol=1e-6)
+
+    def test_sigmoid_route_on_log_odds_matches_ernie(self):
+        from megatron.core.transformer.moe.moe_utils import topk_routing_with_score_function
+
+        torch.manual_seed(0)
+        logits = torch.randn(32, 64, dtype=torch.float32) * 3
+        expert_bias = 0.02 * torch.randn(64)
+        router = Ernie45TopKRouter.__new__(Ernie45TopKRouter)
+        with patch("megatron.core.transformer.moe.router.TopKRouter.gating", return_value=logits):
+            log_odds = Ernie45TopKRouter.gating(router, torch.empty(0))
+        probs, routing_map = topk_routing_with_score_function(
+            log_odds, 6, score_function="sigmoid", expert_bias=expert_bias
+        )
+
+        # Hugging Face Ernie4_5_MoeTopKRouter
+        ref_scores = torch.softmax(logits, dim=-1)
+        _, ref_idx = torch.topk(ref_scores + expert_bias, 6, dim=-1)
+        ref_w = ref_scores.gather(-1, ref_idx)
+        ref_w = ref_w / ref_w.sum(-1, keepdim=True)
+        ref_probs = torch.zeros_like(logits).scatter(-1, ref_idx, ref_w)
+
+        assert torch.equal(routing_map, ref_probs > 0)
+        torch.testing.assert_close(probs, ref_probs, rtol=0, atol=1e-6)
