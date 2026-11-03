@@ -26,8 +26,8 @@ model:
   architecture: Qwen3_5MoeForConditionalGeneration
   min_transformers_version: "5.2.0"
 verification_environment:
-  base_container: nvcr.io/nvidia/pytorch:26.09-py3
-  bridge_commit: e301c817218e4e626c8c264aee9935514559a04b  # pragma: allowlist secret
+  base_container: nvcr.io/nvidia/nemo:26.10
+  bridge_commit: 6452af72ace14f5ba28f54e6373792d8bbd022ee  # pragma: allowlist secret
 items:
   hf_to_megatron_cpu:
     status: unverified

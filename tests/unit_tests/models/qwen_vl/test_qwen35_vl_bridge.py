@@ -38,6 +38,7 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import (
     Qwen35TokenClassificationBridge,
     Qwen35VLBridge,
     Qwen35VLMoEBridge,
+    _get_vision_mappings,
 )
 from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig, Qwen35VLTransformerConfig
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
@@ -1003,3 +1004,18 @@ def test_token_classification_bridge_stays_on_provider():
     assert provider.position_embedding_type == "mrope"
     assert provider.vision_config is hf_config.vision_config
     assert provider.mtp_num_layers == 0
+
+
+@pytest.mark.unit
+def test_vl_mapping_splits_only_language_blocks():
+    from transformers import Qwen3_5MoeConfig
+
+    bridge = Qwen35VLMoEBridge()
+    bridge.hf_config = Qwen3_5MoeConfig(text_config={"num_hidden_layers": 4})
+    registry = bridge.mapping_registry()
+    language = registry.megatron_to_hf_lookup("language_model.decoder.layers.7.mlp.router.weight")
+    assert language.hf_param == "model.language_model.layers.3.mlp.gate.weight"
+    vision = MegatronMappingRegistry(*_get_vision_mappings())
+    for template in vision.mappings:
+        name = template.megatron_param.replace("*", "0")
+        assert registry.megatron_to_hf_lookup(name).hf_param == vision.megatron_to_hf_lookup(name).hf_param

@@ -18,17 +18,27 @@ Unit tests for Qwen3.5 bridge functionality.
 
 from copy import deepcopy
 from dataclasses import fields
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.models.hybrid.hybrid_layer_allocation import select_pipeline_segment
+from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from transformers import Qwen3_5Config, Qwen3_5MoeConfig, Qwen3_5MoeTextConfig, Qwen3_5TextConfig
 
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
-from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hybrid_stack_spec
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import (
+    qwen35_hybrid_mappings,
+    qwen35_hybrid_stack_spec,
+    qwen35_pipeline_pattern,
+)
 from megatron.bridge.models.qwen.modeling_qwen35.model_config import Qwen35HybridModelConfig
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
 
@@ -740,6 +750,9 @@ class TestQwen35MoEBridge:
                 position = int(suffix.startswith(("mlp.", "pre_mlp_layernorm.")))
                 assert f"mtp.layers.*.{layer_attr}.layers.{position}.{suffix}" in megatron_params
 
+            router = registry.megatron_to_hf_lookup(f"mtp.layers.0.{layer_attr}.layers.1.mlp.router.weight")
+            assert router.hf_param == "mtp.layers.0.mlp.gate.weight"
+
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""
         bridge = Qwen35MoEBridge()
@@ -1045,3 +1058,120 @@ class TestQwen35BuilderConfig:
         attention = spec.submodules.attention_layer.submodules.self_attention.submodules
         assert attention.q_layernorm is TESpecProvider().layer_norm(for_qk=True)
         assert attention.k_layernorm is TESpecProvider().layer_norm(for_qk=True)
+
+    @pytest.mark.parametrize(
+        "bridge_class,make_config", [(Qwen35Bridge, _qwen35_text_config), (Qwen35MoEBridge, _qwen35_moe_text_config)]
+    )
+    def test_hybrid_config_export_preserves_nonperiodic_attention_schedule(self, bridge_class, make_config):
+        hf_config = make_config(
+            num_hidden_layers=4,
+            layer_types=["full_attention", "linear_attention", "linear_attention", "full_attention"],
+        )
+        bridge = bridge_class()
+        config = bridge.hf_config_to_model_config(hf_config)
+        restored = type(hf_config)(**bridge.megatron_to_hf_config(config))
+        assert restored.num_hidden_layers == hf_config.num_hidden_layers
+        assert restored.layer_types == hf_config.layer_types
+        assert config.num_layers == 2 * hf_config.num_hidden_layers
+
+    @pytest.mark.parametrize("make_config", [_qwen35_text_config, _qwen35_moe_text_config], ids=["dense", "moe"])
+    @pytest.mark.parametrize("explicit_pattern", [False, True])
+    def test_text_builder_assigns_all_virtual_pipeline_stages(self, monkeypatch, make_config, explicit_pattern):
+        hf_config = make_config()
+        config = AutoBridge.from_hf_config(hf_config).get_model_config()
+        config.pipeline_model_parallel_size = 2
+        config.virtual_pipeline_model_parallel_size = 2
+        config.pipeline_dtype = torch.bfloat16
+        config.mtp_num_layers = 1
+        if explicit_pattern:
+            pattern = config.hybrid_layer_pattern
+            config.hybrid_layer_pattern = "|".join(pattern[i : i + 4] for i in range(0, len(pattern), 4))
+        config.finalize()
+        original_pattern = config.hybrid_layer_pattern
+        builder = config.get_builder_cls()(config)
+        constructor = Mock()
+        monkeypatch.setattr("megatron.training.models.hybrid.HybridModel", constructor)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        group = Mock()
+        group.size.return_value = 2
+        monkeypatch.setattr(torch.distributed, "get_world_size", lambda group=None: 2)
+        pg_collection = SimpleNamespace(pp=group)
+
+        for vp_stage in range(2):
+            for pp_rank in range(2):
+                group.rank.return_value = pp_rank
+                monkeypatch.setattr(torch.distributed, "get_rank", lambda group=None: pp_rank)
+                builder.build_model(pg_collection, vp_stage=vp_stage)
+                kwargs = constructor.call_args.kwargs
+                main, mtp = kwargs["hybrid_layer_pattern"].split("/", 1)
+                assert mtp == config.mtp_hybrid_override_pattern
+                layers, offset = select_pipeline_segment(
+                    main, kwargs["config"], pg_collection.pp, vp_stage, tp_group=group, dp_cp_group=group
+                )
+                assert len(layers) == 4
+                assert offset == 4 * (vp_stage * 2 + pp_rank)
+                assert kwargs["pre_process"] is (vp_stage == 0 and pp_rank == 0)
+                assert kwargs["post_process"] is (vp_stage == 1 and pp_rank == 1)
+        assert config.hybrid_layer_pattern == original_pattern
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("moe", [False, True])
+def test_split_layer_mapping_preserves_hf_block_and_expert_indices(moe):
+    templates = (
+        Qwen35MoEBridge._get_moe_lm_mappings(experts_packed=False) if moe else Qwen35Bridge._get_dense_lm_mappings()
+    )
+    registry = MegatronMappingRegistry(*qwen35_hybrid_mappings(templates, num_layers=4))
+    qkv = registry.megatron_to_hf_lookup("decoder.layers.6.self_attention.linear_qkv.weight")
+    assert qkv.hf_param["q"] == "model.layers.3.self_attn.q_proj.weight"
+    assert registry.hf_to_megatron_lookup(qkv.hf_param["q"]).megatron_param == qkv.megatron_param
+
+    if moe:
+        mlp_name = "decoder.layers.7.mlp.experts.linear_fc1.weight12"
+        hf_gate = "model.layers.3.mlp.experts.12.gate_proj.weight"
+    else:
+        mlp_name = "decoder.layers.7.mlp.linear_fc1.weight"
+        hf_gate = "model.layers.3.mlp.gate_proj.weight"
+    mlp = registry.megatron_to_hf_lookup(mlp_name)
+    assert mlp.hf_param["gate"] == hf_gate
+    assert registry.hf_to_megatron_lookup(hf_gate).megatron_param == mlp_name
+
+
+@pytest.mark.unit
+def test_split_layer_mapping_preserves_zero_centered_gdn_conversion():
+    mappings = qwen35_hybrid_mappings(Qwen35MoEBridge._get_moe_lm_mappings(), num_layers=4)
+    registry = MegatronMappingRegistry(*mappings)
+    norm = registry.megatron_to_hf_lookup("decoder.layers.4.self_attention.out_norm.weight")
+    assert type(norm).__name__ == "RMSNorm2ZeroCenteredRMSNormMapping"
+    assert norm.hf_param == "model.layers.2.linear_attn.norm.weight"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "pipeline",
+    [
+        dict(
+            pipeline_model_parallel_size=2, num_layers_in_first_pipeline_stage=17, num_layers_in_last_pipeline_stage=23
+        ),
+        dict(pipeline_model_parallel_size=2, virtual_pipeline_model_parallel_size=2),
+        dict(
+            pipeline_model_parallel_size=6,
+            account_for_embedding_in_pipeline_split=True,
+            account_for_loss_in_pipeline_split=True,
+        ),
+    ],
+)
+def test_pipeline_pattern_preserves_block_stage_assignment(pipeline):
+    config = TransformerConfig(
+        num_layers=40, hidden_size=64, num_attention_heads=4, pipeline_dtype=torch.bfloat16, **pipeline
+    )
+    pattern = "".join(("*" if (i + 1) % 4 == 0 else "G") + "E" for i in range(40))
+    segments = qwen35_pipeline_pattern(config, pattern).split("|")
+    assert "".join(segments) == pattern
+
+    pp_size = config.pipeline_model_parallel_size
+    vp_size = config.virtual_pipeline_model_parallel_size
+    for index, segment in enumerate(segments):
+        vp_stage, pp_rank = divmod(index, pp_size)
+        offset = get_transformer_layer_offset(config, vp_stage if vp_size else None, pp_rank)
+        assert sum(map(len, segments[:index])) == 2 * offset
