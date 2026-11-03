@@ -39,6 +39,8 @@ from transformers import (
     Qwen3ForCausalLM,
     Qwen3MoeConfig,
     Qwen3MoeForCausalLM,
+    Qwen3NextConfig,
+    Qwen3NextForCausalLM,
 )
 
 from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
@@ -161,6 +163,24 @@ def toy_models(tmp_path_factory) -> dict[str, Path]:
             ),
         ),
         (
+            # Fused in_proj_qkvz / in_proj_ba (GDNLinearMapping, traced).
+            "qwen3_next",
+            Qwen3NextForCausalLM(
+                Qwen3NextConfig(
+                    layer_types=["linear_attention", "full_attention"],
+                    linear_num_key_heads=2,
+                    linear_num_value_heads=4,
+                    linear_key_head_dim=32,
+                    linear_value_head_dim=32,
+                    moe_intermediate_size=64,
+                    shared_expert_intermediate_size=64,
+                    num_experts=4,
+                    num_experts_per_tok=2,
+                    **TOY_CONFIG,
+                )
+            ),
+        ),
+        (
             # Fused [Q|K|V] attention.query_key_value (ConcatenatedQKVMapping); dense layers only, since the
             # bridge maps grouped-GEMM experts only.
             "bailing_moe2",
@@ -223,7 +243,8 @@ def _bits(tensor: torch.Tensor) -> torch.Tensor:
         ("qwen3_moe", "mixed", [("--ep", "2"), ("--etp", "2"), ("--pp", "2")]),
         ("qwen3_5", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
         ("nemotron_h", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
-        ("bailing_moe2", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
+        ("bailing_moe2", "nvfp4", [("--tp", "2")]),
+        ("qwen3_next", "nvfp4", [("--tp", "2")]),
         ("step35", "nvfp4", [("--tp", "2")]),
     ],
 )
@@ -246,6 +267,11 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
             *{f"backbone.layers.{layer}.mixer.conv1d" for layer in (0, 3)},
             "backbone.layers.2.mixer.gate",
         },
+        "qwen3_next": {
+            "model.layers.0.linear_attn.conv1d",
+            "model.layers.0.linear_attn.in_proj_ba",
+            *{f"model.layers.{layer}.mlp.{gate}" for layer in range(2) for gate in ("gate", "shared_expert_gate")},
+        },
     }.get(model, set())
     embedding = {"nemotron_h": "backbone.embeddings", "bailing_moe2": "model.word_embeddings"}.get(
         model, "model.embed_tokens"
@@ -256,6 +282,7 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
         "qwen3_5": "model.layers.0.linear_attn.in_proj_qkv",
         "nemotron_h": "backbone.layers.0.mixer.in_proj",
         "bailing_moe2": "model.layers.0.attention.query_key_value",
+        "qwen3_next": "model.layers.0.linear_attn.in_proj_qkvz",
         "step35": "model.layers.0.self_attn.g_proj",
     }.get(model, "model.layers.0.mlp.down_proj")
     packed_dtype = torch.float8_e4m3fn if config == "fp8" else torch.uint8

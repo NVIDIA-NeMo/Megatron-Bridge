@@ -40,6 +40,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    GDNLinearMapping,
     GDNLinearMappingSeparate,
     MambaInProjMapping,
     QKVGMapping,
@@ -455,17 +456,30 @@ def test_build_plan_rejects_dimension_permutation():
         modelopt_utils.build_modelopt_export_plan([_task(mapping, module)], model=[module])
 
 
-@pytest.mark.parametrize("method", ["megatron_to_hf", "_megatron_to_hf"])
-def test_build_plan_rejects_custom_quantized_qkv_layout(monkeypatch, method):
+@pytest.mark.parametrize(
+    ("method", "convert", "error"),
+    [
+        ("megatron_to_hf", lambda weight: {}, "on its own"),
+        ("_megatron_to_hf", lambda weight: {"q.weight": weight.t().contiguous()}, "copy whole rows"),
+        ("megatron_to_hf", lambda weight: {"q.weight": weight[:, :2]}, "copy whole rows"),
+        ("megatron_to_hf", lambda weight: {"q.weight": weight[:2] + weight[2:]}, "copy whole rows"),
+    ],
+    ids=["no-output", "transpose", "column-slice", "row-sum"],
+)
+def test_build_plan_rejects_mappings_that_do_not_copy_whole_rows(monkeypatch, method, convert, error):
     class CustomQKVMapping(QKVMapping):
         pass
 
-    monkeypatch.setattr(CustomQKVMapping, method, lambda *_args, **_kwargs: {})
-    for mapping_cls in (CustomQKVMapping, MiMoV2FlashQKVMapping):
-        mapping = mapping_cls("projection.weight", "q.weight", "k.weight", "v.weight")
-        module = _fp8_linear()
-        with pytest.raises(RuntimeError, match="custom row layout"):
-            modelopt_utils.build_modelopt_export_plan([_task(mapping, module)], model=[module])
+    if method == "megatron_to_hf":
+        monkeypatch.setattr(CustomQKVMapping, method, lambda _self, weight, _module: convert(weight))
+    else:
+        monkeypatch.setattr(CustomQKVMapping, method, lambda _self, weight, _module, **_kwargs: convert(weight))
+    module = _fp8_linear()
+    module.tensor_model_parallel, module.partition_dim = True, 0
+    module.config = SimpleNamespace(num_attention_heads=2, num_query_groups=1, kv_channels=1, hidden_size=4)
+    mapping = CustomQKVMapping("projection.weight", "q.weight", "k.weight", "v.weight")
+    with pytest.raises(RuntimeError, match=error):
+        modelopt_utils.build_modelopt_export_plan([_task(mapping, module)], model=[module])
 
 
 def test_build_plan_accepts_inherited_standard_qkv_layout():
@@ -824,31 +838,107 @@ def test_qkvg_scales_follow_the_existing_weight_mapping(monkeypatch, tp_size, ou
 
 @pytest.mark.unit
 @pytest.mark.parametrize("custom", [False, True])
-@pytest.mark.parametrize("base", [ConcatenatedQKVMapping, QKVGMapping])
-def test_qkv_variants_reject_custom_row_layout(base, custom):
+@pytest.mark.parametrize(
+    "base", [QKVMapping, ConcatenatedQKVMapping, QKVGMapping, MambaInProjMapping, GDNLinearMappingSeparate]
+)
+def test_only_custom_row_layouts_are_traced(base, custom):
     class Mapping(base):
         pass
 
     if custom:
         Mapping.megatron_to_hf = lambda self, weight, module: {}
-    hf_params = (
-        ("model.qkv.weight",) if base is ConcatenatedQKVMapping else ("q.weight", "k.weight", "v.weight", "g.weight")
-    )
-    task = SimpleNamespace(mapping=Mapping("linear_qkv.weight", *hf_params), global_param_name="linear_qkv.weight")
-    if custom:
-        with pytest.raises(NotImplementedError, match="QKV mappings with a custom row layout"):
-            modelopt_utils._validate_quantized_task(task)
-    else:
-        modelopt_utils._validate_quantized_task(task)
+    hf_params = {
+        QKVMapping: 3,
+        ConcatenatedQKVMapping: 1,
+        QKVGMapping: 4,
+        MambaInProjMapping: 1,
+        GDNLinearMappingSeparate: 4,
+    }[base]
+    mapping = Mapping("decoder.layers.0.projection.weight", *(f"model.p{index}.weight" for index in range(hf_params)))
+    assert modelopt_utils._traces_rows(mapping) is custom
+
+
+def _traced_weight_cases():
+    """(mapping, config, Megatron rows) of bridges whose fused row layout ModelOpt export traces."""
+    from megatron.bridge.models.glm5next.glm53flash_bridge import _ColumnParallelConcatMapping
+    from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import MuseGlimmerQKVGMapping
+
+    attention = {"num_attention_heads": 4, "num_query_groups": 2, "kv_channels": 4, "hidden_size": 16}
+    linear_attention = {
+        "linear_num_key_heads": 2,
+        "linear_num_value_heads": 4,
+        "linear_key_head_dim": 4,
+        "linear_value_head_dim": 4,
+        "hidden_size": 16,
+    }
+    prefix = "model.layers.0.self_attn"
+    qkv = {key: f"{prefix}.{key}_proj.weight" for key in ("q", "k", "v")}
+    return {
+        # Q/K head dim 4, V head dim 2.
+        "mimo": (MiMoV2FlashQKVMapping("linear_qkv.weight", *qkv.values()), {**attention, "v_head_dim": 2}, 28),
+        # Full-width gate.
+        "beam": (
+            BeamQKVGateMapping("linear_qkv.weight", *qkv.values(), f"{prefix}.g_proj.weight"),
+            attention,
+            48,
+        ),
+        "muse": (
+            MuseGlimmerQKVGMapping("linear_qkv.weight", **qkv, gate=f"{prefix}.gate_proj.weight"),
+            {**attention, "attention_output_gate": True},
+            48,
+        ),
+        # Fused in_proj_qkvz / in_proj_ba; the beta / alpha gates stay unquantized.
+        "gdn": (
+            GDNLinearMapping(
+                "in_proj.weight",
+                "model.layers.0.linear_attn.in_proj_qkvz.weight",
+                "model.layers.0.linear_attn.in_proj_ba.weight",
+            ),
+            linear_attention,
+            56,
+        ),
+        # Rank-local [q_r | k_r | v_r], regrouped section by section.
+        "kda": (_ColumnParallelConcatMapping("in_proj.weight", list(qkv.values())), linear_attention, 32),
+    }
+
+
+def _assert_exports_follow_the_mapping_rows(plan, mapping, module):
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    unquantized = modelopt_utils._unquantized_outputs(mapping)
+    outputs = mapping.megatron_to_hf(module.weight, module)
+    assert outputs.keys() == dict(plan.traced_rows[mapping.megatron_param]).keys()
+    for name, weight in outputs.items():
+        exported = dict(export_task.export_hook(name, weight))
+        if name in unquantized:
+            assert exported.keys() == {name} and torch.equal(exported[name], weight)
+            continue
+        # Per-row FP8 scales are bit-identical to quantizing the HF weight on its own only if they moved with its rows.
+        reference_state = weight_export.capture_quantized_weight_export_state(
+            _quantized_qkv(weight, "fp8", None), "weight", cpu=False
+        )
+        reference = weight_export.export_quantized_weight_tensors(weight, reference_state, torch.float32)
+        prefix = name.removesuffix(".weight")
+        assert exported.keys() == {name if key == "weight" else f"{prefix}.{key}" for key in reference}
+        for key, tensor in reference.items():
+            actual = exported[name if key == "weight" else f"{prefix}.{key}"]
+            assert torch.equal(actual.reshape(-1).view(torch.uint8), tensor.contiguous().reshape(-1).view(torch.uint8))
 
 
 @pytest.mark.unit
-def test_beam_qkv_gate_layout_is_rejected():
-    mapping = BeamQKVGateMapping("linear_qkv.weight", "q.weight", "k.weight", "v.weight", "g.weight")
-    with pytest.raises(NotImplementedError, match="QKV mappings with a custom row layout"):
-        modelopt_utils._validate_quantized_task(
-            SimpleNamespace(mapping=mapping, global_param_name="linear_qkv.weight")
-        )
+@pytest.mark.parametrize("case", ["mimo", "beam", "muse", "gdn", "kda"])
+def test_traced_mapping_scales_follow_its_rows(case):
+    mapping, config, rows = _traced_weight_cases()[case]
+    module = _quantized_qkv(torch.arange(rows * 16, dtype=torch.float32).reshape(rows, 16) / 128 - 3, "fp8", None)
+    module.tensor_model_parallel, module.partition_dim, module.config = True, 0, SimpleNamespace(**config)
+    plan = modelopt_utils.build_modelopt_export_plan(
+        [_task(mapping, module, global_name=mapping.megatron_param)], model=[module]
+    )
+    assert sorted(index for _, indices in plan.traced_rows[mapping.megatron_param] for index in indices) == list(
+        range(rows)
+    )
+    ignored = {name.removesuffix(".weight") for name in modelopt_utils._unquantized_outputs(mapping)}
+    assert ignored <= set(plan.quantization_config["ignore"])
+    _assert_exports_follow_the_mapping_rows(plan, mapping, module)
 
 
 @pytest.mark.parametrize("tp_size", [1, 2])
@@ -979,24 +1069,6 @@ def test_disabled_mamba_projection_remains_bf16():
     assert plan.conversion_tasks[0].export_hook is None
     assert any(fnmatchcase(hf_name.removesuffix(".weight"), pattern) for pattern in plan.quantization_config["ignore"])
     assert task.global_param_name not in plan.quantized_params
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("custom", [False, True])
-def test_mamba_projection_rejects_custom_row_layout(custom):
-    class Mapping(MambaInProjMapping):
-        pass
-
-    if custom:
-        Mapping.megatron_to_hf = lambda self, weight, module: {}
-    task = SimpleNamespace(
-        mapping=Mapping("in_proj.weight", "model.in_proj.weight"), global_param_name="in_proj.weight"
-    )
-    if custom:
-        with pytest.raises(NotImplementedError, match="Mamba mappings with a custom row layout"):
-            modelopt_utils._validate_quantized_task(task)
-    else:
-        modelopt_utils._validate_quantized_task(task)
 
 
 @pytest.mark.unit
@@ -1340,6 +1412,38 @@ def test_two_rank_planning_and_expert_collectives(tmp_path):
     torch.multiprocessing.spawn(
         _distributed_topology_worker,
         args=(2, str(tmp_path / "modelopt-dist-init")),
+        nprocs=2,
+        join=True,
+    )
+
+
+def _traced_tensor_parallel_worker(rank, world_size, init_file):
+    torch.distributed.init_process_group("gloo", init_method=f"file://{init_file}", rank=rank, world_size=world_size)
+    try:
+        local_group = [torch.distributed.new_group([member]) for member in range(world_size)][rank]
+        pg_collection = SimpleNamespace(
+            pp=local_group, tp=torch.distributed.group.WORLD, ep=local_group, expt_tp=local_group
+        )
+        for case in ("mimo", "gdn", "kda"):
+            mapping, config, rows = _traced_weight_cases()[case]
+            mapping.set_process_groups_from_pg_collection(pg_collection)
+            weight = torch.arange(rows * 16, dtype=torch.float32).reshape(rows, 16) / 128 - 3
+            module = _quantized_qkv(weight.chunk(world_size)[rank], "fp8", None)
+            module.tensor_model_parallel, module.partition_dim, module.config = True, 0, SimpleNamespace(**config)
+            module.pg_collection = pg_collection
+            plan = modelopt_utils.build_modelopt_export_plan(
+                [_task(mapping, module, global_name=mapping.megatron_param)], model=[module]
+            )
+            _assert_exports_follow_the_mapping_rows(plan, mapping, module)
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.unit
+def test_traced_mapping_rows_follow_the_tensor_parallel_gather(tmp_path):
+    torch.multiprocessing.spawn(
+        _traced_tensor_parallel_worker,
+        args=(2, str(tmp_path / "modelopt-trace-init")),
         nprocs=2,
         join=True,
     )
