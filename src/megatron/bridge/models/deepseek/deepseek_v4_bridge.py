@@ -155,7 +155,8 @@ def set_deepseek_v4_pipeline_model_parallel_layout(
     Args:
         model_cfg: DeepSeek-V4 provider or model config to configure in place.
         logical_layers_per_stage: Optional block counts in VPP-major, PP-minor
-            order. Otherwise distribute logical blocks as evenly as possible.
+            order. Otherwise distribute logical blocks as evenly as possible
+            while keeping the hash-routed MoE blocks on the embedding stage.
     """
     pp_size = model_cfg.pipeline_model_parallel_size or 1
     vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None) or 1
@@ -191,8 +192,13 @@ def set_deepseek_v4_pipeline_model_parallel_layout(
 
     num_stages = pp_size * vp_size
     if logical_layers_per_stage is None:
+        # MCore requires every hash-routed MoE layer on the embedding stage, the only one that owns the token
+        # IDs. Grow that stage when an even split would leave hash layers behind; otherwise the split is even.
+        num_hash_blocks = min(len(blocks), int(getattr(model_cfg, "moe_num_hash_layers", 0) or 0))
         base, extra = divmod(len(blocks), num_stages)
-        counts = [base + int(stage < extra) for stage in range(num_stages)]
+        first = max(base + int(extra > 0), num_hash_blocks)
+        base, extra = divmod(len(blocks) - first, num_stages - 1)
+        counts = [first] + [base + int(stage < extra) for stage in range(num_stages - 1)]
     else:
         counts = list(logical_layers_per_stage)
         if (
@@ -419,32 +425,18 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def generate_pipeline_layout(num_layers: int, pp: int, mtp_layers: int = 1) -> list[list[str]]:
-        """Generate a pipeline-parallel layout for DSv4 models.
+    def configure_pipeline_layout(model_cfg: DeepSeekV4HybridModelProvider) -> None:
+        """Set the pipeline stages of a DSv4 model for checkpoint conversion.
 
-        DSv4 with hash MoE routing requires an explicit pipeline layout when PP > 1.
-        The layout distributes decoder layers across PP stages, placing the embedding
-        on the first stage and MTP + loss on the last stage.
+        MCore's HybridModel takes its stage boundaries from the ``|`` segments of
+        ``hybrid_layer_pattern``, and the layout must list one decoder entry per
+        physical layer, so conversion uses the same segmentation as the recipes.
 
         Args:
-            num_layers: Number of decoder layers (e.g. 43 for Flash, 61 for Pro).
-            pp: Pipeline parallel size.
-            mtp_layers: Number of MTP layers (default 1).
-
-        Returns:
-            List of lists, where each inner list describes one pipeline stage.
+            model_cfg: DeepSeek-V4 provider or model config with its pipeline
+                parallel size set; updated in place.
         """
-        base, rem = num_layers // pp, num_layers % pp
-        layout = []
-        for i in range(pp):
-            n = base + (1 if i < rem else 0)
-            stage = ["decoder"] * n
-            if i == 0:
-                stage = ["embedding"] + stage
-            if i == pp - 1:
-                stage = stage + ["mtp"] * mtp_layers + ["loss"]
-            layout.append(stage)
-        return layout
+        set_deepseek_v4_pipeline_model_parallel_layout(model_cfg)
 
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Map a DeepSeek-V4 HF config to ``DeepSeekV4ModelConfig`` kwargs.
@@ -650,6 +642,17 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         hf_cfg["n_shared_experts"] = getattr(provider, "moe_shared_expert_intermediate_size", 0) // hf_cfg.get(
             "moe_intermediate_size", 1
         )
+
+        # Invert the import's MLA geometry: head_dim -> v_head_dim, qk_rope_head_dim -> qk_pos_emb_head_dim.
+        # Import pins rotary_percent to 1.0, but Transformers derives qk_rope_head_dim as
+        # head_dim * partial_rotary_factor, so export the factor that reproduces the RoPE width.
+        hf_cfg["head_dim"] = provider.v_head_dim
+        hf_cfg["partial_rotary_factor"] = provider.qk_pos_emb_head_dim / provider.v_head_dim
+
+        # Import replaces the context length and router aux-loss coefficient with training settings, and this
+        # export keeps the reference config's RoPE parameters, so let the reference supply these fields as well.
+        for hf_name in ("max_position_embeddings", "router_aux_loss_coef", "aux_loss_alpha", "rope_theta"):
+            hf_cfg.pop(hf_name, None)
 
         return hf_cfg
 
