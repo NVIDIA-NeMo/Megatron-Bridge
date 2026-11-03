@@ -84,6 +84,9 @@ class HFEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
     ``visual_keys`` names processor output tensors retained in the model batch.
     ``min_pixels`` and ``max_pixels`` are independent processor preprocessing
     bounds controlling visual resolution and token cost; they are not output keys.
+    ``return_padding_mask`` adds a boolean ``padding_mask`` (True marks padding)
+    to padded batches, so forward steps that consume it can keep padding tokens
+    out of MoE routing and router statistics.
     """
 
     hf_processor_path: str
@@ -92,6 +95,7 @@ class HFEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
     min_pixels: int | None = None
     max_pixels: int | None = None
     trust_remote_code: bool | None = None
+    return_padding_mask: bool = False
 
     def validate(self) -> None:
         """Validate generic Hugging Face task-encoder settings."""
@@ -102,6 +106,14 @@ class HFEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
             raise ValueError("hf_processor_revision must be a non-empty string when set.")
         if not self.visual_keys or not all(isinstance(key, str) and key for key in self.visual_keys):
             raise ValueError("visual_keys must contain non-empty strings.")
+
+    def validate_dataset(self, dataset_config: EnergonDatasetConfig) -> None:
+        """Reject a padding mask request for in-batch packed batches."""
+        if self.return_padding_mask and dataset_config.enable_in_batch_packing:
+            raise ValueError(
+                "return_padding_mask applies to padded batches only; in-batch packing marks padding "
+                "through its sequence boundaries instead."
+            )
 
 
 @dataclass(kw_only=True)
@@ -328,6 +340,7 @@ def _build_builtin_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
             pad_to_multiple_of=config.pad_to_multiple_of,
             enable_in_batch_packing=effective_packing,
             in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
+            return_padding_mask=task_config.return_padding_mask,
         )
 
     if isinstance(task_config, QwenVLEnergonTaskEncoderConfig):

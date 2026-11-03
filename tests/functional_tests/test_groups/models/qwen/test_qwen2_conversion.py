@@ -224,7 +224,11 @@ class TestQwen2Conversion:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
+                timeout=300,
             )
 
             # Check that the conversion completed successfully
@@ -264,6 +268,40 @@ class TestQwen2Conversion:
         except Exception as e:
             print(f"Error during Qwen2 {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "tp,pp",
+        [(2, 1), (1, 2)],
+    )
+    def test_qwen2_current_pp_stage_only_export(self, qwen2_toy_model_path, tp, pp):
+        """Verify PP-local streams against the full export on a 2-GPU topology."""
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "tests/functional_tests/test_groups/models/qwen/pipeline_stage_local_export.py",
+            "--hf-model-id",
+            qwen2_toy_model_path,
+            "--tp",
+            str(tp),
+            "--pp",
+            str(pp),
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parents[5],
+            timeout=300,
+        )
+        if result.returncode != 0:
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+        assert result.returncode == 0, f"PP-local export failed for TP={tp}, PP={pp}"
+        assert "PP-local verification passed:" in result.stdout
 
     @pytest.mark.run_only_on("GPU")
     def test_qwen2_autoconfig_roundtrip(self, qwen2_toy_model_path, tmp_path):

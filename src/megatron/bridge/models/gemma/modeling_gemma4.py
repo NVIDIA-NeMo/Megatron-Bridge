@@ -39,6 +39,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.extensions.transformer_engine import te_checkpoint
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.backends import LocalSpecProvider
@@ -49,7 +50,7 @@ from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubm
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
-from megatron.core.transformer.moe.moe_layer import MoELayer, te_checkpoint
+from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.spec_utils import ModuleSpec, get_submodules
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -555,10 +556,13 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
         )
 
         _ple_dim = getattr(config, "per_layer_embed_dim", 0)
-        self.register_buffer("layer_scalar", torch.ones(1), persistent=True)
+        # Create these in params_dtype like the Megatron modules (and the MoE layer), so a model
+        # built without the Float16Module wrapper, as Bridge's conversion tools build it, runs.
+        params_dtype = getattr(config, "params_dtype", torch.float32)
+        self.register_buffer("layer_scalar", torch.ones(1, dtype=params_dtype), persistent=True)
         if _ple_dim > 0:
-            self.per_layer_input_gate = nn.Linear(config.hidden_size, _ple_dim, bias=False)
-            self.per_layer_projection = nn.Linear(_ple_dim, config.hidden_size, bias=False)
+            self.per_layer_input_gate = nn.Linear(config.hidden_size, _ple_dim, bias=False, dtype=params_dtype)
+            self.per_layer_projection = nn.Linear(_ple_dim, config.hidden_size, bias=False, dtype=params_dtype)
             self.post_per_layer_input_norm = submodules.post_per_layer_input_norm(
                 config=self.config,
                 hidden_size=self.config.hidden_size,
@@ -734,6 +738,49 @@ def wire_gemma4_kv_sharing(model: nn.Module) -> None:
             source = attn_by_layer.get(attn.kv_shared_layer_index)
             if source is not None:
                 attn._kv_source_ref = weakref.ref(source)
+
+
+def install_gemma4_dense_load_state_aliases(model: torch.nn.Module) -> None:
+    """Translate Gemma4 Dense checkpoint attention aliases before load_state_dict.
+
+    Gemma4 Dense saves sliding/global attention tensors under separate names in
+    dist-checkpoints because the two layer types have different sharded shapes.
+    After dist-checkpoint load materializes a regular state_dict, PyTorch module
+    loading expects the real module attribute name, ``self_attention``.
+    """
+
+    if getattr(model, "_gemma4_dense_load_state_aliases_installed", False):
+        return
+
+    def _load_state_dict_pre_hook(
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        del local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+
+        for key in list(state_dict.keys()):
+            if prefix and not key.startswith(prefix):
+                continue
+
+            canonical_key = None
+            if ".self_attention_sliding." in key:
+                canonical_key = key.replace(".self_attention_sliding.", ".self_attention.")
+            elif ".self_attention_global." in key:
+                canonical_key = key.replace(".self_attention_global.", ".self_attention.")
+
+            if canonical_key is None:
+                continue
+
+            state_dict.setdefault(canonical_key, state_dict[key])
+            state_dict.pop(key)
+
+    model._register_load_state_dict_pre_hook(_load_state_dict_pre_hook)
+    model._gemma4_dense_load_state_aliases_installed = True
 
 
 # ---------------------------------------------------------------------------
@@ -1743,10 +1790,14 @@ class Gemma4TEDotProductAttention(TEDotProductAttention):
         config = copy.deepcopy(config)
         is_local = _is_local_attn_layer(layer_number, config.interleaved_attn_pattern)
         text_config = getattr(config, "text_config", None)
-        self._image_bidirectional_attention = (
-            is_local and getattr(text_config, "use_bidirectional_attention", None) == "vision"
+        uses_vision_bidirectional = getattr(text_config, "use_bidirectional_attention", None) == "vision"
+        self._image_bidirectional_attention = uses_vision_bidirectional and (
+            is_local or getattr(config, "global_image_bidirectional_attention", False)
         )
-        self._image_attention_window = config.window_size if self._image_bidirectional_attention else None
+        # Image bidirectionality also applies to DiffusionGemma's global layers,
+        # but only local layers have a finite left window. Keeping a window on a
+        # global layer silently drops distant prompt context once S > window.
+        self._image_attention_window = config.window_size if is_local and self._image_bidirectional_attention else None
         if is_local:
             if self._image_bidirectional_attention:
                 # Compose the left window into the explicit mask. TE cannot express
@@ -1758,6 +1809,8 @@ class Gemma4TEDotProductAttention(TEDotProductAttention):
                 config.window_size = (config.window_size - 1, 0)
         else:
             config.window_size = None
+            if self._image_bidirectional_attention:
+                attn_mask_type = AttnMaskType.arbitrary
 
         super().__init__(
             config=config,
@@ -1783,10 +1836,11 @@ class Gemma4TEDotProductAttention(TEDotProductAttention):
             # remains causal, including image tokens, as in the HF implementation.
             query_positions = torch.arange(query.size(0), device=query.device) + key.size(0) - query.size(0)
             key_positions = torch.arange(key.size(0), device=key.device)
-            outside_window = key_positions[None, :] <= query_positions[:, None] - self._image_attention_window
             if attention_mask is None:
                 attention_mask = key_positions[None, :] > query_positions[:, None]
-            attention_mask = attention_mask | outside_window[None, None, :, :]
+            if self._image_attention_window is not None:
+                outside_window = key_positions[None, :] <= query_positions[:, None] - self._image_attention_window
+                attention_mask = attention_mask | outside_window[None, None, :, :]
             attn_mask_type = AttnMaskType.arbitrary
         return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)
 

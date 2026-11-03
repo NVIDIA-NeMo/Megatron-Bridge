@@ -25,6 +25,7 @@ from megatron.bridge.data.builders.direct_hf_sft import (
     DirectHFSFTDatasetConfig,
     direct_hf_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.dpo import DPODatasetConfig, dpo_train_valid_test_datasets_provider
 from megatron.bridge.data.builders.energon import EnergonDatasetConfig, energon_train_valid_test_datasets_provider
 from megatron.bridge.data.builders.gpt_sft import (
     GPTSFTDatasetConfig,
@@ -97,6 +98,7 @@ _REGISTRY: dict[type[Any], Callable[..., Any]] = {
     DirectHFSFTDatasetConfig: direct_hf_sft_train_valid_test_datasets_provider,
     EnergonDatasetConfig: energon_train_valid_test_datasets_provider,
     MockVLMSFTDatasetConfig: mock_vlm_sft_train_valid_test_datasets_provider,
+    DPODatasetConfig: dpo_train_valid_test_datasets_provider,
 }
 
 
@@ -107,6 +109,7 @@ def get_dataset_provider(
         | DirectHFSFTDatasetConfig
         | EnergonDatasetConfig
         | MockVLMSFTDatasetConfig
+        | DPODatasetConfig
         | DatasetProvider
     ),
 ) -> Callable[..., Any]:

@@ -482,7 +482,10 @@ class BailingMoeV2Attention(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
         self.head_dim = config.head_dim or self.hidden_size // self.num_heads
-        partial_rotary_factor = config.partial_rotary_factor if hasattr(config, "partial_rotary_factor") else 1.0
+        partial_rotary_factor = getattr(config, "partial_rotary_factor", None)
+        if partial_rotary_factor is None:
+            # Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters.
+            partial_rotary_factor = (getattr(config, "rope_parameters", None) or {}).get("partial_rotary_factor", 1.0)
         self.rope_dim = int(self.head_dim * partial_rotary_factor)
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads

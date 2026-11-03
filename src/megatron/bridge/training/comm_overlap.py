@@ -23,6 +23,7 @@ from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.training.utils.optimizer_utils import uses_distributed_optimizer
 from megatron.bridge.utils.cuda_graph import has_cuda_graph_module
 
 
@@ -636,8 +637,18 @@ class CommOverlapConfig:
         if (
             isinstance(optimizer_config, OptimizerConfig)
             and isinstance(ddp_config, DistributedDataParallelConfig)
-            and ddp_config.use_distributed_optimizer
+            and (ddp_config.use_distributed_optimizer or uses_distributed_optimizer(optimizer_config))
         ):
             comm_overlap_cfg = self._get_optimizer_overlap_cfgs(model_config)
+            if optimizer_config.optimizer not in ("adam", "sgd"):
+                # Emerging optimizers use LayerWise distribution, including raw
+                # aliases/DDP-only requests before ConfigContainer normalization.
+                if self.user_comm_overlap_cfg.bucket_size is None:
+                    # Preserve their existing Core/DDP bucket policy unless explicitly overridden.
+                    comm_overlap_cfg.bucket_size = ddp_config.bucket_size
+                if self.user_comm_overlap_cfg.overlap_grad_reduce is None:
+                    # DP1 can still reduce gradients across CP ranks. Retain the
+                    # existing setting instead of adopting the ordinary DistOpt preset.
+                    comm_overlap_cfg.overlap_grad_reduce = ddp_config.overlap_grad_reduce
             self._apply_cfgs(comm_overlap_cfg, optimizer_config)
             self._apply_cfgs(comm_overlap_cfg, ddp_config)

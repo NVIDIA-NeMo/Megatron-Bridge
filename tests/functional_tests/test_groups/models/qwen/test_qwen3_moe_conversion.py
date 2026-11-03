@@ -246,7 +246,11 @@ class TestQwen3MoEConversion:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
+                timeout=300,
             )
 
             # Check that the conversion completed successfully
@@ -306,6 +310,39 @@ class TestQwen3MoEConversion:
         except Exception as e:
             print(f"Error during Qwen3 MoE {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize("tp,pp,ep", [(2, 1, 1), (1, 2, 1), (1, 1, 2)])
+    def test_qwen3_moe_current_pp_stage_only_export(self, qwen3_moe_toy_model_path, tp, pp, ep):
+        """Verify MoE stage-local streams against full export on two GPUs."""
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "tests/functional_tests/test_groups/models/qwen/pipeline_stage_local_export.py",
+            "--hf-model-id",
+            qwen3_moe_toy_model_path,
+            "--tp",
+            str(tp),
+            "--pp",
+            str(pp),
+            "--ep",
+            str(ep),
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parents[5],
+            timeout=300,
+        )
+        assert result.returncode == 0, (
+            f"PP-local MoE export failed for TP={tp}, PP={pp}, EP={ep}\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+        assert "PP-local verification passed:" in result.stdout
 
     @pytest.mark.run_only_on("GPU")
     def test_qwen3_moe_autoconfig_roundtrip(self, qwen3_moe_toy_model_path, tmp_path):

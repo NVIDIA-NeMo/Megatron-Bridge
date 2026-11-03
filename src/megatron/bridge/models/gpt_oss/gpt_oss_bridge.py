@@ -12,24 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import GptOssForCausalLM
+from megatron.core.utils import unwrap_model
+from torch.distributed._tensor import DTensor
+from transformers import GptOssForCausalLM, PretrainedConfig
 
+from megatron.bridge.models.conversion.gtp import _get_mapping_shape
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
     _align_expert_weight_to_shape,
+    _LooseGatedMLPMapping,
 )
+from megatron.bridge.models.conversion.peft_bridge import MegatronModel
 from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4 as _dequantize_mxfp4
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
-from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
@@ -50,56 +54,85 @@ class GPTOSSBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("openai/gpt-oss-model")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
-        """Convert HuggingFace config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = True
-        provider.add_qkv_bias = getattr(hf_pretrained.config, "attention_bias", True)
-        provider.share_embeddings_and_output_weights = False
-        provider.position_embedding_type = "yarn"
+    def _get_fused_adapter_linear_out_slices(
+        self,
+        megatron_model: list[MegatronModel],
+        base_hf_weight_names: list[str],
+        linear_out_tensor: torch.Tensor,
+        is_expert: bool = False,
+    ) -> dict[str, torch.Tensor] | None:
+        """Put expert LoRA-B output rows in HF's alternating gate/up order."""
+        if is_expert and len(base_hf_weight_names) == 1 and base_hf_weight_names[0].endswith(".experts.gate_up_proj"):
+            # Adapter tasks use generic parallel mappings, bypassing the base
+            # weight's GPT-OSS permutation. Reorder B's output rows, but keep
+            # factors in [out, rank] form: only the base weight is transposed.
+            # Materialization concatenates expert-TP shards, each of which has
+            # its own [gate, up] halves. Permute within each shard before joining.
+            config = unwrap_model(megatron_model)[0].config
+            expert_tp_size = config.expert_tensor_parallel_size or 1
+            shards = torch.chunk(linear_out_tensor, expert_tp_size, dim=0)
+            return {
+                base_hf_weight_names[0]: torch.cat(
+                    [GPTOSSMLPGateUpProjMapping._uninterleave(shard) for shard in shards], dim=0
+                )
+            }
+        return super()._get_fused_adapter_linear_out_slices(
+            megatron_model, base_hf_weight_names, linear_out_tensor, is_expert=is_expert
+        )
 
-        provider.moe_router_pre_softmax = False
-        provider.moe_grouped_gemm = True
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
-        provider.moe_router_load_balancing_type = "none"
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face GPT-OSS config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=True,
+            add_qkv_bias=getattr(hf_config, "attention_bias", True),
+            share_embeddings_and_output_weights=False,
+            position_embedding_type="yarn",
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            moe_router_pre_softmax=False,
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_router_load_balancing_type="none",
+            bias_activation_fusion=True,
+            bias_dropout_fusion=False,
+            hidden_dropout=0.0,
+            fp16=False,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            # GPT-OSS specific activation
+            activation_func=quick_gelu,
+            activation_func_clamp_value=7.0,
+            glu_linear_offset=1.0,
+            softmax_type="learnable",
+            window_size=(hf_config.sliding_window - 1, 0),
+            window_attn_skip_freq=2,
+            # GPT-OSS uses intermediate_size for MoE FFN hidden size
+            moe_ffn_hidden_size=hf_config.intermediate_size,
+            # YaRN settings of the released checkpoints
+            yarn_rotary_scaling_factor=32.0,
+            yarn_original_max_position_embeddings=4096,
+            yarn_beta_fast=32.0,
+            yarn_beta_slow=1.0,
+            yarn_correction_range_round_to_int=False,
+            yarn_mscale=None,
+            yarn_mscale_all_dim=None,
+        )
+        return config_kwargs
 
-        provider.bias_activation_fusion = True
-        provider.bias_dropout_fusion = False
-
-        provider.hidden_dropout = 0.0
-        provider.fp16 = False
-        provider.bf16 = True
-        provider.params_dtype = torch.bfloat16
-
-        # GPT-OSS specific activation
-        provider.activation_func = quick_gelu
-        provider.activation_func_clamp_value = 7.0
-        provider.glu_linear_offset = 1.0
-
-        provider.softmax_type = "learnable"
-        provider.window_size = (hf_pretrained.config.sliding_window - 1, 0)
-        provider.window_attn_skip_freq = 2
-
-        # GPT-OSS uses intermediate_size for MoE FFN hidden size
-        provider.moe_ffn_hidden_size = hf_pretrained.config.intermediate_size
-
-        # YARN position embedding settings (now dataclass fields on GPTModelProvider)
-        provider.yarn_rotary_scaling_factor = 32.0
-        provider.yarn_original_max_position_embeddings = 4096
-        provider.yarn_beta_fast = 32.0
-        provider.yarn_beta_slow = 1.0
-        provider.yarn_correction_range_round_to_int = False
-        provider.yarn_mscale = None
-        provider.yarn_mscale_all_dim = None
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
@@ -283,6 +316,11 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
     def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
         super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
+        self._gated_mapping = _LooseGatedMLPMapping(
+            megatron_param=self.megatron_param,
+            gate=f"{self.hf_param}.gate",
+            up=f"{self.hf_param}.up",
+        )
 
     @property
     def group_key(self) -> str:
@@ -292,7 +330,8 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
     def _interleave(gate_up_proj):
         return torch.cat((gate_up_proj[::2, ...], gate_up_proj[1::2, ...]), dim=0)
 
-    def _uninterleave(self, elem):
+    @staticmethod
+    def _uninterleave(elem: torch.Tensor) -> torch.Tensor:
         gate, up = torch.chunk(elem, 2, dim=0)
         output = torch.empty_like(elem)
         output[::2, ...] = gate
@@ -304,13 +343,37 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
         expert_weight = hf_weights[global_expert_number] if hf_weights.ndim >= 2 else hf_weights
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
-        expert_weight = _align_expert_weight_to_shape(expert_weight, target_param.shape, "gate_up_proj")
-        return super().hf_to_megatron(self._interleave(expert_weight), megatron_module)
+        target_shape = list(_get_mapping_shape(target_param))
+        if not isinstance(target_param, DTensor):
+            target_shape[0] *= self.tp_size
+        expert_weight = _align_expert_weight_to_shape(expert_weight, target_shape, "gate_up_proj")
+        if self.permute_dims is not None:
+            return super().hf_to_megatron(self._interleave(expert_weight), megatron_module)
+        return self._gated_mapping.hf_to_megatron(
+            {"gate": expert_weight[::2, ...], "up": expert_weight[1::2, ...]}, megatron_module
+        )
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        if megatron_weights is None:
+        if self.permute_dims is not None:
+            if megatron_weights is not None:
+                megatron_weights = self._uninterleave(megatron_weights)
+                if megatron_weights.ndim == 2:
+                    megatron_weights = megatron_weights.t()
+                megatron_weights = megatron_weights.contiguous()
             return super().megatron_to_hf(megatron_weights, megatron_module)
-        megatron_weights = self._uninterleave(megatron_weights)
-        if len(megatron_weights.shape) == 2:
-            megatron_weights = megatron_weights.transpose(0, 1)
-        return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
+        converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        is_bias = self.hf_param.endswith("_bias")
+        result = {}
+        for name, gate in converted.items():
+            if not name.endswith(".gate"):
+                continue
+            base_name = name.removesuffix(".gate")
+            up = converted[f"{base_name}.up"]
+            # Reconstruct alternating gate/up rows only after TP and EP gathering.
+            # EP may add a leading expert axis; keep it intact for grouped export.
+            if is_bias:
+                interleaved = torch.stack((gate, up), dim=-1).flatten(-2, -1)
+            else:
+                interleaved = torch.stack((gate, up), dim=-2).flatten(-3, -2).transpose(-1, -2)
+            result[base_name] = interleaved.contiguous()
+        return result

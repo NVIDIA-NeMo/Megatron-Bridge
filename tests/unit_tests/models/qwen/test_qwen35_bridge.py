@@ -16,12 +16,19 @@
 Unit tests for Qwen3.5 bridge functionality.
 """
 
-from unittest.mock import Mock
+from copy import deepcopy
+from dataclasses import fields
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
+from transformers import Qwen3_5Config, Qwen3_5MoeConfig, Qwen3_5MoeTextConfig, Qwen3_5TextConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
@@ -805,3 +812,203 @@ class TestQwen35MoEBridge:
             "seq_fc1": "GatedMLPMapping",
             "seq_fc2": "AutoMapping",
         }
+
+
+_SMALL_GDN_TEXT_CONFIG = dict(
+    hidden_size=64,
+    num_hidden_layers=8,
+    num_attention_heads=4,
+    num_key_value_heads=2,
+    head_dim=16,
+    linear_num_key_heads=2,
+    linear_num_value_heads=4,
+    linear_key_head_dim=16,
+    linear_value_head_dim=16,
+    max_position_embeddings=4096,
+    vocab_size=128,
+    # Released Qwen3.5 and Qwen3.6 text configs carry one MTP layer.
+    mtp_num_hidden_layers=1,
+    dtype="bfloat16",
+)
+_SMALL_MOE_CONFIG = dict(
+    moe_intermediate_size=32,
+    shared_expert_intermediate_size=32,
+    num_experts=4,
+    num_experts_per_tok=2,
+)
+# Multimodal checkpoints nest the language config and keep the mRoPE sections there.
+_MULTIMODAL_ROPE_PARAMETERS = {
+    "rope_type": "default",
+    "rope_theta": 10000000,
+    "partial_rotary_factor": 0.25,
+    "mrope_section": [11, 11, 10],
+    "mrope_interleaved": True,
+}
+_YARN_ROPE_PARAMETERS = {
+    "rope_type": "yarn",
+    "rope_theta": 10000000,
+    "partial_rotary_factor": 0.25,
+    "factor": 4.0,
+    "original_max_position_embeddings": 1024,
+}
+
+
+def _qwen35_text_config(**overrides) -> Qwen3_5TextConfig:
+    """Return a small Qwen3.5 dense text config with the released 3 GDN : 1 attention layer layout."""
+    config = Qwen3_5TextConfig(**{**_SMALL_GDN_TEXT_CONFIG, "intermediate_size": 128, **overrides})
+    config.architectures = ["Qwen3_5ForCausalLM"]
+    return config
+
+
+def _qwen35_moe_text_config(**overrides) -> Qwen3_5MoeTextConfig:
+    """Return a small Qwen3.5 MoE text config with the released 3 GDN : 1 attention layer layout."""
+    config = Qwen3_5MoeTextConfig(**{**_SMALL_GDN_TEXT_CONFIG, **_SMALL_MOE_CONFIG, **overrides})
+    config.architectures = ["Qwen3_5MoeForCausalLM"]
+    return config
+
+
+def _text_config_from_multimodal(multimodal_config, architecture: str):
+    """Extract the language config of a multimodal checkpoint, as the Qwen3.5 text recipes do."""
+    text_config = deepcopy(multimodal_config.text_config)
+    text_config.architectures = [architecture]
+    return text_config
+
+
+def _dense_from_multimodal():
+    text_config = {**_SMALL_GDN_TEXT_CONFIG, "intermediate_size": 128, "rope_parameters": _MULTIMODAL_ROPE_PARAMETERS}
+    multimodal = Qwen3_5Config(text_config=text_config, tie_word_embeddings=False)
+    return _text_config_from_multimodal(multimodal, "Qwen3_5ForCausalLM")
+
+
+def _moe_from_multimodal():
+    text_config = {**_SMALL_GDN_TEXT_CONFIG, **_SMALL_MOE_CONFIG, "rope_parameters": _MULTIMODAL_ROPE_PARAMETERS}
+    multimodal = Qwen3_5MoeConfig(text_config=text_config, tie_word_embeddings=False)
+    return _text_config_from_multimodal(multimodal, "Qwen3_5MoeForCausalLM")
+
+
+_DENSE_CONFIGS = {
+    "default": lambda: _qwen35_text_config(),
+    "tied_fp16": lambda: _qwen35_text_config(tie_word_embeddings=True, dtype="float16"),
+    "no_mtp": lambda: _qwen35_text_config(mtp_num_hidden_layers=0),
+    "yarn": lambda: _qwen35_text_config(rope_parameters=_YARN_ROPE_PARAMETERS),
+    "from_multimodal": _dense_from_multimodal,
+}
+_MOE_CONFIGS = {
+    "default": lambda: _qwen35_moe_text_config(),
+    "tied_fp16": lambda: _qwen35_moe_text_config(tie_word_embeddings=True, dtype="float16"),
+    "yarn": lambda: _qwen35_moe_text_config(rope_parameters=_YARN_ROPE_PARAMETERS),
+    "from_multimodal": _moe_from_multimodal,
+}
+_PARITY_CASES = [
+    *((Qwen35Bridge, make_config) for make_config in _DENSE_CONFIGS.values()),
+    *((Qwen35MoEBridge, make_config) for make_config in _MOE_CONFIGS.values()),
+]
+_PARITY_IDS = [*(f"dense-{name}" for name in _DENSE_CONFIGS), *(f"moe-{name}" for name in _MOE_CONFIGS)]
+
+
+class TestQwen35BuilderConfig:
+    """Builder-backed ModelConfig path for the Qwen3.5 text bridges."""
+
+    @pytest.mark.parametrize("bridge_class", [Qwen35Bridge, Qwen35MoEBridge])
+    def test_provider_bridge_is_inherited_compatibility_only(self, bridge_class):
+        assert "provider_bridge" not in bridge_class.__dict__
+
+    @pytest.mark.parametrize("bridge_class", [Qwen35Bridge, Qwen35MoEBridge])
+    def test_conversion_uses_builder_config(self, bridge_class):
+        assert bridge_class.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert bridge_class.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    @pytest.mark.parametrize(
+        ("bridge_class", "config"),
+        [(Qwen35Bridge, _qwen35_text_config()), (Qwen35MoEBridge, _qwen35_moe_text_config())],
+        ids=["dense", "moe"],
+    )
+    def test_hf_config_to_model_config_uses_direct_mapping(self, bridge_class, config):
+        bridge = bridge_class()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(config)
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.num_layers == 8
+        assert model_config.normalization == "RMSNorm"
+        assert model_config.qk_layernorm is True
+        assert model_config.layernorm_zero_centered_gamma is True
+        assert model_config.attention_output_gate is True
+        assert model_config.experimental_attention_variant == "gdn"
+        assert model_config.linear_attention_freq == [1, 1, 1, 0, 1, 1, 1, 0]
+        assert model_config.linear_num_key_heads == 2
+        assert model_config.linear_num_value_heads == 4
+        assert model_config.rotary_percent == 0.25
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.share_embeddings_and_output_weights is False
+        assert model_config.mtp_num_layers == 1
+        assert model_config.mtp_loss_scaling_factor == 0.1
+        assert model_config.hetereogenous_dist_checkpoint is True
+        # The builder derives the hybrid block spec from experimental_attention_variant.
+        assert model_config.transformer_layer_spec is None
+        if bridge_class is Qwen35MoEBridge:
+            assert model_config.num_moe_experts == 4
+            assert model_config.moe_router_topk == 2
+            assert model_config.moe_ffn_hidden_size == 32
+            assert model_config.moe_shared_expert_intermediate_size == 32
+            assert model_config.moe_shared_expert_gate is True
+            assert model_config.moe_router_load_balancing_type == "global_aux_loss"
+            assert model_config.moe_router_dtype == "fp32"
+        else:
+            assert model_config.num_moe_experts is None
+            assert model_config.ffn_hidden_size == 128
+
+    @pytest.mark.parametrize(("bridge_class", "make_config"), _PARITY_CASES, ids=_PARITY_IDS)
+    def test_model_config_matches_provider_runtime_config(self, bridge_class, make_config):
+        config = make_config()
+        bridge = bridge_class()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = config
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(pretrained)
+
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
+        for field_name in sorted(shared):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+        # The provider's default layer spec builds homogeneous layers, so it keeps the hybrid block spec.
+        assert provider.transformer_layer_spec is get_transformer_block_with_experimental_attention_variant_spec
+        assert model_config.transformer_layer_spec is None
+
+    @pytest.mark.parametrize(
+        ("bridge_class", "make_config"),
+        [(Qwen35Bridge, _qwen35_text_config), (Qwen35MoEBridge, _qwen35_moe_text_config)],
+        ids=["dense", "moe"],
+    )
+    def test_yarn_checkpoint_maps_to_yarn_embeddings(self, bridge_class, make_config):
+        model_config = bridge_class().hf_config_to_model_config(make_config(rope_parameters=_YARN_ROPE_PARAMETERS))
+
+        assert model_config.position_embedding_type == "yarn"
+        assert model_config.transformer.yarn_rotary_scaling_factor == 4.0
+        assert model_config.transformer.yarn_original_max_position_embeddings == 1024
+
+    @pytest.mark.parametrize(
+        ("bridge_class", "config"),
+        [(Qwen35Bridge, _qwen35_text_config()), (Qwen35MoEBridge, _qwen35_moe_text_config())],
+        ids=["dense", "moe"],
+    )
+    def test_builder_default_layer_spec_builds_gated_delta_net_block(self, bridge_class, config, monkeypatch):
+        from megatron.training.models import gpt as mcore_gpt
+
+        calls = []
+
+        def block_spec(config, vp_stage=None):
+            calls.append((config, vp_stage))
+            return "hybrid-block-spec"
+
+        monkeypatch.setattr(mcore_gpt, "get_transformer_block_with_experimental_attention_variant_spec", block_spec)
+        model_config = bridge_class().hf_config_to_model_config(config)
+
+        assert mcore_gpt.default_layer_spec(model_config, vp_stage=None) == "hybrid-block-spec"
+        assert calls == [(model_config.transformer, None)]

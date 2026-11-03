@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.models.distillation_provider import DistillationProvider
+from megatron.bridge.training.callbacks import Callback, CallbackManager
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.gpt_step import forward_step_modelopt
@@ -41,6 +42,7 @@ def _check_step_handles_context_parallelism(config: ConfigContainer, forward_ste
 def distill(
     config: ConfigContainer,
     forward_step_func: ForwardStepCallable = forward_step_modelopt,
+    callbacks: list[Callback] | CallbackManager | None = None,
 ) -> None:
     """Main function to run knowledge distillation (KD).
 
@@ -52,6 +54,7 @@ def distill(
             since that forward never re-shards the sequence -- though packed data is not supported
             there under context parallelism. A custom step must attach the KD loss, or training
             silently runs without distillation.
+        callbacks: Optional list of Callback instances, a CallbackManager, or None.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
@@ -60,4 +63,4 @@ def distill(
     assert isinstance(config.model, DistillationProvider), "Distillation requires a DistillationProvider"
     _check_step_handles_context_parallelism(config, forward_step_func)
 
-    return pretrain(config, forward_step_func)
+    return pretrain(config, forward_step_func, callbacks=callbacks)

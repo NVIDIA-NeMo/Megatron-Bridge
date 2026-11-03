@@ -217,6 +217,7 @@ class TestEnergonDataModuleCPHandling:
         pg_collection = MagicMock(spec=ProcessGroupCollection)
         pg_collection.dp = mock_dp
         pg_collection.cp = mock_cp
+        pg_collection.gtp_remat = None
         return pg_collection
 
     def _make_datamodule(self, num_workers=2, num_val_workers=None, pg_collection=None, **kwargs):
@@ -559,6 +560,7 @@ class TestEnergonDataShardingVerification:
         pg_collection = MagicMock(spec=ProcessGroupCollection)
         pg_collection.dp = mock_dp
         pg_collection.cp = mock_cp
+        pg_collection.gtp_remat = None
         return pg_collection
 
     def _build_loader_for_rank(self, dp_rank, dp_world_size, cp_rank, cp_size, seed):
