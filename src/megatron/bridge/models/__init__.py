@@ -243,6 +243,8 @@ from megatron.bridge.models.stepfun import (
     Step35Bridge,
     Step37Bridge,
     Step37Model,
+    Step37ModelBuilder,
+    Step37ModelConfig,
     Step37ModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
@@ -390,6 +392,8 @@ __all__ = [
     "Step35Bridge",
     "Step37Bridge",
     "Step37Model",
+    "Step37ModelBuilder",
+    "Step37ModelConfig",
     "Step37ModelProvider",
     # EXAONE
     "Exaone4Bridge",
