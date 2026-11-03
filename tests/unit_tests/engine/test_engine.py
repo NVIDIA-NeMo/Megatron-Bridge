@@ -71,6 +71,10 @@ def test_check_supported_accepts_baseline_shape():
         (lambda r: setattr(r.model, "seq_length", None), "seq_length"),
         (lambda r: setattr(r, "batch_layout", "sbhd"), "batch_layout"),
         (lambda r: setattr(r, "mtp_target_scope", "response"), "mtp_target_scope"),
+        (
+            lambda r: (setattr(r.model, "mtp_detach_heads", True), setattr(r, "mtp_target_scope", "all_valid")),
+            "mtp_detach_heads",
+        ),
     ],
 )
 def test_check_supported_rejects_each_violation(mutate, message):
@@ -106,6 +110,24 @@ def test_loss_dispatch_resolves_predefined_and_subclass_methods():
     assert engine.resolve_loss_method("cross_entropy").__func__ is TrainingEngine.cross_entropy
     assert engine.resolve_loss_method("ppo_clip").__func__ is TrainingEngine.ppo_clip
     assert engine.resolve_loss_method("my_loss")(None, None).item() == 0.0
+
+
+def test_detached_mtp_under_primary_scope_is_accepted():
+    recipe = _recipe_like()
+    recipe.model.mtp_detach_heads = True
+    check_supported(recipe)
+
+
+def test_loss_dispatch_rejects_requires_logits_placeholder():
+    class MyEngine(TrainingEngine):
+        def logits_loss(self, batch, output):
+            return torch.zeros(())
+
+        logits_loss.requires_logits = True
+
+    engine = MyEngine.__new__(MyEngine)
+    with pytest.raises(NotImplementedError, match="requires_logits"):
+        engine.resolve_loss_method("logits_loss")
 
 
 @pytest.mark.parametrize(
@@ -163,8 +185,9 @@ def test_unknown_sample_count_is_rejected_under_sample_mean_before_compute(monke
     ran = []
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection, mtp_target_scope: ran.append(1)
-        or (torch.tensor(6.0), torch.tensor(3)),
+        lambda model, mbs, loss_method, pg_collection, mtp_target_scope: (
+            ran.append(1) or (torch.tensor(6.0), torch.tensor(3))
+        ),
     )
     engine.normalization = NormalizationPolicy.SAMPLE_MEAN
     with pytest.raises(ValueError, match="count_samples returned None"):

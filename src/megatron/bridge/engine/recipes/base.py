@@ -130,6 +130,10 @@ def check_supported(recipe: TrainingRecipe) -> None:
         problems.append(f"batch_layout must be one of {SUPPORTED_BATCH_LAYOUTS}")
     if getattr(recipe, "mtp_target_scope", "primary") not in SUPPORTED_MTP_TARGET_SCOPES:
         problems.append(f"mtp_target_scope must be one of {SUPPORTED_MTP_TARGET_SCOPES}")
+    detached_mtp = getattr(recipe.model, "mtp_detach_heads", False)
+    if detached_mtp and getattr(recipe, "mtp_target_scope", "primary") == "all_valid":
+        # TODO(detached-mtp): needs the non-padded count as a separate divisor; see AccumulationWindow.
+        problems.append("model.mtp_detach_heads=True with mtp_target_scope='all_valid' is not supported yet")
     if problems:
         raise ValueError("Recipe is not supported by TrainingEngine:\n  - " + "\n  - ".join(problems))
 

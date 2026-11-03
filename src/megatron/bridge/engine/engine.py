@@ -567,12 +567,19 @@ class TrainingEngine:
 
         Raises:
             ValueError: If ``name`` is reserved, private, or not a callable attribute.
+            NotImplementedError: If the method declares ``requires_logits`` (the full-logits path is not
+                implemented yet).
         """
         if not isinstance(name, str) or not name or name.startswith("_") or name in _RESERVED_METHODS:
             raise ValueError(f"loss_fn={name!r} is not a loss method name.")
         attribute = getattr(type(self), name, None)
         if attribute is None or not callable(attribute):
             raise ValueError(f"{type(self).__name__} has no loss method {name!r}.")
+        if getattr(attribute, "requires_logits", False):
+            # TODO(logits): call the model with labels=None and hand the loss the TP-sharded logits in ModelOutput.
+            raise NotImplementedError(
+                f"loss method {name!r} declares requires_logits; the full-logits path is not implemented yet."
+            )
         return getattr(self, name)
 
     def cross_entropy(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:

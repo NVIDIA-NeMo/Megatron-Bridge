@@ -126,7 +126,8 @@ class ModelOutput:
 
     ``logprobs`` is always present (``-nll`` of ``target_ids`` from the configured kernel, TP-reduced).
     ``logits`` is the TP-sharded vocabulary slice and exists only when the selected loss declares
-    ``requires_logits``; the vocabulary interval then describes this rank's slice.
+    ``requires_logits``; the vocabulary interval then describes this rank's slice. That path is not
+    implemented yet; the engine rejects such losses and ``logits`` is always ``None``.
     """
 
     logprobs: torch.Tensor
