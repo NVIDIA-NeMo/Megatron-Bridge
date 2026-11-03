@@ -601,6 +601,10 @@ class MegatronModelBridge(
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
     hf_config = None
 
+    # Whether the Hugging Face source may run code from its repository. AutoBridge sets it from its
+    # source, so a bridge whose model loads modules from the checkpoint can record it on the model config.
+    trust_remote_code: bool = False
+
     # Optional MIMO conversion metadata. Subclasses set this when the standard
     # bridge registry can be split into MIMO component routes.
     mimo_source_prefixes: ClassVar[Mapping[str, str] | None] = None
