@@ -13,8 +13,10 @@
 # limitations under the License.
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.attention import SelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 
@@ -30,6 +32,75 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
 
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
+
+
+@pytest.fixture(params=[Qwen35VLModelProvider, Qwen35VLMoEModelProvider], ids=["dense", "moe"])
+def language_model_construction(request, monkeypatch):
+    provider = request.param(num_layers=4, hidden_size=64, num_attention_heads=4, vocab_size=128)
+    pp_group = Mock(spec=["rank", "size"])
+    pp_group.rank.return_value = 0
+    pp_group.size.return_value = 1
+    provider._pg_collection = ProcessGroupCollection(pp=pp_group)
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.get_pg_rank", lambda group: group.rank())
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.get_pg_size", lambda group: group.size())
+
+    constructor = Mock()
+    monkeypatch.setattr("megatron.bridge.models.qwen_vl.qwen35_vl_provider.build_module", constructor)
+    return provider, constructor
+
+
+@pytest.mark.unit
+class TestQwen35LanguageModelConstruction:
+    @pytest.mark.parametrize(
+        "pp_size,vp_size,pp_rank,vp_stage,overrides,expected",
+        [
+            (2, 2, 0, 0, {}, (True, False)),
+            (2, 2, 1, 0, {}, (False, False)),
+            (2, 2, 0, 1, {}, (False, False)),
+            (2, 2, 1, 1, {}, (False, True)),
+            (2, None, 0, None, {}, (True, False)),
+            (2, None, 1, None, {}, (False, True)),
+            (1, None, 0, None, {}, (True, True)),
+            (2, 2, 0, 1, {"pre_process": True, "post_process": True}, (True, True)),
+            (2, 2, 0, 0, {"pre_process": False}, (False, False)),
+            (2, 2, 1, 1, {"post_process": False}, (False, False)),
+        ],
+    )
+    def test_logical_pipeline_stage_owns_embedding_and_output(
+        self, language_model_construction, pp_size, vp_size, pp_rank, vp_stage, overrides, expected
+    ):
+        provider, constructor = language_model_construction
+        provider.pipeline_model_parallel_size = pp_size
+        provider.virtual_pipeline_model_parallel_size = vp_size
+        provider._pg_collection.pp.rank.return_value = pp_rank
+        provider._pg_collection.pp.size.return_value = pp_size
+
+        provider.provide_language_model(vp_stage=vp_stage, **overrides)
+
+        kwargs = constructor.call_args.kwargs
+        assert (kwargs["pre_process"], kwargs["post_process"]) == expected
+        assert kwargs["vp_stage"] == vp_stage
+        assert kwargs["pg_collection"] is provider._pg_collection
+
+    @pytest.mark.parametrize(
+        "vocab_size,tp_size,should_pad,expected",
+        [(131, 2, True, 256), (256, 2, True, 256), (131, 1, False, 131), (258, 2, False, 258)],
+    )
+    def test_vocab_padding_is_local_to_language_model_construction(
+        self, language_model_construction, vocab_size, tp_size, should_pad, expected
+    ):
+        provider, constructor = language_model_construction
+        provider.vocab_size = vocab_size
+        provider.tensor_model_parallel_size = tp_size
+        provider.make_vocab_size_divisible_by = 128
+        provider.should_pad_vocab = should_pad
+
+        provider.provide_language_model()
+
+        spec = constructor.call_args.args[0]
+        assert spec.params["vocab_size"] == expected
+        assert provider.vocab_size == vocab_size
+        assert provider.build_language_model_spec().params["vocab_size"] == vocab_size
 
 
 class TestQwen35VLModelProvider:

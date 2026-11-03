@@ -39,7 +39,12 @@ from typing import Any, Callable, ClassVar, List, Literal, Optional, cast
 
 import transformers
 from megatron.core.models.hybrid.hybrid_model import HybridModel
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
@@ -90,6 +95,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification impo
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _QWEN_VISUAL_ENCODER_KEY = "qwen_visual"
@@ -548,10 +554,23 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
 def _provide_qwen35_language_model(provider, pre_process, post_process, vp_stage):
     pg = provider._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
+    vp_size = provider.virtual_pipeline_model_parallel_size
+    if pre_process is None:
+        pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(pg.pp)
+    if post_process is None:
+        post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(pg.pp)
+
+    assert provider.vocab_size is not None, "vocab_size must be configured before calling provide_language_model()"
+    spec = provider.build_language_model_spec()
+    if provider.should_pad_vocab:
+        spec.params["vocab_size"] = calculate_padded_vocab_size(
+            provider.vocab_size, provider.make_vocab_size_divisible_by, provider.tensor_model_parallel_size
+        )
+
     return build_module(
-        provider.build_language_model_spec(),
-        pre_process=is_pp_first_stage(pg.pp) if pre_process is None else pre_process,
-        post_process=is_pp_last_stage(pg.pp) if post_process is None else post_process,
+        spec,
+        pre_process=pre_process,
+        post_process=post_process,
         vp_stage=vp_stage,
         pg_collection=pg,
     )
