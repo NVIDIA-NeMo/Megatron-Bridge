@@ -18,7 +18,7 @@ from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_
     NemotronLabsDiffusionBridge,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
+from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -44,18 +44,16 @@ def _nemotron_labs_diffusion_cpt_config(
 ) -> ConfigContainer:
     cfg = _pretrain_common()
 
-    # Model configuration — load HF config to build a standard Ministral3-based GPTModel
+    # Model configuration — load HF config to build a standard Mistral-based GPTModel
     # (no diffusion attention), and use NemotronLabsDiffusionBridge for weight loading
     # which strips the vision encoder from VLM checkpoints.
     hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
     bridge = NemotronLabsDiffusionBridge()
     provider = bridge.provider_bridge(hf_pretrained)
     # For CPT, use standard attention (not NemotronLabsDiffusionAttention) by calling
-    # the grandparent's provide method which creates a plain GPTModel
-    provider.provide = (
-        lambda pre_process=None, post_process=None, vp_stage=None: Ministral3ModelProvider.provide_language_model(
-            provider, pre_process, post_process, vp_stage
-        )
+    # the text-only parent's provide method which creates a plain GPTModel
+    provider.provide = lambda pre_process=None, post_process=None, vp_stage=None: MistralModelProvider.provide(
+        provider, pre_process, post_process, vp_stage
     )
     cfg.model = provider
     cfg.model.perform_initialization = False

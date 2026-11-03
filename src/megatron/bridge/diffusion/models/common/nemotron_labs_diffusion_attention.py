@@ -14,13 +14,16 @@
 
 """NemotronLabsDiffusionAttention for sbd_block_diff diffusion LM training with YARN RoPE."""
 
+import inspect
 import math
+from dataclasses import dataclass
 from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from megatron.core import tensor_parallel
+from megatron.core import parallel_state, tensor_parallel
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import AttnMaskType
@@ -28,10 +31,10 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import divide
 from torch import Tensor
-from torch.nn.attention.flex_attention import flex_attention
-from transformers import ROPE_INIT_FUNCTIONS
+from torch.nn.attention.flex_attention import BlockMask, flex_attention
+from transformers import ROPE_INIT_FUNCTIONS, PretrainedConfig
 
-from megatron.bridge.diffusion.common.dllm import compute_block_mask
+from megatron.bridge.diffusion.common.dllm import asymmetric_semi_ar_mask_mod, build_block_mask, compute_block_mask
 
 
 # ---------------------------------------------------------------------------
@@ -39,10 +42,31 @@ from megatron.bridge.diffusion.common.dllm import compute_block_mask
 # ---------------------------------------------------------------------------
 
 
+_FLEX_SUPPORTS_GQA = "enable_gqa" in inspect.signature(flex_attention).parameters
+
+
 @torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs", dynamic=False)
 def fused_flex_attention(q, k, v, score_mod=None, block_mask=None, return_lse=False):
-    """Thin compiled wrapper around flex_attention."""
-    return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask, return_lse=return_lse)
+    """Run compiled FlexAttention with native GQA when supported by PyTorch."""
+    if _FLEX_SUPPORTS_GQA:
+        return flex_attention(
+            q,
+            k,
+            v,
+            score_mod=score_mod,
+            block_mask=block_mask,
+            return_lse=return_lse,
+            enable_gqa=q.shape[1] != k.shape[1],
+        )
+    n_rep = q.shape[1] // k.shape[1]
+    return flex_attention(
+        q,
+        repeat_kv(k, n_rep),
+        repeat_kv(v, n_rep),
+        score_mod=score_mod,
+        block_mask=block_mask,
+        return_lse=return_lse,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +110,7 @@ def _get_llama_4_attn_scale(position_ids: torch.Tensor, beta: float, max_positio
 
 
 class Ministral3RotaryEmbedding(nn.Module):
-    """RoPE with YARN support, driven by HF ``rope_parameters`` config."""
+    """RoPE with YARN support; resolved parameters are used without retaining the config."""
 
     inv_freq: torch.Tensor
 
@@ -94,7 +118,6 @@ class Ministral3RotaryEmbedding(nn.Module):
         super().__init__()
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
-        self.config = config
 
         self.rope_type = config.rope_parameters["rope_type"]
         rope_init_fn = self._compute_default_rope_parameters
@@ -108,7 +131,39 @@ class Ministral3RotaryEmbedding(nn.Module):
         inv_freq, self.attention_scaling = rope_init_fn(config, device)
 
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = inv_freq
+        # Keep a non-buffer fp32 copy: model dtype casts convert buffers to bf16.
+        self.original_inv_freq = inv_freq.detach().clone().to(dtype=torch.float32)
+
+    @classmethod
+    def from_megatron_config(cls, config: TransformerConfig) -> "Ministral3RotaryEmbedding":
+        """Build RoPE from resolved native fields, without reading or mutating HF metadata."""
+        if config.rope_type not in ("default", "yarn"):
+            raise ValueError(f"Unsupported NemotronLabsDiffusion RoPE type: {config.rope_type}")
+        rope = {"rope_type": config.rope_type, "rope_theta": config.rotary_base}
+        if config.rope_type == "yarn":
+            if config.yarn_rotary_scaling_factor <= 0 or config.yarn_original_max_position_embeddings <= 0:
+                raise ValueError("YaRN factor and original context length must be positive")
+            rope.update(
+                factor=config.yarn_rotary_scaling_factor,
+                original_max_position_embeddings=config.yarn_original_max_position_embeddings,
+                beta_fast=config.yarn_beta_fast,
+                beta_slow=config.yarn_beta_slow,
+                mscale=config.yarn_mscale,
+                mscale_all_dim=config.yarn_mscale_all_dim,
+                attention_factor=config.yarn_attention_factor,
+                truncate=config.yarn_correction_range_round_to_int,
+            )
+        # Transformers implements the frequency calculation. This private adapter
+        # is derived from native values; it is not the checkpoint's HF config.
+        rotary_config = PretrainedConfig(
+            rope_parameters=rope,
+            rope_theta=config.rotary_base,
+            max_position_embeddings=config.seq_length,
+            hidden_size=config.hidden_size,
+            num_attention_heads=config.num_attention_heads,
+            head_dim=config.kv_channels,
+        )
+        return cls(rotary_config)
 
     @staticmethod
     def _compute_default_rope_parameters(config=None, device=None, seq_len=None):
@@ -121,7 +176,10 @@ class Ministral3RotaryEmbedding(nn.Module):
 
     @torch.no_grad()
     def forward(self, x, position_ids):
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
+        inv_freq = getattr(self, "original_inv_freq", self.inv_freq)
+        inv_freq_expanded = (
+            inv_freq[None, :, None].to(device=x.device, dtype=torch.float32).expand(position_ids.shape[0], -1, 1)
+        )
         position_ids_expanded = position_ids[:, None, :].float()
 
         device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
@@ -137,6 +195,26 @@ class Ministral3RotaryEmbedding(nn.Module):
 # ---------------------------------------------------------------------------
 # NemotronLabsDiffusionAttention  (sbd_block_diff only)
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class AsymmetricARMetadata:
+    """Per-microbatch layout shared by all attention layers.
+
+    Call ``build_asymmetric_ar_metadata`` for validation. Treat input tensors as
+    immutable until every forward and recomputed backward using them completes.
+    ``block_mask`` is built lazily once, then reused across layers.
+    """
+
+    noisy_length: int
+    clean_length: int
+    noisy_response_offset: int
+    prompt_lengths: Tensor
+    response_lengths: Tensor
+    noisy_valid_lengths: Tensor
+    clean_lengths: Tensor
+    block_size: int
+    block_mask: BlockMask | None = None
 
 
 class NemotronLabsDiffusionAttention(MegatronModule):
@@ -157,18 +235,19 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         softmax_scale: float = None,
         cp_comm_type: str = None,
         pg_collection: ProcessGroupCollection = None,
+        rope_module: Ministral3RotaryEmbedding | None = None,
     ):
         super().__init__(config=config)
         self.config = config
 
-        assert config.context_parallel_size == 1, "Context parallelism is only supported by TEDotProductAttention!"
+        self.cp_size = config.context_parallel_size
 
         self.layer_number = max(1, layer_number)
 
         projection_size = config.kv_channels * config.num_attention_heads
 
         if pg_collection is None:
-            pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["tp"])
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["tp", "cp"])
         else:
             assert hasattr(pg_collection, "tp"), (
                 "NemotronLabsDiffusionAttention pg_collection must have tp process group"
@@ -192,28 +271,38 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             config.attention_dropout if attention_dropout is None else attention_dropout
         )
 
-        # RoPE setup (always required)
-        hf_text_config = getattr(config.hf_config, "text_config", config.hf_config)
-        hf_text_config.max_position_embeddings = config.seq_length
-        self.rope_embedding_module = Ministral3RotaryEmbedding(hf_text_config)
+        self.rope_embedding_module = (
+            rope_module if rope_module is not None else Ministral3RotaryEmbedding.from_megatron_config(config)
+        )
 
-        # Llama-4 style query scaling (optional)
         self.beta = None
         self.max_position_embeddings = None
-        if getattr(config, "apply_llama4_style_query_key_layer_scaling", False):
-            self.beta = hf_text_config.rope_parameters["llama_4_scaling_beta"]
-            self.max_position_embeddings = hf_text_config.rope_parameters["original_max_position_embeddings"]
-            if (
-                hasattr(config, "yarn_rotary_scaling_factor")
-                and config.yarn_rotary_scaling_factor != hf_text_config.rope_parameters["factor"]
-            ):
-                hf_text_config.rope_parameters["factor"] = config.yarn_rotary_scaling_factor
+        if config.apply_llama4_style_query_key_layer_scaling:
+            if config.llama4_scaling_beta is None or config.yarn_original_max_position_embeddings <= 0:
+                raise ValueError("Llama-4 query scaling requires beta and a positive original context length")
+            self.beta = config.llama4_scaling_beta
+            self.max_position_embeddings = config.yarn_original_max_position_embeddings
 
-        # Pre-compute the sbd_block_diff block mask
-        self.mask = compute_block_mask(
-            block_size=getattr(config, "block_size", 16),
-            max_seq_length=config.seq_length,
+        # CP-capable causal attention has no parameters; construct it on first use.
+        # Keep the CP=1 SDPA path unchanged.
+        self._ar_core_attention = None
+        self._ar_core_attention_kwargs = dict(
+            config=config,
+            layer_number=self.layer_number,
+            attn_mask_type=AttnMaskType.causal,
+            attention_type=attention_type or "self",
+            attention_dropout=0.0,
+            softmax_scale=self.softmax_scale,
+            cp_comm_type=cp_comm_type,
+            pg_collection=pg_collection,
         )
+
+        self.block_size = getattr(config, "block_size", 16)
+        self._asymmetric_ar_metadata: AsymmetricARMetadata | None = None
+
+        # AR attention does not use the doubled-sequence diffusion mask.
+        # Build it only when the diffusion forward path is first used.
+        self.mask = None
 
         import torch._dynamo.config as dcfg
 
@@ -226,6 +315,114 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         self._kv_cache_k = None
         self._kv_cache_v = None
         self._kv_cache_seq_len = 0
+
+    def build_asymmetric_ar_metadata(
+        self,
+        *,
+        noisy_length: int,
+        clean_length: int,
+        noisy_response_offset: int,
+        prompt_lengths: Tensor,
+        response_lengths: Tensor,
+        noisy_valid_lengths: Tensor,
+        clean_lengths: Tensor,
+    ) -> AsymmetricARMetadata:
+        """Validate a compact ``[noisy response | clean prompt + response]`` layout.
+
+        The noisy block grid starts at ``noisy_response_offset``; its logical
+        positions start at each sample's ``prompt_lengths``. ``response_lengths``
+        excludes the masked tail of the final block, while ``noisy_valid_lengths``
+        includes it. Clean lengths exclude right padding. This path supports
+        unpacked CP=1 sequences, like the existing symmetric attention path.
+        """
+        tensors = (prompt_lengths, response_lengths, noisy_valid_lengths, clean_lengths)
+        if any(t.ndim != 1 or t.shape != prompt_lengths.shape for t in tensors):
+            raise ValueError("Asymmetric metadata must contain matching 1D tensors")
+        if any(t.dtype != torch.long or t.device != prompt_lengths.device for t in tensors):
+            raise ValueError("Asymmetric metadata must use int64 tensors on one device")
+        if noisy_length <= 0 or clean_length <= 0 or not 0 <= noisy_response_offset < noisy_length:
+            raise ValueError("Invalid asymmetric sequence lengths or noisy response offset")
+        if self.block_size <= 0:
+            raise ValueError("block_size must be positive")
+        if any(bool((t < 0).any()) for t in tensors):
+            raise ValueError("Asymmetric lengths must be nonnegative")
+        if bool((clean_lengths > clean_length).any()) or bool(
+            (prompt_lengths + response_lengths > clean_lengths).any()
+        ):
+            raise ValueError("Prompt and response must fit the valid clean sequence")
+        expected = (response_lengths + self.block_size - 1) // self.block_size * self.block_size
+        if not torch.equal(noisy_valid_lengths, expected):
+            raise ValueError("noisy_valid_lengths must round responses up to complete blocks")
+        if bool((noisy_response_offset + noisy_valid_lengths > noisy_length).any()):
+            raise ValueError("Noisy response canvas exceeds noisy_length")
+        return AsymmetricARMetadata(
+            noisy_length,
+            clean_length,
+            noisy_response_offset,
+            prompt_lengths,
+            response_lengths,
+            noisy_valid_lengths,
+            clean_lengths,
+            self.block_size,
+        )
+
+    def set_asymmetric_ar_metadata(self, metadata: AsymmetricARMetadata) -> None:
+        """Enable response-relative attention for the next microbatch.
+
+        Share the object returned by ``build_asymmetric_ar_metadata`` across all
+        layers. Replace it for every microbatch; clear it before symmetric SFT.
+        """
+        if metadata.block_size != self.block_size:
+            raise ValueError("Asymmetric metadata block size must match the model")
+        self._asymmetric_ar_metadata = metadata
+
+    def clear_asymmetric_ar_metadata(self) -> None:
+        """Restore the default symmetric diffusion training layout."""
+        self._asymmetric_ar_metadata = None
+
+    def _asymmetric_semi_ar_forward(self, query: Tensor, key: Tensor, value: Tensor) -> Tensor:
+        metadata = self._asymmetric_ar_metadata
+        if metadata is None:
+            raise RuntimeError("Asymmetric metadata has not been set")
+        n, c = metadata.noisy_length, metadata.clean_length
+        if query.shape[:2] != (n + c, metadata.prompt_lengths.numel()):
+            raise ValueError("Query sequence and batch dimensions must match asymmetric metadata")
+        if query.device != metadata.prompt_lengths.device:
+            raise ValueError("Asymmetric metadata must be on the query device")
+        query, key, value = (t.permute(1, 2, 0, 3) for t in (query, key, value))
+        relative = torch.arange(n, device=query.device)[None] - metadata.noisy_response_offset
+        valid = (relative >= 0) & (relative < metadata.noisy_valid_lengths[:, None])
+        noisy_positions = torch.where(valid, metadata.prompt_lengths[:, None] + relative, 0)
+        clean_positions = torch.arange(c, device=query.device)[None].expand(query.shape[0], -1)
+        positions = torch.cat((noisy_positions, clean_positions), dim=1)
+        cos, sin = self.rope_embedding_module(query, positions)
+        query, key = apply_rotary_pos_emb(query, key, cos, sin)
+        if self.beta is not None:
+            scale = _get_llama_4_attn_scale(positions, self.beta, self.max_position_embeddings)
+            query = query * scale.to(query.dtype).unsqueeze(1)
+        if metadata.block_mask is None:
+            mask_mod = asymmetric_semi_ar_mask_mod(
+                block_size=self.block_size,
+                noisy_length=n,
+                noisy_response_offset=metadata.noisy_response_offset,
+                prompt_lengths=metadata.prompt_lengths,
+                noisy_valid_lengths=metadata.noisy_valid_lengths,
+                clean_lengths=metadata.clean_lengths,
+            )
+            metadata.block_mask = build_block_mask(
+                mask_mod,
+                batch_size=query.shape[0],
+                query_length=n + c,
+                key_value_length=n + c,
+                device=query.device,
+            )
+        context = fused_flex_attention(query, key, value, block_mask=metadata.block_mask)
+        if not self.config.sequence_parallel:
+            with tensor_parallel.get_cuda_rng_tracker().fork():
+                context = self.attention_dropout(context)
+        else:
+            context = self.attention_dropout(context)
+        return context.permute(2, 0, 1, 3).contiguous().view(n + c, query.shape[0], self.hidden_size_per_partition)
 
     def set_inference_mode(self, enabled: bool):
         """Enable or disable inference mode. Clears cache on disable."""
@@ -242,6 +439,17 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         self._kv_cache_v = None
         self._kv_cache_seq_len = 0
 
+    def _get_ar_core_attention(self) -> TEDotProductAttention:
+        """Lazily build the CP-capable causal TE core on first use (AR/causal path only).
+
+        Kept out of ``__init__`` so the pure diffusion-training path never constructs it.
+        ``TEDotProductAttention`` holds no learnable parameters, so late construction is
+        safe (no optimizer/checkpoint/.to() implications).
+        """
+        if self._ar_core_attention is None:
+            self._ar_core_attention = TEDotProductAttention(**self._ar_core_attention_kwargs)
+        return self._ar_core_attention
+
     def forward(
         self,
         query: Tensor,
@@ -252,10 +460,15 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         attention_bias: Tensor = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
     ):
-        assert packed_seq_params is None, "Packed sequence is not supported by NemotronLabsDiffusionAttention."
-
         if self._inference_mode:
-            return self._inference_forward(query, key, value)
+            return self._inference_forward(query, key, value, packed_seq_params)
+
+        if self.cp_size > 1:
+            raise ValueError("Context parallelism requires the packed causal AR attention path")
+        assert packed_seq_params is None, "Packed sequence is not supported in diffusion attention mode"
+
+        if self._asymmetric_ar_metadata is not None:
+            return self._asymmetric_semi_ar_forward(query, key, value)
 
         # Position ids for each half of the doubled sequence
         half_seq_len = query.shape[0] // 2
@@ -282,12 +495,11 @@ class NemotronLabsDiffusionAttention(MegatronModule):
                 query.dtype
             )
 
-        # GQA: expand KV heads
-        n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition
-        key = repeat_kv(key, n_rep)
-        value = repeat_kv(value, n_rep)
-
-        # NemotronLabsDiffusionAttention with pre-computed block mask
+        if self.mask is None:
+            self.mask = compute_block_mask(
+                block_size=self.block_size,
+                max_seq_length=self.config.seq_length,
+            )
         context = fused_flex_attention(query, key, value, block_mask=self.mask)
 
         # Dropout
@@ -309,6 +521,7 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         query: Tensor,
         key: Tensor,
         value: Tensor,
+        packed_seq_params: PackedSeqParams | None = None,
     ) -> Tensor:
         """SDPA-based forward for inference with KV cache support.
 
@@ -324,6 +537,14 @@ class NemotronLabsDiffusionAttention(MegatronModule):
           6. Runs SDPA with causal or bidirectional mask
           7. Optionally stores the new K/V in cache
         """
+        if packed_seq_params is not None:
+            if not self._inference_causal or self._cache_enabled:
+                raise ValueError("Packed AR attention requires causal=True and cache_enabled=False")
+            if packed_seq_params.qkv_format != "thd":
+                raise ValueError("Packed AR attention requires qkv_format='thd'")
+            return self._packed_causal_forward(query, key, value, packed_seq_params)
+        if self.cp_size > 1 and (not self._inference_causal or self._cache_enabled):
+            raise ValueError("Unpacked CP attention requires causal=True and cache_enabled=False")
         sq = query.shape[0]
 
         # Transpose to [b, np, s, hn]
@@ -333,8 +554,24 @@ class NemotronLabsDiffusionAttention(MegatronModule):
 
         # Position IDs: new tokens start after the cached tokens
         offset = self._kv_cache_seq_len
-        q_position_ids = torch.arange(offset, offset + sq, device=query.device).unsqueeze(0)
-        k_position_ids = torch.arange(offset, offset + sq, device=key.device).unsqueeze(0)
+        if self.cp_size > 1:
+            if sq % 2:
+                raise ValueError("CP-local sequence length must be even for zigzag sharding")
+            cp_group = self._ar_core_attention_kwargs["pg_collection"].cp
+            cp_rank = cp_group.rank()
+            segment = sq // 2
+            positions = torch.arange(segment, device=query.device)
+            # Each rank owns one early and one late segment of every sample.
+            q_position_ids = torch.cat(
+                (
+                    positions + cp_rank * segment,
+                    positions + (2 * self.cp_size - cp_rank - 1) * segment,
+                )
+            ).unsqueeze(0)
+            k_position_ids = q_position_ids
+        else:
+            q_position_ids = torch.arange(offset, offset + sq, device=query.device).unsqueeze(0)
+            k_position_ids = torch.arange(offset, offset + sq, device=key.device).unsqueeze(0)
 
         cos, sin = self.rope_embedding_module(query, q_position_ids)
         cos_k, sin_k = self.rope_embedding_module(key, k_position_ids)
@@ -353,6 +590,17 @@ class NemotronLabsDiffusionAttention(MegatronModule):
                 query.dtype
             )
             query = query * scale  # broadcast [sq, 1] -> [b, np, sq, hn]
+
+        if self.cp_size > 1:
+            # Preserve SBHD batches: TE exchanges K/V across the CP group and
+            # applies global causal masking without any packed-sequence metadata.
+            return self._get_ar_core_attention()(
+                query.permute(2, 0, 1, 3).contiguous(),
+                key.permute(2, 0, 1, 3).contiguous(),
+                value.permute(2, 0, 1, 3).contiguous(),
+                attention_mask=None,
+                attn_mask_type=AttnMaskType.causal,
+            )
 
         # Concatenate with KV cache
         if self._kv_cache_k is not None:
@@ -408,4 +656,121 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         context = context.transpose(1, 2).transpose(0, 1)  # [sq, b, np, hn]
         new_shape = context.size()[:-2] + (self.hidden_size_per_partition,)
         context = context.contiguous().view(*new_shape)
+        return context
+
+    @staticmethod
+    def _packed_position_ids(
+        packed_seq_params: PackedSeqParams,
+        total_tokens: int,
+        device: torch.device,
+        cp_group: "torch.distributed.ProcessGroup | None" = None,
+    ) -> Tensor:
+        """Per-pack RoPE position ids for THD packing, correct under context parallelism.
+
+        Positions reset to 0 at each packed sub-sequence boundary (so RoPE / Llama-4
+        scaling are per-sequence). Under CP, Megatron load-balanced ("zigzag") shards
+        each padded pack of length ``Lp`` into ``2*cp`` segments of ``cp_seg = Lp//(2*cp)``;
+        this rank holds segments ``[cp_rank]`` (global positions ``cp_rank*cp_seg ...``)
+        and ``[2*cp - cp_rank - 1]``. We reproduce that mapping (matching Megatron's
+        ``_get_thd_freqs_on_this_cp_rank``) so the local tokens get their true global
+        within-pack positions.
+
+        Returns [1, local_total_tokens].
+        """
+        # Megatron's thd RoPE uses the padded cu_seqlens (full, un-divided by CP).
+        cu = (
+            packed_seq_params.cu_seqlens_q_padded
+            if packed_seq_params.cu_seqlens_q_padded is not None
+            else packed_seq_params.cu_seqlens_q
+        )
+        cp_size = 1 if cp_group is None else cp_group.size()
+
+        if cp_size == 1:
+            t = torch.arange(total_tokens, device=device, dtype=cu.dtype)
+            pack = (torch.searchsorted(cu, t, right=True) - 1).clamp(min=0)
+            return (t - cu[pack]).to(torch.long).unsqueeze(0)
+
+        cp_rank = cp_group.rank()
+        chunks = []
+        for p in range(cu.numel() - 1):
+            lp = int((cu[p + 1] - cu[p]).item())  # full (padded) pack length
+            if lp <= 0:
+                continue
+            if lp % (2 * cp_size) != 0:
+                raise ValueError("Packed sequence lengths must be divisible by 2 * context_parallel_size")
+            cp_seg = lp // (2 * cp_size)
+            fwd = cp_rank * cp_seg
+            bwd = (2 * cp_size - cp_rank - 1) * cp_seg
+            chunks.append(torch.arange(fwd, fwd + cp_seg, device=device))
+            chunks.append(torch.arange(bwd, bwd + cp_seg, device=device))
+        pos = (
+            torch.cat(chunks).to(torch.long).unsqueeze(0)
+            if chunks
+            else torch.zeros(1, total_tokens, dtype=torch.long, device=device)
+        )
+        if pos.numel() != total_tokens:
+            raise ValueError("Packed boundaries do not match the CP-local token count")
+        return pos
+
+    def _packed_causal_forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        packed_seq_params: PackedSeqParams,
+    ) -> Tensor:
+        """AR / causal forward for THD-packed (and optionally CP-sharded) sequences.
+
+        Causal attention is `no_bias`, which TE supports with qkv_format="thd" and
+        context parallelism, so we apply the model's RoPE + Llama-4 scaling with
+        per-pack positions and delegate the attention to the CP-capable causal TE
+        core. The CP group (if any) is carried in packed_seq_params.cp_group.
+
+        query, key, value: [total, np, hn] (Megatron squeezes the dummy batch dim
+        for thd before calling core_attention). A 4D [total, 1, np, hn] caller (e.g.
+        unit tests) is also accepted and squeezed.
+        """
+        # Normalize to 3D THD layout [total, heads, hn].
+        if query.dim() == 4:
+            query = query.squeeze(1)
+            key = key.squeeze(1)
+            value = value.squeeze(1)
+        total = query.shape[0]
+
+        # Per-pack RoPE (positions reset at each cu_seqlens boundary). Under CP the
+        # local tokens are a zigzag slice of the full sequence, so positions must be
+        # the true global within-pack positions (see _packed_position_ids).
+        cp_group = packed_seq_params.cp_group
+        if cp_group is None and self.cp_size > 1:
+            cp_group = parallel_state.get_context_parallel_group()
+        position_ids = self._packed_position_ids(packed_seq_params, total, query.device, cp_group)  # [1, total]
+        cos, sin = self.rope_embedding_module(query, position_ids)
+        cos = cos.squeeze(0).unsqueeze(1)
+        sin = sin.squeeze(0).unsqueeze(1)
+        q = (query * cos) + (rotate_half(query) * sin)  # [total, np, hn]
+        k = (key * cos) + (rotate_half(key) * sin)  # [total, n_kv, hn]
+        v = value
+
+        # Llama-4 query scaling (per-pack positions); scale [total, 1] -> [total, 1, 1]
+        # to broadcast over [total, np, hn].
+        if self.beta is not None:
+            scale = _get_llama_4_attn_scale(position_ids.squeeze(0), self.beta, self.max_position_embeddings).to(
+                q.dtype
+            )
+            q = q * scale.unsqueeze(-1)
+
+        # q/k/v are already 3D [total, heads, hn] == TE's thd layout. GQA is handled
+        # inside TE (num_gqa_groups). TE converts AttnMaskType.causal -> padding_causal
+        # for thd and applies per-pack causal masking via cu_seqlens in packed_seq_params.
+        context = self._get_ar_core_attention()(
+            q.contiguous(),
+            k.contiguous(),
+            v.contiguous(),
+            attention_mask=None,
+            attn_mask_type=AttnMaskType.causal,
+            packed_seq_params=packed_seq_params,
+        )
+        # Restore [total, b=1, hidden] (Megatron reshapes thd output to this anyway).
+        if context.dim() == 2:
+            context = context.unsqueeze(1)
         return context
