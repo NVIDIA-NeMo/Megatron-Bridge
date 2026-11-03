@@ -36,12 +36,14 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     GDNLinearMappingSeparate,
     MambaInProjMapping,
+    QKVGMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
     _split_gdn_grouped_to_separate,
     split_gdn_linear_weights,
     split_qkv_weights,
+    split_qkvg_weights,
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 
@@ -103,7 +105,7 @@ def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
         return "gated"
     if isinstance(mapping, MambaInProjMapping):
         return "column"
-    if isinstance(mapping, (QKVMapping, ConcatenatedQKVMapping, GDNLinearMappingSeparate)):
+    if isinstance(mapping, (QKVMapping, ConcatenatedQKVMapping, QKVGMapping, GDNLinearMappingSeparate)):
         return mapping._tp_mapping._detect_parallelism_type(module)
     if isinstance(mapping, AutoMapping):
         return mapping._detect_parallelism_type(module)
@@ -117,7 +119,7 @@ def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
 
 
 def _qkv_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, int, bool] | None:
-    if not isinstance(mapping, (QKVMapping, ConcatenatedQKVMapping)):
+    if not isinstance(mapping, (QKVMapping, ConcatenatedQKVMapping, QKVGMapping)):
         return None
     config = mapping._get_config(module)
     return (
@@ -196,11 +198,9 @@ def _validate_quantized_task(task: WeightConversionTask) -> None:
         or type(task.mapping)._megatron_to_hf is not QKVMapping._megatron_to_hf
     ):
         raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
-    if (
-        isinstance(task.mapping, ConcatenatedQKVMapping)
-        and type(task.mapping).megatron_to_hf is not ConcatenatedQKVMapping.megatron_to_hf
-    ):
-        raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
+    for qkv_type in (ConcatenatedQKVMapping, QKVGMapping):
+        if isinstance(task.mapping, qkv_type) and type(task.mapping).megatron_to_hf is not qkv_type.megatron_to_hf:
+            raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
     if isinstance(task.mapping, MambaInProjMapping) and (
         type(task.mapping).megatron_to_hf is not MambaInProjMapping.megatron_to_hf
     ):
@@ -458,7 +458,7 @@ def _transform_source_state(
         else:
             raise NotImplementedError(f"Unsupported ModelOpt topology {parallelism!r} for {task.global_param_name}")
 
-        if isinstance(task.mapping, (QKVMapping, ConcatenatedQKVMapping)):
+        if isinstance(task.mapping, (QKVMapping, ConcatenatedQKVMapping, QKVGMapping)):
             if source.qkv_layout is None:
                 raise RuntimeError(f"Missing QKV layout for {task.global_param_name}")
             heads, groups, channels, hidden, output_gate = source.qkv_layout
@@ -469,18 +469,23 @@ def _transform_source_state(
                 hidden_size=hidden,
                 attention_output_gate=output_gate,
             )
-            q_indices, k_indices, v_indices = split_qkv_weights(
-                config,
-                torch.arange(full_shape[0]),
-            )
-            if isinstance(task.mapping, ConcatenatedQKVMapping):
+            rows = torch.arange(full_shape[0])
+            if isinstance(task.mapping, QKVGMapping):
+                # The mapping's own split; its gate takes one row per head.
+                indices = split_qkvg_weights(config, rows.unsqueeze(1), feature_dim=1)
+                transformed = {
+                    names[key]: _select_state(transformed_state, 0, index.squeeze(1))
+                    for key, index in zip(("q", "k", "v", "g"), indices, strict=True)
+                }
+            elif isinstance(task.mapping, ConcatenatedQKVMapping):
                 # One HF tensor holding Q, K and V in that order, as the mapping writes it.
                 transformed = {
                     task.mapping.hf_param: _select_state(
-                        transformed_state, 0, torch.cat((q_indices, k_indices, v_indices))
+                        transformed_state, 0, torch.cat(split_qkv_weights(config, rows))
                     )
                 }
             else:
+                q_indices, k_indices, v_indices = split_qkv_weights(config, rows)
                 transformed = {
                     names["q"]: _select_state(transformed_state, 0, q_indices),
                     names["k"]: _select_state(transformed_state, 0, k_indices),
