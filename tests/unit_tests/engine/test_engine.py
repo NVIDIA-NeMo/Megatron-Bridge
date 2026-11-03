@@ -71,10 +71,7 @@ def test_check_supported_accepts_baseline_shape():
         (lambda r: setattr(r.model, "seq_length", None), "seq_length"),
         (lambda r: setattr(r, "batch_layout", "sbhd"), "batch_layout"),
         (lambda r: setattr(r, "mtp_target_scope", "response"), "mtp_target_scope"),
-        (
-            lambda r: (setattr(r.model, "mtp_detach_heads", True), setattr(r, "mtp_target_scope", "all_valid")),
-            "mtp_detach_heads",
-        ),
+        (lambda r: setattr(r.model, "mtp_detach_heads", True), "mtp_detach_heads"),
     ],
 )
 def test_check_supported_rejects_each_violation(mutate, message):
@@ -110,12 +107,6 @@ def test_loss_dispatch_resolves_predefined_and_subclass_methods():
     assert engine.resolve_loss_method("cross_entropy").__func__ is TrainingEngine.cross_entropy
     assert engine.resolve_loss_method("ppo_clip").__func__ is TrainingEngine.ppo_clip
     assert engine.resolve_loss_method("my_loss")(None, None).item() == 0.0
-
-
-def test_detached_mtp_under_primary_scope_is_accepted():
-    recipe = _recipe_like()
-    recipe.model.mtp_detach_heads = True
-    check_supported(recipe)
 
 
 def test_loss_dispatch_rejects_requires_logits_placeholder():

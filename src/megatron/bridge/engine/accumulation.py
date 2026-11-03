@@ -32,11 +32,13 @@ class AccumulationWindow:
     num_loss_tokens: int = 0  # D: active target positions over the update
     num_samples: int = 0  # N: Datums over the update
     loss_sum: float = 0.0  # sum of the loss methods' returns over the update (reporting only)
-    # TODO(detached-mtp): with mtp_detach_heads=True and mtp_target_scope="all_valid", the MTP-only
-    # parameters get the MTP loss summed over all non-padded positions but are still divided by
-    # num_loss_tokens, so their effective step grows with the non-padded / active-token ratio. Track
-    # the non-padded count over the update and divide those parameters by it instead. Under
-    # mtp_target_scope="primary" MCore's own rescale already makes 1/num_loss_tokens a per-target mean.
+    # TODO(detached-mtp): with mtp_detach_heads=True the MTP-only parameters see nothing but the MTP
+    # loss, so dividing them by num_loss_tokens is not a mean over MTP targets. MCore rescales the MTP
+    # loss by its own before/after-shift counts, but per rank: under CP or packing the ranks' MTP
+    # targets split differently from their primary targets, so the result is a rank-weighted sum, not
+    # a pooled mean (the coupled case accepts this because it matches the baseline). Support needs the
+    # MTP-target count after the shift, all-reduced over DP x CP and summed over the update, as the
+    # divisor for those parameters. Until then the recipe check rejects detached heads.
 
     @property
     def is_open(self) -> bool:

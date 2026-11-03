@@ -175,11 +175,14 @@ def _param_delta(a: TrainingEngine, b: TrainingEngine, *, lr: float) -> tuple[fl
 
 
 def _grad_delta(a: TrainingEngine, b: TrainingEngine) -> tuple[float, float]:
-    """Over the accumulated FP32 gradient buffers (``main_grad`` of every parameter, dense and expert),
-    reduced over ranks: max |a - b| and that difference relative to the largest gradient entry.
+    """Over the accumulated FP32 gradient buffers (``main_grad`` of every parameter, dense and expert):
+    max |a - b| after summing each parameter's difference over the group DDP reduces it over, and that
+    difference relative to the largest reduced gradient entry.
 
-    Both engines run on the same ranks with the same parameter layout, so the unnormalized local sums
-    are comparable element by element before any DP reduction or scaling."""
+    Summing the difference over the data-parallel group (DP x CP for dense parameters, expert-DP for
+    expert parameters) makes the comparison independent of which DP replica held which microbatch,
+    so it is valid for the pack-replay engine and the re-packing engine alike."""
+    groups = a.process_groups
     diff = torch.zeros((), device="cuda")
     scale = torch.zeros((), device="cuda")
     for chunk_a, chunk_b in zip(a.model, b.model):
@@ -188,8 +191,14 @@ def _grad_delta(a: TrainingEngine, b: TrainingEngine) -> tuple[float, float]:
             if ga is None or gb is None:
                 assert ga is None and gb is None, "gradient buffers differ in layout"
                 continue
-            diff = torch.maximum(diff, (ga.float() - gb.float()).abs().max())
-            scale = torch.maximum(scale, ga.float().abs().max())
+            group = groups.dp_cp if getattr(pa, "allreduce", True) else groups.expt_dp
+            delta = ga.float() - gb.float()
+            total = ga.float().clone()
+            if group is not None and group.size() > 1:
+                torch.distributed.all_reduce(delta, group=group)
+                torch.distributed.all_reduce(total, group=group)
+            diff = torch.maximum(diff, delta.abs().max())
+            scale = torch.maximum(scale, total.abs().max())
     torch.distributed.all_reduce(diff, op=torch.distributed.ReduceOp.MAX)
     torch.distributed.all_reduce(scale, op=torch.distributed.ReduceOp.MAX)
     return diff.item(), (diff / scale.clamp(min=1e-30)).item()
@@ -210,7 +219,7 @@ def _compare_one_vs_four(
     out1 = one.forward_backward(datums)
     outs4 = [four.forward_backward(chunk) for chunk in _chunks(datums, 4)]
     grad_diff, grad_rel = _grad_delta(one, four)
-    print_rank_0(f"[accum:{label}] accumulated grad buffers: max |diff|={grad_diff:.3e} (relative {grad_rel:.3e})")
+    print_rank_0(f"[accum:{label}] DP-reduced grad sums: max |diff|={grad_diff:.3e} (relative {grad_rel:.3e})")
     step1 = one.optim_step(adam)
     step4 = four.optim_step(adam)
     tokens4 = sum(o.num_loss_tokens for o in outs4)
@@ -237,7 +246,7 @@ def check_accumulation(args: argparse.Namespace, recipe) -> None:
     """Strict gate on identical microbatches (pack replay), plus the re-packing comparison for information."""
     datums = next(iter_pack_batches(args.parquet, args.packs_per_step))
     grad_rel, rel, diff, fraction = _compare_one_vs_four(args, recipe, PackReplayEngine, datums, "same-packs")
-    assert grad_rel < 1e-4, f"accumulated gradients differ by {grad_rel:.3e} (relative) on identical microbatches"
+    assert grad_rel < 1e-4, f"reduced gradients differ by {grad_rel:.3e} (relative) on identical microbatches"
     assert rel < 1e-4, f"grad norm differs by {rel:.3e} on identical microbatches"
     assert fraction < 1e-5, f"{fraction:.3e} of elements took a different update on identical microbatches"
     _compare_one_vs_four(args, recipe, TrainingEngine, datums, "repacked")
