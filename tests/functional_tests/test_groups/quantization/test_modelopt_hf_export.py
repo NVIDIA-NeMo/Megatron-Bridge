@@ -26,185 +26,26 @@ from pathlib import Path
 import pytest
 import torch
 from safetensors import safe_open
-from safetensors.torch import save_file
-from tokenizers import Tokenizer
-from tokenizers.models import WordLevel
-from transformers import (
-    NemotronHConfig,
-    NemotronHForCausalLM,
-    PreTrainedTokenizerFast,
-    Qwen3_5ForCausalLM,
-    Qwen3_5TextConfig,
-    Qwen3Config,
-    Qwen3ForCausalLM,
-    Qwen3MoeConfig,
-    Qwen3MoeForCausalLM,
-    Qwen3NextConfig,
-    Qwen3NextForCausalLM,
-)
 
-from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
-from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2ForCausalLM
-from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
+from tests.functional_tests.test_groups.quantization.modelopt_export_toys import save_toy_model
 
 
 REPO_ROOT = Path(__file__).parents[4]
-TOY_CONFIG = {
-    "hidden_size": 128,
-    "intermediate_size": 256,
-    "num_hidden_layers": 2,
-    "num_attention_heads": 4,
-    "num_key_value_heads": 2,
-    "head_dim": 32,
-    "vocab_size": 256,
-    "max_position_embeddings": 128,
-    "tie_word_embeddings": False,
-}
-
-
-def _save_step35(path: Path) -> None:
-    """Dense Step-3.5: per-head scalar gate g_proj fused into linear_qkv (QKVGMapping); no HF model class."""
-    hidden, heads, groups, head_dim, layers = (
-        TOY_CONFIG[key]
-        for key in ("hidden_size", "num_attention_heads", "num_key_value_heads", "head_dim", "num_hidden_layers")
-    )
-    config = Step35Config(
-        hidden_size=hidden,
-        intermediate_size=TOY_CONFIG["intermediate_size"],
-        num_attention_heads=heads,
-        num_attention_groups=groups,
-        head_dim=head_dim,
-        num_hidden_layers=layers,
-        vocab_size=TOY_CONFIG["vocab_size"],
-        max_position_embeddings=TOY_CONFIG["max_position_embeddings"],
-        layer_types=["full_attention"] * layers,
-        partial_rotary_factors=[1.0] * layers,
-        moe_layers_enum="",
-        num_nextn_predict_layers=0,
-        tie_word_embeddings=False,
-    )
-    config.architectures = ["Step3p5ForCausalLM"]
-    config.save_pretrained(path)
-    shapes = {
-        "input_layernorm": (hidden,),
-        "post_attention_layernorm": (hidden,),
-        "self_attn.q_norm": (head_dim,),
-        "self_attn.k_norm": (head_dim,),
-        "self_attn.q_proj": (heads * head_dim, hidden),
-        "self_attn.k_proj": (groups * head_dim, hidden),
-        "self_attn.v_proj": (groups * head_dim, hidden),
-        "self_attn.g_proj": (heads, hidden),
-        "self_attn.o_proj": (hidden, heads * head_dim),
-        "mlp.gate_proj": (TOY_CONFIG["intermediate_size"], hidden),
-        "mlp.up_proj": (TOY_CONFIG["intermediate_size"], hidden),
-        "mlp.down_proj": (hidden, TOY_CONFIG["intermediate_size"]),
-    }
-    state = {
-        "model.embed_tokens.weight": (TOY_CONFIG["vocab_size"], hidden),
-        "lm_head.weight": (TOY_CONFIG["vocab_size"], hidden),
-        "model.norm.weight": (hidden,),
-        **{f"model.layers.{layer}.{name}.weight": shape for layer in range(layers) for name, shape in shapes.items()},
-    }
-    save_file(
-        {name: torch.randn(shape, dtype=torch.bfloat16) for name, shape in state.items()}, path / "model.safetensors"
-    )
 
 
 @pytest.fixture(scope="module")
-def toy_models(tmp_path_factory) -> dict[str, Path]:
+def toy_models(tmp_path_factory):
+    """Build each toy checkpoint the first time a test asks for it."""
     paths = {}
-    torch.manual_seed(0)
-    tokenizer = PreTrainedTokenizerFast(
-        tokenizer_object=Tokenizer(
-            WordLevel({"<unk>": 0, **{f"token{i}": i for i in range(1, TOY_CONFIG["vocab_size"])}}, unk_token="<unk>")
-        ),
-        unk_token="<unk>",
-    )
-    for name, model in (
-        ("qwen3", Qwen3ForCausalLM(Qwen3Config(**TOY_CONFIG))),
-        (
-            "qwen3_moe",
-            Qwen3MoeForCausalLM(
-                Qwen3MoeConfig(moe_intermediate_size=64, num_experts=4, num_experts_per_tok=2, **TOY_CONFIG)
-            ),
-        ),
-        (
-            "qwen3_5",
-            Qwen3_5ForCausalLM(
-                Qwen3_5TextConfig(
-                    layer_types=["linear_attention", "full_attention"],
-                    linear_num_key_heads=2,
-                    linear_num_value_heads=4,
-                    linear_key_head_dim=32,
-                    linear_value_head_dim=32,
-                    **TOY_CONFIG,
-                )
-            ),
-        ),
-        (
-            "nemotron_h",
-            NemotronHForCausalLM(
-                NemotronHConfig(
-                    **{
-                        **TOY_CONFIG,
-                        "num_hidden_layers": 4,
-                        "layers_block_type": ["mamba", "attention", "moe", "mamba"],
-                        "mamba_num_heads": 8,
-                        "mamba_head_dim": 32,
-                        "ssm_state_size": 16,
-                        "n_groups": 2,
-                        "n_routed_experts": 4,
-                        "num_experts_per_tok": 2,
-                        "moe_intermediate_size": 64,
-                        "moe_shared_expert_intermediate_size": 128,
-                        "num_nextn_predict_layers": 0,
-                    }
-                )
-            ),
-        ),
-        (
-            # Fused in_proj_qkvz / in_proj_ba (GDNLinearMapping, traced).
-            "qwen3_next",
-            Qwen3NextForCausalLM(
-                Qwen3NextConfig(
-                    layer_types=["linear_attention", "full_attention"],
-                    linear_num_key_heads=2,
-                    linear_num_value_heads=4,
-                    linear_key_head_dim=32,
-                    linear_value_head_dim=32,
-                    moe_intermediate_size=64,
-                    shared_expert_intermediate_size=64,
-                    num_experts=4,
-                    num_experts_per_tok=2,
-                    **TOY_CONFIG,
-                )
-            ),
-        ),
-        (
-            # Fused [Q|K|V] attention.query_key_value (ConcatenatedQKVMapping); dense layers only, since the
-            # bridge maps grouped-GEMM experts only.
-            "bailing_moe2",
-            BailingMoeV2ForCausalLM(
-                BailingMoeV2Config(
-                    num_experts=4,
-                    num_experts_per_tok=2,
-                    n_group=1,
-                    topk_group=1,
-                    first_k_dense_replace=TOY_CONFIG["num_hidden_layers"],
-                    pad_token_id=0,
-                    eos_token_id=0,
-                    **TOY_CONFIG,
-                )
-            ),
-        ),
-    ):
-        paths[name] = tmp_path_factory.mktemp(name)
-        model.to(torch.bfloat16).save_pretrained(paths[name])
-        tokenizer.save_pretrained(paths[name])
-    paths["step35"] = tmp_path_factory.mktemp("step35")
-    _save_step35(paths["step35"])
-    tokenizer.save_pretrained(paths["step35"])
-    return paths
+
+    def toy_model(name: str) -> Path:
+        if name not in paths:
+            torch.manual_seed(0)
+            paths[name] = tmp_path_factory.mktemp(name)
+            save_toy_model(name, paths[name])
+        return paths[name]
+
+    return toy_model
 
 
 def _export(model: Path, out: Path, config: str, *parallelism: str, offline_out: Path | None = None) -> None:
@@ -234,57 +75,94 @@ def _bits(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.view(torch.uint8) if tensor.element_size() == 1 else tensor
 
 
+# The HF modules each toy leaves unquantized: embeddings, LM heads, routers, convolutions, the GatedDeltaNet
+# beta / alpha gates, vision towers, DSA indexers, DeepSeek-V4 compressors and its einsum-only wo_a, and
+# Kimi-K3's attention residuals; never norms. ModelOpt folds some of them into wildcards.
+IGNORE = {
+    "qwen3": {"lm_head", "model.embed_tokens"},
+    "qwen3_5_vl_moe": {
+        "lm_head",
+        "model.language_model.embed_tokens",
+        "model.visual*",
+        *{f"model.language_model.layers.0.linear_attn.{name}" for name in ("conv1d", "in_proj_b", "in_proj_a")},
+        *{
+            f"model.language_model.layers.{layer}.mlp.{gate}"
+            for layer in range(2)
+            for gate in ("gate", "shared_expert_gate")
+        },
+    },
+    "nemotron_h": {
+        "lm_head",
+        "backbone.embeddings",
+        *{f"backbone.layers.{layer}.mixer.conv1d" for layer in (0, 3)},
+        "backbone.layers.2.mixer.gate",
+    },
+    "glm5_next": {
+        "lm_head",
+        "model.language_model.embed_tokens",
+        "model.visual*",
+        *{f"model.language_model.layers.0.self_attn.{name}_conv1d" for name in ("q", "k", "v")},
+        "model.language_model.layers.1.mlp.gate",
+        "model.language_model.layers.1.self_attn.indexer*",
+    },
+    "deepseek_v4": {
+        "embed",
+        "head",
+        *{f"layers.{layer}.{name}" for layer in range(3) for name in ("attn.wo_a", "ffn.gate")},
+        *{f"layers.{layer}.attn.compressor*" for layer in (1, 2)},
+        "layers.1.attn.indexer*",
+    },
+    "kimi_k3": {
+        "language_model.lm_head",
+        "language_model.model.embed_tokens",
+        "language_model.model.output_attn_res_proj",
+        *{
+            f"language_model.model.layers.{layer}.{name}_res_proj"
+            for layer in range(2)
+            for name in ("self_attention", "mlp")
+        },
+        *{f"language_model.model.layers.0.self_attn.{name}_conv1d" for name in ("q", "k", "v")},
+        "language_model.model.layers.1.block_sparse_moe.gate",
+    },
+}
+# A quantized projection per toy, preferably one whose layout the export has to rebuild.
+PROJECTION = {
+    "qwen3": "model.layers.0.mlp.down_proj",
+    "qwen3_5_vl_moe": "model.language_model.layers.0.mlp.experts.0.down_proj",
+    "nemotron_h": "backbone.layers.0.mixer.in_proj",
+    # The KDA in_proj, split back into q / k / v.
+    "glm5_next": "model.language_model.layers.0.self_attn.q_proj",
+    "deepseek_v4": "layers.0.ffn.experts.0.w2",
+    "kimi_k3": "language_model.model.layers.1.block_sparse_moe.routed_expert_down_proj",
+}
+
+
 @pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize(
     ("model", "config", "parallelisms"),
     [
-        ("qwen3", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
+        # Nemotron-H, and Qwen3 with Qwen3.5-VL, cover TP, PP and EP; the other models one or two of them.
         ("qwen3", "fp8", [("--tp", "2")]),
-        ("qwen3_moe", "mixed", [("--ep", "2"), ("--etp", "2"), ("--pp", "2")]),
-        ("qwen3_5", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
-        ("nemotron_h", "nvfp4", [("--tp", "2"), ("--pp", "2")]),
-        ("bailing_moe2", "nvfp4", [("--tp", "2")]),
-        ("qwen3_next", "nvfp4", [("--tp", "2")]),
-        ("step35", "nvfp4", [("--tp", "2")]),
+        ("qwen3_5_vl_moe", "mixed", [("--pp", "2"), ("--ep", "2")]),
+        ("nemotron_h", "nvfp4", [("--tp", "2"), ("--pp", "2"), ("--ep", "2")]),
+        ("glm5_next", "nvfp4", [("--ep", "2")]),
+        # DeepSeek-V4 attention supports TP=1 only.
+        ("deepseek_v4", "nvfp4", [("--pp", "2")]),
+        ("kimi_k3", "nvfp4", [("--tp", "2")]),
     ],
 )
 def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, model, config, parallelisms):
     """Every parallelism writes the single-GPU checkpoint bit for bit, with a deployable quantization config."""
     # ModelOpt 0.48 predates its FP8 rounding fix; FP8 bit parity remains deferred above.
     offline_out = tmp_path / "offline" if model == "nemotron_h" and config == "nvfp4" else None
-    _export(toy_models[model], tmp_path / "reference", config, offline_out=offline_out)
+    _export(toy_models(model), tmp_path / "reference", config, offline_out=offline_out)
     weights, hf_config = _load(tmp_path / "reference")
 
     quantization = hf_config["quantization_config"]
     assert quantization["quant_method"] == "modelopt"
     assert quantization["quant_algo"] == {"nvfp4": "NVFP4", "fp8": "FP8", "mixed": "MIXED_PRECISION"}[config]
-    # Only unquantized linear layers are excluded: the embedding, LM head, MoE routers and, in GatedDeltaNet,
-    # the conv1d and the beta / alpha gates fused into the quantized in_proj; never norms.
-    unquantized = {
-        "qwen3_moe": {f"model.layers.{layer}.mlp.gate" for layer in range(2)},
-        "qwen3_5": {f"model.layers.0.linear_attn.{name}" for name in ("conv1d", "in_proj_b", "in_proj_a")},
-        "nemotron_h": {
-            *{f"backbone.layers.{layer}.mixer.conv1d" for layer in (0, 3)},
-            "backbone.layers.2.mixer.gate",
-        },
-        "qwen3_next": {
-            "model.layers.0.linear_attn.conv1d",
-            "model.layers.0.linear_attn.in_proj_ba",
-            *{f"model.layers.{layer}.mlp.{gate}" for layer in range(2) for gate in ("gate", "shared_expert_gate")},
-        },
-    }.get(model, set())
-    embedding = {"nemotron_h": "backbone.embeddings", "bailing_moe2": "model.word_embeddings"}.get(
-        model, "model.embed_tokens"
-    )
-    assert set(quantization["ignore"]) == {"lm_head", embedding, *unquantized}
-    projection = {
-        "qwen3_moe": "model.layers.0.mlp.experts.0.down_proj",
-        "qwen3_5": "model.layers.0.linear_attn.in_proj_qkv",
-        "nemotron_h": "backbone.layers.0.mixer.in_proj",
-        "bailing_moe2": "model.layers.0.attention.query_key_value",
-        "qwen3_next": "model.layers.0.linear_attn.in_proj_qkvz",
-        "step35": "model.layers.0.self_attn.g_proj",
-    }.get(model, "model.layers.0.mlp.down_proj")
+    assert set(quantization["ignore"]) == IGNORE[model]
+    projection = PROJECTION[model]
     packed_dtype = torch.float8_e4m3fn if config == "fp8" else torch.uint8
     assert weights[f"{projection}.weight"].dtype == packed_dtype
     assert {f"{projection}.weight_scale", f"{projection}.input_scale"} <= weights.keys()
@@ -305,7 +183,7 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
 
     for parallelism in parallelisms:
         out = tmp_path / "_".join(parallelism).strip("-")
-        _export(toy_models[model], out, config, *parallelism)
+        _export(toy_models(model), out, config, *parallelism)
         other_weights, other_config = _load(out)
         assert other_config == hf_config, parallelism
         assert other_weights.keys() == weights.keys(), parallelism
