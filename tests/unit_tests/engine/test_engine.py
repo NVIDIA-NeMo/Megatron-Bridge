@@ -28,6 +28,7 @@ def _recipe_like() -> SimpleNamespace:
         ),
         batch_layout="thd",
         pad_to_max_length=False,
+        mtp_target_scope="primary",
     )
 
 
@@ -69,6 +70,7 @@ def test_check_supported_accepts_baseline_shape():
         (lambda r: setattr(r.model, "vocab_size", None), "vocab_size"),
         (lambda r: setattr(r.model, "seq_length", None), "seq_length"),
         (lambda r: setattr(r, "batch_layout", "sbhd"), "batch_layout"),
+        (lambda r: setattr(r, "mtp_target_scope", "response"), "mtp_target_scope"),
     ],
 )
 def test_check_supported_rejects_each_violation(mutate, message):
@@ -121,7 +123,7 @@ def test_forward_backward_runs_pipeline_and_opens_window(monkeypatch):
     with pytest.raises(ValueError, match="loss method"):
         engine.forward_backward(_datums(), loss_fn="nope")
     calls = []
-    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(overlap_grad_reduce=False))
+    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(overlap_grad_reduce=False), mtp_target_scope="primary")
     engine._runtime.pg_collection = None
     engine._model = []
     engine._window = AccumulationWindow()
@@ -133,7 +135,7 @@ def test_forward_backward_runs_pipeline_and_opens_window(monkeypatch):
     engine.count_samples = lambda microbatches: 2
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection: (torch.tensor(6.0), torch.tensor(3)),
+        lambda model, mbs, loss_method, pg_collection, mtp_target_scope: (torch.tensor(6.0), torch.tensor(3)),
     )
     out = engine.forward_backward(_datums())
     assert out == ForwardBackwardOutput(loss_sum=6.0, num_loss_tokens=3)
@@ -149,17 +151,20 @@ def test_default_count_samples_is_unknown_for_foreign_mappings():
 
 def test_unknown_sample_count_is_rejected_under_sample_mean_before_compute(monkeypatch):
     engine = _unbuilt_engine()
-    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(overlap_grad_reduce=False))
+    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(overlap_grad_reduce=False), mtp_target_scope="primary")
     engine._runtime.pg_collection = None
     engine._model = []
     engine._window = AccumulationWindow()
     engine.preprocess = lambda data, training: [_prepared(mapping=object())]
     engine.check_microbatches = lambda microbatches: None
-    engine.summarize = lambda loss_sum, tokens: ForwardBackwardOutput(loss_sum=float(loss_sum), num_loss_tokens=int(tokens))
+    engine.summarize = lambda loss_sum, tokens: ForwardBackwardOutput(
+        loss_sum=float(loss_sum), num_loss_tokens=int(tokens)
+    )
     ran = []
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection: ran.append(1) or (torch.tensor(6.0), torch.tensor(3)),
+        lambda model, mbs, loss_method, pg_collection, mtp_target_scope: ran.append(1)
+        or (torch.tensor(6.0), torch.tensor(3)),
     )
     engine.normalization = NormalizationPolicy.SAMPLE_MEAN
     with pytest.raises(ValueError, match="count_samples returned None"):
@@ -192,7 +197,10 @@ def test_forward_only_runs_preprocess_check_then_postprocess(monkeypatch):
     engine.postprocess = lambda microbatches, logprobs, gather_output: calls.append(("post", gather_output)) or "out"
     engine._runtime.pg_collection = None
     engine._model = []
-    monkeypatch.setattr("megatron.bridge.engine.engine.run_forward_only", lambda model, mbs, pg_collection: ["lp"])
+    engine._recipe = SimpleNamespace(mtp_target_scope="primary")
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.run_forward_only", lambda model, mbs, pg_collection, mtp_target_scope: ["lp"]
+    )
     assert engine.forward_only(_datums(), gather_output=False) == "out"
     assert calls == [("preprocess", False), ("check", ["mb"]), ("post", False)]
 

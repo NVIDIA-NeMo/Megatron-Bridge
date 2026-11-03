@@ -66,6 +66,11 @@ class TrainingRecipe:
             widths vary with their content (what RL rollouts normally do). ``True`` pads every pack to
             ``model.seq_length`` so kernels always see one shape; wastes compute on padding but avoids
             per-shape kernel autotuning, which can dominate step time on some stacks.
+        mtp_target_scope: Positions the MTP auxiliary loss trains on, when ``model.mtp_num_layers`` is
+            set. ``"primary"`` uses the primary objective's positions (``loss_mask & ~padding_mask``, the
+            SFT baseline). ``"all_valid"`` uses every non-padded position, as in pretraining; the MTP
+            term then carries more total weight relative to the primary loss (it is still divided by the
+            primary denominator). Padding is excluded either way; the user's loss methods are unaffected.
     """
 
     model: ModelProviderMixin
@@ -78,9 +83,11 @@ class TrainingRecipe:
     env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
     batch_layout: Literal["thd", "bshd"] = "thd"
     pad_to_max_length: bool = False
+    mtp_target_scope: Literal["primary", "all_valid"] = "primary"
 
 
 SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")
+SUPPORTED_MTP_TARGET_SCOPES = ("primary", "all_valid")
 
 
 def data_parallel_size(recipe: TrainingRecipe) -> int:
@@ -121,6 +128,8 @@ def check_supported(recipe: TrainingRecipe) -> None:
         problems.append("model.seq_length must be set (packed token budget per microbatch)")
     if getattr(recipe, "batch_layout", "thd") not in SUPPORTED_BATCH_LAYOUTS:
         problems.append(f"batch_layout must be one of {SUPPORTED_BATCH_LAYOUTS}")
+    if getattr(recipe, "mtp_target_scope", "primary") not in SUPPORTED_MTP_TARGET_SCOPES:
+        problems.append(f"mtp_target_scope must be one of {SUPPORTED_MTP_TARGET_SCOPES}")
     if problems:
         raise ValueError("Recipe is not supported by TrainingEngine:\n  - " + "\n  - ".join(problems))
 

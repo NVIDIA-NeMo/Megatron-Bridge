@@ -7,6 +7,7 @@ from megatron.bridge.engine import AdamParams, ModelOutput, NormalizationPolicy,
 from megatron.bridge.engine.accumulation import AccumulationWindow
 from megatron.bridge.engine.losses import cross_entropy
 from megatron.bridge.engine.optim import apply_adam_params
+from megatron.bridge.engine.schedule import model_loss_mask
 
 
 def test_accumulation_window_lifecycle_and_denominators():
@@ -50,3 +51,21 @@ def test_cross_entropy_uses_active_mask_only():
     assert loss.item() == pytest.approx(2.5)
     loss.backward()
     assert output.logprobs.grad.tolist() == [[0.0, -1.0, -1.0, 0.0]]
+
+
+def test_model_loss_mask_follows_mtp_target_scope_and_never_includes_padding():
+    batch = PreparedMicrobatch(
+        input_ids=torch.zeros(1, 4, dtype=torch.int64),
+        target_ids=torch.zeros(1, 4, dtype=torch.int64),
+        position_ids=torch.arange(4).unsqueeze(0),
+        loss_mask=torch.tensor([[0.0, 1.0, 1.0, 1.0]]),
+        padding_mask=torch.tensor([[False, False, False, True]]),
+        packed_seq_params=None,
+    )
+    primary = model_loss_mask(batch, "primary")
+    all_valid = model_loss_mask(batch, "all_valid")
+    assert primary.dtype == all_valid.dtype == torch.float32
+    assert primary.tolist() == [[0.0, 1.0, 1.0, 0.0]]
+    assert all_valid.tolist() == [[1.0, 1.0, 1.0, 0.0]]
+    with pytest.raises(ValueError, match="mtp_target_scope"):
+        model_loss_mask(batch, "response")

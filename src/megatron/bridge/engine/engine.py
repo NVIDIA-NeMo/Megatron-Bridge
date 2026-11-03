@@ -358,7 +358,12 @@ class TrainingEngine:
             )
         microbatches = self.preprocess(data, training=False)
         self.check_microbatches(microbatches)
-        logprobs = run_forward_only(self._model, microbatches, pg_collection=self._runtime.pg_collection)
+        logprobs = run_forward_only(
+            self._model,
+            microbatches,
+            pg_collection=self._runtime.pg_collection,
+            mtp_target_scope=self._recipe.mtp_target_scope,
+        )
         return self.postprocess(microbatches, logprobs, gather_output=gather_output)
 
     def forward_backward(
@@ -395,7 +400,11 @@ class TrainingEngine:
                 "override count_samples together with preprocess when the mapping is not MicrobatchMapping."
             )
         loss_sum, num_loss_tokens = run_forward_backward(
-            self._model, microbatches, loss_method, pg_collection=self._runtime.pg_collection
+            self._model,
+            microbatches,
+            loss_method,
+            pg_collection=self._runtime.pg_collection,
+            mtp_target_scope=self._recipe.mtp_target_scope,
         )
         summary = self.summarize(loss_sum, num_loss_tokens)
         self._window.add(

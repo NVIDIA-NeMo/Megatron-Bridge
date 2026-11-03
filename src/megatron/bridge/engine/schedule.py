@@ -34,8 +34,27 @@ from megatron.bridge.engine.datum import ModelOutput, PreparedMicrobatch
 from megatron.bridge.training.gpt_step import _prepare_packed_padding_mask
 
 
+def model_loss_mask(microbatch: PreparedMicrobatch, mtp_target_scope: str) -> torch.Tensor:
+    """The ``loss_mask`` handed to the model, which only the MTP block reads (the main NLL is unmasked).
+
+    ``"primary"`` selects the primary objective's positions, ``"all_valid"`` every non-padded position.
+    Padding is never a target, even when a custom batch carries ``loss_mask=1`` there.
+    """
+    if mtp_target_scope == "primary":
+        selected = microbatch.active_mask
+    elif mtp_target_scope == "all_valid":
+        selected = ~microbatch.padding_mask
+    else:
+        raise ValueError(f"Unknown mtp_target_scope {mtp_target_scope!r}.")
+    return selected.to(microbatch.loss_mask.dtype)
+
+
 def call_model(
-    model: MegatronModule, microbatch: PreparedMicrobatch, pg_collection: ProcessGroupCollection
+    model: MegatronModule,
+    microbatch: PreparedMicrobatch,
+    pg_collection: ProcessGroupCollection,
+    *,
+    mtp_target_scope: str,
 ) -> torch.Tensor:
     """Run one microbatch through the model; returns per-token NLL ``[B, T_local]`` (labels path)."""
     config = get_model_config(model)
@@ -47,7 +66,7 @@ def call_model(
         position_ids=microbatch.position_ids,
         attention_mask=None,
         labels=microbatch.target_ids,
-        loss_mask=microbatch.loss_mask,
+        loss_mask=model_loss_mask(microbatch, mtp_target_scope),
         packed_seq_params=microbatch.packed_seq_params,
         padding_mask=padding_mask,
     )
@@ -58,12 +77,12 @@ def to_model_output(nll: torch.Tensor) -> ModelOutput:
     return ModelOutput(logprobs=-nll)
 
 
-def _make_scoring_step(pg_collection: ProcessGroupCollection) -> Callable:
+def _make_scoring_step(pg_collection: ProcessGroupCollection, mtp_target_scope: str) -> Callable:
     def forward_step_func(
         data_iterator: Iterator[PreparedMicrobatch], model: MegatronModule
     ) -> tuple[torch.Tensor, Callable]:
         microbatch = next(data_iterator)
-        nll = call_model(model, microbatch, pg_collection)
+        nll = call_model(model, microbatch, pg_collection, mtp_target_scope=mtp_target_scope)
 
         def collect(output_tensor: torch.Tensor, non_loss_data: bool = False) -> torch.Tensor:
             return to_model_output(output_tensor).logprobs[0].detach().float()
@@ -74,7 +93,11 @@ def _make_scoring_step(pg_collection: ProcessGroupCollection) -> Callable:
 
 
 def run_forward_only(
-    model: list[MegatronModule], microbatches: list[PreparedMicrobatch], *, pg_collection: ProcessGroupCollection
+    model: list[MegatronModule],
+    microbatches: list[PreparedMicrobatch],
+    *,
+    pg_collection: ProcessGroupCollection,
+    mtp_target_scope: str = "primary",
 ) -> list[torch.Tensor]:
     """Score microbatches with the schedule in forward-only mode; one ``[T_local]`` logprob tensor each.
 
@@ -89,7 +112,7 @@ def run_forward_only(
     try:
         with torch.no_grad():
             store: list[Any] = get_forward_backward_func()(
-                forward_step_func=_make_scoring_step(pg_collection),
+                forward_step_func=_make_scoring_step(pg_collection, mtp_target_scope),
                 data_iterator=iter(microbatches),
                 model=model,
                 num_microbatches=len(microbatches),
@@ -111,6 +134,7 @@ def run_forward_backward(
     loss_method: Callable[[PreparedMicrobatch, ModelOutput], torch.Tensor],
     *,
     pg_collection: ProcessGroupCollection,
+    mtp_target_scope: str = "primary",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Forward/backward over the microbatches, accumulating raw FP32 gradient sums in the DDP buffers.
 
@@ -136,7 +160,7 @@ def run_forward_backward(
 
     def forward_step_func(data_iterator: Iterator[PreparedMicrobatch], chunk: MegatronModule) -> tuple:
         microbatch = next(data_iterator)
-        nll = call_model(chunk, microbatch, pg_collection)
+        nll = call_model(chunk, microbatch, pg_collection, mtp_target_scope=mtp_target_scope)
 
         def loss_func(output_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, dict]:
             loss = loss_method(microbatch, to_model_output(output_tensor))

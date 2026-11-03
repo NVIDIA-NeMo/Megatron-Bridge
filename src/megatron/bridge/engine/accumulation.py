@@ -32,7 +32,11 @@ class AccumulationWindow:
     num_loss_tokens: int = 0  # D: active target positions over the update
     num_samples: int = 0  # N: Datums over the update
     loss_sum: float = 0.0  # sum of the loss methods' returns over the update (reporting only)
-    # TODO(detached-mtp): track M, the valid MTP-target count, when detached MTP heads are supported.
+    # TODO(detached-mtp): with mtp_detach_heads=True and mtp_target_scope="all_valid", the MTP-only
+    # parameters get the MTP loss summed over all non-padded positions but are still divided by
+    # num_loss_tokens, so their effective step grows with the non-padded / active-token ratio. Track
+    # the non-padded count over the update and divide those parameters by it instead. Under
+    # mtp_target_scope="primary" MCore's own rescale already makes 1/num_loss_tokens a per-target mean.
 
     @property
     def is_open(self) -> bool:
