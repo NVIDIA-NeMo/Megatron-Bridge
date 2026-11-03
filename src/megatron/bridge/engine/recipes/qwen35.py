@@ -38,6 +38,7 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
     hf_path: str,
     hf_revision: str | None = None,
     seq_length: int = 131072,
+    pad_to_max_length: bool = True,
 ) -> TrainingRecipe:
     """Qwen3.5-35B-A3B text model, BF16, TP1/CP8/EP16 with one MTP layer, for 16 GB200/GB300 GPUs.
 
@@ -45,6 +46,7 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
         hf_path: HF model ID or local directory holding the text-only causal-LM config.
         hf_revision: Matching HF revision, or ``None`` for a local directory.
         seq_length: Packed token budget per microbatch; a positive multiple of 16 for CP8.
+        pad_to_max_length: Pad every pack to ``seq_length`` (one kernel shape) instead of to its content.
 
     Returns:
         The engine recipe. Pretrained weights are supplied to the engine through ``checkpoint_path``.
@@ -124,4 +126,5 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
         mixed_precision=bf16_mixed(),
         rng=RNGConfig(seed=1234),
         env_vars=env_vars,
+        pad_to_max_length=pad_to_max_length,
     )

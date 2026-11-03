@@ -85,7 +85,13 @@ def _checkpoint_state(recipe: TrainingRecipe, checkpoint_config: CheckpointConfi
 def load_pretrained_weights(
     recipe: TrainingRecipe, model: list[MegatronModule], optimizer: Any | None, checkpoint_path: str
 ) -> None:
-    """Load model weights from a Megatron (torch_dist) or HF checkpoint; optimizer and RNG state are not loaded."""
+    """Load model weights from a Megatron (torch_dist) or HF checkpoint; optimizer and RNG state are not loaded.
+
+    The optimizer is passed to the loader even though its state is not loaded (``load_optim=False``):
+    Bridge refreshes the optimizer's FP32 master parameters from the loaded weights only when it is
+    given the optimizer. Without it the masters keep their initialization values and the first
+    ``optim_step`` would overwrite the model from them.
+    """
     checkpoint_config = _engine_checkpoint_config(checkpoint_path)
     checkpoint_config.finalize()
     manager = create_checkpoint_manager(checkpoint_config)
@@ -93,7 +99,7 @@ def load_pretrained_weights(
         CheckpointLoadContext(
             state=_checkpoint_state(recipe, checkpoint_config),
             model=model,
-            optimizer=None,
+            optimizer=optimizer,
             opt_param_scheduler=None,
         )
     )

@@ -62,6 +62,10 @@ class TrainingRecipe:
         batch_layout: How the engine lays out Datums for the kernels. ``"thd"`` packs several Datums
             along the sequence axis (batch 1, ``PackedSeqParams`` boundaries); ``"bshd"`` runs one Datum
             per forward pass as a padded ``[1, S]`` row with dense causal attention.
+        pad_to_max_length: THD only. ``False`` pads each pack just to the CP/TP multiple, so microbatch
+            widths vary with their content (what RL rollouts normally do). ``True`` pads every pack to
+            ``model.seq_length`` so kernels always see one shape; wastes compute on padding but avoids
+            per-shape kernel autotuning, which can dominate step time on some stacks.
     """
 
     model: ModelProviderMixin
@@ -73,6 +77,7 @@ class TrainingRecipe:
     comm_overlap: CommOverlapConfig | None = None
     env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
     batch_layout: Literal["thd", "bshd"] = "thd"
+    pad_to_max_length: bool = False
 
 
 SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")
@@ -95,6 +100,15 @@ def check_supported(recipe: TrainingRecipe) -> None:
     problems: list[str] = []
     if getattr(recipe.dist, "lazy_mpu_init", False):
         problems.append("dist.lazy_mpu_init is not supported")
+    # TODO(mfsdp-v2): support Megatron FSDP v2. Accumulating gradients across forward_backward calls
+    # already works with plain FSDP sharding, because v2 reduces and adds each backward into a
+    # persistent gradient buffer without rescaling the total. Two things are missing:
+    #   - engine side: zero grads through the optimizer, scale them after finish_grad_sync, and release
+    #     the FSDP hooks in close();
+    #   - FSDP side (hybrid sharding only): v2 reduces the cross-replica axis only inside the backward
+    #     it is told is the last one (is_last_microbatch=True). The engine cannot know that during
+    #     forward_backward, so it needs a method to run that reduction on demand at optim_step (before
+    #     finish_grad_sync).
     if (
         getattr(recipe.dist, "use_megatron_fsdp", False)
         or getattr(recipe.dist, "use_torch_fsdp2", False)

@@ -21,6 +21,7 @@ engine-local ``close()`` and named-loss dispatch. Compute, state and placement A
 from __future__ import annotations
 
 import copy
+import functools
 import gc
 import logging
 from collections.abc import Callable, Iterator
@@ -36,7 +37,10 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.engine import losses
+from megatron.bridge.engine.accumulation import AccumulationWindow
 from megatron.bridge.engine.batching import (
+    MicrobatchMapping,
     check_microbatches,
     default_postprocess,
     default_preprocess,
@@ -54,8 +58,9 @@ from megatron.bridge.engine.datum import (
     PreparedMicrobatch,
     check_datums,
 )
+from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
-from megatron.bridge.engine.schedule import run_forward_only
+from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.config import RerunStateMachineConfig
 from megatron.bridge.training.initialize import init_rerun_state, torch_dist_init
@@ -81,6 +86,13 @@ _RESERVED_METHODS = frozenset(
         "forward_backward",
         "optim_step",
         "zero_grad",
+        "step",
+        "trainable",
+        "model",
+        "optimizer",
+        "closed",
+        "process_groups",
+        "pad_multiple",
         "preprocess",
         "postprocess",
         "summarize",
@@ -128,16 +140,6 @@ def topology_from_recipe(recipe: TrainingRecipe) -> Topology:
         etp=getattr(model, "expert_tensor_parallel_size", None),
         decentralized_pg=bool(recipe.dist.use_decentralized_pg),
     )
-
-
-@dataclass
-class _GradHooks:
-    """Schedule hooks Bridge installed on the model config; the engine nulls them per call and restores them."""
-
-    finalize_model_grads_func: Callable[..., None] | None
-    grad_sync_func: Callable[..., None] | list[Callable[..., None]] | None
-    no_sync_func: Callable[[], Any] | list[Callable[[], Any]] | None
-    grad_scale_func: Callable[[torch.Tensor], torch.Tensor] | None
 
 
 class _SharedRuntime:
@@ -280,6 +282,7 @@ class TrainingEngine:
         self._trainable = trainable
         self._closed = False
         self._step = 0
+        self._window = AccumulationWindow()
         pg_collection = runtime.pg_collection
         self._pad_multiple = sequence_pad_multiple(
             cp_size=runtime.topology.cp,
@@ -306,7 +309,10 @@ class TrainingEngine:
         if checkpoint_path is not None:
             load_pretrained_weights(recipe, self._model, self._optimizer, checkpoint_path)
 
-        self._grad_hooks: _GradHooks | None = None
+        # Bridge installs the schedule hooks on the model config (finalize_model_grads_func, grad_scale_func,
+        # and the overlap hooks). The engine keeps only the finalizer: run_forward_backward suppresses it
+        # per call, and optim_step invokes it once per update (see schedule.py / optim.py).
+        self._finalize_model_grads_func: Callable[..., None] | None = None
         if trainable:
             model_config = get_model_config(self._model[0])
             _update_model_config_funcs(
@@ -318,12 +324,7 @@ class TrainingEngine:
                 pg_collection=pg_collection,
                 peft_enabled=False,
             )
-            self._grad_hooks = _GradHooks(
-                finalize_model_grads_func=model_config.finalize_model_grads_func,
-                grad_sync_func=model_config.grad_sync_func,
-                no_sync_func=model_config.no_sync_func,
-                grad_scale_func=model_config.grad_scale_func,
-            )
+            self._finalize_model_grads_func = model_config.finalize_model_grads_func
         runtime.attach(self)
 
     # ---- compute ------------------------------------------------------------------------------
@@ -367,13 +368,35 @@ class TrainingEngine:
         loss_kwargs: dict[str, Any] | None = None,
         broadcast_output: bool = True,
     ) -> ForwardBackwardOutput:
-        """Run forward/backward with the named loss and accumulate gradients (phase B2)."""
+        """Run forward/backward with the named loss and accumulate FP32 gradients.
+
+        Gradients are summed, unnormalized, into the DDP buffers across calls; ``optim_step`` normalizes
+        and applies them. Returns this call's detached loss sum and active-token count, reduced over
+        DP x CP. ``loss_kwargs`` are bound to the loss method as keyword arguments.
+        """
         self._require_open()
         self._require_trainable("forward_backward")
-        self.resolve_loss_method(loss_fn)
+        loss_method = self.resolve_loss_method(loss_fn)
+        if loss_kwargs:
+            loss_method = functools.partial(loss_method, **loss_kwargs)
+        if self._runtime.topology.pp > 1:
+            # TODO(pp): PP output-stage loss, broadcast_output of the summary.
+            raise NotImplementedError("forward_backward with pipeline parallelism is not supported yet.")
+        if getattr(self._recipe.ddp, "overlap_grad_reduce", False):
+            # TODO(overlap): defer bucket reductions across calls with DDP.no_sync + explicit start_grad_sync.
+            raise NotImplementedError("forward_backward with ddp.overlap_grad_reduce=True is not supported yet.")
         microbatches = self.preprocess(data, training=True)
         self.check_microbatches(microbatches)
-        raise NotImplementedError("forward_backward is implemented in phase B2.")
+        loss_sum, num_loss_tokens = run_forward_backward(
+            self._model, microbatches, loss_method, pg_collection=self._runtime.pg_collection
+        )
+        summary = self.summarize(loss_sum, num_loss_tokens)
+        self._window.add(
+            num_loss_tokens=summary.num_loss_tokens,
+            num_samples=self._count_samples(microbatches),
+            loss_sum=summary.loss_sum,
+        )
+        return summary
 
     # ---- data pipeline extension points (override in a subclass) -------------------------------
 
@@ -396,6 +419,7 @@ class TrainingEngine:
             cp_group=pg_collection.cp,
             device=torch.device("cuda", torch.cuda.current_device()),
             hybrid_model=bool(getattr(self._recipe.model, "is_hybrid_model", False)),
+            pad_to_max_length=self._recipe.pad_to_max_length,
         )
 
     def postprocess(
@@ -436,16 +460,83 @@ class TrainingEngine:
         )
 
     def optim_step(self, adam_params: AdamParams, *, normalize_gradients: bool = True) -> dict[str, float]:
-        """Normalize and finalize accumulated gradients, then step the optimizer (phase B2)."""
+        """Normalize the accumulated gradients once, finalize, and step the optimizer.
+
+        The divisor follows ``self.normalization`` (active tokens ``D``, Datums ``N``, or none);
+        ``normalize_gradients=False`` bypasses it. The caller supplies the learning rate and the other
+        Adam hyperparameters for this step. An update is skipped (buffers zeroed, window closed) when
+        the normalization domain is empty or the optimizer finds non-finite gradients.
+        """
         self._require_open()
         self._require_trainable("optim_step")
-        raise NotImplementedError("optim_step is implemented in phase B2.")
+        if not self._window.is_open:
+            raise RuntimeError("optim_step called without a preceding forward_backward.")
+        scale: float | None = None
+        if normalize_gradients:
+            denominator = self._window.denominator(self.normalization)
+            if denominator is not None:
+                if denominator == 0:
+                    zero_gradients(self._model, self._optimizer)
+                    self._window.reset()
+                    return {"update_successful": 0.0, "skipped_empty_window": 1.0}
+                scale = 1.0 / denominator
+        if scale is None and self._has_coupled_auxiliary_losses():
+            # Coupled MTP / router aux gradients share the primary 1/D; bypassing it changes their semantics.
+            raise NotImplementedError(
+                "normalize_gradients=False (or NormalizationPolicy.NONE) with MTP or router auxiliary losses "
+                "enabled is not supported yet."
+            )
+        update_successful, grad_norm, num_zeros = finalize_and_step(
+            self._model,
+            self._optimizer,
+            finalize_model_grads_func=self._finalize_model_grads_func,
+            scale=scale,
+            adam_params=adam_params,
+        )
+        result = {
+            "update_successful": float(update_successful),
+            "grad_norm": float("nan") if grad_norm is None else grad_norm,
+            "num_zeros_in_grad": float("nan") if num_zeros is None else float(num_zeros),
+            "num_loss_tokens": float(self._window.num_loss_tokens),
+            "num_samples": float(self._window.num_samples),
+            "loss_sum": self._window.loss_sum,
+            "learning_rate": adam_params.learning_rate,
+        }
+        zero_gradients(self._model, self._optimizer)
+        self._window.reset()
+        if update_successful:
+            self._step += 1
+        return result
 
     def zero_grad(self) -> None:
-        """Abort the open accumulation window (phase B2)."""
+        """Abort the open accumulation window: zero the gradient buffers and reset the counts."""
         self._require_open()
         self._require_trainable("zero_grad")
-        raise NotImplementedError("zero_grad is implemented in phase B2.")
+        zero_gradients(self._model, self._optimizer)
+        self._window.reset()
+
+    @property
+    def step(self) -> int:
+        """Number of successful optimizer updates since construction."""
+        return self._step
+
+    def _count_samples(self, microbatches: list[PreparedMicrobatch]) -> int:
+        """Datums in this call across DP replicas (CP ranks share the same samples)."""
+        local = sum(
+            len(mb.mapping.segments)
+            for mb in microbatches
+            if isinstance(mb.mapping, MicrobatchMapping) and not mb.mapping.filler
+        )
+        count = torch.tensor([local], device="cuda")
+        torch.distributed.all_reduce(count, group=self._runtime.pg_collection.dp)
+        return int(count.item())
+
+    def _has_coupled_auxiliary_losses(self) -> bool:
+        model = self._recipe.model
+        mtp = (getattr(model, "mtp_num_layers", None) or 0) > 0 and not getattr(model, "mtp_detach_heads", False)
+        aux_coeff = getattr(model, "moe_aux_loss_coeff", 0.0) or 0.0
+        z_coeff = getattr(model, "moe_z_loss_coeff", None) or 0.0
+        return bool(mtp or aux_coeff > 0 or z_coeff > 0)
 
     # ---- loss extension points ----------------------------------------------------------------
 
@@ -466,8 +557,8 @@ class TrainingEngine:
         return getattr(self, name)
 
     def cross_entropy(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
-        """Negative log-likelihood summed over active positions (``loss_mask & ~padding_mask``); phase B2."""
-        raise NotImplementedError("cross_entropy is implemented in phase B2.")
+        """Negative log-likelihood summed over active positions (``loss_mask & ~padding_mask``)."""
+        return losses.cross_entropy(batch, output)
 
     def importance_sampling(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
         """Importance-sampling policy-gradient loss (phase C1)."""
@@ -559,6 +650,16 @@ class TrainingEngine:
         """Whether ``close()`` has released this engine."""
         return self._closed
 
+    @property
+    def process_groups(self) -> ProcessGroupCollection:
+        """The shared runtime's process groups (``dp``, ``cp``, ``tp``, ``ep``, ...), for custom pipelines."""
+        return self._runtime.pg_collection
+
+    @property
+    def pad_multiple(self) -> int:
+        """Per-sequence alignment the default pipeline pads to (CP zigzag and sequence-parallel constraints)."""
+        return self._pad_multiple
+
     def close(self) -> None:
         """Release this engine's model, optimizer and buffers. The shared runtime and other engines survive."""
         if self._closed:
@@ -582,7 +683,7 @@ class TrainingEngine:
                 if hasattr(model_config, name):
                     setattr(model_config, name, None)
         self._optimizer = None
-        self._grad_hooks = None
+        self._finalize_model_grads_func = None
         self._model = []
         gc.collect()
         if torch.cuda.is_available():

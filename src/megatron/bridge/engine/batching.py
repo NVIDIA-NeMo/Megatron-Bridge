@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 import torch
 
+from megatron.bridge.data.packing.algorithms import first_fit
 from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.engine.datum import COMMON_FIELDS, Datum, ForwardOutput, PreparedMicrobatch
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params, get_thd_cp_partition_indices
@@ -92,21 +93,21 @@ def _padded_length(length: int, multiple: int) -> int:
 
 
 def group_into_microbatches(datums: list[Datum], *, seq_length: int, pad_multiple: int) -> list[list[int]]:
-    """First-fit Datum indices, in input order, into groups whose padded length is at most ``seq_length``."""
-    bins: list[tuple[int, list[int]]] = []
-    for index, datum in enumerate(datums):
-        padded = _padded_length(datum.num_tokens, pad_multiple)
+    """First-fit Datum indices, in input order, into groups whose padded length is at most ``seq_length``.
+
+    Uses Bridge's ``first_fit`` (``megatron.bridge.data.packing.algorithms``). Input order is kept so the
+    plan is deterministic and identical on every rank.
+
+    TODO(packing): expose the algorithm choice (``first_fit_decreasing``, ``first_fit_shuffle``) through
+    the recipe for better bin utilization.
+    """
+    padded_lengths = [_padded_length(datum.num_tokens, pad_multiple) for datum in datums]
+    for index, (datum, padded) in enumerate(zip(datums, padded_lengths)):
         if padded > seq_length:
             raise ValueError(
                 f"datums[{index}] has {datum.num_tokens} tokens ({padded} padded), above seq_length {seq_length}."
             )
-        for slot, (used, members) in enumerate(bins):
-            if used + padded <= seq_length:
-                bins[slot] = (used + padded, members + [index])
-                break
-        else:
-            bins.append((padded, [index]))
-    return [members for _, members in bins]
+    return first_fit(list(range(len(datums))), seq_length, item_lengths=padded_lengths)
 
 
 def assign_to_dp_ranks(groups: list[list[int]], dp_size: int) -> list[list[list[int] | None]]:
@@ -128,37 +129,49 @@ def _rows(datums: list[Datum], indices: list[int], extra_keys: list[str]) -> lis
         n = datum.num_tokens
         row = {
             "input_ids": datum.input_ids.to(torch.int64),
-            "position_ids": torch.arange(n, dtype=torch.int64),
+            "position_ids": torch.arange(n, dtype=torch.int64, device=datum.input_ids.device),
             "labels": datum.target_ids.to(torch.int64),
             "loss_mask": datum.loss_mask.to(torch.float32),
         }
         for name in extra_keys:
-            value = getattr(datum, name, None) if name in COMMON_FIELDS else datum.loss_inputs.get(name)
-            row[name] = value.to(torch.float32) if value is not None else torch.zeros(n, dtype=torch.float32)
-        rows.append({key: value.cpu() for key, value in row.items()})
+            if name in COMMON_FIELDS:
+                row[name] = getattr(datum, name).to(torch.float32)
+            else:
+                row[name] = datum.loss_inputs[name]
+        rows.append(row)
     return rows
 
 
 def _extra_keys(datums: list[Datum], indices: list[int]) -> list[str]:
-    common = [name for name in COMMON_FIELDS if any(getattr(datums[i], name) is not None for i in indices)]
-    custom = sorted({key for i in indices for key in datums[i].loss_inputs})
-    return common + custom
+    """Common fields and custom ``loss_inputs`` keys to pack; ``check_datums`` made them uniform."""
+    first = datums[indices[0]]
+    common = [name for name in COMMON_FIELDS if getattr(first, name) is not None]
+    return common + sorted(first.loss_inputs)
 
 
 def pack_sequences(
-    datums: list[Datum], indices: list[int], *, seq_length: int, pad_multiple: int, device: torch.device
+    datums: list[Datum],
+    indices: list[int],
+    *,
+    seq_length: int,
+    pad_multiple: int,
+    device: torch.device,
+    pad_to_max_length: bool = False,
 ) -> PreparedMicrobatch:
     """Concatenate the selected Datums into one THD row (``[1, T]``, not yet CP-sharded).
 
     Each sequence is padded to ``pad_multiple``; padding carries ``PAD_TOKEN_ID`` inputs and targets,
-    ``loss_mask`` 0, ``padding_mask`` True and 0 in every optional field. The mapping records each
-    Datum's offset and length.
+    ``loss_mask`` 0, ``padding_mask`` True and 0 in every optional field. With ``pad_to_max_length`` the
+    pack is padded to exactly ``seq_length`` so every microbatch has the same physical width (fixed
+    kernel shapes, no per-shape autotuning; what the offline-packed SFT recipes do). The mapping records
+    each Datum's offset and length.
     """
     extra_keys = _extra_keys(datums, indices)
     packed = build_mcore_thd_sequence_batch_from_rows(
         _rows(datums, indices, extra_keys),
         sequence_length=seq_length,
         pad_to_multiple_of=pad_multiple,
+        pad_to_max_length=pad_to_max_length,
         pad_token_id=PAD_TOKEN_ID,
         ignore_index=PAD_TOKEN_ID,
         sequence_tensor_pad_values={key: 0.0 for key in extra_keys},
@@ -205,15 +218,22 @@ def pad_sequence(datum: Datum, index: int, *, pad_multiple: int, device: torch.d
     raise NotImplementedError("batch_layout='bshd' is not implemented yet; use 'thd'.")
 
 
-def filler_microbatch(*, pad_multiple: int, device: torch.device, layout: str) -> PreparedMicrobatch:
-    """A zero-contribution microbatch so every DP replica runs the same number of forward passes."""
+def filler_microbatch(
+    *, pad_multiple: int, device: torch.device, layout: str, width: int | None = None
+) -> PreparedMicrobatch:
+    """A zero-contribution microbatch so every DP replica runs the same number of forward passes.
+
+    ``width`` sets the physical token count (default ``pad_multiple``); pass ``seq_length`` to keep the
+    fixed-width shape of the real microbatches.
+    """
+    width = width or pad_multiple
     datum = Datum(
-        input_ids=torch.full((pad_multiple,), PAD_TOKEN_ID, dtype=torch.int64),
-        target_ids=torch.full((pad_multiple,), PAD_TOKEN_ID, dtype=torch.int64),
-        loss_mask=torch.zeros(pad_multiple),
+        input_ids=torch.full((width,), PAD_TOKEN_ID, dtype=torch.int64),
+        target_ids=torch.full((width,), PAD_TOKEN_ID, dtype=torch.int64),
+        loss_mask=torch.zeros(width),
     )
     if layout == "thd":
-        microbatch = pack_sequences([datum], [0], seq_length=pad_multiple, pad_multiple=pad_multiple, device=device)
+        microbatch = pack_sequences([datum], [0], seq_length=width, pad_multiple=pad_multiple, device=device)
     elif layout == "bshd":
         microbatch = pad_sequence(datum, 0, pad_multiple=pad_multiple, device=device)
     else:
@@ -301,7 +321,7 @@ def check_microbatches(
             raise ValueError(f"{where}.padding_mask must be bool.")
         if mb.loss_mask.dtype != torch.float32 or not bool(((mb.loss_mask == 0) | (mb.loss_mask == 1)).all()):
             raise ValueError(f"{where}.loss_mask must be a binary float32 mask.")
-        for name in list(COMMON_FIELDS) + list(mb.loss_inputs):
+        for name in COMMON_FIELDS:
             if name in tensors and tensors[name].dtype != torch.float32:
                 raise ValueError(f"{where}.{name} must be float32.")
         for name in ("input_ids", "target_ids"):
@@ -397,6 +417,7 @@ def default_preprocess(
     cp_group: torch.distributed.ProcessGroup | None,
     device: torch.device,
     hybrid_model: bool = False,
+    pad_to_max_length: bool = False,
 ) -> list[PreparedMicrobatch]:
     """Global ``list[Datum]`` -> this rank's CP-sharded microbatches.
 
@@ -407,6 +428,8 @@ def default_preprocess(
        equalized with fillers because EP collectives span DP replicas.
     3. Materialize each full (un-sharded) microbatch: tokens, targets, positions, masks, optional
        fields and PackedSeqParams, with per-sequence padding; the mapping records each Datum's slot.
+       With ``pad_to_max_length`` every THD microbatch (fillers included) is padded to ``seq_length``
+       so kernels see one shape; otherwise widths follow the content.
     4. Keep this CP rank's zigzag slice of every token-aligned tensor (metadata stays global) and
        remember the slice in ``mapping.cp_indices`` for the postprocessor.
 
@@ -421,11 +444,19 @@ def default_preprocess(
     dp_size = dp_group.size() if dp_group is not None else 1
     dp_rank = dp_group.rank() if dp_group is not None else 0
     microbatches = []
+    filler_width = seq_length if pad_to_max_length else None
     for group in assign_to_dp_ranks(groups, dp_size)[dp_rank]:
         if group is None:
-            mb = filler_microbatch(pad_multiple=pad_multiple, device=device, layout=layout)
+            mb = filler_microbatch(pad_multiple=pad_multiple, device=device, layout=layout, width=filler_width)
         elif layout == "thd":
-            mb = pack_sequences(datums, group, seq_length=seq_length, pad_multiple=pad_multiple, device=device)
+            mb = pack_sequences(
+                datums,
+                group,
+                seq_length=seq_length,
+                pad_multiple=pad_multiple,
+                device=device,
+                pad_to_max_length=pad_to_max_length,
+            )
         else:
             mb = pad_sequence(datums[group[0]], group[0], pad_multiple=pad_multiple, device=device)
         microbatches.append(shard_for_cp(mb, cp_group, hybrid_model=hybrid_model))

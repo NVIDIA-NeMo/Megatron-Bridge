@@ -53,3 +53,5 @@ def test_custom_loss_inputs_must_be_token_aligned_tensors():
         check_datums([_datum(3, loss_inputs={"teacher": torch.zeros(4)})])
     with pytest.raises(TypeError):
         check_datums([_datum(3, loss_inputs={"teacher": [0.0, 0.0, 0.0]})])
+    with pytest.raises(ValueError, match="loss_inputs keys must match"):
+        check_datums([_datum(3, loss_inputs={"teacher": torch.zeros(3)}), _datum(2)])

@@ -51,7 +51,13 @@ def test_assign_to_dp_ranks_equalizes_counts():
 def test_pack_sequences_pads_and_records_mapping():
     datums = [_datum(5, loss_from=2, advantages=torch.full((5,), 0.5)), _datum(3, advantages=torch.ones(3))]
     datums[0].loss_inputs["teacher"] = torch.arange(5.0)
+    datums[1].loss_inputs["teacher"] = torch.zeros(3)
+    datums[0].loss_inputs["cls"] = torch.arange(5, dtype=torch.int64)
+    datums[1].loss_inputs["cls"] = torch.full((3,), 7, dtype=torch.int64)
     mb = pack_sequences(datums, [0, 1], seq_length=64, pad_multiple=4, device=CPU)
+    # Custom keys keep the caller's dtype; common fields are normalized to float32.
+    assert mb.loss_inputs["cls"].dtype == torch.int64 and mb.advantages.dtype == torch.float32
+    assert mb.loss_inputs["cls"][0].tolist() == [0, 1, 2, 3, 4, 0, 0, 0, 7, 7, 7, 0]
     assert isinstance(mb, PreparedMicrobatch)
     assert mb.input_ids.shape == (1, 12)
     assert [(s.index, s.offset, s.length) for s in mb.mapping.segments] == [(0, 0, 5), (1, 8, 3)]
@@ -102,11 +108,26 @@ def test_filler_microbatch_contributes_nothing():
 
 def test_default_preprocess_and_postprocess_single_rank():
     datums = [_datum(5, loss_from=2), _datum(3), _datum(2)]
-    microbatches = default_preprocess(
+    # [5->8 + 3->4], [2->4]; by default widths follow the content.
+    variable = default_preprocess(
         datums, layout="thd", seq_length=12, pad_multiple=4, dp_group=None, cp_group=None, device=CPU
     )
-    assert [mb.input_ids.shape[1] for mb in microbatches] == [12, 4]  # [5->8 + 3->4], [2->4]
-    logprobs = [-torch.arange(1.0, 13.0), -torch.arange(1.0, 5.0)]
+    assert [mb.input_ids.shape[1] for mb in variable] == [12, 4]
+    assert variable[1].padding_mask[0].tolist() == [False, False, True, True]
+    # With pad_to_max_length every microbatch is padded to seq_length so kernels see one shape.
+    microbatches = default_preprocess(
+        datums,
+        layout="thd",
+        seq_length=12,
+        pad_multiple=4,
+        dp_group=None,
+        cp_group=None,
+        device=CPU,
+        pad_to_max_length=True,
+    )
+    assert [mb.input_ids.shape[1] for mb in microbatches] == [12, 12]
+    assert microbatches[1].padding_mask[0].tolist() == [False, False] + [True] * 10
+    logprobs = [-torch.arange(1.0, 13.0), -torch.arange(1.0, 13.0)]
     out = default_postprocess(microbatches, logprobs, gather_output=True, cp_group=None, dp_group=None)
     assert [t.tolist() for t in out.logprobs] == [[-1, -2, -3, -4, -5], [-9, -10, -11], [-1, -2]]
     assert out.sample_indices is None

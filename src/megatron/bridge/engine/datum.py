@@ -49,8 +49,8 @@ class Datum:
         old_logprobs: ``[L]`` float32 target logprobs under the old policy (optional).
         reference_logprobs: ``[L]`` float32 target logprobs under a reference model (optional).
         rollout_logprobs: ``[L]`` float32 target logprobs recorded by the generation backend (optional).
-        loss_inputs: Custom token-aligned ``[L]`` float tensors; they follow the standard transform with
-            padding value 0.
+        loss_inputs: Custom token-aligned ``[L]`` tensors; every Datum in a call must carry the same keys.
+            They follow the standard transform with padding value 0 and keep the caller's dtype.
         sample_inputs: Custom per-sample values passed through untouched (never sliced).
     """
 
@@ -215,6 +215,7 @@ def check_datums(datums: list[Datum]) -> list[Datum]:
     if len(datums) == 0:
         raise ValueError("datums must contain at least one Datum.")
     present = {name: datums[0] is not None and getattr(datums[0], name, None) is not None for name in COMMON_FIELDS}
+    loss_input_keys = set(getattr(datums[0], "loss_inputs", {}) or {})
     for index, datum in enumerate(datums):
         if not isinstance(datum, Datum):
             raise TypeError(f"datums[{index}] is {type(datum).__name__}, expected Datum.")
@@ -230,6 +231,11 @@ def check_datums(datums: list[Datum]) -> list[Datum]:
                 raise ValueError(f"{name} must be set for every Datum or for none (datums[{index}] differs).")
             if value is not None:
                 _check_tensor(f"datums[{index}].{name}", value, n, None)
+        if set(datum.loss_inputs) != loss_input_keys:
+            raise ValueError(
+                f"loss_inputs keys must match on every Datum: datums[{index}] has {sorted(datum.loss_inputs)}, "
+                f"datums[0] has {sorted(loss_input_keys)}."
+            )
         for name, value in datum.loss_inputs.items():
             _check_tensor(f"datums[{index}].loss_inputs[{name!r}]", value, n, None)
     return datums

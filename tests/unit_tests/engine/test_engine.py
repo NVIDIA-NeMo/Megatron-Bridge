@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from megatron.bridge.engine import Datum, TrainingEngine, topology_from_recipe
+from megatron.bridge.engine import AdamParams, Datum, ForwardBackwardOutput, TrainingEngine, topology_from_recipe
+from megatron.bridge.engine.accumulation import AccumulationWindow
 from megatron.bridge.engine.engine import Topology, _SharedRuntime
 from megatron.bridge.engine.recipes import check_supported, data_parallel_size
 
@@ -25,6 +26,7 @@ def _recipe_like() -> SimpleNamespace:
             lazy_mpu_init=False, use_megatron_fsdp=False, use_torch_fsdp2=False, use_decentralized_pg=False
         ),
         batch_layout="thd",
+        pad_to_max_length=False,
     )
 
 
@@ -100,16 +102,43 @@ def test_loss_dispatch_rejects_reserved_private_and_unknown_names(name):
         engine.resolve_loss_method(name)
 
 
-def test_forward_backward_checks_loss_name_then_runs_pipeline_then_raises_placeholder():
+def test_forward_backward_runs_pipeline_and_opens_window(monkeypatch):
     engine = _unbuilt_engine()
     with pytest.raises(ValueError, match="loss method"):
         engine.forward_backward(_datums(), loss_fn="nope")
     calls = []
+    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(overlap_grad_reduce=False))
+    engine._runtime.pg_collection = None
+    engine._model = []
+    engine._window = AccumulationWindow()
     engine.preprocess = lambda data, training: calls.append(("preprocess", training)) or ["mb"]
     engine.check_microbatches = lambda microbatches: calls.append(("check", microbatches))
-    with pytest.raises(NotImplementedError, match="phase B2"):
-        engine.forward_backward(_datums())
+    engine.summarize = lambda loss_sum, tokens: ForwardBackwardOutput(
+        loss_sum=float(loss_sum), num_loss_tokens=int(tokens)
+    )
+    engine._count_samples = lambda microbatches: 2
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.run_forward_backward",
+        lambda model, mbs, loss_method, pg_collection: (torch.tensor(6.0), torch.tensor(3)),
+    )
+    out = engine.forward_backward(_datums())
+    assert out == ForwardBackwardOutput(loss_sum=6.0, num_loss_tokens=3)
     assert calls == [("preprocess", True), ("check", ["mb"])]
+    assert engine._window.is_open and engine._window.num_loss_tokens == 3 and engine._window.num_samples == 2
+
+
+def test_overlap_grad_reduce_is_an_explicit_placeholder():
+    engine = _unbuilt_engine()
+    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(overlap_grad_reduce=True))
+    with pytest.raises(NotImplementedError, match="overlap_grad_reduce"):
+        engine.forward_backward(_datums())
+
+
+def test_optim_step_requires_open_window():
+    engine = _unbuilt_engine()
+    engine._window = AccumulationWindow()
+    with pytest.raises(RuntimeError, match="without a preceding forward_backward"):
+        engine.optim_step(AdamParams(1e-5))
 
 
 def test_forward_only_runs_preprocess_check_then_postprocess(monkeypatch):

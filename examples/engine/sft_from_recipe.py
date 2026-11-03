@@ -1,0 +1,276 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Phase B2 demo: SFT through ``TrainingEngine`` on offline-packed data, logged to W&B for the baseline comparison.
+
+Each iteration reads ``--packs-per-step`` packed rows (in file order), expands them to Datums, runs
+``forward_backward`` in ``--calls-per-step`` chunks, and calls ``optim_step`` with the learning rate from
+the recipe's warmup + cosine schedule computed here (the caller owns the schedule).
+
+``--check-accumulation`` instead builds two engines from the same checkpoint and applies one update to
+each from the same packs, as one call and as four calls, then compares the gradient norms and the
+resulting parameters (the strict accumulation gate). The strict comparison uses ``PackReplayEngine``,
+whose ``preprocess`` keeps each original parquet pack as one microbatch, so both paths run identical
+microbatches and only the accumulation mechanics differ; the default re-packing engine is compared
+too, as an indication of bf16 noise from different packing.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import math
+import time
+from collections.abc import Iterator
+
+import pyarrow.parquet as pq
+import torch
+
+import megatron.bridge.engine.recipes as recipes
+from megatron.bridge.engine import AdamParams, Datum, PreparedMicrobatch, TrainingEngine, check_datums
+from megatron.bridge.engine.batching import assign_to_dp_ranks, filler_microbatch, pack_sequences, shard_for_cp
+from megatron.bridge.utils.common_utils import print_rank_0
+
+
+logger = logging.getLogger(__name__)
+
+
+class PackReplayEngine(TrainingEngine):
+    """Custom preprocessing: one microbatch per original parquet pack (``Datum.sample_inputs['pack']``).
+
+    Shows the override seam: group Datums your own way, then reuse the engine's public blocks for
+    materialization, DP distribution and CP sharding. The engine still validates the result.
+    """
+
+    def preprocess(self, data, *, training: bool) -> list[PreparedMicrobatch]:
+        """Group by original pack, keep file order, deal to DP replicas, shard for CP."""
+        datums = check_datums(data)
+        by_pack: dict[int, list[int]] = {}
+        for index, datum in enumerate(datums):
+            by_pack.setdefault(int(datum.sample_inputs["pack"]), []).append(index)
+        groups = [by_pack[key] for key in sorted(by_pack)]
+        dp, cp = self.process_groups.dp, self.process_groups.cp
+        device = torch.device("cuda", torch.cuda.current_device())
+        microbatches = []
+        seq_length = self.recipe.model.seq_length
+        pad_to_max_length = self.recipe.pad_to_max_length
+        filler_width = seq_length if pad_to_max_length else None
+        for group in assign_to_dp_ranks(groups, dp.size())[dp.rank()]:
+            if group is None:
+                mb = filler_microbatch(pad_multiple=self.pad_multiple, device=device, layout="thd", width=filler_width)
+            else:
+                mb = pack_sequences(
+                    datums,
+                    group,
+                    seq_length=seq_length,
+                    pad_multiple=self.pad_multiple,
+                    device=device,
+                    pad_to_max_length=pad_to_max_length,
+                )
+            microbatches.append(shard_for_cp(mb, cp))
+        return microbatches
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--recipe", required=True)
+    parser.add_argument("--recipe-kwargs", default="{}")
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--parquet", required=True, help="Offline-packed training parquet")
+    parser.add_argument("--iters", type=int, default=50)
+    parser.add_argument("--packs-per-step", type=int, default=32)
+    parser.add_argument("--calls-per-step", type=int, default=1)
+    parser.add_argument("--max-lr", type=float, default=2e-5)
+    parser.add_argument("--min-lr", type=float, default=2e-6)
+    parser.add_argument("--warmup-iters", type=int, default=200)
+    parser.add_argument("--decay-iters", type=int, default=300000)
+    parser.add_argument("--weight-decay", type=float, default=0.1)
+    parser.add_argument("--wandb-project", default=None)
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-name", default=None)
+    parser.add_argument("--check-accumulation", action="store_true")
+    return parser.parse_args()
+
+
+def iter_pack_batches(path: str, packs_per_step: int) -> Iterator[list[Datum]]:
+    """Yield ``packs_per_step`` packed rows at a time as Datums, in file order (same on every rank)."""
+    pack_index = 0
+    for batch in pq.ParquetFile(path).iter_batches(batch_size=packs_per_step):
+        datums: list[Datum] = []
+        for row in batch.to_pylist():
+            ids = torch.tensor(row["input_ids"], dtype=torch.int64)
+            mask = torch.tensor(row["loss_mask"], dtype=torch.float32)
+            boundaries = list(row["seq_start_id"]) + [len(ids)]
+            for start, end in zip(boundaries[:-1], boundaries[1:]):
+                if end - start >= 2:
+                    datums.append(
+                        Datum(
+                            input_ids=ids[start : end - 1],
+                            target_ids=ids[start + 1 : end],
+                            loss_mask=mask[start : end - 1],
+                            sample_inputs={"pack": pack_index},
+                        )
+                    )
+            pack_index += 1
+        yield datums
+
+
+def learning_rate(step: int, args: argparse.Namespace) -> float:
+    """Megatron's linear warmup then cosine decay, evaluated for 1-based ``step``."""
+    if step <= args.warmup_iters:
+        return args.max_lr * step / args.warmup_iters
+    if step > args.decay_iters:
+        return args.min_lr
+    ratio = (step - args.warmup_iters) / (args.decay_iters - args.warmup_iters)
+    return args.min_lr + 0.5 * (math.cos(math.pi * ratio) + 1.0) * (args.max_lr - args.min_lr)
+
+
+def _chunks(datums: list[Datum], n: int) -> list[list[Datum]]:
+    """Split into ``n`` chunks along original pack boundaries (never splits a pack across calls)."""
+    packs = sorted({int(d.sample_inputs["pack"]) for d in datums})
+    size = -(-len(packs) // n)
+    chunks = []
+    for i in range(0, len(packs), size):
+        members = set(packs[i : i + size])
+        chunks.append([d for d in datums if int(d.sample_inputs["pack"]) in members])
+    return chunks
+
+
+def _master_params(engine: TrainingEngine) -> list[torch.Tensor]:
+    """FP32 master shards of the distributed optimizer (fall back to model parameters)."""
+    optimizer = engine.optimizer
+    inner = getattr(optimizer, "chained_optimizers", [optimizer])
+    shards = [t for opt in inner for group in getattr(opt, "shard_fp32_from_float16_groups", []) for t in group]
+    return shards or [p.detach() for p in engine.model[0].parameters()]
+
+
+def _param_delta(a: TrainingEngine, b: TrainingEngine, *, lr: float) -> tuple[float, float]:
+    """Over all FP32 master parameters, reduced over ranks: max |a - b| and the fraction of elements whose
+    update differs materially (by more than 10% of an Adam step, i.e. a different update direction)."""
+    diff = torch.zeros((), device="cuda")
+    differing = torch.zeros((), device="cuda", dtype=torch.float64)
+    total = torch.zeros((), device="cuda", dtype=torch.float64)
+    for pa, pb in zip(_master_params(a), _master_params(b)):
+        delta = (pa.detach().float() - pb.detach().float()).abs()
+        diff = torch.maximum(diff, delta.max())
+        differing += (delta > 0.1 * lr).sum()
+        total += delta.numel()
+    torch.distributed.all_reduce(diff, op=torch.distributed.ReduceOp.MAX)
+    torch.distributed.all_reduce(differing)
+    torch.distributed.all_reduce(total)
+    return diff.item(), (differing / total).item()
+
+
+def _compare_one_vs_four(
+    args: argparse.Namespace, recipe, engine_cls: type[TrainingEngine], datums: list[Datum], label: str
+) -> tuple[float, float, float]:
+    """Apply one update from identical state as 1 call and as 4 calls; return (grad-norm rel diff, max diff, fraction)."""
+    adam = AdamParams(learning_rate=args.max_lr, weight_decay=args.weight_decay)
+    one = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
+    four = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
+    diff0, _ = _param_delta(one, four, lr=adam.learning_rate)
+    assert diff0 == 0.0, f"engines differ before training: {diff0}"
+
+    out1 = one.forward_backward(datums)
+    step1 = one.optim_step(adam)
+    outs4 = [four.forward_backward(chunk) for chunk in _chunks(datums, 4)]
+    step4 = four.optim_step(adam)
+    tokens4 = sum(o.num_loss_tokens for o in outs4)
+    loss4 = sum(o.loss_sum for o in outs4)
+    print_rank_0(
+        f"[accum:{label}] 1 call : loss_sum={out1.loss_sum:.4f} tokens={out1.num_loss_tokens} "
+        f"grad_norm={step1['grad_norm']:.6f}"
+    )
+    print_rank_0(f"[accum:{label}] 4 calls: loss_sum={loss4:.4f} tokens={tokens4} grad_norm={step4['grad_norm']:.6f}")
+    assert out1.num_loss_tokens == tokens4, "token counts differ between 1-call and 4-call accumulation"
+    assert step1["update_successful"] and step4["update_successful"]
+    rel = abs(step1["grad_norm"] - step4["grad_norm"]) / max(step1["grad_norm"], 1e-12)
+    diff, fraction = _param_delta(one, four, lr=adam.learning_rate)
+    print_rank_0(
+        f"[accum:{label}] grad_norm rel diff={rel:.3e}; max |master param diff|={diff:.3e} "
+        f"(2*lr={2 * adam.learning_rate:.1e}); fraction with a different update={fraction:.3e}"
+    )
+    one.close()
+    four.close()
+    return rel, diff, fraction
+
+
+def check_accumulation(args: argparse.Namespace, recipe) -> None:
+    """Strict gate on identical microbatches (pack replay), plus the re-packing comparison for information."""
+    datums = next(iter_pack_batches(args.parquet, args.packs_per_step))
+    rel, diff, fraction = _compare_one_vs_four(args, recipe, PackReplayEngine, datums, "same-packs")
+    assert rel < 1e-4, f"grad norm differs by {rel:.3e} on identical microbatches"
+    assert fraction < 1e-5, f"{fraction:.3e} of elements took a different update on identical microbatches"
+    _compare_one_vs_four(args, recipe, TrainingEngine, datums, "repacked")
+    print_rank_0("ACCUMULATION GATE PASSED")
+
+
+def train(args: argparse.Namespace, recipe) -> None:
+    """The engine-driven reproduction of the baseline schedule."""
+    engine = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
+    print_rank_0(f"[engine] built; parallel_info={engine.parallel_info}")
+    run = None
+    if args.wandb_project and torch.distributed.get_rank() == 0:
+        import wandb
+
+        run = wandb.init(project=args.wandb_project, entity=args.wandb_entity, name=args.wandb_name, config=vars(args))
+
+    batches = iter_pack_batches(args.parquet, args.packs_per_step)
+    for step in range(1, args.iters + 1):
+        datums = next(batches)
+        start = time.time()
+        outs = [engine.forward_backward(chunk) for chunk in _chunks(datums, args.calls_per_step)]
+        lr = learning_rate(step, args)
+        result = engine.optim_step(AdamParams(learning_rate=lr, weight_decay=args.weight_decay))
+        torch.cuda.synchronize()
+        elapsed = time.time() - start
+        loss_sum = sum(o.loss_sum for o in outs)
+        tokens = sum(o.num_loss_tokens for o in outs)
+        metrics = {
+            "lm loss": loss_sum / max(tokens, 1),
+            "loss_sum": loss_sum,
+            "num_loss_tokens": tokens,
+            "num_datums": len(datums),
+            "grad_norm": result["grad_norm"],
+            "learning_rate": lr,
+            "iteration_time": elapsed,
+            "update_successful": result["update_successful"],
+        }
+        print_rank_0(
+            f"[train] step {step}: lm loss {metrics['lm loss']:.4f} tokens {tokens} "
+            f"grad_norm {result['grad_norm']:.4f} lr {lr:.3e} time {elapsed:.1f}s"
+        )
+        if run is not None:
+            run.log(metrics, step=step)
+    if run is not None:
+        run.finish()
+    engine.close()
+    print_rank_0("TRAINING RUN FINISHED")
+
+
+def main() -> None:
+    """Entry point."""
+    logging.basicConfig(level=logging.INFO)
+    args = _parse_args()
+    recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    if args.check_accumulation:
+        check_accumulation(args, recipe)
+    else:
+        train(args, recipe)
+    torch.distributed.barrier()
+    torch.distributed.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()

@@ -20,6 +20,7 @@ this call. The call uses the keyword contract shared by Megatron's GPT and hybri
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -104,6 +105,68 @@ def run_forward_only(
     return store
 
 
-def run_forward_backward(engine: Any, microbatches: list[PreparedMicrobatch], loss_method: Any) -> Any:
-    """Drive the schedule with gradient finalization suppressed (accumulation across calls)."""
-    raise NotImplementedError("run_forward_backward is implemented in phase B2.")
+def run_forward_backward(
+    model: list[MegatronModule],
+    microbatches: list[PreparedMicrobatch],
+    loss_method: Callable[[PreparedMicrobatch, ModelOutput], torch.Tensor],
+    *,
+    pg_collection: ProcessGroupCollection,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Forward/backward over the microbatches, accumulating raw FP32 gradient sums in the DDP buffers.
+
+    Gradient finalization is suppressed for the call: ``finalize_model_grads_func``, ``grad_sync_func``
+    and ``no_sync_func`` are nulled on the model config and the DDP wrappers run under ``no_sync()``,
+    so no DP reduce-scatter and no ``1/num_tokens`` scaling happen here (the engine does both once at
+    ``optim_step``). The loss method returns an additive scalar per microbatch; with
+    ``calculate_per_token_loss=True`` the schedule leaves it unscaled.
+
+    Returns:
+        ``(loss_sum, num_loss_tokens)`` for this rank's microbatches, un-reduced, detached.
+    """
+    if not microbatches:
+        raise ValueError("forward_backward needs at least one microbatch on every DP replica.")
+    config = get_model_config(model[0])
+    saved = (config.finalize_model_grads_func, config.grad_sync_func, config.no_sync_func)
+    config.finalize_model_grads_func = None
+    config.grad_sync_func = None
+    config.no_sync_func = None
+    device = microbatches[0].input_ids.device
+    loss_sum = torch.zeros((), dtype=torch.float32, device=device)
+    num_loss_tokens = torch.zeros((), dtype=torch.int64, device=device)
+
+    def forward_step_func(data_iterator: Iterator[PreparedMicrobatch], chunk: MegatronModule) -> tuple:
+        microbatch = next(data_iterator)
+        nll = call_model(chunk, microbatch, pg_collection)
+
+        def loss_func(output_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, dict]:
+            loss = loss_method(microbatch, to_model_output(output_tensor))
+            if not isinstance(loss, torch.Tensor) or loss.ndim != 0:
+                raise ValueError("A loss method must return a scalar tensor (the additive loss sum).")
+            tokens = microbatch.active_mask.sum()
+            loss_sum.add_(loss.detach().float())
+            num_loss_tokens.add_(tokens)
+            # Three-tuple: with calculate_per_token_loss=True the schedule keeps the sum unscaled.
+            return loss, tokens.to(torch.int32), {}
+
+        return nll, loss_func
+
+    for chunk in model:
+        chunk.train()
+    try:
+        with contextlib.ExitStack() as stack:
+            for chunk in model:
+                if hasattr(chunk, "no_sync"):
+                    stack.enter_context(chunk.no_sync())
+            get_forward_backward_func()(
+                forward_step_func=forward_step_func,
+                data_iterator=iter(microbatches),
+                model=model,
+                num_microbatches=len(microbatches),
+                seq_length=microbatches[0].input_ids.shape[1],
+                micro_batch_size=microbatches[0].input_ids.shape[0],
+                forward_only=False,
+                pg_collection=pg_collection,
+            )
+    finally:
+        config.finalize_model_grads_func, config.grad_sync_func, config.no_sync_func = saved
+    return loss_sum, num_loss_tokens
