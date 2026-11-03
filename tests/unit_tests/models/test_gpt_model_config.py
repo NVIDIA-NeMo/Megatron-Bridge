@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import inspect
-from dataclasses import dataclass
+import re
+import warnings
+from dataclasses import dataclass, fields
 from unittest.mock import Mock, patch
 
 import pytest
@@ -21,13 +23,20 @@ import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel
 from megatron.core.transformer import ModuleSpec
+from transformers import DeepseekV3Config, Qwen2Config
 
+import megatron.bridge.models  # noqa: F401  (registers every model-family bridge)
 from megatron.bridge.models.common.base import ModelConfig
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
 from megatron.bridge.models.gpt.gpt_builder import GPTModelBuilder
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTMLAModelConfig, BridgeGPTModelConfig
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
-from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import MuseGlimmerBridge
+from megatron.bridge.models.qwen.qwen2_bridge import Qwen2Bridge
+from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
+from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 pytestmark = pytest.mark.unit
@@ -137,22 +146,90 @@ def test_model_config_class_selects_nested_transformer_type(monkeypatch: pytest.
     assert model_config.specialized_field is True
 
 
-def test_gpt_model_config_is_the_bridge_default() -> None:
-    assert MegatronModelBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
-    assert LlamaBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
-    assert "MODEL_CONFIG_CLASS" not in LlamaBridge.__dict__
+def _bridge_subclasses(bridge_class: type[MegatronModelBridge]) -> set[type[MegatronModelBridge]]:
+    subclasses = set(bridge_class.__subclasses__())
+    return subclasses.union(*(_bridge_subclasses(subclass) for subclass in subclasses))
+
+
+def _all_bridge_classes() -> list[type[MegatronModelBridge]]:
+    """Return every bridge class registered by importing ``megatron.bridge.models``."""
+    return sorted(
+        (
+            bridge_class
+            for bridge_class in _bridge_subclasses(MegatronModelBridge)
+            if bridge_class.__module__.startswith("megatron.bridge.")
+        ),
+        key=lambda bridge_class: bridge_class.__name__,
+    )
+
+
+def _has_model_config_mapping(bridge_class: type[MegatronModelBridge]) -> bool:
+    return (
+        bridge_class.hf_config_to_model_config_kwargs is not MegatronModelBridge.hf_config_to_model_config_kwargs
+        or bridge_class.hf_config_to_model_config is not MegatronModelBridge.hf_config_to_model_config
+    )
+
+
+def test_model_config_is_opt_in_per_family() -> None:
+    assert MegatronModelBridge.MODEL_CONFIG_CLASS is None
     assert MegatronModelBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
-    assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
+    for bridge_class in (LlamaBridge, Qwen3Bridge):
+        assert bridge_class.__dict__["MODEL_CONFIG_CLASS"] is BridgeGPTModelConfig
+        assert bridge_class.__dict__["USE_MODEL_CONFIG_FOR_CONVERSION"] is True
+    assert MuseGlimmerBridge.__dict__["MODEL_CONFIG_CLASS"] is not None
     assert BridgeGPTModelConfig.transformer_config_class is TransformerConfig
     assert not hasattr(MegatronModelBridge, "TRANSFORMER_CONFIG_CLASS")
 
 
-def test_bridge_can_explicitly_disable_model_config() -> None:
-    class UnsupportedBridge(LlamaBridge):
+def test_bridge_subclass_inherits_model_config_opt_in() -> None:
+    class DerivedBridge(LlamaBridge):
+        pass
+
+    assert DerivedBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+
+
+@pytest.mark.parametrize("bridge_class", _all_bridge_classes(), ids=lambda bridge_class: bridge_class.__name__)
+def test_bridge_can_explicitly_disable_model_config(bridge_class: type[MegatronModelBridge]) -> None:
+    if bridge_class.MODEL_CONFIG_CLASS is None:
+        # Unmigrated family: the builder path is rejected instead of returning generic defaults.
+        assert not _has_model_config_mapping(bridge_class)
+        assert bridge_class.USE_MODEL_CONFIG_FOR_CONVERSION is False
+        with pytest.raises(ModelConfigNotSupportedError, match=f"{bridge_class.__name__}.*to_megatron_provider"):
+            bridge_class().hf_config_to_model_config(object())
+    else:
+        # Opted-in family: it must map its Hugging Face config for the builder path.
+        assert _has_model_config_mapping(bridge_class)
+
+    # A bridge that replaces hf_config_to_model_config() wholesale does not read MODEL_CONFIG_CLASS.
+    if bridge_class.hf_config_to_model_config is MegatronModelBridge.hf_config_to_model_config:
+
+        class UnsupportedBridge(bridge_class):
+            MODEL_CONFIG_CLASS = None
+
+        with pytest.raises(ModelConfigNotSupportedError, match="UnsupportedBridge.*to_megatron_provider"):
+            UnsupportedBridge().hf_config_to_model_config(object())
+
+
+def test_unmigrated_bridge_keeps_provider_without_warning() -> None:
+    hf_config = Qwen2Config(
+        num_hidden_layers=2,
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        vocab_size=256,
+    )
+
+    class UnmigratedQwen2Bridge(Qwen2Bridge):
         MODEL_CONFIG_CLASS = None
 
-    with pytest.raises(ModelConfigNotSupportedError, match="sets MODEL_CONFIG_CLASS to None"):
-        UnsupportedBridge().hf_config_to_model_config(object())
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        provider = UnmigratedQwen2Bridge().provider_bridge(Mock(config=hf_config))
+
+    assert provider.position_embedding_type == "rope"
+    assert provider.add_qkv_bias is True
+    assert provider.add_bias_linear is False
 
 
 @pytest.mark.skipif(
@@ -181,3 +258,146 @@ def test_requested_logit_dtype_fails_before_old_mcore_builder() -> None:
 
     with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
         GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True)
+
+
+def _mla_transformer(**kwargs) -> MLATransformerConfig:
+    values = dict(
+        num_layers=2,
+        hidden_size=128,
+        num_attention_heads=4,
+        ffn_hidden_size=256,
+        activation_func=F.silu,
+        q_lora_rank=None,
+        kv_lora_rank=32,
+        qk_head_dim=16,
+        qk_pos_emb_head_dim=16,
+        v_head_dim=16,
+    )
+    values.update(kwargs)
+    return MLATransformerConfig(**values)
+
+
+def _make_mla_model_config(**kwargs) -> BridgeGPTMLAModelConfig:
+    values = dict(
+        transformer=_mla_transformer(),
+        vocab_size=256,
+        seq_length=128,
+        position_embedding_type="rope",
+        rotary_base=50_000.0,
+    )
+    values.update(kwargs)
+    return BridgeGPTMLAModelConfig(**values)
+
+
+class _GPTMLABridge(MegatronModelBridge):
+    """A builder-only MLA bridge: no legacy MLA provider selects the MLA rope fields."""
+
+    MODEL_CONFIG_CLASS = BridgeGPTMLAModelConfig
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        return MegatronMappingRegistry()
+
+
+def _deepseek_v3_config(**kwargs) -> DeepseekV3Config:
+    values = dict(
+        num_hidden_layers=2,
+        hidden_size=128,
+        intermediate_size=256,
+        moe_intermediate_size=64,
+        num_attention_heads=4,
+        num_key_value_heads=4,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        q_lora_rank=32,
+        kv_lora_rank=32,
+        qk_nope_head_dim=16,
+        qk_rope_head_dim=16,
+        v_head_dim=16,
+        vocab_size=256,
+        rope_theta=50_000.0,
+        rope_scaling={
+            "type": "yarn",
+            "factor": 40,
+            "beta_fast": 32,
+            "beta_slow": 1,
+            "mscale": 1.0,
+            "mscale_all_dim": 1.0,
+            "original_max_position_embeddings": 4096,
+        },
+    )
+    values.update(kwargs)
+    return DeepseekV3Config(**values)
+
+
+class TestGPTMLAModelConfig:
+    def test_rotary_settings_are_stored_only_on_the_mla_transformer(self) -> None:
+        """MLA attention reads rotary_base and rotary_percent from the transformer config, which alone stores them."""
+        config = _make_mla_model_config(rotary_percent=0.5)
+
+        assert BridgeGPTMLAModelConfig.transformer_config_class is MLATransformerConfig
+        assert {"rotary_base", "rotary_percent"}.isdisjoint(field.name for field in fields(config))
+        assert config.transformer.rotary_base == 50_000.0
+        assert config.transformer.rotary_percent == 0.5
+
+        config.rotary_base = 20_000.0
+        assert config.transformer.rotary_base == 20_000.0
+        assert "rotary_base" not in config.__dict__
+
+        serialized = config.as_dict()
+        assert {"rotary_base", "rotary_percent"}.isdisjoint(serialized)
+        assert serialized["transformer"]["rotary_base"] == 20_000.0
+        assert serialized["transformer"]["rotary_percent"] == 0.5
+
+    def test_constructor_rejects_conflicting_rotary_values(self) -> None:
+        message = re.escape("rotary_base=50000.0 conflicts with transformer.rotary_base=20000.0")
+
+        with pytest.raises(ValueError, match=message):
+            _make_mla_model_config(transformer=_mla_transformer(rotary_base=20_000.0))
+
+    def test_round_trip_restores_the_mla_transformer(self) -> None:
+        restored = BridgeGPTMLAModelConfig.from_dict(_make_mla_model_config().as_dict())
+
+        assert isinstance(restored, BridgeGPTMLAModelConfig)
+        assert isinstance(restored.transformer, MLATransformerConfig)
+        assert restored.rotary_base == restored.transformer.rotary_base == 50_000.0
+        assert restored.q_lora_rank is None
+        assert restored.kv_lora_rank == 32
+        assert restored.transformer.activation_func is F.silu
+        assert restored.get_builder_cls() is GPTModelBuilder
+
+    def test_cli_overrides_reach_the_mla_transformer(self) -> None:
+        @dataclass
+        class _Root:
+            model: BridgeGPTMLAModelConfig
+
+        root = _Root(model=_make_mla_model_config())
+
+        process_config_with_overrides(root, cli_overrides=["model.rotary_base=20000.0", "model.kv_lora_rank=64"])
+
+        assert root.model.transformer.rotary_base == 20_000.0
+        assert root.model.kv_lora_rank == 64
+
+    @patch("megatron.training.models.gpt.GPTModel")
+    def test_gpt_builder_passes_the_transformer_rotary_settings(self, mock_model) -> None:
+        config = _make_mla_model_config(rotary_percent=0.5)
+        config.transformer_layer_spec = ModuleSpec(module=object)
+        config.finalize()
+
+        GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True)
+
+        kwargs = mock_model.call_args.kwargs
+        assert kwargs["config"] is config.transformer
+        assert kwargs["rotary_base"] == 50_000.0
+        assert kwargs["rotary_percent"] == 0.5
+
+    def test_bridge_maps_mla_rope_fields_from_the_model_config(self) -> None:
+        """The MLA model config, not a legacy MLA provider, selects the MLA rope fields."""
+        model_config = _GPTMLABridge().hf_config_to_model_config(_deepseek_v3_config())
+
+        assert isinstance(model_config, BridgeGPTMLAModelConfig)
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.transformer.rotary_base == 50_000.0
+        assert model_config.rotary_scaling_factor == 40
+        assert model_config.original_max_position_embeddings == 4096
+        assert model_config.mscale_all_dim == 1.0
+        assert model_config.q_lora_rank == 32

@@ -46,7 +46,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin, build_distributed_models
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.peft.utils import (
     enable_expert_parallel_grad_sync_in_finalize,
@@ -82,6 +82,7 @@ from megatron.bridge.training.tensor_inspect import (
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.bridge.training.utils.optimizer_utils import uses_layer_wise_optimizer
 from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
@@ -342,16 +343,6 @@ def setup(
     if hasattr(cfg.dataset, "tokenizer"):
         cfg.dataset.tokenizer = tokenizer
 
-    # Compute token_dtype_code for sequences_per_dataset support.
-    # Bridge skips MCoreGPTDatasetConfig.__post_init__() (tokenizer unavailable at
-    # finalize time), so this field must be set once the tokenizer is available.
-    if hasattr(cfg.dataset, "token_dtype_code") and cfg.dataset.token_dtype_code is None:
-        vocab_size = getattr(tokenizer, "vocab_size", None)
-        if vocab_size is not None:
-            import numpy
-
-            cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
-
     if cfg.train.num_epochs is not None:
         if should_fire(callback_manager, "on_data_init_start"):
             raise ValueError("num_epochs is not supported with on_data_init_start callbacks")
@@ -455,12 +446,10 @@ def setup(
                     skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
                 )
             )
-        # Workaround for upstream mcore: reload_model_params() only refreshes the
-        # level-1 FP32 GPU shards of HybridDeviceOptimizer, so the level-2 CPU
-        # clones and level-3 FP32 working copies retain their random init.  Without
-        # this sync, the first optimizer step on (optimizer_cpu_offload=True + dist
-        # optimizer + BF16 + HF init) regresses the BF16 model to fresh random init.
-        # No-op when CPU offload is not enabled.  See NVIDIA-NeMo/RL PR #2372.
+        # Refresh HDO working masters after model-only initialization, or rebind
+        # saved FP32 masters/moments and restore CPU/GPU counters after full resume.
+        # Core's reload_model_params() and distributed state loader do not cover
+        # all of these working copies. No-op when CPU offload is not enabled.
         sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
@@ -613,21 +602,28 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
     model_config = cfg.model
     if not isinstance(model_config, ModelConfig):
         model_config.finalize()
-    configure_gtp_remat(model_config)
+    configure_gtp_remat(
+        model_config,
+        reduce_scatter_with_fp32_accumulation=cfg.dist.gtp_remat_reduce_scatter_with_fp32_accumulation,
+        nccl_ub=cfg.dist.gtp_remat_nccl_ub,
+        pg_collection=pg_collection,
+    )
     if getattr(model_config, "freeze_base_model_for_mtp", False):
         _register_setup_pre_wrap_hook(
             model_config, _freeze_base_model_for_mtp, setup_hook_name="freeze_base_model_for_mtp"
         )
     if isinstance(model_config, ModelConfig):
-        builder_cls = model_config.get_builder_cls()
-        builder = builder_cls(model_config)
-        model = builder.build_distributed_models(
-            pg_collection=pg_collection,
+        # PEFT loads base weights in a pre-wrap hook; the helper keeps FP32 router tensors through the cast.
+        model = build_distributed_models(
+            model_config,
+            pg_collection,
             ddp_config=cfg.ddp,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
         )
     else:
         model = model_config.provide_distributed_model(
@@ -635,6 +631,8 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
+            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
         )

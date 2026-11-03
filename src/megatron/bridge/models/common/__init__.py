@@ -14,6 +14,7 @@
 
 from megatron.bridge.models.common.base import (
     BuildConfigT,
+    MLAModelConfigMixin,
     ModelBuilder,
     ModelConfig,
     ModelConfigOverrideMixin,
@@ -27,6 +28,7 @@ from megatron.bridge.models.common.unimodal import build_virtual_pipeline_stages
 
 __all__ = [
     "BuildConfigT",
+    "MLAModelConfigMixin",
     "ModelBuilder",
     "ModelConfig",
     "ModelConfigOverrideMixin",

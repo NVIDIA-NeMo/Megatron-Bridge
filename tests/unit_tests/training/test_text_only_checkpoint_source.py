@@ -46,6 +46,55 @@ def test_checkpoint_bridge_cache_separates_full_text_and_revisions(monkeypatch):
     assert factory.call_count == 3
 
 
+def test_checkpoint_bridge_reads_builder_source_metadata(monkeypatch):
+    """Builder-backed configs record the source and its revision in extra_checkpoint_metadata."""
+    monkeypatch.setattr(checkpointing, "_AUTO_BRIDGE_CACHE", {})
+    factory = Mock(side_effect=lambda *args, **kwargs: object())
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", factory)
+    cfg = SimpleNamespace(
+        model=SimpleNamespace(
+            hf_model_text_only=True,
+            extra_checkpoint_metadata={"hf_model_id": "org/vl", "hf_model_revision": "pinned"},
+        ),
+        checkpoint=SimpleNamespace(hf_source_path=None, hf_trust_remote_code=True),
+        tokenizer=SimpleNamespace(tokenizer_model="org/tokenizer"),
+    )
+
+    checkpointing._build_auto_bridge_for_save(cfg)
+    factory.assert_called_once_with("org/vl", trust_remote_code=True, text_only=True, revision="pinned")
+    checkpointing._build_auto_bridge_for_save(cfg, hf_source="org/text-export")
+    factory.assert_called_with("org/text-export", trust_remote_code=True, text_only=True, revision=None)
+
+
+@pytest.mark.parametrize(
+    ("hf_source_path", "model", "expected"),
+    [
+        pytest.param(
+            "org/explicit",
+            SimpleNamespace(extra_checkpoint_metadata={"hf_model_id": "org/builder"}),
+            "org/explicit",
+            id="explicit-source",
+        ),
+        pytest.param(
+            None,
+            SimpleNamespace(extra_checkpoint_metadata={"hf_model_id": "org/builder"}),
+            "org/builder",
+            id="builder-metadata",
+        ),
+        pytest.param(None, SimpleNamespace(hf_model_id="org/provider"), "org/provider", id="provider-field"),
+        pytest.param(None, SimpleNamespace(extra_checkpoint_metadata={}), "org/tokenizer", id="tokenizer-fallback"),
+    ],
+)
+def test_hf_source_resolution_order(hf_source_path, model, expected):
+    cfg = SimpleNamespace(
+        checkpoint=SimpleNamespace(hf_source_path=hf_source_path),
+        model=model,
+        tokenizer=SimpleNamespace(tokenizer_model="org/tokenizer"),
+    )
+
+    assert checkpointing._resolve_hf_source(cfg) == expected
+
+
 @pytest.mark.parametrize("use_template_override", [False, True])
 def test_checkpoint_replacement_source_does_not_inherit_revision(monkeypatch, use_template_override):
     monkeypatch.setattr(checkpointing, "_AUTO_BRIDGE_CACHE", {})

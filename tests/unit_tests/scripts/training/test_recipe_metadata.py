@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import logging
 import re
 import sys
 from pathlib import Path
@@ -98,6 +99,61 @@ def test_metadata_does_not_impose_a_hardware_node_shape():
     assert metadata.hardware == "h100"
 
 
+def test_deprecated_hardware_name_resolves_to_renamed_recipe(caplog, monkeypatch):
+    module = _load_module()
+    legacy_name = "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config"
+    monkeypatch.delenv("RANK", raising=False)
+    monkeypatch.delenv("SLURM_PROCID", raising=False)
+
+    with caplog.at_level(logging.WARNING):
+        metadata = module.selected_benchmark_recipe(["--recipe", legacy_name])
+
+    assert metadata is not None
+    assert metadata.recipe_name == "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config"
+    assert metadata.hardware == "vrnvl72"
+    assert f"Recipe '{legacy_name}' uses a deprecated hardware name" in caplog.text
+    assert module.available_benchmark_recipe_metadata(legacy_name) is None
+
+
+@pytest.mark.parametrize("rank_variable", ["RANK", "SLURM_PROCID"])
+def test_deprecated_hardware_name_resolves_without_warning_on_nonzero_ranks(caplog, monkeypatch, rank_variable):
+    module = _load_module()
+    monkeypatch.delenv("RANK", raising=False)
+    monkeypatch.delenv("SLURM_PROCID", raising=False)
+    monkeypatch.setenv(rank_variable, "3")
+
+    with caplog.at_level(logging.WARNING):
+        metadata = module.resolved_benchmark_recipe_metadata("qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config")
+
+    assert metadata is not None
+    assert metadata.recipe_name == "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config"
+    assert "deprecated" not in caplog.text
+
+
+def test_deprecated_hardware_name_without_renamed_recipe_is_not_rewritten(caplog, monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("RANK", raising=False)
+    monkeypatch.delenv("SLURM_PROCID", raising=False)
+
+    with caplog.at_level(logging.WARNING):
+        # qwen3_30b_a3b has no VRNVL72 fp8cs benchmark to redirect to.
+        metadata = module.resolved_benchmark_recipe_metadata("qwen3_30b_a3b_pretrain_8gpu_vr200_fp8cs_config")
+
+    assert metadata is None
+    assert "deprecated" not in caplog.text
+
+
+def test_current_hardware_name_resolves_without_deprecation_warning(caplog):
+    module = _load_module()
+
+    with caplog.at_level(logging.WARNING):
+        metadata = module.resolved_benchmark_recipe_metadata("qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config")
+
+    assert metadata is not None
+    assert metadata.hardware == "vrnvl72"
+    assert "deprecated" not in caplog.text
+
+
 @pytest.mark.parametrize(
     ("recipe_name", "task", "step_name"),
     [
@@ -138,9 +194,18 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
         ("kimi_k25_vl_sft_config", "vlm_step"),
         ("ministral3_8b_sft_config", "vlm_step"),
         ("muse_glimmer_30b_sft_32gpu_h100_bf16_config", "vlm_step"),
+        ("muse_spark_open_peft_64gpu_gb200_bf16_config", "vlm_step"),
+        ("muse_spark_open_pretrain_192gpu_gb200_bf16_config", "vlm_step"),
+        ("muse_spark_open_pretrain_256gpu_gb200_bf16_config", "vlm_step"),
+        ("muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config", "vlm_step"),
+        ("muse_spark_open_sft_192gpu_gb200_bf16_config", "vlm_step"),
+        ("muse_spark_open_sft_192gpu_gb200_bf16_long_context_config", "vlm_step"),
+        ("muse_spark_open_sft_256gpu_gb200_bf16_config", "vlm_step"),
         ("step37_sft_flickr8k_config", "step37_flickr8k_step"),
         ("flux_12b_pretrain_config", "flux_step"),
         ("wan_14b_pretrain_config", "wan_step"),
+        ("qwen3_30b_a3b_dpo_config", "dpo_step"),
+        ("qwen3_30b_a3b_dpo_8gpu_h100_bf16_config", "dpo_step"),
     ],
 )
 def test_recipe_step_is_source_agnostic(recipe_name, step_name):

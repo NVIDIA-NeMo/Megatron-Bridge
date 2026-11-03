@@ -137,7 +137,7 @@ def kimi_k2_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def _build_kimi_k2_gb300_fp8mx() -> ConfigContainer:
-    """Shared HybridEP MXFP8 base for the Kimi K2 GB300 recipe and its VR200 alias."""
+    """Shared HybridEP MXFP8 base for the Kimi K2 GB300 recipe and its VRNVL72 alias."""
     cfg = kimi_k2_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False

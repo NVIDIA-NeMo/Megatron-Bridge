@@ -147,21 +147,22 @@ train.global_batch_size=1024
 
 ### Hybrid Attention (Full / Sliding)
 
-`Step35Bridge.provider_bridge` populates `provider.layer_types` from the HF
-`layer_types` list and writes the sliding-layer shape overrides into
-`provider.sliding_attention_setting`:
+`Step35Bridge` copies the HF `layer_types` list (main decoder layers followed by
+the MTP layers) into the model config's `layer_types` and writes the
+sliding-layer shape overrides into `sliding_attention_setting`. For
+Step-3.5-Flash:
 
 ```python
-provider.sliding_attention_setting = {
-    "rotary_percent": 1.0,
+sliding_attention_setting = {
+    "window_size": [512, 0],
     "num_attention_heads": 96,
     "num_query_groups": 8,
-    "head_dim": 128,
+    "kv_channels": 128,
 }
 ```
 
 `Step35DecoderLayer` deep-copies the config and overrides
-`rotary_percent` / `num_attention_heads` / `num_query_groups` / `kv_channels`
+`window_size` / `num_attention_heads` / `num_query_groups` / `kv_channels`
 when the resolved global layer index is marked `"sliding_attention"` in
 `layer_types`. The training-time sliding-window mask is controlled separately
 through `model.window_size` and `model.window_attn_skip_freq` (see the

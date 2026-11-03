@@ -106,11 +106,16 @@ class FakeLoRA:
 
 
 class _ToyExperts(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, transposed: bool = False):
         super().__init__()
-        self.is_transposed = True
-        self.gate_up_proj = torch.nn.Parameter(torch.zeros(2, 6, 4))
-        self.down_proj = torch.nn.Parameter(torch.zeros(2, 4, 3))
+        if transposed:
+            # GPT-OSS style: (experts, in_features, out_features)
+            self.is_transposed = True
+            self.gate_up_proj = torch.nn.Parameter(torch.zeros(2, 4, 6))
+            self.down_proj = torch.nn.Parameter(torch.zeros(2, 3, 4))
+        else:
+            self.gate_up_proj = torch.nn.Parameter(torch.zeros(2, 6, 4))
+            self.down_proj = torch.nn.Parameter(torch.zeros(2, 4, 3))
 
     def forward(self, x):
         return x
@@ -124,27 +129,31 @@ class _ToySelfAttention(torch.nn.Module):
 
 
 class _ToyMLP(torch.nn.Module):
-    def __init__(self, with_packed_experts: bool = False):
+    def __init__(self, with_packed_experts: bool = False, transposed_experts: bool = False):
         super().__init__()
         self.gate_proj = torch.nn.Linear(32, 32, bias=False)
         if with_packed_experts:
-            self.experts = _ToyExperts()
+            self.experts = _ToyExperts(transposed=transposed_experts)
 
 
 class _ToyLayer(torch.nn.Module):
-    def __init__(self, with_packed_experts: bool = False):
+    def __init__(self, with_packed_experts: bool = False, transposed_experts: bool = False):
         super().__init__()
         self.self_attn = _ToySelfAttention()
-        self.mlp = _ToyMLP(with_packed_experts=with_packed_experts)
+        self.mlp = _ToyMLP(with_packed_experts=with_packed_experts, transposed_experts=transposed_experts)
 
 
 class _ToyAdapterModel(torch.nn.Module):
     _keys_to_ignore_on_load_unexpected = (r"^mtp.*",)
 
-    def __init__(self, *, model_name_or_path: str, with_packed_experts: bool = False):
+    def __init__(
+        self, *, model_name_or_path: str, with_packed_experts: bool = False, transposed_experts: bool = False
+    ):
         super().__init__()
         self.model = torch.nn.Module()
-        self.model.layers = torch.nn.ModuleList([_ToyLayer(with_packed_experts=with_packed_experts)])
+        self.model.layers = torch.nn.ModuleList(
+            [_ToyLayer(with_packed_experts=with_packed_experts, transposed_experts=transposed_experts)]
+        )
         self.config = {"tie_word_embeddings": False}
         self.model_name_or_path = model_name_or_path
 
@@ -159,6 +168,14 @@ def _adapter_export(name: str, tensor: torch.Tensor) -> HFWeightTuple:
     """Build a raw adapter export record."""
 
     return HFWeightTuple(param_name=name, weight=tensor)
+
+
+def _param_wrapper_delta(lora_a: torch.Tensor, lora_b: torch.Tensor, num_experts: int) -> torch.Tensor:
+    """Per-expert ``[E, out, in]`` delta as PEFT's ParamWrapper reconstructs it from packed factors."""
+
+    lora_a = lora_a.reshape(num_experts, -1, lora_a.shape[-1])
+    lora_b = lora_b.reshape(lora_b.shape[0], -1, num_experts)
+    return torch.einsum("o r e, e r i -> e o i", lora_b, lora_a)
 
 
 class TestBuildAdapterConfigDict:
@@ -342,7 +359,7 @@ class TestSaveHfAdapter:
 
         names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
         tensors = [torch.randn(2, 4), torch.randn(4, 2)]
-        bridge = MagicMock(text_only=False)
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
         bridge.hf_pretrained = SimpleNamespace(model_name_or_path="org/text-base")
         bridge.export_adapter_weights.return_value = iter(
             [_adapter_export(name, tensor) for name, tensor in zip(names, tensors)]
@@ -356,6 +373,128 @@ class TestSaveHfAdapter:
         assert set(exported) == {f"base_model.model.{name}" for name in names}
         for name, tensor in zip(names, tensors):
             torch.testing.assert_close(exported[f"base_model.model.{name}"], tensor, rtol=0, atol=0)
+
+    @pytest.mark.unit
+    def test_non_zero_rank_drives_export_without_retaining_weights_or_writing(self, tmp_path):
+        """Ranks other than 0 must consume the collective export generator, keep nothing, write nothing, and join the status broadcast."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        exports = [_adapter_export(name, torch.randn(2, 4)) for name in names]
+        consumed = []
+
+        def export_generator(*args, **kwargs):
+            for export in exports:
+                consumed.append(export.param_name)
+                yield export
+
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.export_adapter_weights.side_effect = export_generator
+        output = tmp_path / "adapter"
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=1),
+            patch("torch.distributed.barrier") as barrier,
+            patch("torch.distributed.broadcast_object_list") as broadcast,
+            patch("megatron.bridge.models.conversion.peft_bridge.convert_adapter_weights_to_peft_state") as convert,
+        ):
+            AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        assert consumed == names
+        convert.assert_not_called()
+        barrier.assert_called_once()
+        broadcast.assert_called_once_with([None], src=0)
+        assert not output.exists()
+
+    @pytest.mark.unit
+    def test_rank_zero_of_a_process_group_writes_the_adapter(self, tmp_path):
+        """With a process group, rank 0 keeps the gathered weights and writes the same files as a single process."""
+        from safetensors.torch import load_file
+
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        tensors = [torch.randn(2, 4), torch.randn(4, 2)]
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.hf_pretrained = SimpleNamespace(model_name_or_path="org/text-base")
+        bridge.export_adapter_weights.return_value = iter(
+            [_adapter_export(name, tensor) for name, tensor in zip(names, tensors)]
+        )
+        output = tmp_path / "adapter"
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.barrier"),
+            patch("torch.distributed.broadcast_object_list") as broadcast,
+        ):
+            AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        broadcast.assert_called_once_with([None], src=0)
+        exported = load_file(output / "adapter_model.safetensors")
+        assert set(exported) == {f"base_model.model.{name}" for name in names}
+        for name, tensor in zip(names, tensors):
+            torch.testing.assert_close(exported[f"base_model.model.{name}"], tensor, rtol=0, atol=0)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("rank", [0, 1])
+    def test_empty_export_raises_on_every_rank(self, tmp_path, rank):
+        """An export that yields nothing is an error on every rank, not only on the writing rank."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.export_adapter_weights.return_value = iter([])
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=rank),
+            patch("torch.distributed.barrier"),
+        ):
+            with pytest.raises(RuntimeError, match="No adapter weights"):
+                AutoBridge.save_hf_adapter(bridge, model=[], path=tmp_path / "adapter", peft_config=FakeLoRA(dim=2))
+
+    @pytest.mark.unit
+    def test_rank_zero_write_failure_is_broadcast_and_re_raised(self, tmp_path):
+        """A conversion or write error on rank 0 is sent to every rank and re-raised on rank 0 as is."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.export_adapter_weights.return_value = iter([_adapter_export(name, torch.randn(2, 4)) for name in names])
+        output = tmp_path / "adapter"
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.barrier"),
+            patch("torch.distributed.broadcast_object_list") as broadcast,
+            patch(
+                "megatron.bridge.models.conversion.peft_bridge.convert_adapter_weights_to_peft_state",
+                side_effect=ValueError("Incomplete adapter export for target parameter: x"),
+            ),
+        ):
+            with pytest.raises(ValueError, match="Incomplete adapter export"):
+                AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        broadcast.assert_called_once_with(["ValueError: Incomplete adapter export for target parameter: x"], src=0)
+        assert not output.exists()
+
+    @pytest.mark.unit
+    def test_non_zero_rank_raises_when_rank_zero_failed(self, tmp_path):
+        """A non-zero rank learns about rank 0's failure from the status broadcast and raises instead of hanging."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.export_adapter_weights.return_value = iter([_adapter_export(name, torch.randn(2, 4)) for name in names])
+        output = tmp_path / "adapter"
+
+        def deliver_rank_zero_failure(status, src=0):
+            status[0] = "ValueError: Incomplete adapter export for target parameter: x"
+
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=1),
+            patch("torch.distributed.barrier"),
+            patch("torch.distributed.broadcast_object_list", side_effect=deliver_rank_zero_failure),
+        ):
+            with pytest.raises(RuntimeError, match="Rank zero failed to write the HF adapter: ValueError: Incomplete"):
+                AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        assert not output.exists()
 
     def test_convert_packed_expert_adapter_to_target_parameters(self):
         down_a = torch.tensor(
@@ -398,26 +537,23 @@ class TestSaveHfAdapter:
             "model.layers.0.mlp.experts.gate_up_proj",
         ]
 
-        expected_gate_up_a = torch.cat([chunk.transpose(0, 1) for chunk in gate_up_b], dim=0)
-        expected_gate_up_b = torch.cat([chunk.transpose(0, 1) for chunk in gate_up_a], dim=1)
-        expected_down_a = torch.cat([chunk.transpose(0, 1) for chunk in down_b], dim=0)
-        expected_down_b = torch.cat([chunk.transpose(0, 1) for chunk in down_a], dim=1)
-
+        gate_up_prefix = "base_model.model.model.layers.0.mlp.experts.base_layer"
+        down_prefix = "base_model.model.model.layers.0.mlp.experts"
         torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.base_layer.lora_A.weight"],
-            expected_gate_up_a,
+            _param_wrapper_delta(
+                adapter_state[f"{gate_up_prefix}.lora_A.weight"],
+                adapter_state[f"{gate_up_prefix}.lora_B.weight"],
+                num_experts=2,
+            ),
+            torch.bmm(gate_up_b, gate_up_a),
         )
         torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.base_layer.lora_B.weight"],
-            expected_gate_up_b,
-        )
-        torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.lora_A.weight"],
-            expected_down_a,
-        )
-        torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.lora_B.weight"],
-            expected_down_b,
+            _param_wrapper_delta(
+                adapter_state[f"{down_prefix}.lora_A.weight"],
+                adapter_state[f"{down_prefix}.lora_B.weight"],
+                num_experts=2,
+            ),
+            torch.bmm(down_b, down_a),
         )
 
     def test_convert_linear_module_adapter_stays_module_target(self):
@@ -585,7 +721,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.v_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -629,7 +765,7 @@ class TestSaveHfAdapter:
             ),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -658,7 +794,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -687,7 +823,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -725,7 +861,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -763,7 +899,7 @@ class TestSaveHfAdapter:
                 ]
             )
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
         with patch("torch.distributed.is_initialized", return_value=False):
@@ -807,7 +943,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -829,7 +965,7 @@ class TestSaveHfAdapter:
         assert "target_parameters" not in cfg
 
     def test_save_raises_on_empty_adapter(self, tmp_path):
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter([])
 
         with patch("torch.distributed.is_initialized", return_value=False):
@@ -855,7 +991,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.gate_proj.lora_B.weight", torch.randn(32, 4)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="inferred/model-id")
 
@@ -921,7 +1057,7 @@ class TestSaveHfAdapter:
             ),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(
             model_name_or_path="test/normalized-expert-model",
@@ -948,8 +1084,11 @@ class TestSaveHfAdapter:
             "model.layers.0.mlp.experts.gate_up_proj": 1,
         }
 
-    def test_save_packed_expert_adapter_uses_target_parameters(self, tmp_path):
-        peft = pytest.importorskip("peft", reason="peft library not installed")
+    @pytest.mark.parametrize("transposed_experts", [False, True], ids=["qwen_layout", "gpt_oss_layout"])
+    def test_save_packed_expert_adapter_uses_target_parameters(self, tmp_path, transposed_experts):
+        # PEFT < 0.19 does not swap in/out features for non-transposed 3D expert parameters.
+        peft = pytest.importorskip("peft", minversion="0.19.0", reason="peft>=0.19 not installed")
+        from peft.tuners.lora.layer import ParamWrapper
         from safetensors.torch import load_file
 
         from megatron.bridge.peft.lora import LoRA
@@ -989,11 +1128,12 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.experts.gate_up_proj.lora_B.weight", gate_up_b),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(
             model_name_or_path="test/packed-experts",
             with_packed_experts=True,
+            transposed_experts=transposed_experts,
         )
 
         with patch("torch.distributed.is_initialized", return_value=False):
@@ -1023,27 +1163,22 @@ class TestSaveHfAdapter:
             "base_model.model.model.layers.0.mlp.experts.base_layer.lora_B.weight",
         }
 
-        expected_gate_up_a = torch.cat([chunk.transpose(0, 1) for chunk in gate_up_b], dim=0)
-        expected_gate_up_b = torch.cat([chunk.transpose(0, 1) for chunk in gate_up_a], dim=1)
-        expected_down_a = torch.cat([chunk.transpose(0, 1) for chunk in down_b], dim=0)
-        expected_down_b = torch.cat([chunk.transpose(0, 1) for chunk in down_a], dim=1)
-
-        torch.testing.assert_close(
-            state["base_model.model.model.layers.0.mlp.experts.base_layer.lora_A.weight"],
-            expected_gate_up_a,
-        )
-        torch.testing.assert_close(
-            state["base_model.model.model.layers.0.mlp.experts.base_layer.lora_B.weight"],
-            expected_gate_up_b,
-        )
-        torch.testing.assert_close(state["base_model.model.model.layers.0.mlp.experts.lora_A.weight"], expected_down_a)
-        torch.testing.assert_close(state["base_model.model.model.layers.0.mlp.experts.lora_B.weight"], expected_down_b)
-
         loaded = peft.PeftModel.from_pretrained(
-            _ToyAdapterModel(model_name_or_path="test/packed-experts", with_packed_experts=True),
+            _ToyAdapterModel(
+                model_name_or_path="test/packed-experts",
+                with_packed_experts=True,
+                transposed_experts=transposed_experts,
+            ),
             output_dir,
         )
-        assert loaded is not None
+        expected_deltas = {"gate_up_proj": torch.bmm(gate_up_b, gate_up_a), "down_proj": torch.bmm(down_b, down_a)}
+        wrappers = [module for module in loaded.modules() if isinstance(module, ParamWrapper)]
+        assert sorted(wrapper.parameter_name for wrapper in wrappers) == ["down_proj", "gate_up_proj"]
+        for wrapper in wrappers:
+            expected = expected_deltas[wrapper.parameter_name] * wrapper.scaling["default"]
+            if transposed_experts:
+                expected = expected.transpose(1, 2)
+            torch.testing.assert_close(wrapper.get_delta_weight("default"), expected)
 
 
 # ---------------------------------------------------------------------------
@@ -1067,6 +1202,8 @@ class TestExportAdapterCkpt:
         mock = MagicMock(spec=AutoBridge)
         mock.export_adapter_ckpt = AutoBridge.export_adapter_ckpt.__get__(mock, AutoBridge)
         mock.hf_pretrained = SimpleNamespace(model_name_or_path="test-org/test-model")
+
+        mock._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=False)
 
         fake_provider = MagicMock()
         fake_provider.provide_distributed_model.return_value = [MagicMock()]
@@ -1192,6 +1329,25 @@ class TestExportAdapterCkpt:
         assert peft_config.dim == 8
         assert peft_config.alpha == 16
         assert not hasattr(peft_config, "freeze_language_model")
+
+    def test_builder_backed_family_uses_model_config(self, bridge, ckpt_dir, tmp_path):
+        """Builder-backed bridges build through get_model() with fp32 params, never the provider."""
+        bridge._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=True)
+        model_config = SimpleNamespace(transformer=SimpleNamespace(), pre_wrap_hooks=[])
+        bridge.get_model_config.return_value = model_config
+        bridge.get_model.return_value = [MagicMock()]
+
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out", show_progress=False)
+
+        bridge.to_megatron_provider.assert_not_called()
+        bridge.get_model.assert_called_once()
+        assert bridge.get_model.call_args.args[0] is model_config
+        assert bridge.get_model.call_args.kwargs["wrap_with_ddp"] is False
+        assert model_config.transformer.params_dtype == torch.float32
+        assert model_config.transformer.pipeline_dtype == torch.float32
+        assert model_config.transformer.use_cpu_initialization is True
+        assert len(model_config.pre_wrap_hooks) == 1  # the LoRA hook
+        bridge.save_hf_adapter.assert_called_once()
 
     def test_missing_checkpoint_raises(self, bridge, tmp_path):
         with pytest.raises(FileNotFoundError, match="PEFT checkpoint not found"):

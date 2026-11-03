@@ -27,7 +27,7 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_24gpu_h100_bf16_config as nemotron_3_ultra_pretrain_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
-    nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config as nemotron_3_ultra_sft_openmathinstruct2_packed_config,
+    nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config as nemotron_3_ultra_sft_openmathinstruct2_packed_config,
 )
 
 

@@ -160,6 +160,11 @@ def test_dataset_config_enables_only_requested_or_known_validation_splits(
                 do_validation=do_validation,
                 pack_sequences_in_batch=False,
                 scalable_dp=False,
+                intra_microbatch_reorder=False,
+                reorder_encoder_cost_weight=1.0,
+                reorder_language_cost_weight=0.0,
+                no_overlap_intra_microbatch_reorder=False,
+                reorder_window_size=1,
             )
         )
         config.validate()
@@ -278,5 +283,115 @@ def test_qwen35_vl_mimo_rejects_truncated_visual_tokens():
 
         with pytest.raises(ValueError, match="truncates Qwen visual tokens"):
             module._adapt_qwen35_hf_batch(batch, spec, seq_length=4, pad_to_seq_length=True)
+    finally:
+        sys.modules.pop(name, None)
+
+
+def _spec_for(module, module_name, pp_rank, pp_size, dataset):
+    class _PG:
+        def rank(self):
+            return pp_rank
+
+    grid = SimpleNamespace(dim_names=("pp",), shape=[pp_size], get_pg=lambda dims: _PG())
+    module._rank_grid_and_module = lambda grids: (grid, module_name)
+    cfg = SimpleNamespace(model=SimpleNamespace(_grids={module_name: grid}), dataset=dataset)
+    return module._batch_spec_for_rank(cfg)
+
+
+def _dataset(reorder=False, language_cost=0.0, packing=False):
+    return SimpleNamespace(
+        megatron_mimo_scalable_dp=reorder,
+        megatron_mimo_intra_microbatch_reorder=reorder,
+        megatron_mimo_reorder_language_cost_weight=language_cost,
+        enable_in_batch_packing=packing,
+    )
+
+
+def test_batch_spec_language_non_first_stage_input_ids_only_under_reorder():
+    # Upstream ships input_ids to the first language stage only; the reorder cost reads it on every
+    # stage, so reorder (and only reorder) keeps it on later stages. Labels/loss_mask stay last-stage only.
+    name = "qwen35_vl_mimo_finetune_batch_spec_under_test"
+    module = _load_example_module(name)
+    try:
+        lang = module.MIMO_LANGUAGE_MODULE_KEY
+        off = _spec_for(module, lang, pp_rank=1, pp_size=3, dataset=_dataset(reorder=False))
+        assert off.input_ids is False and off.position_ids is True
+        assert off.labels is False and off.loss_mask is False and off.modality_inputs is False
+        on = _spec_for(module, lang, pp_rank=1, pp_size=3, dataset=_dataset(reorder=True))
+        assert on.input_ids is True and on.position_ids is True
+        assert on.labels is False and on.loss_mask is False and on.modality_inputs is False
+        first = _spec_for(module, lang, pp_rank=0, pp_size=3, dataset=_dataset(reorder=False))
+        assert first.input_ids is True
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_batch_spec_attention_mask_follows_packing_or_language_cost():
+    name = "qwen35_vl_mimo_finetune_attention_mask_spec_under_test"
+    module = _load_example_module(name)
+    try:
+        lang = module.MIMO_LANGUAGE_MODULE_KEY
+        neither = _dataset()
+        assert _spec_for(module, lang, 0, 1, neither).attention_mask is False
+        assert _spec_for(module, "images", 0, 1, neither).attention_mask is False
+        packing = _dataset(packing=True)
+        assert _spec_for(module, lang, 0, 1, packing).attention_mask is True
+        assert _spec_for(module, "images", 0, 1, packing).attention_mask is False
+        cost = _dataset(reorder=True, language_cost=0.5)
+        assert _spec_for(module, lang, 0, 1, cost).attention_mask is True
+        assert _spec_for(module, "images", 0, 1, cost).attention_mask is True
+        cost_without_reorder = _dataset(reorder=False, language_cost=0.5)
+        assert _spec_for(module, "images", 0, 1, cost_without_reorder).attention_mask is False
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_batch_spec_encoder_ships_inputs_and_pixels():
+    name = "qwen35_vl_mimo_finetune_encoder_spec_under_test"
+    module = _load_example_module(name)
+    try:
+        first = _spec_for(module, "images", pp_rank=0, pp_size=1, dataset=_dataset())
+        assert first.input_ids is True and first.modality_inputs is True
+        assert first.labels is False and first.loss_mask is False and first.position_ids is False
+        later_off = _spec_for(module, "images", pp_rank=1, pp_size=2, dataset=_dataset(reorder=False))
+        assert later_off.input_ids is False and later_off.modality_inputs is False
+        later_on = _spec_for(module, "images", pp_rank=1, pp_size=2, dataset=_dataset(reorder=True))
+        assert later_on.input_ids is True and later_on.modality_inputs is False
+    finally:
+        sys.modules.pop(name, None)
+
+
+def _reorder_args(**overrides):
+    args = SimpleNamespace(
+        micro_batch_size=4,
+        global_batch_size=8,
+        intra_microbatch_reorder=True,
+        no_overlap_intra_microbatch_reorder=False,
+        pad_to_seq_length=True,
+    )
+    for key, value in overrides.items():
+        if not hasattr(args, key):
+            raise ValueError(f"args has no field '{key}'")
+        setattr(args, key, value)
+    return args
+
+
+@pytest.mark.parametrize("no_overlap", [False, True])
+def test_validate_rejects_reorder_overlap_under_single_hardware_queue(monkeypatch, no_overlap):
+    # Overlapped reorder deadlocks under CUDA_DEVICE_MAX_CONNECTIONS=1; validate must refuse it on
+    # every rank before model build. The non-overlapped path stays allowed.
+    name = "qwen35_vl_mimo_finetune_validate_under_test"
+    module = _load_example_module(name)
+    try:
+        monkeypatch.setenv("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+        empty = SimpleNamespace(module_parallelisms={})
+        args = _reorder_args(no_overlap_intra_microbatch_reorder=no_overlap)
+        if no_overlap:
+            assert module._validate_mimo_batch_sizes(empty, args) == []
+        else:
+            with pytest.raises(ValueError, match="CUDA_DEVICE_MAX_CONNECTIONS=1"):
+                module._validate_mimo_batch_sizes(empty, args)
+        monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS")
+        assert module._validate_mimo_batch_sizes(empty, _reorder_args()) == []
     finally:
         sys.modules.pop(name, None)

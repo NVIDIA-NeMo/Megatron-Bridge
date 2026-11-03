@@ -947,6 +947,90 @@ class TestHFNameSuffixMapping:
 
 
 class TestFp8ParamExport:
+    @pytest.mark.parametrize("grouped", [False, True])
+    def test_native_mxfp8_rejects_gtp_before_yielding_any_task(self, monkeypatch, grouped):
+        bridge = DummyBridge()
+        first, unsupported = _FakeNativeMXFP8Tensor(), _FakeNativeMXFP8Tensor()
+        unsupported.is_gtp_weight_remat = True
+        tasks = [
+            WeightConversionTask(
+                param_name=f"linear{index}.weight",
+                global_param_name=f"linear{index}.weight",
+                mapping=RowParallelMapping(f"linear{index}.weight", f"hf.{index}.weight"),
+                megatron_module=SimpleNamespace(),
+                param_weight=parameter,
+            )
+            for index, parameter in enumerate((first, unsupported))
+        ]
+        monkeypatch.setattr(f"{_PARAM_MB}.get_pg_size", lambda _group: 1)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: grouped and weight is unsupported)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda _weight: True)
+        materialize = Mock(wraps=bridge._materialize_local_native_mxfp8_task)
+        monkeypatch.setattr(bridge, "_materialize_local_native_mxfp8_task", materialize)
+
+        iterator = bridge.iter_local_mxfp8_params(tasks)
+        with pytest.raises(ValueError, match="linear1.weight: local native MXFP8 export cannot represent GTP"):
+            next(iterator)
+        materialize.assert_not_called()
+
+    @pytest.mark.parametrize("fp8_recipe", ["blockwise", "mxfp8"])
+    @pytest.mark.parametrize("remote_pp", [False, True])
+    def test_build_export_fp8_tasks_rejects_gtp_before_stripping_parameter_attributes(
+        self, monkeypatch, fp8_recipe, remote_pp
+    ):
+        bridge = DummyBridge()
+        global_name = _QKV_GLOBAL
+        parameter = torch.nn.Parameter(torch.zeros(4, 64))
+        parameter.is_gtp_weight_remat = True
+        metadata = {
+            "fp8_dtype": SimpleNamespace(name="kFloat8E4M3"),
+            "rowwise_data": torch.zeros(4, 64, dtype=torch.uint8),
+        }
+        if fp8_recipe == "mxfp8":
+            metadata.update(
+                rowwise_scale_inv=torch.ones(128, 4, dtype=torch.uint8),
+                with_gemm_swizzled_scales=False,
+            )
+        else:
+            metadata.update(
+                rowwise_scale_inv=torch.ones(2, 1),
+                is_2D_scaled=True,
+                quantizer=SimpleNamespace(block_len=64),
+            )
+        parameter.get_metadata = lambda: metadata
+        model = SimpleNamespace(
+            config=SimpleNamespace(fp8_recipe=fp8_recipe),
+            named_parameters=lambda: [] if remote_pp else [(global_name, parameter)],
+        )
+        mapping = _make_qkv_mapping_type(global_name)()
+        registry = MegatronMappingRegistry(mapping)
+        _patch_export_task_context(
+            monkeypatch,
+            bridge,
+            global_name,
+            registry_factory=lambda: registry,
+            detect_fp8=bridge._detect_fp8_params,
+            pp_rank=int(remote_pp),
+            pp_size=2,
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}.get_module_and_param_from_name", lambda *_args: (model, parameter))
+        monkeypatch.setattr(f"{_MODEL_MB}.get_pg_size", lambda _group: 2)
+
+        def gather(layouts, local, **_kwargs):
+            assert local == ({} if remote_pp else {global_name: -1})
+            layouts[:] = [{global_name: -1}, {}]
+
+        collective = Mock(side_effect=gather)
+        monkeypatch.setattr(torch.distributed, "all_gather_object", collective)
+        raw_views = Mock(side_effect=AssertionError("GTP must be rejected before extracting raw FP8 storage"))
+        monkeypatch.setattr(f"{_MODEL_MB}.get_fp8_export_tensors", raw_views)
+        hf = SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace()))
+
+        with pytest.raises(ValueError, match="raw FP8 export does not support GTP"):
+            bridge.build_export_fp8_tasks(hf, [model])
+        collective.assert_called_once()
+        raw_views.assert_not_called()
+
     def test_native_mxfp8_materialization_releases_preflight_projections_between_tasks(self, monkeypatch):
         bridge = DummyBridge()
         projected_weight_refs = []

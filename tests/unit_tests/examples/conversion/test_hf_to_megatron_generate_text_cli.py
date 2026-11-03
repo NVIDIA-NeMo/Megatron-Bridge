@@ -96,7 +96,9 @@ def test_main_initializes_single_process_distributed_environment(monkeypatch: py
         }
         raise RuntimeError("stop after model-parallel initialization")
 
-    provider = types.SimpleNamespace(finalize=lambda: None, initialize_model_parallel=initialize_model_parallel)
+    provider = types.SimpleNamespace(
+        apply_overrides_and_finalize=lambda: None, initialize_model_parallel=initialize_model_parallel
+    )
     bridge = types.SimpleNamespace(to_megatron_provider=lambda load_weights: provider)
     module.AutoBridge = types.SimpleNamespace(from_hf_pretrained=lambda *args, **kwargs: bridge)
     args = types.SimpleNamespace(
@@ -179,7 +181,7 @@ def test_main_provides_an_iterator_for_each_virtual_pipeline_chunk(monkeypatch: 
     spec.loader.exec_module(module)
 
     provider = types.SimpleNamespace(
-        finalize=lambda: None,
+        apply_overrides_and_finalize=lambda: None,
         initialize_model_parallel=lambda *, seed: None,
         provide_distributed_model=lambda *, wrap_with_ddp: [ModelChunk(), ModelChunk()],
         vocab_size=32,

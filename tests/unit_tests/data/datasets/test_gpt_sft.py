@@ -148,7 +148,9 @@ def test_import_preserves_tokenizers_fork_safety():
         capture_output=True,
         env=environment,
         text=True,
-        timeout=30,
+        # A fresh Bridge import loads all model registrations and can exceed 30s
+        # on CI. Keep the actual forked tokenization bounded by result.get(10s).
+        timeout=180,
         check=False,
     )
     assert result.returncode == 0, result.stderr
