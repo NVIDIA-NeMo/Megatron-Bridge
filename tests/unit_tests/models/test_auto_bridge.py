@@ -393,6 +393,25 @@ class TestAutoBridge:
 
         assert source.save_generator_kwargs["ignored_source_key_suffixes"] == expected
 
+    def test_save_hf_weights_combines_ignored_prefixes_and_dequantized_suffixes(self, tmp_path):
+        """Family omissions and dequantization accounting must coexist with MTP omissions."""
+
+        class _UnderstandingBridge(Mock):
+            HF_EXPORT_IGNORED_SOURCE_PREFIXES = ("tts.",)
+            DEQUANTIZED_SOURCE_KEY_SUFFIXES = ("_scale_inv",)
+
+        source = _make_fake_source(present={"model.layers.47.*"})
+        self._run_save_hf_weights(
+            source,
+            tmp_path,
+            mtp_num_layers=None,
+            weight_dtype=torch.bfloat16,
+            model_bridge_cls=_UnderstandingBridge,
+        )
+
+        assert source.save_generator_kwargs["ignored_source_key_prefixes"] == ("model.layers.47.", "tts.")
+        assert source.save_generator_kwargs["ignored_source_key_suffixes"] == ("_scale_inv",)
+
     @pytest.fixture
     def export_weights(self):
         bridge = object.__new__(AutoBridge)
