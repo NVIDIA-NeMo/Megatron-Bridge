@@ -1703,6 +1703,12 @@ class AutoBridge(Generic[MegatronModelT]):
             ignored_source_key_prefixes = (
                 _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ()
             ) or None
+            ignored_source_key_suffixes = tuple(
+                dict.fromkeys(
+                    (("_scale_inv",) if weight_dtype is not None else ())
+                    + tuple(getattr(type(bridge), "DEQUANTIZED_SOURCE_KEY_SUFFIXES", ()))
+                )
+            )
             saved_filenames = source.save_generator(
                 generator,
                 path,
@@ -1710,7 +1716,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 distributed_save=distributed_save,
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
-                ignored_source_key_suffixes=("_scale_inv",) if weight_dtype is not None else None,
+                ignored_source_key_suffixes=ignored_source_key_suffixes or None,
             )
         else:
             # Config-only path: shard and write safetensors directly
@@ -2674,6 +2680,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         bridge = model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
         bridge.export_weight_dtype = self.export_weight_dtype
+        bridge.trust_remote_code = self.trust_remote_code
         return bridge
 
     def _text_only_pretrained_from_path(self, path: str | Path) -> PreTrainedCausalLM:

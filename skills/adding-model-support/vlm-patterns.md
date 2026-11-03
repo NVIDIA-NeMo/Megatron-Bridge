@@ -250,6 +250,13 @@ provider, from a builder config:
 - Hugging Face configs are dataclasses, and Megatron Core's `ModelConfig.as_dict()` reads every field of a nested
   dataclass. `Gemma4TextConfig` raises on its per-layer attributes, so the Gemma 4 VL configs serialize their
   Hugging Face sub-configs with `_ConfigContainerBase._convert_value_to_dict()`, as provider checkpoints do.
+- A remote-code Hugging Face config sets its settings as attributes that its dataclass does not declare, so the
+  default deserialization drops them. Kimi K2.5 VL (`kimi_vl/kimi_k25_vl_config.py`) restores its vision config
+  with the config class's own `from_dict()`.
+- A wrapper that loads its encoders from the checkpoint's own code, as `KimiK25VLModel` does, needs the checkpoint
+  and the permission to run its code. `get_model_config()` passes the bridge only the Hugging Face config, so the
+  Kimi K2.5 VL bridge records the config's `name_or_path` and the bridge's `trust_remote_code`, which `AutoBridge`
+  sets from its source, as `hf_model_path` and `trust_remote_code` on the model config.
 
 ## Weight Mapping Naming Conventions
 
