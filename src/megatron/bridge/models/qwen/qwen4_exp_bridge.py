@@ -215,9 +215,9 @@ class PLENGramEmbeddingMapping(MegatronParamMapping[Mapping[str, torch.Tensor]])
     ) -> torch.Tensor:
         """Assemble one HF shard over the table's TP or EP group.
 
-        Rank ``r`` owns rows ``[r * rows_per_rank, (r + 1) * rows_per_rank)``; each rank writes
-        its overlap with the shard's row range into a zero buffer and the buffers are summed over
-        the TP group (exact: every row has exactly one owner).
+        Rank ``r`` owns rows ``[r * rows_per_rank, (r + 1) * rows_per_rank)``. EP owners
+        broadcast their intersections without arithmetic, preserving the frozen table's bits.
+        The existing TP path sums zero-filled buffers with one owner per row.
         """
         group, rank, size = self._row_sharding(megatron_module)
         rows_per_rank = local_rows.shape[0]
@@ -233,6 +233,18 @@ class PLENGramEmbeddingMapping(MegatronParamMapping[Mapping[str, torch.Tensor]])
         shard = torch.zeros(end - start, local_rows.shape[1], dtype=local_rows.dtype, device=local_rows.device)
         if hi > lo:
             shard[lo - start : hi - start] = local_rows[lo - rank_start : hi - rank_start]
+        if isinstance(megatron_module, FrozenEPNgramEmbedding):
+            # Copy each owner's intersection without arithmetic: summing zero-filled
+            # buffers can change signed-zero bits in the frozen checkpoint table.
+            for owner in range(start // rows_per_rank, (end - 1) // rows_per_rank + 1):
+                owner_lo = max(start, owner * rows_per_rank)
+                owner_hi = min(end, (owner + 1) * rows_per_rank)
+                torch.distributed.broadcast(
+                    shard[owner_lo - start : owner_hi - start],
+                    src=torch.distributed.get_global_rank(group, owner),
+                    group=group,
+                )
+            return shard
         torch.distributed.all_reduce(shard, group=group)
         return shard
 

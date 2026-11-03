@@ -97,14 +97,43 @@ def test_single_hf_tensor_retains_original_key_and_ep_rows(rank):
     assert list(mapping.megatron_to_hf(actual, module)) == [name]
 
 
-@pytest.mark.parametrize("ep_size,shards", [(2, 3), (4, 5)])
-def test_lazy_export_uses_ep_group_and_exact_owner_intersections(monkeypatch, ep_size, shards):
-    full = torch.arange(48, dtype=torch.float32).view(24, 2) - 19
+@pytest.mark.parametrize(
+    "ep_size,shards,dtype", [(1, 3, torch.float32), (2, 3, torch.bfloat16), (4, 5, torch.float32)]
+)
+def test_lazy_export_uses_ep_group_and_exact_owner_intersections(monkeypatch, ep_size, shards, dtype):
+    full = (torch.arange(48, dtype=torch.float32).view(24, 2) - 19).to(dtype)
+    full[0, 0] = -0.0
+    full[8, 1] = -0.0
+    words = full.view(torch.int16 if dtype == torch.bfloat16 else torch.int32)
+    words[15, 0] = 0x7FC1 if dtype == torch.bfloat16 else 0x7FC12345
+    words[16, 1] = 0x7FE3 if dtype == torch.bfloat16 else 0x7FE54321
     mapping = _Mapping("ple.weight", "hf.shard_{}", shards)
     ep_group = object()
+    global_ranks = [13, 4, 29, 8][:ep_size]
     calls = []
-    monkeypatch.setattr(torch.distributed, "all_reduce", lambda tensor, group: calls.append((group, tensor.clone())))
     local_rows = full.shape[0] // ep_size
+
+    def global_rank(group, owner):
+        assert group is ep_group
+        return global_ranks[owner]
+
+    def broadcast(tensor, src, group):
+        assert group is ep_group and tensor.is_contiguous()
+        owner = global_ranks.index(src)
+        lo, hi = max(start, owner * local_rows), min(stop, (owner + 1) * local_rows)
+        expected = full[lo:hi]
+        # Verify the sender really supplied its slice before the simulated broadcast.
+        before = expected if rank == owner else torch.zeros_like(expected)
+        assert torch.equal(tensor.view(torch.uint8), before.view(torch.uint8))
+        tensor.copy_(expected)
+        calls.append((src, lo, hi))
+
+    def forbidden_reduce(*args, **kwargs):
+        pytest.fail("EP export must not reduce signed-zero/NaN payload bytes")
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", forbidden_reduce)
+    monkeypatch.setattr(torch.distributed, "get_global_rank", global_rank)
+    monkeypatch.setattr(torch.distributed, "broadcast", broadcast)
     exports = []
     for rank in range(ep_size):
         local = full[rank * local_rows : (rank + 1) * local_rows]
@@ -114,18 +143,14 @@ def test_lazy_export_uses_ep_group_and_exact_owner_intersections(monkeypatch, ep
     assert calls == []
     width = (len(full) + shards - 1) // shards
     for i, name in enumerate(exports[0]):
-        calls.clear()
-        pieces = [export[name] for export in exports]
-        assert len(calls) == ep_size and all(group is ep_group for group, _ in calls)
-        expected = full[i * width : min((i + 1) * width, len(full))]
-        torch.testing.assert_close(torch.stack(pieces).sum(0), expected, rtol=0, atol=0)
-        # The simulated reduction checks each owner's pre-collective buffer, not just its sum.
-        for rank, (_, piece) in enumerate(calls):
-            owned = torch.zeros_like(expected)
-            start, stop = max(i * width, rank * local_rows), min((i + 1) * width, (rank + 1) * local_rows, len(full))
-            if stop > start:
-                owned[start - i * width : stop - i * width] = full[start:stop]
-            torch.testing.assert_close(piece, owned, rtol=0, atol=0)
+        start, stop = i * width, min((i + 1) * width, len(full))
+        expected = full[start:stop]
+        owners = range(start // local_rows, (stop - 1) // local_rows + 1)
+        for rank, export in enumerate(exports):
+            calls.clear()
+            actual = export[name]
+            assert torch.equal(actual.view(torch.uint8), expected.view(torch.uint8))
+            assert [call[0] for call in calls] == ([] if ep_size == 1 else [global_ranks[o] for o in owners])
 
 
 def test_tp_import_and_export_remain_on_tp_group(monkeypatch):
