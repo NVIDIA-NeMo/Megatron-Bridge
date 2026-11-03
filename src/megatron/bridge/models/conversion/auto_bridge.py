@@ -2694,6 +2694,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         bridge = model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
         bridge.export_weight_dtype = self.export_weight_dtype
+        bridge.trust_remote_code = self.trust_remote_code
         return bridge
 
     def _text_only_pretrained_from_path(self, path: str | Path) -> PreTrainedCausalLM:

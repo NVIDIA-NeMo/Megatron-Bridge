@@ -89,6 +89,20 @@ dict whose type is `"yarn"`. Hugging Face YaRN configs often omit `beta_fast`, `
 `truncate`; check that the mapped config carries Hugging Face's defaults (32, 1 and `True`) for
 them. Megatron Core passes `None` through to its YaRN embedding and fails at model construction.
 
+### Multi-Latent Attention (MLA)
+
+A GPT family with Multi-Latent Attention sets `MODEL_CONFIG_CLASS = BridgeGPTMLAModelConfig`, the
+builder counterpart of `MLAModelProvider`, or a subclass that names its own `MLATransformerConfig`
+subclass as `transformer_config_class`. Its rotary settings behave as described for
+`BridgeHybridMLAModelConfig` below. With an MLA model config, the base mapping maps a YaRN
+`rope_scaling` dict (`"yarn"`, or DeepSeek's `"deepseek_yarn"`) to the MLA fields and selects
+`position_embedding_type="rope"`. MLA providers combine an MLA transformer config with
+`GPTModelProvider`, and the dataclass field order gives Megatron Core's defaults precedence over
+`GPTModelProvider`'s, for example `deallocate_pipeline_outputs=False`: set the provider's values
+explicitly. Follow Kimi K3 (`src/megatron/bridge/models/kimi/kimi_k3_config.py`), whose transformer
+config declares the fields its custom layers read, and Sarvam MLA
+(`src/megatron/bridge/models/sarvam/sarvam_mla_bridge.py`).
+
 ### HybridModel families
 
 A `HybridModel` LLM built from a Mamba, attention, MLP and MoE layer pattern, such as Nemotron-H,
@@ -323,6 +337,14 @@ silently drops every attribute set in `provider_bridge()`. To migrate a family:
 6. Verify that the provider fields are unchanged from `main`, that `get_model_config()` matches the
    provider on every shared field, that export reproduces the source HF weights, and that logits are
    identical before and after, including on a checkpoint imported by `main`.
+
+Bridge's `build_distributed_models()`, which `get_model()`, training and checkpoint loading use,
+keeps router expert biases and the parameters listed in `_keep_in_float32_parameter_names` in FP32
+through the `Float16Module` cast. Also mark those tensors with `mark_keep_in_fp32` when the model is
+built, as MiniMax-M3 does for its router weights and vision patch embedding: builder conversion
+builds without any wrapper, so a module cast there with `convert_module_to_dtype_except_fp32_marked`
+(such as a Hugging Face-style vision tower) keeps only marked tensors in FP32, and a caller of the
+builder's own `build_distributed_models()` gets Megatron Core's plain wrapper.
 
 ## Registration Options
 
