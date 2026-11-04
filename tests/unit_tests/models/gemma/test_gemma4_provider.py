@@ -142,10 +142,17 @@ class TestGemma4DenseProviderDefaults:
         with pytest.raises(NotImplementedError, match="PP=1"):
             provider.provide()
 
-    def test_provide_rejects_context_parallel(self, provider):
+    def test_provide_rejects_context_parallel_without_te(self, provider):
+        """CP > 1 needs TE attention.
+
+        The local backend core_attention() is DotProductAttention, which asserts
+        context_parallel_size == 1. With TE present the layer spec uses TE attention and CP > 1
+        is allowed, so the rejection is conditional on TE being unavailable.
+        """
         provider.context_parallel_size = 2
-        with pytest.raises(NotImplementedError, match="CP=1"):
-            provider.provide()
+        with patch("megatron.bridge.models.gemma.gemma4_provider.HAVE_TE", False):
+            with pytest.raises(NotImplementedError, match="Transformer Engine"):
+                provider.provide()
 
     def test_provide_rejects_virtual_pipeline_stage(self, provider):
         with pytest.raises(NotImplementedError, match="PP=1"):
