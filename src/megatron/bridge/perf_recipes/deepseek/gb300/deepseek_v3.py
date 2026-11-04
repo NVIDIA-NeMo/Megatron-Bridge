@@ -474,7 +474,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = False
 
     cfg.train.micro_batch_size = 1
-    cfg.train.global_batch_size = 1024
+    cfg.train.global_batch_size = 15360
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
     cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
