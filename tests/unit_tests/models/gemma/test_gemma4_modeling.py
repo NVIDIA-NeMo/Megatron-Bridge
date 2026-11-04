@@ -24,6 +24,7 @@ import pytest
 import torch
 from megatron.core import tensor_parallel
 from megatron.core.models.common.embeddings.rotary_pos_embedding import apply_rotary_pos_emb
+from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.transformer_layer import TransformerLayer
 from megatron.training.config.instantiate_utils import instantiate
 
@@ -32,6 +33,7 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4DenseRotaryEmbedding,
     Gemma4DenseSelfAttention,
     Gemma4DenseTransformerLayer,
+    Gemma4DotProductAttention,
     Gemma4MoEExperts,
     Gemma4MoELayer,
     Gemma4MoERouter,
@@ -170,6 +172,7 @@ class TestGemma4LayerSpec:
 
         assert layer_spec.module is Gemma4DenseTransformerLayer
         assert layer_spec.submodules.self_attention.module is Gemma4DenseSelfAttention
+        assert layer_spec.submodules.self_attention.submodules.core_attention is Gemma4DotProductAttention
         assert layer_spec.submodules.post_self_attn_layernorm is Gemma4RMSNorm
         assert layer_spec.submodules.post_mlp_layernorm is Gemma4RMSNorm
 
@@ -607,6 +610,180 @@ class TestGemma4DenseSelfAttention:
         assert out is hidden_states
         assert bias is None
         assert calls[0] is sliding_mask
+
+
+class TestGemma4DotProductAttention:
+    """Dense core attention: Hugging Face's per-layer image masks on top of Megatron Core's softmax."""
+
+    @staticmethod
+    def _vision_config(**kwargs):
+        return _config(text_config=SimpleNamespace(use_bidirectional_attention="vision"), **kwargs)
+
+    @staticmethod
+    def _capture_init(monkeypatch):
+        calls = []
+
+        def fake_init(self, **kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.__init__", fake_init)
+        return calls
+
+    @staticmethod
+    def _capture_forward(monkeypatch):
+        calls = {}
+
+        def fake_forward(self, query, key, value, attention_mask, attn_mask_type=None, **kwargs):
+            calls.update(mask=attention_mask, mask_type=attn_mask_type, **kwargs)
+            return value
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.forward", fake_forward)
+        return calls
+
+    def test_sliding_image_layer_moves_window_into_explicit_mask(self, monkeypatch):
+        calls = self._capture_init(monkeypatch)
+        cfg = self._vision_config(window_size=(3, 0))
+
+        attention = Gemma4DotProductAttention(
+            config=cfg, layer_number=1, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+
+        assert calls[0]["config"].window_size is None
+        assert calls[0]["attn_mask_type"] == AttnMaskType.arbitrary
+        assert cfg.window_size == (3, 0)
+        assert attention._image_bidirectional_attention is True
+        assert attention._causal_image_attention is False
+        assert attention._image_attention_window == 4
+
+    def test_global_image_layer_keeps_causal_mask_type(self, monkeypatch):
+        calls = self._capture_init(monkeypatch)
+        cfg = self._vision_config()
+
+        attention = Gemma4DotProductAttention(
+            config=cfg, layer_number=2, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+
+        assert calls[0]["config"] is cfg
+        assert calls[0]["attn_mask_type"] == AttnMaskType.causal
+        assert attention._image_bidirectional_attention is False
+        assert attention._causal_image_attention is True
+        assert attention._image_attention_window is None
+
+    @pytest.mark.parametrize("layer_number", [1, 2])
+    @pytest.mark.parametrize("text_config", [None, SimpleNamespace(use_bidirectional_attention=None)])
+    def test_layers_without_image_bidirectional_attention_are_unchanged(self, monkeypatch, layer_number, text_config):
+        calls = self._capture_init(monkeypatch)
+        cfg = _config(text_config=text_config)
+
+        attention = Gemma4DotProductAttention(
+            config=cfg, layer_number=layer_number, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+        calls_forward = self._capture_forward(monkeypatch)
+        value = torch.ones(2, 1, 1, 4)
+        mask = torch.zeros(1, 1, 2, 2, dtype=torch.bool)
+        attention.forward(value, value, value, mask, AttnMaskType.causal, attention_bias=None)
+
+        assert calls[0]["config"] is cfg
+        assert calls[0]["attn_mask_type"] == AttnMaskType.causal
+        assert calls_forward["mask"] is mask
+        assert calls_forward["attention_bias"] is None
+
+    @pytest.mark.parametrize("with_image_mask", [True, False])
+    def test_sliding_image_layer_applies_left_window_and_keeps_future_image_tokens(self, monkeypatch, with_image_mask):
+        self._capture_init(monkeypatch)
+        attention = Gemma4DotProductAttention(
+            config=self._vision_config(window_size=(1, 0)),
+            layer_number=1,
+            attn_mask_type=AttnMaskType.causal,
+            attention_type="self",
+        )
+        calls = self._capture_forward(monkeypatch)
+        value = torch.ones(4, 1, 1, 4)
+        mask = torch.zeros(1, 1, 4, 4, dtype=torch.bool) if with_image_mask else None
+
+        attention.forward(value, value, value, mask, AttnMaskType.causal)
+
+        assert calls["mask"][0, 0, 3, 1].item() is True
+        assert calls["mask"][0, 0, 3, 2].item() is False
+        assert calls["mask"][0, 0, 0, 1].item() is (not with_image_mask)
+
+    def test_global_image_layer_masks_future_image_tokens(self, monkeypatch):
+        self._capture_init(monkeypatch)
+        attention = Gemma4DotProductAttention(
+            config=self._vision_config(), layer_number=2, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+        calls = self._capture_forward(monkeypatch)
+        value = torch.ones(3, 1, 1, 4)
+        image_block_mask = torch.zeros(1, 1, 3, 3, dtype=torch.bool)
+
+        attention.forward(value, value, value, image_block_mask, AttnMaskType.causal)
+
+        torch.testing.assert_close(calls["mask"][0, 0], torch.ones(3, 3, dtype=torch.bool).triu(diagonal=1))
+        assert calls["mask_type"] == AttnMaskType.causal
+
+    def test_decode_step_offsets_query_positions(self, monkeypatch):
+        self._capture_init(monkeypatch)
+        attention = Gemma4DotProductAttention(
+            config=self._vision_config(window_size=(1, 0)),
+            layer_number=1,
+            attn_mask_type=AttnMaskType.causal,
+            attention_type="self",
+        )
+        calls = self._capture_forward(monkeypatch)
+        query = torch.ones(1, 1, 1, 4)
+        key = torch.ones(4, 1, 1, 4)
+
+        attention.forward(query, key, key, None, AttnMaskType.causal)
+
+        assert calls["mask"][0, 0, 0].tolist() == [True, True, False, False]
+
+    def test_real_softmax_keeps_image_block_in_sliding_layers_only(self):
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        cfg = TransformerConfig(
+            num_layers=2,
+            hidden_size=8,
+            num_attention_heads=2,
+            window_size=(1, 0),
+            window_attn_skip_freq=[1, 0],
+            masked_softmax_fusion=False,
+        )
+        cfg.text_config = SimpleNamespace(use_bidirectional_attention="vision")
+        pg_collection = SimpleNamespace(tp=SimpleNamespace(size=lambda: 1))
+        # Text, a three-token image, text. The VL model's mask opens the image block in every layer.
+        image = torch.tensor([False, True, True, True, False])
+        causal = torch.ones(5, 5, dtype=torch.bool).tril()
+        image_block_mask = ~(causal | (image[:, None] & image[None, :]))[None, None]
+        qkv = torch.zeros(5, 1, 2, 4)
+
+        probs = {}
+        for layer_number in (1, 2):
+            attention = Gemma4DotProductAttention(
+                config=cfg,
+                layer_number=layer_number,
+                attn_mask_type=AttnMaskType.causal,
+                attention_type="self",
+                pg_collection=pg_collection,
+            )
+            captured = {}
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(
+                    "megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.forward",
+                    lambda self, q, k, v, mask, *args, **kwargs: captured.setdefault("mask", mask),
+                )
+                attention.forward(qkv, qkv, qkv, image_block_mask)
+            # Megatron Core's softmax, as configured for this layer; it masks the scores in place.
+            probs[layer_number] = attention.scale_mask_softmax(torch.zeros(1, 2, 5, 5), captured["mask"])[0, 0]
+
+        # Sliding layer: the first image token attends to the later image tokens; the window of 2
+        # drops the first text token for the last image token.
+        assert probs[1][1, 3] > 0
+        assert probs[1][3, 0] == 0
+        assert probs[1][4, 0] == 0
+        # Global layer: causal, including image tokens.
+        assert probs[2][1, 2] == 0
+        assert probs[2][1, 3] == 0
+        assert probs[2][3, 0] > 0
 
 
 class TestGemma4SelfAttention:

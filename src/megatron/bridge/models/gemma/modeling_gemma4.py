@@ -47,6 +47,7 @@ from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEm
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
+from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
@@ -511,6 +512,70 @@ class Gemma4DenseSelfAttention(SelfAttention):
         )
 
 
+class Gemma4DotProductAttention(DotProductAttention):
+    """Gemma 4 dense core attention with Hugging Face's per-layer image masks.
+
+    With ``use_bidirectional_attention="vision"``, Hugging Face lets the tokens of an image
+    attend to each other only in sliding layers, inside the sliding window; global layers stay
+    causal. The VL model passes one mask that opens every image block, so global layers restore
+    causality here. Sliding layers apply the left window to that mask themselves, because
+    Megatron Core's softmax would OR its causal sliding-window mask into it and close the block.
+    """
+
+    def __init__(
+        self,
+        config: TransformerConfig,
+        layer_number: int,
+        attn_mask_type: AttnMaskType,
+        attention_type: str,
+        attention_dropout: float | None = None,
+        **kwargs,
+    ):
+        text_config = getattr(config, "text_config", None)
+        uses_vision_bidirectional = getattr(text_config, "use_bidirectional_attention", None) == "vision"
+        is_sliding = _is_gemma4_sliding_layer(config, layer_number)
+        self._image_bidirectional_attention = uses_vision_bidirectional and is_sliding
+        self._causal_image_attention = uses_vision_bidirectional and not is_sliding
+        # window_size is (sliding_window - 1, 0); HF keeps keys with kv_idx > q_idx - sliding_window.
+        self._image_attention_window = config.window_size[0] + 1 if self._image_bidirectional_attention else None
+        if self._image_bidirectional_attention:
+            config = copy.copy(config)
+            config.window_size = None
+            # A causal mask type would let the fused softmax kernel ignore the explicit mask.
+            attn_mask_type = AttnMaskType.arbitrary
+        super().__init__(
+            config=config,
+            layer_number=layer_number,
+            attn_mask_type=attn_mask_type,
+            attention_type=attention_type,
+            attention_dropout=attention_dropout,
+            **kwargs,
+        )
+
+    def forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attention_mask: Tensor | None,
+        attn_mask_type: AttnMaskType | None = None,
+        **kwargs,
+    ) -> Tensor:
+        """Apply the layer's image mask: windowed image blocks in sliding layers, causal in global layers."""
+        if self._image_bidirectional_attention or self._causal_image_attention:
+            query_positions = torch.arange(query.size(0), device=query.device) + key.size(0) - query.size(0)
+            key_positions = torch.arange(key.size(0), device=key.device)
+            future = (key_positions[None, :] > query_positions[:, None])[None, None]
+            if attention_mask is None:
+                attention_mask = future
+            if self._causal_image_attention:
+                attention_mask = attention_mask | future
+            else:
+                outside_window = key_positions[None, :] <= query_positions[:, None] - self._image_attention_window
+                attention_mask = attention_mask | outside_window[None, None]
+        return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Gemma4DenseTransformerLayer: 4-norm + dual-RoPE + PLE + optional local MoE
 # ---------------------------------------------------------------------------
@@ -799,7 +864,7 @@ def get_gemma4_layer_spec(config: Optional[TransformerConfig] = None) -> ModuleS
             params={"attn_mask_type": AttnMaskType.causal},
             submodules=SelfAttentionSubmodules(
                 linear_qkv=backend.column_parallel_linear(),
-                core_attention=backend.core_attention(),
+                core_attention=Gemma4DotProductAttention,
                 linear_proj=backend.row_parallel_linear(),
                 q_layernorm=RMSNorm,
                 k_layernorm=RMSNorm,
