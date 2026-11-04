@@ -146,17 +146,6 @@ def _pretrain(
         checkpoint_manager = setup_output.checkpoint_manager
         pg_collection = setup_output.pg_collection
 
-        if (getattr(config.model, "dsa_indexer_loss_coeff", None) or 0.0) > 0:
-            try:
-                from megatron.core.transformer.experimental_attention_variant.dsa_logging import (
-                    initialize_dsa_metric_tracker,
-                )
-            except ImportError:
-                pass  # Main and older dev revisions do not expose this lifecycle hook.
-            else:
-                # Every owning PP rank must participate, even without a local writer.
-                initialize_dsa_metric_tracker(model, pg_collection)
-
         # TRAINING
         if not config.validation.skip_train:
             if state.train_state.do_train and config.train.train_iters > 0:

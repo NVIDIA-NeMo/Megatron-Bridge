@@ -42,6 +42,7 @@ from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
+from megatron.bridge.models.common.dsa_metrics import register_dsa_metric_hook
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -618,6 +619,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
         nccl_ub=cfg.dist.gtp_remat_nccl_ub,
         pg_collection=pg_collection,
     )
+    register_dsa_metric_hook(model_config, pg_collection)
     if getattr(model_config, "freeze_base_model_for_mtp", False):
         _register_setup_pre_wrap_hook(
             model_config, _freeze_base_model_for_mtp, setup_hook_name="freeze_base_model_for_mtp"
