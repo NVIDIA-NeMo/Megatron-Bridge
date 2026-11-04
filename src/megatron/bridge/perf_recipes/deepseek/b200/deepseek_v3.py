@@ -148,8 +148,6 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _enable_deepseek_transformer_engine_graph(cfg)
     _enable_ncclep(cfg)
-    cfg.comm_overlap.delay_wgrad_compute = True
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = False
@@ -164,7 +162,6 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode and one GPU per rank.
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -207,6 +204,45 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_128gpu_b200_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 128× B200, MXFP8, NCCL EP (EP=16 proxy for 256-GPU run)."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _deepseek_v3_common(cfg)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    _benchmark_common(cfg)
+    _enable_ncclep(cfg)
+    cfg.model.moe_use_grouped_tensor = False
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
