@@ -19,8 +19,8 @@ from functools import partial
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from megatron.core.transformer.moe.moe_layer import MoELayer
-from megatron.core.transformer.moe.router import TopKRouter
+from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
+from megatron.core.transformer.moe.router import InferenceTopKRouter, TopKRouter
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.gpt import GPTModelConfig
@@ -30,6 +30,13 @@ from megatron.bridge.models.conversion.param_mapping import AutoMapping
 
 # Keep probabilities below 1 so the log-odds stay finite.
 _MAX_PROB = 1.0 - 1e-6
+
+
+def _ernie45_log_odds(logits: torch.Tensor) -> torch.Tensor:
+    """Convert router logits to the log-odds of their softmax probabilities."""
+    log_probs = torch.log_softmax(logits.float(), dim=-1)
+    log_odds = log_probs - torch.log1p(-log_probs.exp().clamp(max=_MAX_PROB))
+    return log_odds.type_as(logits)
 
 
 class Ernie45TopKRouter(TopKRouter):
@@ -46,13 +53,35 @@ class Ernie45TopKRouter(TopKRouter):
 
     def gating(self, input: torch.Tensor) -> torch.Tensor:
         """Return the log-odds of the softmax gate probabilities."""
-        logits = super().gating(input)
-        log_probs = torch.log_softmax(logits.float(), dim=-1)
-        log_odds = log_probs - torch.log1p(-log_probs.exp().clamp(max=_MAX_PROB))
-        return log_odds.type_as(logits)
+        return _ernie45_log_odds(super().gating(input))
+
+
+class Ernie45InferenceTopKRouter(InferenceTopKRouter):
+    """ERNIE softmax gating with Megatron-Core's optimized inference router."""
+
+    def gating(self, input: torch.Tensor) -> torch.Tensor:
+        """Return the log-odds of the softmax gate probabilities."""
+        return _ernie45_log_odds(super().gating(input))
 
 
 AutoMapping.register_module_type("Ernie45TopKRouter", "replicated")
+AutoMapping.register_module_type("Ernie45InferenceTopKRouter", "replicated")
+
+
+def _ernie45_moe_submodules(submodules: MoESubmodules) -> MoESubmodules:
+    """Replace the MCore router while retaining its inference or training path."""
+    router = submodules.router
+    ernie_router: type[TopKRouter]
+    if router is TopKRouter:
+        ernie_router = Ernie45TopKRouter
+    elif router is InferenceTopKRouter:
+        ernie_router = Ernie45InferenceTopKRouter
+    elif router is Ernie45TopKRouter or router is Ernie45InferenceTopKRouter:
+        # Multiple layers can share the same MCore layer spec.
+        return submodules
+    else:
+        raise TypeError(f"ERNIE 4.5 expects TopKRouter or InferenceTopKRouter in the MoE spec, got {router!r}.")
+    return replace(submodules, router=ernie_router)
 
 
 def ernie45_decoder_block_spec(
@@ -64,7 +93,7 @@ def ernie45_decoder_block_spec(
     pp_rank: int | None = None,
     **kwargs: object,
 ) -> TransformerBlockSubmodules:
-    """Build a GPT block spec that honors ``moe_layer_freq`` and uses :class:`Ernie45TopKRouter`.
+    """Build a GPT block spec that honors ``moe_layer_freq`` and uses the ERNIE router.
 
     A builder passes its model config; the spec is then built from the nested transformer config.
     """
@@ -86,14 +115,9 @@ def ernie45_decoder_block_spec(
         mlp_spec = layer_spec.submodules.mlp
         if isinstance(mlp_spec, partial) and isinstance(mlp_spec.func, type) and issubclass(mlp_spec.func, MoELayer):
             mlp_kwargs = dict(mlp_spec.keywords or {})
-            mlp_submodules = mlp_kwargs["submodules"]
-            if mlp_submodules.router is not TopKRouter:
-                continue
-            mlp_kwargs["submodules"] = replace(mlp_submodules, router=Ernie45TopKRouter)
+            mlp_kwargs["submodules"] = _ernie45_moe_submodules(mlp_kwargs["submodules"])
             layer_spec.submodules.mlp = partial(mlp_spec.func, *mlp_spec.args, **mlp_kwargs)
-        elif getattr(mlp_spec, "module", None) is MoELayer and mlp_spec.submodules.router is TopKRouter:
-            layer_spec.submodules.mlp = replace(
-                mlp_spec, submodules=replace(mlp_spec.submodules, router=Ernie45TopKRouter)
-            )
+        elif isinstance(getattr(mlp_spec, "module", None), type) and issubclass(mlp_spec.module, MoELayer):
+            layer_spec.submodules.mlp = replace(mlp_spec, submodules=_ernie45_moe_submodules(mlp_spec.submodules))
 
     return block_spec

@@ -14,13 +14,21 @@
 
 """Unit tests for ERNIE 4.5 text-only MoE bridge."""
 
+from functools import partial
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
+from megatron.core.transformer.moe.router import TopKRouter
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import AutoMapping
+from megatron.bridge.models.ernie import ernie_router
 from megatron.bridge.models.ernie.ernie_45_bridge import (
     Ernie45Bridge,
     _PPSafeAutoMapping,
@@ -476,3 +484,107 @@ class TestErnie45TopKRouter:
 
         assert torch.equal(routing_map, ref_probs > 0)
         torch.testing.assert_close(probs, ref_probs, rtol=0, atol=1e-6)
+
+
+@pytest.mark.unit
+class TestErnie45DecoderBlockSpec:
+    @pytest.mark.parametrize(
+        ("transformer_impl", "expected_router"),
+        [
+            ("local", "Ernie45TopKRouter"),
+            ("transformer_engine", "Ernie45TopKRouter"),
+            ("inference_optimized", "Ernie45InferenceTopKRouter"),
+        ],
+    )
+    def test_every_moe_layer_uses_ernie_router(self, transformer_impl, expected_router):
+        config = TransformerConfig(
+            num_layers=4,
+            hidden_size=16,
+            num_attention_heads=4,
+            normalization="RMSNorm",
+            add_bias_linear=False,
+            num_moe_experts=4,
+            moe_ffn_hidden_size=32,
+            moe_router_topk=2,
+            moe_layer_freq=[0, 1, 0, 1],
+            moe_router_score_function="sigmoid",
+            moe_router_dtype="fp32",
+            moe_router_enable_expert_bias=True,
+            transformer_impl=transformer_impl,
+            use_cpu_initialization=True,
+        )
+
+        block = ernie45_decoder_block_spec(config, pp_rank=0)
+        expected_router_class = getattr(ernie_router, expected_router, None)
+        assert len(block.layer_specs) == 4
+        for index, layer in enumerate(block.layer_specs):
+            mlp = layer.submodules.mlp
+            if index in (1, 3):
+                if isinstance(mlp, partial):
+                    assert issubclass(mlp.func, MoELayer)
+                    router = mlp.keywords["submodules"].router
+                else:
+                    assert issubclass(mlp.module, MoELayer)
+                    router = mlp.submodules.router
+                assert router is expected_router_class
+            else:
+                assert not (isinstance(mlp, partial) and isinstance(mlp.func, type) and issubclass(mlp.func, MoELayer))
+                assert not (
+                    isinstance(mlp, ModuleSpec) and isinstance(mlp.module, type) and issubclass(mlp.module, MoELayer)
+                )
+
+    @pytest.mark.parametrize("module_spec", [False, True])
+    def test_unknown_moe_router_is_rejected(self, module_spec):
+        class UnexpectedRouter(TopKRouter):
+            pass
+
+        submodules = MoESubmodules(experts=object, router=UnexpectedRouter)
+        mlp = (
+            ModuleSpec(module=MoELayer, submodules=submodules)
+            if module_spec
+            else partial(MoELayer, submodules=submodules)
+        )
+        block = SimpleNamespace(layer_specs=[SimpleNamespace(submodules=SimpleNamespace(mlp=mlp))])
+        config = SimpleNamespace(transformer_impl="local")
+
+        with patch("megatron.bridge.models.ernie.ernie_router.get_gpt_decoder_block_spec", return_value=block):
+            with pytest.raises(TypeError, match="UnexpectedRouter"):
+                ernie45_decoder_block_spec(config)
+
+    def test_inference_forward_uses_ernie_probabilities(self):
+        from megatron.bridge.models.ernie.ernie_router import Ernie45InferenceTopKRouter
+
+        logits = torch.tensor([[[1.0, 0.5, -0.2, -1.0]], [[-1.0, 0.3, 1.1, 0.4]]])
+        bias = torch.tensor([0.0, 0.08, 0.0, -0.02])
+        router = Ernie45InferenceTopKRouter.__new__(Ernie45InferenceTopKRouter)
+        torch.nn.Module.__init__(router)
+        router.config = SimpleNamespace(
+            moe_router_pre_softmax=False,
+            moe_router_num_groups=None,
+            moe_router_group_topk=None,
+            moe_router_topk_scaling_factor=None,
+            moe_router_fusion=False,
+        )
+        router.is_hash_layer = False
+        router.qb_beta = None
+        router.topk = 2
+        router.score_function = "sigmoid"
+        router.expert_bias = bias
+        router.router_replay = None
+        mapping = AutoMapping(
+            megatron_param="decoder.layers.0.mlp.router.weight", hf_param="model.layers.0.gate.weight"
+        )
+        assert mapping._detect_parallelism_type(router) == "replicated"
+
+        with (
+            patch.object(TopKRouter, "gating", return_value=logits),
+            patch("megatron.core.transformer.moe.router.is_batch_invariant_mode_enabled", return_value=True),
+        ):
+            probabilities, indices = router._forward(torch.empty(2, 1, 16))
+
+        expected_scores = torch.softmax(logits.squeeze(1), dim=-1)
+        expected_indices = torch.topk(expected_scores + bias, k=2, dim=-1).indices
+        expected_probs = expected_scores.gather(-1, expected_indices)
+        expected_probs /= expected_probs.sum(dim=-1, keepdim=True)
+        assert torch.equal(indices, expected_indices)
+        torch.testing.assert_close(probabilities, expected_probs, rtol=0, atol=1e-6)
