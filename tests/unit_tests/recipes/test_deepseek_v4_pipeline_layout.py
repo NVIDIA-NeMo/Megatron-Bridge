@@ -275,6 +275,41 @@ def test_builder_config_checks_a_command_line_layout_string():
         cfg.validate()
 
 
+def _layout_as(layout_form, cfg):
+    """The config's explicit layout as a command-line string, a list, or a parsed layout."""
+    if layout_form == "string":
+        return "E" + "|".join(f"t*{count}" for count in _segment_lengths(cfg)) + "mL"
+    if layout_form == "parsed":
+        return PipelineParallelLayerLayout(
+            layout=cfg.pipeline_model_parallel_layout,
+            pipeline_model_parallel_size=cfg.pipeline_model_parallel_size,
+        )
+    return cfg.pipeline_model_parallel_layout
+
+
+@pytest.mark.parametrize("layout_form", ["string", "list", "parsed"])
+def test_builder_finalize_infers_vpp_from_an_explicit_layout(layout_form):
+    # An eight-stage PP4 layout implies VPP2, which MCore sets during finalization.
+    cfg = _builder_config(4, 2)
+    cfg.pipeline_model_parallel_layout = _layout_as(layout_form, cfg)
+    cfg.virtual_pipeline_model_parallel_size = None
+
+    cfg.finalize()
+
+    assert cfg.virtual_pipeline_model_parallel_size == 2
+
+
+@pytest.mark.parametrize("layout_form", ["string", "list", "parsed"])
+def test_builder_config_rejects_segments_that_do_not_match_the_layout_vpp(layout_form):
+    # Four PP4 segments cannot fill the eight stages of a layout that implies VPP2.
+    layout = _layout_as(layout_form, _builder_config(4, 2))
+    cfg = _builder_config(4)
+    cfg.pipeline_model_parallel_layout = layout
+
+    with pytest.raises(ValueError, match="has 4 pipeline segments"):
+        cfg.validate()
+
+
 @pytest.mark.parametrize("counts", [[4] * 16, [4] * 14 + [5], [4] * 15 + [-1]])
 def test_invalid_stage_counts_fail_before_model_construction(counts):
     cfg = _provider(61, 4, 4)

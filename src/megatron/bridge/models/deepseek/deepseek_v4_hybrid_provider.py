@@ -79,7 +79,8 @@ def validate_deepseek_v4_pipeline_segments(config: Any) -> None:
     MCore picks segment ``vp_stage * PP + pp_rank`` and only checks that the segment count is
     divisible by PP, so segments left over from an earlier topology can build only part of the
     decoder without an error: a PP4 pattern used at PP1 builds only its first segment. A pattern
-    without ``|`` keeps MCore's even split by PP. The check does not change ``config``.
+    without ``|`` keeps MCore's even split by PP. When VP is unset, an explicit layout supplies it,
+    as MCore's finalization infers it from the layout. The check does not change ``config``.
 
     Args:
         config: DeepSeek-V4 provider or builder-backed model config.
@@ -94,24 +95,27 @@ def validate_deepseek_v4_pipeline_segments(config: Any) -> None:
         return
 
     pp_size = config.pipeline_model_parallel_size or 1
-    vp_size = config.virtual_pipeline_model_parallel_size or 1
+    # Before finalization the layout is still the string or list that MCore parses.
+    layout = config.pipeline_model_parallel_layout
+    if isinstance(layout, str):
+        layout = PipelineParallelLayerLayout.from_str(layout=layout, pipeline_model_parallel_size=pp_size)
+    elif layout is not None and not isinstance(layout, PipelineParallelLayerLayout):
+        layout = PipelineParallelLayerLayout(layout=layout, pipeline_model_parallel_size=pp_size)
+
+    vp_size = config.virtual_pipeline_model_parallel_size
+    if vp_size is None:
+        vp_size = layout.virtual_pipeline_model_parallel_size if layout is not None else 1
     if len(segments) != pp_size * vp_size:
         raise ValueError(
             f"DSv4 hybrid_layer_pattern has {len(segments)} pipeline segments, but "
             f"pipeline_model_parallel_size={pp_size} and virtual_pipeline_model_parallel_size="
-            f"{config.virtual_pipeline_model_parallel_size} need {pp_size * vp_size}. Call "
+            f"{vp_size} need {pp_size * vp_size}. Call "
             "set_deepseek_v4_pipeline_model_parallel_layout() after changing PP or VP, or supply "
             "a hybrid_layer_pattern with one '|' segment per stage."
         )
 
-    # Before finalization the layout is still the string or list that MCore parses.
-    layout = config.pipeline_model_parallel_layout
     if layout is None:
         return
-    if isinstance(layout, str):
-        layout = PipelineParallelLayerLayout.from_str(layout=layout, pipeline_model_parallel_size=pp_size)
-    elif not isinstance(layout, PipelineParallelLayerLayout):
-        layout = PipelineParallelLayerLayout(layout=layout, pipeline_model_parallel_size=pp_size)
     decoder_counts = [
         layout.layout[pp_rank][vp_rank].count(LayerType.decoder)
         for vp_rank in range(layout.virtual_pipeline_model_parallel_size)

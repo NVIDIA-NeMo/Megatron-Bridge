@@ -59,6 +59,8 @@ uneven split and keeps the MTP suffix. If the command also sets
 `model.hybrid_layer_pattern` as well. Python code that changes PP or VPP on a
 recipe should call `set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)`.
 Training rejects `|` segments that do not match PP x VPP or the explicit layout.
+With VPP unset, an explicit layout sets it, as in Megatron Core: an eight-stage
+PP4 layout means VPP2.
 
 `fast-hadamard-transform` is required by DSA and is installed from the pinned
 source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
