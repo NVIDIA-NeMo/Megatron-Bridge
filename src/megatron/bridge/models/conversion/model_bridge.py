@@ -573,9 +573,20 @@ class MegatronModelBridge(
     # changing how its checkpoints are constructed. Requires MODEL_CONFIG_CLASS to be set.
     USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
 
+    # Source modules intentionally absent from every target of this bridge.
+    # Strict export still requires all other source tensors. Prefixes must name
+    # complete modules (nonempty, ending in a dot), never a wildcard or all keys.
+    HF_EXPORT_IGNORED_SOURCE_PREFIXES: ClassVar[tuple[str, ...]] = ()
+
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
+
+    # Source checkpoint key suffixes that import consumes and export never writes back, such as the
+    # ``*_scale_inv`` companions of FP8 weights a bridge dequantizes on import. Saved artifacts drop
+    # ``quantization_config``, so such a bridge exports plain weights; strict saving then ignores
+    # these source keys instead of reporting them as missing.
+    DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ()
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Apply model-specific fixes after Hugging Face artifacts are saved.
@@ -594,6 +605,10 @@ class MegatronModelBridge(
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
     hf_config = None
+
+    # Whether the Hugging Face source may run code from its repository. AutoBridge sets it from its
+    # source, so a bridge whose model loads modules from the checkpoint can record it on the model config.
+    trust_remote_code: bool = False
 
     # Optional MIMO conversion metadata. Subclasses set this when the standard
     # bridge registry can be split into MIMO component routes.
@@ -765,7 +780,8 @@ class MegatronModelBridge(
         if rope_scaling is not None and isinstance(rope_scaling, dict) and rope_scaling != {}:
             rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
 
-        if rope_type == "yarn":
+        # MLA attention implements DeepSeek's YaRN, which some MLA checkpoints (Sarvam MLA) name "deepseek_yarn".
+        if rope_type == "yarn" or (is_mla and rope_type == "deepseek_yarn"):
             # MLA configs use direct field names; GPT configs use yarn_ prefixed field names
             if is_mla:
                 # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)
@@ -1109,6 +1125,35 @@ class MegatronModelBridge(
                     )
         """
         raise NotImplementedError("Subclass must implement mapping_registry method")
+
+    @staticmethod
+    def _prefix_mapping_registry(
+        registry: MegatronMappingRegistry, megatron_prefix: str, *extra: MegatronParamMapping
+    ) -> MegatronMappingRegistry:
+        """Re-key a text-model mapping registry for a VLM wrapper.
+
+        VLM bridges typically reuse a text bridge's ``mapping_registry`` but must
+        re-prefix every Megatron parameter (e.g. ``embedding.*`` →
+        ``language_model.embedding.*``) because the language model is a submodule of
+        the VLM wrapper. Concatenation/delegation mappings that hold a nested
+        ``_tp_mapping`` keep it in sync with the parent ``megatron_param``.
+
+        Args:
+            registry: The text-model registry returned by ``super().mapping_registry()``.
+            megatron_prefix: Prefix prepended to each ``megatron_param``.
+            *extra: Additional mappings appended verbatim (e.g. replicated vision
+                weights); they are NOT prefixed.
+
+        Returns:
+            A new ``MegatronMappingRegistry`` with prefixed text mappings + extras.
+        """
+        mappings = list(registry.mappings)
+        for mapping in mappings:
+            mapping.megatron_param = megatron_prefix + mapping.megatron_param
+            nested = getattr(mapping, "_tp_mapping", None)
+            if nested is not None:
+                nested.megatron_param = mapping.megatron_param
+        return MegatronMappingRegistry(*mappings, *extra)
 
     def _megatron_global_param_names_all_pp_ranks(
         self,

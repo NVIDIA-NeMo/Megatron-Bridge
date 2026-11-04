@@ -502,6 +502,33 @@ class TestStep35BridgeModelConfig:
             assert mtp_model_layer.module is Step35DecoderLayer
             assert mtp_model_layer.submodules.mlp.func == MLP.as_mlp_submodule
 
+    def test_layer_spec_passes_model_rope_settings_to_decoder_layers(self):
+        """MCore's per-layer rotary embeddings read the RoPE settings a builder config keeps outside the layer config."""
+        model_config = Step35Bridge().hf_config_to_model_config(_make_hf_config())
+        model_config.seq_len_interpolation_factor = 2.0
+
+        block_spec = build_step35_layer_spec(model_config, pp_rank=0)
+
+        expected = {
+            "position_embedding_type": "rope",
+            "rope_scaling": False,
+            "rope_scaling_factor": 1.0,
+            "rotary_scaling_factor": 2.0,
+        }
+        assert all(layer_spec.params["rope_settings"] == expected for layer_spec in block_spec.layer_specs)
+        mtp_layer_spec = block_spec.layer_specs[-1].layer_specs[0]
+        assert mtp_layer_spec.module is Step35DecoderLayer
+        assert mtp_layer_spec.params["rope_settings"] == expected
+
+    def test_layer_spec_for_provider_passes_no_rope_settings(self):
+        with pytest.warns(FutureWarning):
+            provider = Step35Bridge().provider_bridge(_FakeHFPretrained(_make_hf_config()))
+
+        block_spec = build_step35_layer_spec(provider, pp_rank=0)
+
+        assert all("rope_settings" not in layer_spec.params for layer_spec in block_spec.layer_specs)
+        assert "rope_settings" not in block_spec.layer_specs[-1].params
+
     def test_model_config_round_trips_through_serialization(self):
         model_config = Step35Bridge().hf_config_to_model_config(_make_hf_config(rope_theta=[1e4] * 6))
 
