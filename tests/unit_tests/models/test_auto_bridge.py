@@ -17,9 +17,10 @@ Unit tests for AutoBridge automatic bridge selection and bridge functionality.
 """
 
 import json
+import sys
 from contextlib import nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
@@ -57,6 +58,8 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+from megatron.bridge.utils.instantiate_utils import _ALLOWED_TARGET_PREFIXES, InstantiationException, target_allowlist
 
 
 def create_mock_pretrained_causal_lm():
@@ -1389,6 +1392,82 @@ class TestAutoBridge:
 
         with pytest.raises(FileNotFoundError, match="Could not find run_config.yaml"):
             AutoBridge.from_auto_config(str(ckpt_dir), "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+
+    @pytest.fixture
+    def remote_code_prefix_not_allowed(self):
+        """Remove trust_remote_code modules from the target allowlist and restore it afterwards."""
+        prefix = "transformers_modules."
+        in_bridge = prefix in _ALLOWED_TARGET_PREFIXES
+        in_mlm = prefix in target_allowlist.allowed_prefixes
+        _ALLOWED_TARGET_PREFIXES.discard(prefix)
+        if in_mlm:
+            target_allowlist.remove_prefix(prefix)
+        yield
+        _ALLOWED_TARGET_PREFIXES.discard(prefix)
+        if prefix in target_allowlist.allowed_prefixes:
+            target_allowlist.remove_prefix(prefix)
+        if in_bridge:
+            _ALLOWED_TARGET_PREFIXES.add(prefix)
+        if in_mlm:
+            target_allowlist.add_prefix(prefix)
+
+    @pytest.mark.usefixtures("remote_code_prefix_not_allowed")
+    def test_from_auto_config_allows_remote_code_targets_only_with_trust_remote_code(self, tmp_path, monkeypatch):
+        """from_auto_config restores run-config classes from repository code only with trust_remote_code."""
+        # Kimi-K2.5-VL run configs restore the vision config from the checkpoint's repository code.
+        module_name = "transformers_modules.toy_vlm.0123456789abcdef.configuration_toy_vlm"
+
+        class ToyVisionConfig(PretrainedConfig):
+            __module__ = module_name
+            __qualname__ = "ToyVisionConfig"
+            model_type = "toy_vision"
+
+            def __init__(self, vt_hidden_size=32, **kwargs):
+                super().__init__(**kwargs)
+                self.vt_hidden_size = vt_hidden_size
+
+        remote_module = ModuleType(module_name)
+        remote_module.ToyVisionConfig = ToyVisionConfig
+        monkeypatch.setitem(sys.modules, module_name, remote_module)
+
+        ckpt_dir = tmp_path / "ckpt"
+        ckpt_dir.mkdir()
+        run_config = {
+            "model": {
+                "_target_": f"{KimiK25VLModelProvider.__module__}.{KimiK25VLModelProvider.__qualname__}",
+                "num_layers": 2,
+                "hidden_size": 16,
+                "num_attention_heads": 2,
+                "vision_config": {"_target_": f"{module_name}.ToyVisionConfig", "vt_hidden_size": 48},
+            }
+        }
+        (ckpt_dir / "run_config.yaml").write_text(yaml.safe_dump(run_config))
+
+        mock_hf_cfg = Mock()
+        mock_hf_cfg.to_dict.return_value = {"vocab_size": 32000}
+        first_bridge = Mock()
+        first_bridge._model_bridge.megatron_to_hf_config.return_value = {"vocab_size": 64000}
+        second_bridge = Mock()
+        hf_model_id = "moonshotai/Kimi-K2.5"
+
+        with (
+            patch("transformers.AutoConfig.from_pretrained", return_value=mock_hf_cfg),
+            patch(
+                "megatron.bridge.models.conversion.utils.conform_config_to_reference",
+                return_value={"vocab_size": 64000},
+            ),
+            patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]),
+        ):
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                AutoBridge.from_auto_config(str(ckpt_dir), hf_model_id)
+
+            bridge = AutoBridge.from_auto_config(str(ckpt_dir), hf_model_id, trust_remote_code=True)
+
+        assert bridge is second_bridge
+        megatron_cfg = first_bridge._model_bridge.megatron_to_hf_config.call_args.args[0]
+        assert isinstance(megatron_cfg, KimiK25VLModelProvider)
+        assert isinstance(megatron_cfg.vision_config, ToyVisionConfig)
+        assert megatron_cfg.vision_config.vt_hidden_size == 48
 
     def test_supports_method(self):
         """Test the supports class method."""
