@@ -22,11 +22,16 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from megatron.core import tensor_parallel
+from megatron.core import parallel_state, tensor_parallel
 from megatron.core.models.common.embeddings.rotary_pos_embedding import apply_rotary_pos_emb
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.torch_norm import WrappedTorchNorm
 from megatron.core.transformer.transformer_layer import TransformerLayer
 from megatron.training.config.instantiate_utils import instantiate
+from transformers import Gemma4TextConfig
 
+from megatron.bridge.models.gemma.gemma4_bridge import Gemma4Bridge
+from megatron.bridge.models.gemma.gemma4_builder import Gemma4DenseModelBuilder
 from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4DenseMLP,
     Gemma4DenseRotaryEmbedding,
@@ -476,6 +481,39 @@ class TestGemma4DenseSelfAttention:
         assert out_query is query
         torch.testing.assert_close(out_key, source_key)
         torch.testing.assert_close(out_value, source_value)
+
+    def test_shared_layer_gives_unused_key_norm_a_zero_gradient(self, monkeypatch):
+        query = torch.randn(2, 1, 1, 2, requires_grad=True)
+
+        def fake_get_qkv(self, hidden_states, key_value_states=None, output_gate=False, split_qkv=True):
+            del hidden_states, key_value_states, output_gate, split_qkv
+            own_key = self.k_layernorm(torch.ones_like(query))
+            return query, own_key, torch.ones_like(query)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors",
+            fake_get_qkv,
+        )
+        attn = self._make_attention_for_methods()
+        attn.is_kv_shared_layer = True
+        object.__setattr__(attn, "k_layernorm", Gemma4RMSNorm(_config(), hidden_size=2))
+
+        class Source:
+            pass
+
+        source = Source()
+        source._stored_kv = (torch.ones_like(query), torch.ones_like(query))
+        attn._kv_source_ref = weakref.ref(source)
+
+        out_query, _, _ = Gemma4DenseSelfAttention.get_query_key_value_tensors(
+            attn, hidden_states=torch.zeros(2, 1, 4)
+        )
+        upstream = torch.randn_like(query)
+        out_query.backward(upstream)
+
+        torch.testing.assert_close(out_query, query, rtol=0, atol=0)
+        torch.testing.assert_close(query.grad, upstream, rtol=0, atol=0)
+        torch.testing.assert_close(attn.k_layernorm.weight.grad, torch.zeros(2), rtol=0, atol=0)
 
     def test_shared_layer_normalizes_fallback_kv_when_source_missing(self, monkeypatch):
         query = torch.ones(2, 1, 1, 2)
@@ -1283,6 +1321,112 @@ class TestGemma4SharedKVWiring:
 
         assert shared._kv_source_ref() is source
         assert missing._kv_source_ref is None
+
+
+def _cpu_sliding_window_causal_mask(sq, skv, window_size):
+    mask = torch.triu(torch.ones(sq, skv, dtype=torch.bool), diagonal=skv - sq - window_size[0])
+    return ~torch.tril(mask, diagonal=skv - sq + window_size[1])
+
+
+class TestGemma4SharedKVTraining:
+    """Run a real tiny dense model with shared KV through forward and backward on CPU."""
+
+    @pytest.fixture
+    def cpu_model_parallel(self, monkeypatch, tmp_path):
+        # The local dense layer spec runs on CPU once RoPE, the sliding-window mask, the dropout RNG fork and the
+        # final norm stop assuming CUDA, and MCore's torch.compile'd activations run eagerly.
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+        monkeypatch.setattr("megatron.core.transformer.transformer_block.LayerNormImpl", WrappedTorchNorm)
+        monkeypatch.setattr(
+            "megatron.core.fusions.fused_softmax.get_sliding_window_causal_mask",
+            _cpu_sliding_window_causal_mask,
+        )
+        monkeypatch.setattr(
+            Gemma4DenseRotaryEmbedding,
+            "forward",
+            lambda self, max_seq_len, offset=0, packed_seq=False, cp_group=None: (
+                self.rope_sliding.get_emb(max_seq_len, offset),
+                self.rope_full.get_emb(max_seq_len, offset),
+            ),
+        )
+        monkeypatch.setattr(tensor_parallel.random.CudaRNGStatesTracker, "fork", lambda self, name=None: nullcontext())
+        torch.distributed.init_process_group(
+            "gloo", init_method=f"file://{tmp_path / 'dist_init'}", rank=0, world_size=1
+        )
+        parallel_state.initialize_model_parallel()
+        try:
+            with torch.compiler.set_stance("force_eager"):
+                yield
+        finally:
+            parallel_state.destroy_model_parallel()
+            torch.distributed.destroy_process_group()
+
+    def test_every_trainable_parameter_gets_a_gradient(self, cpu_model_parallel):
+        hf_config = Gemma4TextConfig(
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=6,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            num_global_key_value_heads=1,
+            head_dim=8,
+            global_head_dim=16,
+            layer_types=["sliding_attention", "sliding_attention", "full_attention"] * 2,
+            sliding_window=4,
+            num_kv_shared_layers=2,
+            hidden_size_per_layer_input=8,
+            vocab_size=64,
+            vocab_size_per_layer_input=64,
+            enable_moe_block=False,
+            rope_parameters={
+                "full_attention": {
+                    "partial_rotary_factor": 0.25,
+                    "rope_theta": 1_000_000.0,
+                    "rope_type": "proportional",
+                },
+                "sliding_attention": {"rope_theta": 10_000.0, "rope_type": "default"},
+            },
+        )
+        model_config = Gemma4Bridge().hf_config_to_model_config(hf_config)
+        model_config.seq_length = 16
+        model_config.make_vocab_size_divisible_by = 1
+        model_config.params_dtype = torch.float32
+        model_config.bf16 = False
+        model_config.use_cpu_initialization = True
+        model_config.gradient_accumulation_fusion = False
+        model_config.cross_entropy_loss_fusion = False
+        model_config.finalize()
+        torch.manual_seed(0)
+        model = Gemma4DenseModelBuilder(model_config).build_model(
+            pg_collection=ProcessGroupCollection.use_mpu_process_groups()
+        )
+
+        input_ids = torch.randint(0, 64, (2, 12))
+        loss = model(
+            input_ids=input_ids,
+            position_ids=torch.arange(12).expand(2, -1),
+            attention_mask=torch.ones(1, 1, 12, 12, dtype=torch.bool).triu(diagonal=1),
+            labels=torch.randint(0, 64, (2, 12)),
+        )
+        loss.mean().backward()
+
+        # MCore DDP with overlap_grad_reduce fails at the next zero_grad_buffer() if a bucketed parameter got none.
+        assert [name for name, param in model.named_parameters() if param.requires_grad and param.grad is None] == []
+        shared = {
+            layer.layer_number - 1: layer.self_attention
+            for layer in model.decoder.layers
+            if layer.self_attention.is_kv_shared_layer
+        }
+        assert sorted(shared) == [4, 5]
+        state_dict = model.state_dict()
+        for index, attention in shared.items():
+            # The source layer's K/V replace the layer's own, so its key norm stays a trainable checkpoint entry
+            # (HF keeps k_norm for every layer) whose gradient is all zero.
+            assert attention.k_layernorm.weight.requires_grad
+            assert f"decoder.layers.{index}.self_attention.k_layernorm.weight" in state_dict
+            assert torch.count_nonzero(attention.k_layernorm.weight.grad) == 0
+        assert torch.count_nonzero(model.decoder.layers[3].self_attention.k_layernorm.weight.grad) > 0
 
 
 class TestGemma4PLEHelpers:
