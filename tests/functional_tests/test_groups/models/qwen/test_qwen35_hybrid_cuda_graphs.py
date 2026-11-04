@@ -33,16 +33,20 @@ from megatron.core.distributed.finalize_model_grads import reset_model_temporary
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
 )
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.num_microbatches_calculator import (
     destroy_num_microbatches_calculator,
     init_num_microbatches_calculator,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, model_parallel_cuda_manual_seed
-from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
-from megatron.core.transformer.module import Float16Module
+from megatron.core.transformer.cuda_graphs import TECudaGraphHelper, VisionTECudaGraphHelper
+from megatron.core.transformer.enums import CudaGraphModule
+from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker, set_moe_metrics_tracker
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
+from megatron.core.transformer.transformer_block import TransformerBlock
 from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Tensor
 from transformers import Qwen3_5MoeTextConfig
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5VisionConfig
@@ -52,11 +56,14 @@ from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import mtp_block_spec
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35MoEBridge
 from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import (
+    Qwen35VLHybridAttentionLayer,
     Qwen35VLHybridModel,
     qwen35_vl_hybrid_stack_spec,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionTransformerLayer
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35VLMoEModelProvider,
     _patch_standard_attention_specs,
@@ -102,6 +109,91 @@ def qwen35_graph_process_groups():
         if owns_group:
             dist.destroy_process_group()
         torch.cuda.set_stream(original_stream)
+
+
+@pytest.mark.parametrize("vision", [False, True])
+def test_rotary_graph_inputs_without_eager_warmup(qwen35_graph_process_groups, vision):
+    """Capture must consume changing positions without observing an eager batch first."""
+    config = Qwen3VLTransformerConfig(
+        num_layers=1,
+        hidden_size=64,
+        num_attention_heads=4,
+        use_cpu_initialization=True,
+        cuda_graph_impl="transformer_engine",
+        cuda_graph_modules=[CudaGraphModule.attn, CudaGraphModule.mlp],
+        cuda_graph_warmup_steps=0,
+        use_te_rng_tracker=True,
+        bf16=True,
+        params_dtype=torch.bfloat16,
+        pipeline_dtype=torch.bfloat16,
+        attention_dropout=0.0,
+        hidden_dropout=0.0,
+        apply_rope_fusion=False,
+        apply_rotary_pos_emb_in_fp32=vision,
+        init_method_std=0.1,
+    )
+    batch_size, rotary_dim = (1, 16) if vision else (2, 8)
+    spec = get_vit_layer_with_transformer_engine_spec() if vision else get_gpt_layer_with_transformer_engine_spec()
+    spec.module = Qwen3VLVisionTransformerLayer if vision else Qwen35VLHybridAttentionLayer
+    spec.params["rotary_dim"] = rotary_dim
+    spec.submodules.self_attention.module = Qwen3VLSelfAttention
+    decoder = MegatronModule(config)
+    decoder.decoder = TransformerBlock(config, spec, pg_collection=qwen35_graph_process_groups).cuda().bfloat16()
+    decoder.position_embedding_type = "mrope"
+    container = MegatronModule(config) if vision else decoder
+    if vision:
+        container.vision_model = decoder
+    model = DistributedDataParallel(
+        config,
+        DistributedDataParallelConfig(),
+        container,
+        disable_bucketing=True,
+        pg_collection=qwen35_graph_process_groups,
+    )
+    helper = (
+        VisionTECudaGraphHelper([model], config, 32, batch_size, pg_collection=qwen35_graph_process_groups)
+        if vision
+        else TECudaGraphHelper(
+            [model], config, 32, batch_size, optimizers=[], pg_collection=qwen35_graph_process_groups
+        )
+    )
+    layer = decoder.decoder.layers[0]
+    layer.current_microbatch = 0
+    hidden = torch.randn(32, batch_size, 64, device="cuda", dtype=torch.bfloat16)
+    positions = [torch.randn(32, batch_size, 1, rotary_dim, device="cuda") for _ in range(2)]
+
+    try:
+        helper.create_cudagraphs()
+        assert helper.graphs_created()
+        graphs = layer.cuda_graphs
+        eager_outputs = []
+        for rotary in positions:
+            layer.cuda_graphs = []
+            try:
+                model.zero_grad_buffer()
+                x = hidden.clone().requires_grad_(True)
+                expected, _ = layer(x, attention_mask=None, rotary_pos_emb=rotary)
+                expected.float().square().mean().backward()
+                expected = expected.detach().clone()
+                expected_input_grad = x.grad.detach().clone()
+                expected_param_grads = {name: p.main_grad.detach().clone() for name, p in layer.named_parameters()}
+                eager_outputs.append(expected)
+            finally:
+                layer.cuda_graphs = graphs
+
+            model.zero_grad_buffer()
+            x = hidden.clone().requires_grad_(True)
+            actual, _ = layer(x, attention_mask=None, rotary_pos_emb=rotary)
+            actual.float().square().mean().backward()
+            torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-3)
+            torch.testing.assert_close(x.grad, expected_input_grad, rtol=1e-2, atol=1e-5)
+            for name, param in layer.named_parameters():
+                torch.testing.assert_close(param.main_grad, expected_param_grads[name], rtol=1e-2, atol=1e-4)
+        assert not torch.allclose(eager_outputs[0], eager_outputs[1], rtol=1e-2, atol=1e-3)
+        torch.cuda.synchronize()
+    finally:
+        if helper.graphs_created():
+            helper.delete_cuda_graphs()
 
 
 def test_hybrid_graph_replay_preserves_mtp_fp8_gradients(qwen35_graph_process_groups):

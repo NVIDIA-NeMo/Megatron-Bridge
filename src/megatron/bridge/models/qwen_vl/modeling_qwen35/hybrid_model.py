@@ -15,7 +15,7 @@
 """Qwen3.5 vision-language composition with Core's HybridModel decoder."""
 
 from contextvars import ContextVar
-from copy import copy
+from copy import copy, deepcopy
 from typing import Any
 
 import torch
@@ -34,6 +34,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLS
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_layer import Qwen3VLRotaryTransformerLayer
 
 
 _POSITION_IDS: ContextVar[torch.Tensor | None] = ContextVar("qwen35_hybrid_position_ids", default=None)
@@ -47,9 +48,14 @@ class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
         return super().forward(position_ids, self.mrope_section)
 
 
+class Qwen35VLHybridAttentionLayer(Qwen3VLRotaryTransformerLayer):
+    """Keep language graph wrappers separate from vision and feed-forward layers."""
+
+
 def qwen35_vl_hybrid_stack_spec() -> ModuleSpec:
     """Use Qwen's absolute multimodal rotary attention in the Hybrid stack."""
     spec = qwen35_hybrid_stack_spec()
+    spec.submodules.attention_layer.module = Qwen35VLHybridAttentionLayer
     spec.submodules.attention_layer.submodules.self_attention.module = Qwen3VLSelfAttention
     return spec
 
@@ -88,6 +94,12 @@ class Qwen35VLHybridLanguageModel(HybridModel):
         hybrid_config.pipeline_model_parallel_layout = None
         if config.mtp_num_layers:
             pattern += "/" + "/".join([hybrid_config.mtp_hybrid_override_pattern] * config.mtp_num_layers)
+
+        if transformer_layer_spec.submodules.attention_layer.module is Qwen35VLHybridAttentionLayer:
+            transformer_layer_spec = deepcopy(transformer_layer_spec)
+            transformer_layer_spec.submodules.attention_layer.params["rotary_dim"] = int(
+                config.kv_channels * rotary_percent
+            )
 
         super().__init__(
             config=hybrid_config,
