@@ -807,7 +807,7 @@ def test_nemotron_omni_export_preserves_source_only_buffers():
     hf_pretrained.state.__getitem__ = Mock(side_effect=source_tensors.__getitem__)
     converted = HFWeightTuple("language_model.weight", torch.ones(1))
 
-    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+    with patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter([converted, None])):
         exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained))
 
     assert exported[0] == converted
@@ -828,7 +828,9 @@ def test_nemotron_omni_export_with_megatron_names_marks_source_only_buffers_sour
     hf_pretrained.state.__getitem__ = Mock(side_effect=source_tensors.__getitem__)
     converted = HFSourcedWeightTuple("language_model.weight", torch.ones(1), ("decoder.weight",))
 
-    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])) as stream:
+    with patch.object(
+        NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter([converted, None])
+    ) as stream:
         exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained, with_megatron_names=True))
 
     assert stream.call_args.kwargs["with_megatron_names"] is True
@@ -836,6 +838,58 @@ def test_nemotron_omni_export_with_megatron_names_marks_source_only_buffers_sour
     assert all(type(item) is HFSourcedWeightTuple for item in exported[1:])
     assert {item.param_name for item in exported[1:]} == set(source_tensors)
     assert all(item.megatron_param_names == () and item.megatron_param_name is None for item in exported[1:])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bridge_cls", [NemotronOmniBridge, Nemotron35SuperVLBridge])
+@pytest.mark.parametrize("mapped_video", [False, True])
+def test_omni_grouped_modelopt_export_preserves_boundaries_and_media(tmp_path, monkeypatch, bridge_cls, mapped_video):
+    from megatron.bridge.models.conversion.modelopt_utils import ModelOptExportPlan
+
+    bridge = bridge_cls()
+    video = bridge._HF_VIDEO_EMBEDDER_KEY
+    original = torch.ones(2, 3)
+    trained = original + 2
+    source_tensors = {name: torch.tensor([index]) for index, name in enumerate(bridge._HF_PASSTHROUGH_KEYS)}
+    save_file({**source_tensors, video: original}, tmp_path / "model.safetensors")
+    config = PretrainedConfig()
+    config.name_or_path = str(tmp_path)
+    config.vision_config = {"separate_video_embedder": True}
+    config.video_temporal_patch_size = 2
+    converted = [
+        HFWeightTuple("language_model.weight", torch.ones(1)),
+        HFWeightTuple("language_model.scale", torch.ones(1)),
+    ]
+    # One conversion emits multiple tensors; the following task emits none.
+    events = [*converted, None, None]
+    expected = [[weight.param_name for weight in converted], []]
+    if mapped_video:
+        events.extend([HFWeightTuple(video, trained), None])
+        expected.append([video])
+    expected.extend([name] for name in source_tensors)
+    if not mapped_video:
+        expected.append([video])
+
+    auto = AutoBridge(config)
+    monkeypatch.setattr(AutoBridge, "_model_bridge", property(lambda self: bridge))
+    plan = ModelOptExportPlan([], {"quantized_layers": {}}, frozenset(), {})
+    with patch.object(
+        NemotronVLBridge, "_stream_weight_events_megatron_to_hf", side_effect=lambda *args, **kwargs: iter(events)
+    ):
+        groups = list(auto.export_hf_weight_groups_modelopt([], export_plan=plan, cpu=True, show_progress=False))
+        flat = list(
+            bridge.stream_weights_megatron_to_hf([], config, cpu=True, show_progress=False, conversion_tasks=[])
+        )
+
+    assert [[weight.param_name for weight in group] for group in groups] == expected
+    grouped = [weight for group in groups for weight in group]
+    assert [weight.param_name for weight in grouped] == [weight.param_name for weight in flat]
+    for grouped_weight, flat_weight in zip(grouped, flat, strict=True):
+        torch.testing.assert_close(grouped_weight.weight, flat_weight.weight)
+    assert sum(weight.param_name == video for weight in grouped) == 1
+    torch.testing.assert_close(
+        next(weight.weight for weight in grouped if weight.param_name == video), trained if mapped_video else original
+    )
 
 
 @pytest.mark.parametrize("bridge_cls", [NemotronOmniBridge, Nemotron35SuperVLBridge])
@@ -946,7 +1000,7 @@ def test_nemotron_35_super_vl_strict_reexport_preserves_summary_buffer(tmp_path,
     converted = [] if omit_learned_weight else [HFWeightTuple(learned_key, learned_weight)]
     second_export = tmp_path / "second-export"
 
-    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(converted)):
+    with patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter([*converted, None])):
         exported = bridge.stream_weights_megatron_to_hf([], hf_pretrained)
         if omit_learned_weight:
             with pytest.raises(RuntimeError, match="1 tensors from the original checkpoint were not written"):
@@ -971,7 +1025,7 @@ def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path
     hf_config.name_or_path = str(tmp_path)
     converted = HFWeightTuple("language_model.weight", torch.ones(1))
 
-    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+    with patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter([converted, None])):
         exported = list(bridge.stream_weights_megatron_to_hf([], hf_config))
 
     exported_buffers = {item.param_name: item.weight for item in exported[1:]}
@@ -1025,7 +1079,7 @@ def test_nemotron_omni_export_video_weight_precedence(tmp_path):
     config.name_or_path = str(tmp_path)
     config.vision_config = SimpleNamespace(separate_video_embedder=True)
     converted = [HFSourcedWeightTuple(name, trained, ("vision_model.video_embedder.weight",))]
-    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(converted)):
+    with patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter([*converted, None])):
         exported = list(NemotronOmniBridge().stream_weights_megatron_to_hf([], config, with_megatron_names=True))
     assert len(exported) == 1
     assert exported[0].param_name == name
@@ -1042,7 +1096,7 @@ def test_nemotron_omni_export_fails_without_required_video_weight(tmp_path, refe
         if reference_state == "missing_key":
             save_file({"unrelated.weight": torch.ones(1)}, tmp_path / "model.safetensors")
         config.name_or_path = str(tmp_path)
-    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(())):
+    with patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter(())):
         with pytest.raises(ValueError, match="video_embedder.weight"):
             list(NemotronOmniBridge().stream_weights_megatron_to_hf([], config))
 
@@ -1073,10 +1127,11 @@ def test_nemotron_omni_mimo_video_export_uses_vision_route(tmp_path, video_state
         visited.append(submodule)
         if submodule is model.vision_model and video_state == "trained":
             yield HFWeightTuple(name, trained)
+        yield None
 
     orchestrator = "megatron.bridge.models.megatron_mimo.conversion.orchestrator"
     with (
-        patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", mapped_stream),
+        patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", mapped_stream),
         patch(f"{orchestrator}.dist.is_initialized", return_value=False),
         patch(f"{orchestrator}._bridged_parallel_state", side_effect=lambda _: nullcontext()),
         patch(f"{orchestrator}.component_pg_context", side_effect=lambda *_: nullcontext()),
@@ -1114,7 +1169,7 @@ def test_super_vl_export_uses_top_level_video_config(tmp_path, video_state):
     elif video_state == "unavailable":
         save_file({"unrelated.weight": torch.ones(1)}, tmp_path / "model.safetensors")
         config.name_or_path = str(tmp_path)
-    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(())):
+    with patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter(())):
         stream = Nemotron35SuperVLBridge().stream_weights_megatron_to_hf([], config)
         if video_state == "unavailable":
             with pytest.raises(ValueError, match="video_embedder.weight"):
@@ -1138,7 +1193,7 @@ def test_nemotron_omni_stage_local_export_does_not_replace_remote_video(tmp_path
     bridge = NemotronOmniBridge()
     bridge._cached_param_owners = {"vision_model.video_embedder.weight": 1}
     with (
-        patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(())),
+        patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter(())),
         patch("megatron.bridge.models.conversion.model_bridge._get_pp_rank", return_value=0),
     ):
         assert list(bridge.stream_weights_megatron_to_hf([], config, current_pp_stage_only=True)) == []
@@ -1151,7 +1206,7 @@ def test_nemotron_omni_recovered_video_respects_device_and_dtype(tmp_path):
     config = PretrainedConfig()
     config.name_or_path = str(tmp_path)
     config.vision_config = {"separate_video_embedder": True}
-    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(())):
+    with patch.object(NemotronVLBridge, "_stream_weight_events_megatron_to_hf", return_value=iter(())):
         exported = list(
             NemotronOmniBridge().stream_weights_megatron_to_hf([], config, cpu=False, weight_dtype=torch.bfloat16)
         )
