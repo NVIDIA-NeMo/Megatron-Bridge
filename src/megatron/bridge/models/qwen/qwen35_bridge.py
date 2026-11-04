@@ -411,9 +411,6 @@ class Qwen35MoEBridge(MegatronModelBridge):
 
         return mapping_list
 
-    MODEL_CONFIG_CLASS = Qwen35HybridModelConfig
-    USE_MODEL_CONFIG_FOR_CONVERSION = True
-
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Reject the removed provider path instead of constructing an inconsistent model."""
         raise NotImplementedError("Qwen3.5 uses Hybrid builders; use AutoBridge.get_model_config() or get_model().")
@@ -672,9 +669,6 @@ class Qwen35Bridge(MegatronModelBridge):
         )
 
         return mapping_list
-
-    MODEL_CONFIG_CLASS = Qwen35HybridModelConfig
-    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Reject the removed provider path instead of constructing an inconsistent model."""
