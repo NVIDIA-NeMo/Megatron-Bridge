@@ -98,6 +98,7 @@ from megatron.bridge.training.profiling import (
     should_profile_rank,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.teardown_diagnostics import teardown_phase
 from megatron.bridge.training.tensor_inspect import (
     tensor_inspect_end_if_enabled,
     tensor_inspect_step_if_enabled,
@@ -820,20 +821,24 @@ def train(
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
     if writer:
-        writer.flush()
+        with teardown_phase("tensorboard_flush"):
+            writer.flush()
 
     # Close out pre-hooks if using distributed optimizer and overlapped param gather.
     if pre_hook_enabled:
-        disable_forward_pre_hook(model, optimizer=optimizer)
+        with teardown_phase("disable_forward_pre_hook"):
+            disable_forward_pre_hook(model, optimizer=optimizer)
 
     # Finalize pending saves here, but leave manager termination to the outer
     # lifecycle on normal completion or the exit branch below.
-    fault_tolerance.on_checkpointing_start(global_state)
-    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=False)
-    fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
+    with teardown_phase("train_checkpoint_finalization"):
+        fault_tolerance.on_checkpointing_start(global_state)
+        checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=False)
+        fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
     # Shutdown NVRx straggler detection if enabled
-    safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
+    with teardown_phase("train_nvrx_straggler_shutdown"):
+        safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
 
     if energy_monitor is not None:
         energy_monitor.lap()
@@ -845,16 +850,17 @@ def train(
     tensor_inspect_end_if_enabled(config.tensor_inspect)
 
     if should_fire(callback_manager, "on_train_end"):
-        callback_manager.fire(
-            "on_train_end",
-            CallbackContext(
-                state=global_state,
-                model=model,
-                user_state=callback_manager.user_state,
-                optimizer=optimizer,
-                scheduler=scheduler,
-            ),
-        )
+        with teardown_phase("on_train_end_callback"):
+            callback_manager.fire(
+                "on_train_end",
+                CallbackContext(
+                    state=global_state,
+                    model=model,
+                    user_state=callback_manager.user_state,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                ),
+            )
 
     # If any exit conditions (signal handler, duration, iterations) have been reached, exit.
     if should_exit:
@@ -1614,24 +1620,31 @@ def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManag
         checkpoint_manager: The checkpoint manager for finalizing async saves.
     """
     # Shutdown NVRx straggler detection if enabled
-    safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
+    with teardown_phase("nvrx_straggler_shutdown"):
+        safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
 
-    fault_tolerance.on_checkpointing_start(global_state)
-    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
-    fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
-    fault_tolerance.shutdown(global_state)
+    with teardown_phase("checkpoint_finalization"):
+        fault_tolerance.on_checkpointing_start(global_state)
+        checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
+        fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
+    with teardown_phase("fault_tolerance_shutdown"):
+        fault_tolerance.shutdown(global_state)
 
     if global_state.wandb_logger:
-        global_state.wandb_logger.finish()
+        with teardown_phase("wandb_finish"):
+            global_state.wandb_logger.finish()
 
     if global_state._comet_logger:
-        global_state._comet_logger.end()
+        with teardown_phase("comet_end"):
+            global_state._comet_logger.end()
 
     _delete_cuda_graphs(None)
     if global_state._signal_handler is not None:
-        global_state._signal_handler.release()
+        with teardown_phase("signal_handler_release"):
+            global_state._signal_handler.release()
         global_state._signal_handler = None
-    destroy_global_state()
+    with teardown_phase("destroy_global_state"):
+        destroy_global_state()
 
 
 def _should_skip_and_handle_iteration(
@@ -1766,6 +1779,11 @@ def _delete_local_cuda_graph_runners(model: list[MegatronModule]) -> None:
 
 
 def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None, model: list[MegatronModule] | None = None):
+    with teardown_phase("delete_cuda_graphs"):
+        _delete_cuda_graphs_impl(cuda_graph_helper, model)
+
+
+def _delete_cuda_graphs_impl(cuda_graph_helper: TECudaGraphHelper | None, model: list[MegatronModule] | None = None):
     """
     Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
     process-destory (torch.dist.destroy_process_group()) at the end of the training loop.

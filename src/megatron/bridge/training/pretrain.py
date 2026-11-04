@@ -27,6 +27,11 @@ from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.setup import setup
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.teardown_diagnostics import (
+    finish_teardown_diagnostics,
+    mark_teardown,
+    teardown_phase,
+)
 from megatron.bridge.training.train import _finish_train, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -161,7 +166,9 @@ def _pretrain(
                     callback_manager=callback_manager,
                 )
 
-            barrier_and_log("after training is done")
+            mark_teardown("train.returned")
+            with teardown_phase("after_training_barrier"):
+                barrier_and_log("after training is done")
 
         else:
             print_rank_0("skipping training ...")
@@ -197,7 +204,8 @@ def _pretrain(
                 is_test=True,
             )
 
-        _finish_train(state, checkpoint_manager)
+        with teardown_phase("finish_train"):
+            _finish_train(state, checkpoint_manager)
     except BaseException as error:
         if inprocess_call_wrapper is None:
             logger.exception(
@@ -214,6 +222,7 @@ def _pretrain(
         raise
 
     _maybe_destroy_process_group(should_destroy_process_group)
+    finish_teardown_diagnostics()
 
 
 def _abort_async_checkpoint_worker(state: GlobalState) -> None:
@@ -304,5 +313,7 @@ def _maybe_destroy_process_group(
             dist.distributed_c10d._abort_process_group()
             return
         if synchronize:
-            dist.barrier()
-        dist.destroy_process_group()
+            with teardown_phase("final_process_group_barrier"):
+                dist.barrier()
+        with teardown_phase("destroy_process_group"):
+            dist.destroy_process_group()
