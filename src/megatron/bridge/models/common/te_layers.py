@@ -27,7 +27,7 @@ class TERowParallelLinearLayerNorm(TERowParallelLinear):
     """Row-parallel linear with an additional Post-LayerNorm on the output.
 
     Used by models that attach a Post-LN module to row-parallel projection
-    outputs, such as Gemma2, Gemma3, and EXAONE 4.0.
+    outputs, such as Gemma3 and EXAONE 4.0.
     """
 
     def __init__(

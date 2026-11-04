@@ -1,0 +1,237 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for lightweight performance submission from a Slurm login node."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+pytestmark = pytest.mark.unit
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_PERF_SCRIPTS_DIR = _REPO_ROOT / "scripts" / "performance"
+if str(_PERF_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
+
+# setup_experiment imports utils.executors, which references nemo_run.KubeflowExecutor at import time; the locked
+# nemo-run 0.4.0 does not have it.
+if not hasattr(pytest.importorskip("nemo_run"), "KubeflowExecutor"):
+    pytest.skip("scripts/performance needs a nemo-run release with KubeflowExecutor", allow_module_level=True)
+
+import setup_experiment
+
+
+def test_default_experiment_name_uses_only_cli_metadata() -> None:
+    assert (
+        setup_experiment._default_experiment_name(
+            use_recipes=False,
+            model_recipe_name="deepseek_v3",
+            task="pretrain",
+            compute_dtype="fp8_mx",
+            num_gpus=256,
+            gpu="vrnvl72",
+            config_variant="large_scale",
+        )
+        == "pretrain_deepseek_v3_fp8_mx_gpus256_vrnvl72_large_scale"
+    )
+    assert (
+        setup_experiment._default_experiment_name(
+            use_recipes=True,
+            model_recipe_name="llama3_8b",
+            task="pretrain",
+            compute_dtype="bf16",
+            num_gpus=8,
+            gpu="h100",
+            config_variant=None,
+        )
+        == "llama3_8b_pretrain_8gpu_h100"
+    )
+
+
+def test_bridge_source_overlay_keeps_scripts_and_package_on_the_same_checkout() -> None:
+    source = _REPO_ROOT / "src" / "megatron" / "bridge"
+
+    assert setup_experiment.BRIDGE_SOURCE_DIR == source
+    assert setup_experiment._bridge_source_mount("/opt/Megatron-Bridge/scripts/performance") == (
+        f"{source}:/opt/Megatron-Bridge/src/megatron/bridge"
+    )
+
+
+def test_recipe_arguments_are_forwarded_unchanged() -> None:
+    recipe_args = [
+        "--tensor_model_parallel_size",
+        "2",
+        "--global_batch_size",
+        "64",
+        "++model.num_layers=2",
+        "++env_vars.TEST_SENTINEL=1",
+    ]
+    argv = ["--wandb_experiment_name", "wandb-name", *recipe_args]
+
+    assert setup_experiment._filter_run_script_args(argv) == [
+        "--wandb_experiment_name",
+        "wandb-name",
+        *recipe_args,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("gpu", "gpus_per_node", "expected_gpu"),
+    [
+        ("h100", "8", "h100"),
+        # The deprecated name must reach main() as vrnvl72, which applies the 4752 MHz memory clock default.
+        ("vr200", "4", "vrnvl72"),
+    ],
+)
+@pytest.mark.parametrize("is_long_convergence_run", [False, True])
+def test_submission_dry_run_does_not_import_bridge_or_mcore(
+    tmp_path: Path, is_long_convergence_run: bool, gpu: str, gpus_per_node: str, expected_gpu: str
+) -> None:
+    blocker_dir = tmp_path / "login_node"
+    blocker_dir.mkdir()
+    (blocker_dir / "sitecustomize.py").write_text(
+        """
+import importlib.abc
+import sys
+
+class _RejectMegatron(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "megatron" or fullname.startswith("megatron."):
+            raise RuntimeError(f"login-node import forbidden: {fullname}")
+        return None
+
+sys.meta_path.insert(0, _RejectMegatron())
+
+# Exercise the W&B 0.29 API surface even when testing with an older SDK.
+import wandb
+if hasattr(wandb.util, "generate_id"):
+    del wandb.util.generate_id
+"""
+    )
+    environment = os.environ.copy()
+    # Non-zero ranks skip the deprecated --gpu warning that this test expects from the launcher.
+    environment.pop("RANK", None)
+    environment.pop("SLURM_PROCID", None)
+    environment["NEMORUN_HOME"] = str(tmp_path / "nemorun")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(blocker_dir), environment.get("PYTHONPATH")) if value
+    )
+    command = [
+        sys.executable,
+        str(_PERF_SCRIPTS_DIR / "setup_experiment.py"),
+        "--model_family_name",
+        "llama",
+        "--model_recipe_name",
+        "llama3_8b",
+        "--num_gpus",
+        "8",
+        "--gpus_per_node",
+        gpus_per_node,
+        "--gpu",
+        gpu,
+        "--account",
+        "test-account",
+        "--partition",
+        "batch",
+        "--container_image",
+        "example.invalid/nemo:test",
+        "--packager",
+        "none",
+        "--dryrun",
+    ]
+    if is_long_convergence_run:
+        command.append("--is_long_convergence_run")
+
+    result = subprocess.run(
+        command,
+        cwd=_REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "bootstrap.py" in output
+    assert f"pretrain_llama3_8b_bf16_gpus8_{expected_gpu}" in output
+    assert ("--gpu vr200 is deprecated; use --gpu vrnvl72." in output) == (gpu == "vr200")
+    # The dry-run sbatch dump wraps at spaces, so match the clock value as one token.
+    assert ("4752,4752" in output) == (expected_gpu == "vrnvl72")
+    assert "WANDB_RUN_ID" in output
+    assert "WANDB_RESUME" in output
+    assert "login-node import forbidden" not in output
+
+
+def test_dryrun_short_flag_is_filtered_from_recipe_args() -> None:
+    """-d (short form of --dryrun) must be stripped from args forwarded to the recipe script."""
+    argv = ["-d", "--tensor_model_parallel_size", "2"]
+    assert "-d" not in setup_experiment._filter_run_script_args(argv)
+
+
+def test_nvcre_flags_are_filtered_from_recipe_args() -> None:
+    """All --nvcre_* flags and their values must be stripped before forwarding to the recipe."""
+    argv = [
+        "--nvcre_namespace",
+        "nemo-perf",
+        "--nvcre_image_pull_secret=ngc-secret",
+        "--tensor_model_parallel_size",
+        "2",
+    ]
+    filtered = setup_experiment._filter_run_script_args(argv)
+    assert filtered == ["--tensor_model_parallel_size", "2"]
+
+
+# ── _nvcre_env_vars ───────────────────────────────────────────────────────────
+
+
+def test_nvcre_env_vars_without_hf_token_secret() -> None:
+    """Custom env vars must be forwarded unchanged when no HF token secret is configured."""
+    custom = {"NCCL_TIMEOUT": "1800", "MY_VAR": "1"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name=None)
+    assert result == custom
+    assert result is not custom  # must be an independent copy
+
+
+def test_nvcre_env_vars_with_hf_token_secret_enables_online_mode() -> None:
+    """When an HF secret is configured, offline-mode flags must be overridden to allow pod access."""
+    result = setup_experiment._nvcre_env_vars({}, hf_token_secret_name="hf-token-secret")
+    assert result["HF_HUB_OFFLINE"] == "0"
+    assert result["TRANSFORMERS_OFFLINE"] == "0"
+    assert "HF_TOKEN" not in result  # token is injected via secret_env_vars, not here
+
+
+def test_nvcre_env_vars_hf_token_secret_forces_online_mode() -> None:
+    """HF secret must override any caller-supplied offline flag so the pod can reach HuggingFace."""
+    custom = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name="hf-token-secret")
+    assert result["HF_HUB_OFFLINE"] == "0"
+    assert result["TRANSFORMERS_OFFLINE"] == "0"
+    assert "HF_TOKEN" not in result
+
+
+def test_nvcre_env_vars_strips_plain_hf_token_when_secret_configured() -> None:
+    """Plain HF_TOKEN from cluster_config environment: or --env flags must be stripped when a secret is set."""
+    custom = {"HF_TOKEN": "hf_leaked_token", "NCCL_TIMEOUT": "1800"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name="hf-token-secret")
+    assert "HF_TOKEN" not in result
+    assert result["NCCL_TIMEOUT"] == "1800"

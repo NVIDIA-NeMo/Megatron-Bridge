@@ -35,7 +35,7 @@ def _set_optimizer_precision(cfg: ConfigContainer) -> None:
 
 
 def _apply_exaone4_common(cfg: ConfigContainer) -> None:
-    cfg.model = AutoBridge.from_hf_pretrained(_HF_PATH).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_HF_PATH).get_model_config()
     cfg.tokenizer.tokenizer_model = _HF_PATH
 
     cfg.model.tensor_model_parallel_size = 1

@@ -20,8 +20,11 @@ Megatron-Core GPTModel with single-pool MoE (64 experts, top-6 routing,
 shared experts, expert bias for aux-free load balancing).
 """
 
+from typing import Any
+
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -31,6 +34,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -157,8 +161,11 @@ class Ernie45Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("baidu/ERNIE-4.5-0.3B-PT")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @staticmethod
     def _get_num_experts(hf_config) -> int:
@@ -172,87 +179,82 @@ class Ernie45Bridge(MegatronModelBridge):
             return raw[0]
         return int(raw)
 
-    def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace ERNIE 4.5 MoE config to GPTModelProvider.
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face ERNIE 4.5 MoE config to builder config kwargs.
 
-        Uses super().provider_bridge() for standard CONFIG_MAPPING fields
-        (hidden_size, num_layers, rope_theta, tie_word_embeddings, etc.)
-        and then overrides ERNIE-specific settings.
+        Starts from the shared ``CONFIG_MAPPING`` fields (hidden_size, num_layers,
+        tie_word_embeddings, etc.) and adds the ERNIE-specific settings.
         """
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
-
-        # --- Architecture overrides ---
-        provider.normalization = "RMSNorm"
-        provider.activation_func = F.silu
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False
-        provider.hidden_dropout = 0.0
-        provider.position_embedding_type = "rope"
-        provider.rotary_base = 500000.0
-        provider.rotary_interleaved = True
-        provider.moe_router_load_balancing_type = "aux_loss"
-        # Mixed dense/MoE layers (layer 0 dense, rest MoE): use decoder
-        # block spec that parses moe_layer_freq per-layer instead of the
-        # default spec which applies MoE uniformly to all layers.
-        provider.transformer_layer_spec = _ernie45_decoder_block_spec
-
-        # --- MoE settings (ERNIE uses non-standard HF config field names) ---
-        num_experts = self._get_num_experts(hf_config)
-        provider.num_moe_experts = num_experts
-        provider.moe_router_topk = getattr(hf_config, "moe_k", 6)
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
 
         # Expert intermediate size: may be int or list (text-only uses first/only).
         moe_intermediate = getattr(hf_config, "moe_intermediate_size", None)
         if isinstance(moe_intermediate, (list, tuple)):
-            provider.moe_ffn_hidden_size = moe_intermediate[0]
+            moe_ffn_hidden_size = moe_intermediate[0]
         elif moe_intermediate is not None:
-            provider.moe_ffn_hidden_size = moe_intermediate
+            moe_ffn_hidden_size = moe_intermediate
         else:
-            provider.moe_ffn_hidden_size = getattr(hf_config, "intermediate_size", 5120)
+            moe_ffn_hidden_size = getattr(hf_config, "intermediate_size", 5120)
 
-        # Shared experts
-        moe_num_shared = getattr(hf_config, "moe_num_shared_experts", 2)
-        provider.moe_shared_expert_intermediate_size = provider.moe_ffn_hidden_size * moe_num_shared
-
-        # Router settings
-        provider.moe_aux_loss_coeff = getattr(hf_config, "router_aux_loss_coef", 0.001)
-
-        # MoE runtime settings — same as DeepSeek V3 (sigmoid routing + expert bias)
-        provider.moe_grouped_gemm = True
-        provider.moe_router_pre_softmax = False
-        provider.moe_router_score_function = "sigmoid"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_dtype = "fp32"
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
-        # gradient_accumulation_fusion: use the auto-detected default from
-        # GPTModelProvider (checks for APEX or TE availability) rather than
-        # overriding it here.  For conversion jobs (no backward pass) the
-        # flag is irrelevant; for training it will be enabled whenever
-        # the required extensions are present.
-
-        # Disable MTP (Multi-Token Prediction) for inference -- the ERNIE HF
-        # model stores num_nextn_predict_layers in config but does not ship
-        # MTP weights, so we must not create MTP layers in Megatron.
-        provider.mtp_num_layers = None
+        config_kwargs.update(
+            # --- Architecture ---
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            position_embedding_type="rope",
+            rotary_base=500000.0,
+            rotary_interleaved=True,
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            # --- MoE (ERNIE uses non-standard HF config field names) ---
+            num_moe_experts=self._get_num_experts(hf_config),
+            moe_router_topk=getattr(hf_config, "moe_k", 6),
+            moe_ffn_hidden_size=moe_ffn_hidden_size,
+            moe_shared_expert_intermediate_size=moe_ffn_hidden_size * getattr(hf_config, "moe_num_shared_experts", 2),
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=getattr(hf_config, "router_aux_loss_coef", 0.001),
+            # Same MoE runtime settings as DeepSeek V3 (sigmoid routing + expert bias)
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=False,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            # The HF config stores num_nextn_predict_layers, but the checkpoints ship
+            # no MTP weights, so Megatron must not create MTP layers.
+            mtp_num_layers=None,
+        )
 
         # Determine which layers are dense vs MoE.
         mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
         if mlp_layer_types is not None:
-            provider.moe_layer_freq = [0 if t == "dense" else 1 for t in mlp_layer_types]
+            config_kwargs["moe_layer_freq"] = [0 if t == "dense" else 1 for t in mlp_layer_types]
         else:
             num_layers = hf_config.num_hidden_layers
             moe_start = getattr(hf_config, "moe_layer_start_index", None)
             if moe_start is not None:
                 start = moe_start[0] if isinstance(moe_start, (list, tuple)) else moe_start
-                provider.moe_layer_freq = [0] * start + [1] * (num_layers - start)
+                config_kwargs["moe_layer_freq"] = [0] * start + [1] * (num_layers - start)
             else:
                 # Default: layer 0 dense, rest MoE
-                provider.moe_layer_freq = [0] + [1] * (num_layers - 1)
+                config_kwargs["moe_layer_freq"] = [0] + [1] * (num_layers - 1)
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path.
+
+        The builder's default MoE spec already honors ``moe_layer_freq``; the
+        provider's default spec does not, so the provider path keeps the
+        decoder block spec explicitly.
+        """
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        provider_kwargs["transformer_layer_spec"] = _ernie45_decoder_block_spec
+        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry with parameter mappings for ERNIE 4.5 MoE."""

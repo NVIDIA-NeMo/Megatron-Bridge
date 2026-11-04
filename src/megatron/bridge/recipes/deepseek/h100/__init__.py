@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.deepseek.h100.deepseek_v2 import *  # noqa: F403
 from megatron.bridge.recipes.deepseek.h100.deepseek_v3 import *  # noqa: F403
 from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import *  # noqa: F403
 
 
 __all__ = [
-    "deepseek_v2_lite_pretrain_8gpu_h100_bf16_config",
-    "deepseek_v2_pretrain_128gpu_h100_bf16_config",
     "deepseek_v3_pretrain_1024gpu_h100_bf16_config",
     "deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config",
     "deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config",

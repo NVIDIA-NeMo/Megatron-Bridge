@@ -98,9 +98,9 @@ uv run python scripts/translate_mlm_to_bridge.py --reverse \
 | `--mtp-hybrid-override-pattern P` | `model.mtp_hybrid_override_pattern=P` | Separate MLM MTP pattern |
 | `--mtp-use-repeated-layer` | `model.mtp_use_repeated_layer=true` | One physical MTP layer reused across prediction depths |
 | `--sft-tokenizer-prompt-format P` | `tokenizer.tokenizer_prompt_format=P` | Bridge exposes the MCore SFT compatibility alias at load time |
-| `--mock-data` | `dataset.mock=true` | Use synthetic data (no files needed) |
+| `--mock-data` | *(omitted)* | Bridge uses synthetic data whenever no data path or blend is set |
 
-Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are omitted and listed in a comment. `--mock-data` translates to `dataset.mock=true`. Unknown flags are listed separately so you can handle them manually.
+Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are omitted and listed in a comment. `--mock-data` is omitted too, because Bridge uses synthetic data whenever no data path or blend is set. Unknown flags are listed separately so you can handle them manually.
 
 Megatron-LM `--spec` values are intentionally not copied into generated configuration as arbitrary import targets. A recognized Mamba or Hybrid spec helps the translator identify the provider family, but a standalone Hybrid recipe still requires an explicit layer pattern. Review and select any Bridge stack specification in trusted Python code.
 
@@ -365,7 +365,7 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 | `--num-query-groups` | `model.num_query_groups` | Number of query groups. |
 | `--qk-layernorm` | `model.qk_layernorm` | Enable QK LayerNorm. |
 | `--seq-length` | `model.seq_length` | Max model sequence length. |
-| `--max-position-embeddings` | `model.seq_length` | Alias used by HF conversions. |
+| `--max-position-embeddings` | `model.seq_length` | Alias used by HF conversions. A value differing from `--seq-length` is reported in the skipped section instead, since Bridge has no separate field for it. |
 | `--make-vocab-size-divisible-by` | `model.make_vocab_size_divisible_by` | TP padding multiple. |
 | `--disable-bias-linear` | `model.add_bias_linear=false` | Disable linear bias. |
 | `--use-flash-attn` | `model.attention_backend=flash` | Use FlashAttention backend. |

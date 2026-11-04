@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
+import fnmatch
 import html
 import importlib.util
 import re
@@ -27,7 +29,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 GENERATOR_PATH = REPO_ROOT / "scripts/docs/generate_model_verification_catalog.py"
 RECIPE_METADATA_PATH = REPO_ROOT / "scripts/training/recipe_metadata.py"
 # Items whose commands intentionally launch benchmark recipes.
-BENCHMARK_ITEMS = frozenset({"pretrain_performance", "pretrain_fsdp", "pretrain_weak_scaling"})
+BENCHMARK_ITEMS = frozenset(
+    {"pretrain_performance", "pretrain_performance_hsdp", "pretrain_fsdp", "pretrain_weak_scaling"}
+)
 
 
 def _load_generator() -> ModuleType:
@@ -70,7 +74,7 @@ def test_catalog_discovers_every_card_without_a_model_list(catalog: dict[str, ob
         ("bagel", "bagel_7b_pretrain_32gpu_h100_bf16_config"),
         (
             "glm5-2",
-            "glm52_pretrain_416gpu_h100_bf16_config",
+            "glm52_pretrain_192gpu_gb200_bf16_config",
         ),
         (
             "qwen3.8-27b",
@@ -199,7 +203,7 @@ def test_sphinx_model_page_renders_focused_combinations(generator: ModuleType, c
             "megatron_to_hf_gpu",
         },
         "pretrain": {"pretrain", "pretrain_fsdp", "pretrain_weak_scaling"},
-        "benchmark": {"pretrain_performance"},
+        "benchmark": {"pretrain_performance", "pretrain_performance_hsdp"},
         "sft": {"sft"},
         "lora": {"peft"},
         "long-context": {"sft_long_context"},
@@ -238,6 +242,28 @@ def test_sphinx_model_page_renders_focused_combinations(generator: ModuleType, c
         for command in entry["commands"]:
             assert html.escape(command) in page
         assert html.escape(entry["expected_result"]) in page
+
+
+@pytest.mark.parametrize("fern", [False, True])
+def test_hsdp_performance_renders_as_a_separate_benchmark(
+    generator: ModuleType, catalog: dict[str, object], fern: bool
+) -> None:
+    model = _models(catalog)["deepseek-v3"]
+    page = generator.render_model_section([model], fern=fern)
+    benchmark_entries = [
+        entry
+        for entry in model["entries"]
+        if entry["workflow"] in {"pretrain_performance", "pretrain_performance_hsdp"}
+    ]
+
+    assert {entry["workflow"] for entry in benchmark_entries} == {"pretrain_performance", "pretrain_performance_hsdp"}
+    assert "Benchmark · HSDP · GB300" in page
+    for entry in benchmark_entries:
+        assert page.count(f'id="{entry["entry_id"]}"') == 1
+        button = next(line for line in page.splitlines() if f'data-entry="{entry["entry_id"]}"' in line)
+        assert 'data-capability="benchmark"' in button
+        for command in entry["commands"]:
+            assert html.escape(command) in page
 
 
 def test_full_verification_records_are_removed_from_every_model_page(
@@ -295,8 +321,8 @@ def test_model_page_merge_preserves_intro_and_replaces_old_sections(generator: M
     assert generator._merge_model_page(original, section, title="New title").startswith("# New title\n\n")
 
 
-def test_nemotron_text_only_guide_is_in_both_navigation_trees() -> None:
-    guide = "nemotron3.5-super-vl-text-only"
+@pytest.mark.parametrize("guide", ["nemotron3.5-super-vl", "nemotron3.5-super-vl-text-only"])
+def test_released_nemotron_guides_are_published(generator: ModuleType, catalog: dict[str, object], guide: str) -> None:
     index = (REPO_ROOT / "docs/models/nemotron/index.md").read_text(encoding="utf-8")
     fern_index = (REPO_ROOT / "docs/fern/versions/nightly/pages/models/nemotron/index.mdx").read_text(encoding="utf-8")
     nav = (REPO_ROOT / "docs/fern/versions/nightly.yml").read_text(encoding="utf-8")
@@ -305,6 +331,28 @@ def test_nemotron_text_only_guide_is_in_both_navigation_trees() -> None:
     assert f"]({guide}.md)" in index
     assert f"]({guide}.md)" in fern_index
     assert f"path: ./nightly/pages/models/nemotron/{guide}.mdx" in nav
+    assert (REPO_ROOT / f"docs/models/nemotron/{guide}.md").is_file()
+    assert (REPO_ROOT / f"docs/fern/versions/nightly/pages/models/nemotron/{guide}.mdx").is_file()
+    for fern in (False, True):
+        page = generator.render_supported_models_page(catalog, REPO_ROOT, fern=fern)
+        suffix = "" if fern else ".html"
+        assert f'href="nemotron/{guide}{suffix}#' in page
+        assert f"**{len(catalog['models'])} model cards**" in page
+
+    config = ast.parse((REPO_ROOT / "docs/conf.py").read_text(encoding="utf-8"))
+    excludes = next(
+        ast.literal_eval(node.value)
+        for node in config.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "exclude_patterns" for target in node.targets)
+    )
+    assert not any(fnmatch.fnmatch(f"models/nemotron/{guide}.md", pattern) for pattern in excludes)
+
+    fern_config = yaml.safe_load((REPO_ROOT / "docs/fern/docs.yml").read_text(encoding="utf-8"))
+    slug = "nemotron-3-5-super-text-only" if guide.endswith("text-only") else "nemotron-3-5-super-vl"
+    for redirect in fern_config.get("redirects", []):
+        assert not redirect["source"].endswith(f"/supported-models/nemotron/{slug}")
+        assert not redirect["source"].endswith(f"/models/nemotron/{guide}.html")
 
 
 def test_generated_outputs_and_navigation_are_current(generator: ModuleType, catalog: dict[str, object]) -> None:

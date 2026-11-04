@@ -245,6 +245,7 @@ class TestDistillationProvider:
         teacher_full.language_model.config = Mock()
         student_full.language_model.config.hidden_size = teacher_full.language_model.config.hidden_size = 4096
         student_full.language_model.parameters.return_value = iter(())
+        student_full.language_model.named_modules.return_value = []
         teacher_full.language_model.parameters.return_value = iter(())
         # The teacher's full model is built inside _convert_hook.
         teacher.provide_distributed_model = Mock(return_value=[teacher_full])

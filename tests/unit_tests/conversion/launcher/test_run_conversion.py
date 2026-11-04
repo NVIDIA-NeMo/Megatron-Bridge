@@ -87,6 +87,12 @@ def test_cpu_import_dispatches_to_cpu_backend():
             "torch_dtype": "bfloat16",
             "trust_remote_code": False,
             "overwrite": False,
+            "use_distributed": False,
+            "tp": 1,
+            "pp": 1,
+            "ep": 1,
+            "etp": 1,
+            "distributed_timeout_minutes": None,
         }
     ]
 
@@ -110,6 +116,57 @@ def test_gpu_import_forwards_low_memory_save():
     )
 
     assert calls[0]["low_memory_save"] is True
+
+
+def test_gpu_import_exposes_bagel_repo_before_backend(tmp_path, monkeypatch):
+    module, _, gpu_backend = _load_run_conversion_module()
+    checkout = tmp_path / "Bagel"
+    (checkout / "data").mkdir(parents=True)
+    (checkout / "modeling").mkdir()
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    seen_paths = []
+    gpu_backend.import_checkpoint = lambda **kwargs: seen_paths.append(list(sys.path))
+
+    module.main(
+        [
+            "import",
+            "--device",
+            "gpu",
+            "--hf-model",
+            "ByteDance-Seed/BAGEL-7B-MoT",
+            "--megatron-path",
+            "/checkpoint",
+            "--bagel-repo",
+            str(checkout),
+        ]
+    )
+
+    assert len(seen_paths) == 1
+    assert str(checkout.resolve()) in seen_paths[0]
+
+
+def test_gpu_import_rejects_invalid_bagel_repo(tmp_path, monkeypatch):
+    module, _, gpu_backend = _load_run_conversion_module()
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    calls = []
+    gpu_backend.import_checkpoint = lambda **kwargs: calls.append(kwargs)
+
+    with pytest.raises(ImportError, match="BAGEL source checkout is invalid"):
+        module.main(
+            [
+                "import",
+                "--device",
+                "gpu",
+                "--hf-model",
+                "ByteDance-Seed/BAGEL-7B-MoT",
+                "--megatron-path",
+                "/checkpoint",
+                "--bagel-repo",
+                str(tmp_path / "missing"),
+            ]
+        )
+
+    assert calls == []
 
 
 def test_cpu_import_rejects_low_memory_save():

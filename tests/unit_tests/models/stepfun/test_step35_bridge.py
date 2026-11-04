@@ -14,11 +14,19 @@
 
 """Unit tests for Step35Bridge (Step-3.5-Flash)."""
 
+import copy
+from dataclasses import fields
 from functools import partial
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.transformer.mlp import MLP
+from megatron.core.transformer.moe.shared_experts import SharedExpertMLP
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_layer import TransformerLayer
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -28,6 +36,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     merge_qkvg_weights,
     split_qkvg_weights,
 )
+from megatron.bridge.models.gpt.gpt_builder import mtp_block_spec
 from megatron.bridge.models.stepfun import step35_bridge as _step35_bridge_mod
 from megatron.bridge.models.stepfun.step35_bridge import (
     StackedExpertAutoMapping,
@@ -38,12 +47,13 @@ from megatron.bridge.models.stepfun.step35_bridge import (
     _MTPDenseLayerSpecsList,
     build_step35_layer_spec,
 )
+from megatron.bridge.models.stepfun.step35_config import Step35ModelConfig, Step35TransformerConfig
 
 
 def _make_hf_config(**overrides) -> SimpleNamespace:
-    """Build a minimal HF-like config namespace that satisfies Step35Bridge.provider_bridge.
+    """Build a minimal HF-like config namespace that satisfies Step35Bridge's config mapping.
 
-    Only the fields read by the Step35-specific portion of provider_bridge / mapping_registry
+    Only the fields read by the Step35-specific portion of the config kwargs / mapping_registry
     are populated. Defaults mirror a small Step-3.5-Flash variant: 4 main decoder layers
     + 2 MTP layers, half full / half sliding attention, 4 experts with `moe_layers_enum`
     enumerating only the MoE-bearing main decoder layers.
@@ -99,55 +109,6 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
-class _FakeProvider:
-    """Stand-in for a `Step35ModelProvider` returned by the parent `provider_bridge`.
-
-    Mirrors only the fields that Step35Bridge.provider_bridge reads or writes.
-    """
-
-    def __init__(self):
-        self.num_layers = 4
-        self.mtp_num_layers = 2
-        self.num_query_groups = None
-        self.num_moe_experts = None
-        self.moe_router_topk = None
-        self.moe_shared_expert_intermediate_size = None
-        self.head_wise_attn_gate = None
-        self.attention_output_gate = None
-        self.layer_types = None
-        self.attention_other_setting = None
-        self.sliding_attention_setting = None
-        self.kv_channels = None
-        self.rotary_base = None
-        self.rotary_base_per_layer = None
-        # Step35Bridge.provider_bridge unconditionally writes the following:
-        self.normalization = None
-        self.layernorm_zero_centered_gamma = None
-        self.gated_linear_unit = None
-        self.add_bias_linear = None
-        self.add_qkv_bias = None
-        self.hidden_dropout = None
-        self.attention_dropout = None
-        self.qk_layernorm = None
-        self.autocast_dtype = None
-        self.moe_grouped_gemm = None
-        self.moe_router_load_balancing_type = None
-        self.moe_aux_loss_coeff = None
-        self.moe_router_pre_softmax = None
-        self.moe_token_dispatcher_type = None
-        self.moe_permute_fusion = None
-        self.moe_layer_freq = None
-        self.transformer_layer_spec = None
-        self.rotary_percents = None
-        self.swiglu_limits = None
-        self.swiglu_limits_shared = None
-        self.moe_router_enable_expert_bias = None
-        self.moe_router_score_function = None
-        self.moe_router_topk_scaling_factor = None
-        # Only assigned when hf_config.need_fp32_gate is truthy.
-        self.moe_router_dtype = None
-
-
 class _FakeHFPretrained:
     """Stand-in for `PreTrainedCausalLM`; only `.config` is read."""
 
@@ -174,38 +135,20 @@ class TestStep35BridgeRegistration:
 
 
 # ---------------------------------------------------------------------------
-# provider_bridge (Step35-specific assignments)
+# hf_config_to_model_config_kwargs (Step35-specific assignments)
 # ---------------------------------------------------------------------------
 
 
-class TestStep35BridgeProviderBridge:
-    """Verify that Step35Bridge.provider_bridge applies the Step-3.5-Flash overrides.
+class TestStep35BridgeConfigKwargs:
+    """Verify that Step35Bridge.hf_config_to_model_config_kwargs applies the Step-3.5-Flash overrides.
 
-    The parent `MegatronModelBridge.provider_bridge` is patched out so the test
-    does not depend on the global CONFIG_MAPPING resolution path.
+    The builder config and the deprecated provider path both consume these kwargs.
     """
 
-    def _run(self, hf_overrides=None, provider_overrides=None):
+    def _run(self, hf_overrides=None):
         hf_config = _make_hf_config(**(hf_overrides or {}))
-        provider = _FakeProvider()
-        # Simulate what `MegatronModelBridge.provider_bridge` (mocked below) would
-        # have populated through `CONFIG_MAPPING` before `Step35Bridge.provider_bridge`
-        # runs its own assignments.
-        provider.num_query_groups = hf_config.num_attention_groups
-        provider.num_moe_experts = hf_config.moe_num_experts
-        provider.moe_router_topk = hf_config.moe_top_k
-        provider.moe_shared_expert_intermediate_size = hf_config.share_expert_dim
-        provider.head_wise_attn_gate = hf_config.use_head_wise_attn_gate
-        provider.attention_output_gate = hf_config.attention_output_gate
-        provider.layer_types = hf_config.layer_types
-        provider.kv_channels = hf_config.head_dim
-        for k, v in (provider_overrides or {}).items():
-            setattr(provider, k, v)
-
-        with patch.object(MegatronModelBridge, "provider_bridge", return_value=provider):
-            result = Step35Bridge().provider_bridge(_FakeHFPretrained(hf_config))
-
-        return hf_config, result
+        config_kwargs = Step35Bridge().hf_config_to_model_config_kwargs(hf_config)
+        return hf_config, SimpleNamespace(**config_kwargs)
 
     def test_core_field_assignment(self):
         hf_config, p = self._run()
@@ -228,12 +171,15 @@ class TestStep35BridgeProviderBridge:
         assert kwargs["head_wise_attn_gate"] is True
         assert kwargs["layer_types"] == hf_config.layer_types
 
-    def test_attention_output_gate_mapped_by_base_bridge_path(self):
-        # HF Step-3.5-Flash can carry ``attention_output_gate`` verbatim into
-        # the base provider kwargs. Step35Bridge.provider_bridge normalizes it
-        # later when ``head_wise_attn_gate`` is also enabled.
-        hf_config = _make_hf_config(attention_output_gate=True)
+    @pytest.mark.parametrize("native_head_wise_gate", [True, False])
+    def test_attention_output_gate_mapped_by_base_bridge_path(self, monkeypatch, native_head_wise_gate):
+        # Without head-wise gating, an explicit HF ``attention_output_gate``
+        # passes through the canonical kwargs unchanged, whichever gate the
+        # installed MCore supports. The head-wise cases are covered below.
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: native_head_wise_gate)
+        hf_config = _make_hf_config(attention_output_gate=True, use_head_wise_attn_gate=False)
         kwargs = Step35Bridge().hf_config_to_provider_kwargs(hf_config)
+        assert kwargs["head_wise_attn_gate"] is False
         assert kwargs["attention_output_gate"] is True
 
     def test_attention_output_gate_entry_in_config_mapping(self):
@@ -241,12 +187,12 @@ class TestStep35BridgeProviderBridge:
         # MCore's full output-gate layout.
         assert ("attention_output_gate", "attention_output_gate") in Step35Bridge.CONFIG_MAPPING
 
-    def test_head_wise_attn_gate_preserved_through_step35_provider_bridge(self):
-        """The Step35-specific provider_bridge must not overwrite ``head_wise_attn_gate``.
+    def test_head_wise_attn_gate_preserved_through_step35_kwargs(self):
+        """The Step35-specific kwargs must not overwrite ``head_wise_attn_gate``.
 
         The CONFIG_MAPPING parent path is what sets it (mapped from HF's
-        ``use_head_wise_attn_gate``); Step35Bridge.provider_bridge only adds
-        the Step-3.5-specific fields on top.
+        ``use_head_wise_attn_gate``); Step35Bridge only adds the
+        Step-3.5-specific fields on top.
         """
         _, p = self._run()
         assert p.head_wise_attn_gate is True
@@ -369,7 +315,7 @@ class TestStep35BridgeProviderBridge:
         _, p = self._run(hf_overrides={"rope_theta": 50000.0})
         assert p.rotary_base == 50000.0
         # No per-layer overrides created from a scalar rope_theta.
-        assert p.rotary_base_per_layer is None
+        assert not hasattr(p, "rotary_base_per_layer")
 
     def test_rope_theta_per_layer_list(self):
         per_layer = [1000.0 + i for i in range(6)]
@@ -384,12 +330,9 @@ class TestStep35BridgeProviderBridge:
         assert p.moe_layer_freq == [0, 0, 1, 1]
 
     def test_moe_layer_freq_skipped_when_enum_none(self):
-        provider_overrides = {"moe_layer_freq": "untouched"}
-        _, p = self._run(
-            hf_overrides={"moe_layers_enum": None},
-            provider_overrides=provider_overrides,
-        )
-        assert p.moe_layer_freq == "untouched"
+        _, p = self._run(hf_overrides={"moe_layers_enum": None})
+        assert not hasattr(p, "moe_layer_freq")
+        assert not hasattr(p, "transformer_layer_spec")
 
     def test_static_overrides_applied(self):
         hf_config, p = self._run()
@@ -415,6 +358,11 @@ class TestStep35BridgeProviderBridge:
         assert p.moe_router_pre_softmax is False
         assert p.moe_token_dispatcher_type == "alltoall"
         assert p.moe_permute_fusion is True
+        # GPTModelProvider values that the builder config does not default to.
+        assert p.position_embedding_type == "rope"
+        assert p.masked_softmax_fusion is True
+        assert p.rope_scaling is False
+        assert p.rope_scaling_factor == 1.0
 
     def test_autocast_dtype_normalizes_string_aliases(self):
         """HF's ``torch_dtype`` can arrive as a string alias from ``config.json``;
@@ -433,14 +381,10 @@ class TestStep35BridgeProviderBridge:
         assert p.autocast_dtype is torch.float16
 
     def test_autocast_dtype_rejects_unknown_string(self):
-        import pytest
-
         with pytest.raises(ValueError, match="Unknown torch dtype"):
             self._run(hf_overrides={"torch_dtype": "fp8"})
 
     def test_autocast_dtype_rejects_unsupported_type(self):
-        import pytest
-
         with pytest.raises(ValueError, match="Unknown torch dtype"):
             self._run(hf_overrides={"torch_dtype": 16})
 
@@ -468,7 +412,7 @@ class TestStep35BridgeProviderBridge:
 
     def test_need_fp32_gate_false_leaves_moe_router_dtype_untouched(self):
         _, p = self._run()  # fixture default: need_fp32_gate=False
-        assert p.moe_router_dtype is None
+        assert not hasattr(p, "moe_router_dtype")
 
     def test_transformer_layer_spec_uses_custom_builder(self):
         _, p = self._run()
@@ -487,6 +431,129 @@ class TestStep35BridgeProviderBridge:
 
 
 # ---------------------------------------------------------------------------
+# Builder-backed model config
+# ---------------------------------------------------------------------------
+
+
+class TestStep35BridgeModelConfig:
+    def test_conversion_uses_builder_config(self):
+        assert "provider_bridge" not in Step35Bridge.__dict__
+        assert Step35Bridge.MODEL_CONFIG_CLASS is Step35ModelConfig
+        assert Step35ModelConfig.transformer_config_class is Step35TransformerConfig
+        assert Step35Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_model_config_maps_hf_config_without_provider(self):
+        hf_config = _make_hf_config(rope_theta=[5e6, 1e4, 1e4, 1e4, 5e6, 1e4])
+        bridge = Step35Bridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(hf_config)
+
+        assert isinstance(model_config, Step35ModelConfig)
+        assert isinstance(model_config.transformer, Step35TransformerConfig)
+        assert model_config.transformer_layer_spec is build_step35_layer_spec
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.rotary_base == 5e6
+        assert model_config.transformer.rotary_base_per_layer == [5e6, 1e4, 1e4, 1e4, 5e6, 1e4]
+        assert model_config.transformer.layer_types == hf_config.layer_types
+        assert model_config.transformer.rotary_percents == hf_config.partial_rotary_factors
+        assert model_config.transformer.swiglu_limits == hf_config.swiglu_limits
+        assert model_config.transformer.swiglu_limits_shared == hf_config.swiglu_limits_shared
+        assert model_config.transformer.sliding_attention_setting["window_size"] == [512, 0]
+        assert model_config.transformer.head_wise_attn_gate is True
+        assert model_config.moe_layer_freq == [0, 0, 1, 1]
+        assert model_config.mtp_num_layers == 2
+
+    def test_model_config_matches_provider(self):
+        hf_config = _make_hf_config(
+            rope_theta=[5e6, 1e4, 1e4, 1e4, 5e6, 1e4],
+            swiglu_limits=[0.0, 0.0, 7.0, 7.0],
+            swiglu_limits_shared=[0.0, 0.0, 0.0, 16.0],
+            need_fp32_gate=True,
+        )
+        bridge = Step35Bridge()
+        model_config = bridge.hf_config_to_model_config(hf_config)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(_FakeHFPretrained(hf_config))
+
+        model_fields = {f.name for f in fields(model_config)} | {f.name for f in fields(model_config.transformer)}
+        shared = {f.name for f in fields(provider)} & model_fields
+        # The provider declares the per-layer fields the decoder layer reads, so the deprecated
+        # path keeps them and its checkpoints serialize them.
+        assert {"rotary_percents", "swiglu_limits", "swiglu_limits_shared", "sliding_attention_setting"} <= shared
+        mismatches = {
+            name: (getattr(model_config, name), getattr(provider, name))
+            for name in sorted(shared)
+            if getattr(model_config, name) != getattr(provider, name)
+        }
+        assert mismatches == {}
+
+    def test_layer_spec_accepts_model_config(self):
+        model_config = Step35Bridge().hf_config_to_model_config(_make_hf_config())
+
+        block_spec = build_step35_layer_spec(model_config, pp_rank=0)
+
+        assert all(layer_spec.module is Step35DecoderLayer for layer_spec in block_spec.layer_specs)
+        assert isinstance(block_spec.layer_specs[-1], TransformerBlockSubmodules)
+
+        # The GPT builder derives the MTP block from layer_specs[-1].
+        mtp_spec = mtp_block_spec(model_config, block_spec, vp_stage=None, pp_rank=0)
+        assert len(mtp_spec.layer_specs) == 2
+        for mtp_layer_spec in mtp_spec.layer_specs:
+            mtp_model_layer = mtp_layer_spec.submodules.mtp_model_layer
+            assert mtp_model_layer.module is Step35DecoderLayer
+            assert mtp_model_layer.submodules.mlp.func == MLP.as_mlp_submodule
+
+    def test_layer_spec_passes_model_rope_settings_to_decoder_layers(self):
+        """MCore's per-layer rotary embeddings read the RoPE settings a builder config keeps outside the layer config."""
+        model_config = Step35Bridge().hf_config_to_model_config(_make_hf_config())
+        model_config.seq_len_interpolation_factor = 2.0
+
+        block_spec = build_step35_layer_spec(model_config, pp_rank=0)
+
+        expected = {
+            "position_embedding_type": "rope",
+            "rope_scaling": False,
+            "rope_scaling_factor": 1.0,
+            "rotary_scaling_factor": 2.0,
+        }
+        assert all(layer_spec.params["rope_settings"] == expected for layer_spec in block_spec.layer_specs)
+        mtp_layer_spec = block_spec.layer_specs[-1].layer_specs[0]
+        assert mtp_layer_spec.module is Step35DecoderLayer
+        assert mtp_layer_spec.params["rope_settings"] == expected
+
+    def test_layer_spec_for_provider_passes_no_rope_settings(self):
+        with pytest.warns(FutureWarning):
+            provider = Step35Bridge().provider_bridge(_FakeHFPretrained(_make_hf_config()))
+
+        block_spec = build_step35_layer_spec(provider, pp_rank=0)
+
+        assert all("rope_settings" not in layer_spec.params for layer_spec in block_spec.layer_specs)
+        assert "rope_settings" not in block_spec.layer_specs[-1].params
+
+    def test_model_config_round_trips_through_serialization(self):
+        model_config = Step35Bridge().hf_config_to_model_config(_make_hf_config(rope_theta=[1e4] * 6))
+
+        restored = Step35ModelConfig.from_dict(model_config.as_dict())
+
+        assert isinstance(restored, Step35ModelConfig)
+        assert isinstance(restored.transformer, Step35TransformerConfig)
+        assert restored.transformer_layer_spec is build_step35_layer_spec
+        for name in (
+            "layer_types",
+            "rotary_percents",
+            "rotary_base_per_layer",
+            "sliding_attention_setting",
+            "swiglu_limits",
+            "swiglu_limits_shared",
+            "head_wise_attn_gate",
+        ):
+            assert getattr(restored.transformer, name) == getattr(model_config.transformer, name), name
+
+
+# ---------------------------------------------------------------------------
 # build_step35_layer_spec
 # ---------------------------------------------------------------------------
 
@@ -497,29 +564,29 @@ class TestBuildStep35LayerSpec:
     Mocks out the two Megatron-Core spec builders so the test can run without
     a real backend, and feeds them a hand-rolled mix of MoE and dense layer
     specs to exercise both branches of the ``shared_experts`` rebind guard.
+    Megatron Core wraps each layer's MLP in a ``functools.partial``, so the
+    mocks do too.
     """
 
     class _OriginalSharedExpert:
         """Sentinel class for the *pre-rebind* shared-expert builder."""
 
+    class _MoELayer:
+        """Sentinel class for Megatron Core's ``MoELayer``."""
+
     def _moe_spec(self):
-        """Layer spec shaped like an MoE main-decoder layer: mlp.submodules has
-        a ``shared_experts`` partial that the bridge must replace."""
+        """Layer spec shaped like an MoE main-decoder layer: mlp is ``partial(MoELayer, submodules=...)``
+        whose ``shared_experts`` partial the bridge must replace."""
         original = partial(self._OriginalSharedExpert, clamp=2.5, gated=True)
-        mlp_submods = SimpleNamespace(shared_experts=original)
-        return SimpleNamespace(
-            module="placeholder",
-            submodules=SimpleNamespace(mlp=SimpleNamespace(submodules=mlp_submods)),
-        ), original
+        mlp = partial(self._MoELayer, submodules=SimpleNamespace(shared_experts=original))
+        return SimpleNamespace(module="placeholder", submodules=SimpleNamespace(mlp=mlp)), original
 
     def _dense_spec(self):
-        """Layer spec shaped like a dense main-decoder layer: mlp has no
-        ``submodules`` attribute, so the ``getattr(..., None)`` guard must
-        short-circuit without raising."""
-        return SimpleNamespace(
-            module="placeholder",
-            submodules=SimpleNamespace(mlp=SimpleNamespace()),
-        )
+        """Layer spec shaped like a dense main-decoder layer: the MLP partial's
+        submodules have no ``shared_experts``, so the ``getattr(..., None)``
+        guard must short-circuit without raising."""
+        mlp = partial(MLP.as_mlp_submodule, submodules=SimpleNamespace(linear_fc1="fc1", linear_fc2="fc2"))
+        return SimpleNamespace(module="placeholder", submodules=SimpleNamespace(mlp=mlp))
 
     def _build(self, layer_specs):
         fake_block = SimpleNamespace(layer_specs=layer_specs)
@@ -546,7 +613,8 @@ class TestBuildStep35LayerSpec:
 
         # The MoE spec's ``shared_experts`` was rebound to ``Step35SharedExpertMLP``
         # while preserving the original partial's keyword arguments verbatim.
-        new_shared = moe_spec.submodules.mlp.submodules.shared_experts
+        assert moe_spec.submodules.mlp.func is self._MoELayer
+        new_shared = moe_spec.submodules.mlp.keywords["submodules"].shared_experts
         assert new_shared is not original_partial
         assert isinstance(new_shared, partial)
         assert new_shared.func is Step35SharedExpertMLP
@@ -561,13 +629,17 @@ class TestBuildStep35LayerSpec:
         assert out.layer_specs[-1] is fake_dense_mtp
 
     def test_dense_layer_short_circuits_without_mutation(self):
-        """A dense layer (no ``mlp.submodules``) must skip the rebind branch
-        without raising and without growing a ``submodules`` attribute."""
+        """A dense layer (no ``shared_experts``) must skip the rebind branch
+        without raising and without changing its MLP spec."""
         dense_spec = self._dense_spec()
+        dense_mlp = dense_spec.submodules.mlp
+        dense_submodules = dense_mlp.keywords["submodules"]
         out, *_ = self._build([dense_spec])
 
         assert dense_spec.module is Step35DecoderLayer
-        assert not hasattr(dense_spec.submodules.mlp, "submodules")
+        assert dense_spec.submodules.mlp is dense_mlp
+        assert dense_mlp.keywords == {"submodules": dense_submodules}
+        assert not hasattr(dense_submodules, "shared_experts")
         # The dense spec is still the first (and only) entry under forward iteration.
         assert list(out.layer_specs) == [dense_spec]
 
@@ -575,16 +647,107 @@ class TestBuildStep35LayerSpec:
         """Both branches of the guard exercised in a single pass — order of
         appearance in ``layer_specs`` must not affect the per-spec decision."""
         dense_spec = self._dense_spec()
+        dense_mlp = dense_spec.submodules.mlp
         moe_spec, original_partial = self._moe_spec()
         out, *_ = self._build([dense_spec, moe_spec])
 
         assert dense_spec.module is Step35DecoderLayer
         assert moe_spec.module is Step35DecoderLayer
-        assert not hasattr(dense_spec.submodules.mlp, "submodules")
-        new_shared = moe_spec.submodules.mlp.submodules.shared_experts
+        assert dense_spec.submodules.mlp is dense_mlp
+        assert not hasattr(dense_mlp.keywords["submodules"], "shared_experts")
+        new_shared = moe_spec.submodules.mlp.keywords["submodules"].shared_experts
         assert new_shared.func is Step35SharedExpertMLP
         assert new_shared.keywords == original_partial.keywords
         assert list(out.layer_specs) == [dense_spec, moe_spec]
+
+
+def _decoder_layer_config(config, layer_number):
+    """Return the private config ``Step35DecoderLayer`` builds layer ``layer_number`` (1-based) from."""
+    captured = {}
+
+    def capture_config(self, config, **kwargs):
+        captured["config"] = config
+
+    with (
+        patch.object(TransformerLayer, "__init__", capture_config),
+        patch("megatron.bridge.models.stepfun.step35_provider.get_pg_rank", return_value=0),
+        patch("megatron.bridge.models.stepfun.step35_provider.get_transformer_layer_offset", return_value=0),
+    ):
+        Step35DecoderLayer(
+            config=config, submodules=None, layer_number=layer_number, pg_collection=SimpleNamespace(pp=None)
+        )
+    return captured["config"]
+
+
+class TestStep35SharedExpertClampWithMCoreSpecs:
+    """Build the layer specs with Megatron Core's own spec builder, which wraps MoE layers in a partial, for the
+    builder-backed model config and the deprecated provider."""
+
+    # Like Step-3.5-Flash's layers 43 and 44: both clamp the routed experts, only the last clamps the shared expert.
+    _SWIGLU_LIMITS = [0.0, 0.0, 7.0, 5.0]
+    _SWIGLU_LIMITS_SHARED = [0.0, 0.0, 0.0, 16.0]
+
+    @pytest.fixture(params=["model_config", "provider"])
+    def config(self, request):
+        hf_config = _make_hf_config(swiglu_limits=self._SWIGLU_LIMITS, swiglu_limits_shared=self._SWIGLU_LIMITS_SHARED)
+        if request.param == "model_config":
+            return Step35Bridge().hf_config_to_model_config(hf_config)
+        with pytest.warns(FutureWarning):
+            return Step35Bridge().provider_bridge(_FakeHFPretrained(hf_config))
+
+    def test_moe_layers_build_step35_shared_expert_mlp(self, config):
+        transformer_config = getattr(config, "transformer", config)
+
+        block_spec = build_step35_layer_spec(config, pp_rank=0)
+        mcore_spec = get_gpt_decoder_block_spec(
+            transformer_config, use_transformer_engine=True, normalization="RMSNorm", pp_rank=0
+        )
+
+        assert config.moe_layer_freq == [0, 0, 1, 1]
+        for is_moe, layer_spec, mcore_layer_spec in zip(
+            config.moe_layer_freq, block_spec.layer_specs, mcore_spec.layer_specs
+        ):
+            mlp, mcore_mlp = layer_spec.submodules.mlp, mcore_layer_spec.submodules.mlp
+            assert mlp.func == mcore_mlp.func
+            if is_moe:
+                shared = mlp.keywords["submodules"].shared_experts
+                assert shared.func is Step35SharedExpertMLP
+                assert shared.keywords == mcore_mlp.keywords["submodules"].shared_experts.keywords
+            else:
+                assert mlp.keywords == mcore_mlp.keywords
+        # MTP layers are dense, so they have no shared expert to rebind.
+        mtp_spec = block_spec.layer_specs[-1]
+        if isinstance(mtp_spec, TransformerBlockSubmodules):
+            mtp_spec = mtp_spec.layer_specs[0]
+        assert not hasattr(mtp_spec.submodules.mlp.keywords["submodules"], "shared_experts")
+
+    @pytest.mark.parametrize("layer_index, shared_clamp", [(2, None), (3, 16.0)])
+    def test_shared_expert_clamps_at_its_own_per_layer_limit(self, config, layer_index, shared_clamp):
+        """The shared expert built from the spec clamps at ``swiglu_limits_shared`` (unclamped for 0), as in Hugging
+        Face; the routed experts keep ``swiglu_limits``."""
+        block_spec = build_step35_layer_spec(config, pp_rank=0)
+        layer_config = _decoder_layer_config(getattr(config, "transformer", config), layer_number=layer_index + 1)
+        clamps_seen = []
+
+        def shared_expert_init(self, config, submodules, gate, pg_collection=None, name=None):
+            torch.nn.Module.__init__(self)
+            self.config = copy.deepcopy(config)
+            self.use_shared_expert_gate = gate
+
+        def record_mlp_forward(self, hidden_states, *args, **kwargs):
+            clamps_seen.append(self.config.activation_func_clamp_value)
+            return hidden_states, None
+
+        build_shared_expert = block_spec.layer_specs[layer_index].submodules.mlp.keywords["submodules"].shared_experts
+        with (
+            patch.object(SharedExpertMLP, "__init__", shared_expert_init),
+            patch.object(MLP, "forward", record_mlp_forward),
+        ):
+            shared_expert = build_shared_expert(config=layer_config, pg_collection=None, gate=False, name="shared")
+            shared_expert(torch.zeros(1, 1, 4))
+
+        assert clamps_seen == [shared_clamp]
+        assert layer_config.activation_func_clamp_value == self._SWIGLU_LIMITS[layer_index]
 
 
 # ---------------------------------------------------------------------------

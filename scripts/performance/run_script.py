@@ -126,6 +126,7 @@ def _prepare_perf_recipe(args, cli_overrides: list[str]):
             gpu=args.gpu,
             compute_dtype=args.compute_dtype,
             config_variant=getattr(args, "config_variant", None),
+            launch_num_gpus=args.num_gpus,
         )
         recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)
         from utils.overrides import set_post_overrides

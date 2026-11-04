@@ -190,8 +190,9 @@ differences and retain the diagnostic evidence.
    values; inverse mapping errors can cancel in a roundtrip. Record cosine
    similarity, absolute differences, token decisions, and continuations; use
    task-specific acceptance criteria. A high cosine alone does not explain a
-   changed token or establish numerical equivalence. Check `provider_bridge()`
-   config mapping (normalization, activation, RoPE, etc.).
+   changed token or establish numerical equivalence. Check the bridge's config
+   mapping in `hf_config_to_model_config_kwargs()`, or in `provider_bridge()` for
+   families that have not migrated (normalization, activation, RoPE, etc.).
 
 4. **Use the debugging script template** from the `add-model-support` skill
    to inspect runtime vs safetensors key naming and bridge config mapping.

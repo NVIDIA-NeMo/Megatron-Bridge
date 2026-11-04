@@ -25,7 +25,7 @@ from pathlib import Path
 
 import nemo_run as run
 from arguments import build_parser, conversion_worker_args
-from container_runtime import apply_container_runtime, validate_container_runtime
+from container_runtime import apply_container_runtime, run_from_container_repo_root, validate_container_runtime
 from nemo_run.config import get_nemorun_home
 from slurm_wait import wait_for_slurm_job
 from torchx.specs.api import AppState
@@ -110,14 +110,12 @@ def _validate_args(args: argparse.Namespace) -> None:
 
     distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
     if args.device == "cpu":
-        if distributed_cpu and args.command != "export":
-            raise ValueError("Distributed CPU conversion currently supports export only.")
         if not distributed_cpu and args.nodes != 1:
             raise ValueError("Single-process CPU conversion supports exactly one node.")
         if args.gpus_per_node is not None and args.gpus_per_node < 0:
             raise ValueError("--gpus-per-node must not be negative.")
         if distributed_cpu and args.gpus_per_node not in (None, 0):
-            raise ValueError("Distributed CPU export does not request GPU resources.")
+            raise ValueError("Distributed CPU conversion does not request GPU resources.")
         if args.gres:
             raise ValueError("CPU conversion does not accept --gres.")
         if not distributed_cpu and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
@@ -141,6 +139,8 @@ def _validate_args(args: argparse.Namespace) -> None:
                 worker_values.append(args.megatron_path)
             if args.command == "export":
                 worker_values.append(args.hf_path)
+            if args.command == "import" and args.bagel_repo is not None:
+                worker_values.append(args.bagel_repo)
             if any(shlex.quote(value) != value for value in worker_values):
                 raise ValueError(
                     "Local GPU execution cannot pass model IDs or paths containing whitespace or shell "
@@ -286,6 +286,8 @@ def main(argv: list[str] | None = None) -> None:
 
     experiment_options = {"skip_status_at_exit": True} if args.executor == "slurm" else {}
     task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
+    if args.executor == "slurm" and args.container_runtime == "pyxis":
+        task = run_from_container_repo_root(task)
     with run.Experiment(experiment_name, **experiment_options) as experiment:
         experiment.add(task, executor=executor, name=f"{args.command}-{args.device}")
         if args.submission_dry_run:

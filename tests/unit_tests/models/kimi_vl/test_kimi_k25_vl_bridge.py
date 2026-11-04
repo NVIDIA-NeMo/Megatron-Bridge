@@ -12,10 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import fields
+from functools import partial
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
+import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from transformers import GenerationConfig
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -23,7 +29,9 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge import KimiK25VLBridge
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_config import KimiK25VLModelConfig
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
 @pytest.fixture
@@ -367,3 +375,184 @@ class TestKimiK25VLBridgeWeightConversion:
 
         _, kwargs = mock_dequantize.call_args
         assert kwargs["device"] == packed.device
+
+
+def _vision_config() -> PretrainedConfig:
+    """Stand-in for the remote ``KimiK25VisionConfig``, whose vision settings are undeclared attributes."""
+    return PretrainedConfig(
+        patch_size=14,
+        vt_num_hidden_layers=27,
+        vt_hidden_size=1152,
+        vt_intermediate_size=4304,
+        vt_num_attention_heads=16,
+        merge_kernel_size=[2, 2],
+        mm_hidden_size=1152,
+        text_hidden_size=7168,
+    )
+
+
+def _kimi_k25_config(**text_overrides) -> SimpleNamespace:
+    """A config shaped like the remote ``KimiK25Config`` (four Kimi K2 layers), with no unset attributes."""
+    text_config = dict(
+        num_hidden_layers=4,
+        hidden_size=7168,
+        intermediate_size=18432,
+        num_attention_heads=64,
+        num_key_value_heads=64,
+        q_lora_rank=1536,
+        kv_lora_rank=512,
+        qk_nope_head_dim=128,
+        qk_rope_head_dim=64,
+        v_head_dim=128,
+        n_routed_experts=384,
+        moe_intermediate_size=2048,
+        n_shared_experts=1,
+        first_k_dense_replace=1,
+        num_experts_per_tok=8,
+        n_group=1,
+        topk_group=1,
+        routed_scaling_factor=2.827,
+        vocab_size=163840,
+        rope_theta=50000.0,
+        rope_scaling={
+            "type": "yarn",
+            "factor": 64.0,
+            "beta_fast": 32.0,
+            "beta_slow": 1.0,
+            "mscale": 1.0,
+            "mscale_all_dim": 1.0,
+            "original_max_position_embeddings": 4096,
+        },
+        rms_norm_eps=1e-5,
+        hidden_act="silu",
+        max_position_embeddings=262144,
+        num_nextn_predict_layers=0,
+        tie_word_embeddings=False,
+        torch_dtype="bfloat16",
+        bos_token_id=163584,
+        eos_token_id=163585,
+    )
+    text_config.update(text_overrides)
+    return SimpleNamespace(
+        architectures=["KimiK25ForConditionalGeneration"],
+        name_or_path="moonshotai/Kimi-K2.5",
+        text_config=SimpleNamespace(**text_config),
+        vision_config=_vision_config(),
+        media_placeholder_token_id=163605,
+        pad_token_id=163839,
+        ignore_index=-100,
+        torch_dtype="bfloat16",
+    )
+
+
+def _deprecated_provider(hf_config, *, trust_remote_code: bool = True) -> KimiK25VLModelProvider:
+    pretrained = SimpleNamespace(
+        config=hf_config,
+        model_name_or_path=hf_config.name_or_path,
+        trust_remote_code=trust_remote_code,
+        generation_config=GenerationConfig(eos_token_id=163586),
+    )
+    with pytest.warns(FutureWarning, match="deprecated for builder-backed models"):
+        return KimiK25VLBridge().provider_bridge(pretrained)
+
+
+class TestKimiK25VLBridgeModelConfig:
+    """Test the builder-backed model config mapping."""
+
+    def test_conversion_uses_builder_config(self):
+        assert KimiK25VLBridge.MODEL_CONFIG_CLASS is KimiK25VLModelConfig
+        assert KimiK25VLBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_model_config_mapping(self):
+        bridge = KimiK25VLBridge()
+        # The builder path must not route through the legacy provider.
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(_kimi_k25_config())
+
+        assert type(model_config) is KimiK25VLModelConfig
+        assert type(model_config.transformer) is MLATransformerConfig
+        assert model_config.transformer_layer_spec is None
+        assert model_config.num_layers == 4
+        assert model_config.activation_func is F.silu
+        assert model_config.multi_latent_attention is True
+        assert (model_config.q_lora_rank, model_config.kv_lora_rank) == (1536, 512)
+        assert (model_config.qk_head_dim, model_config.qk_pos_emb_head_dim, model_config.v_head_dim) == (128, 64, 128)
+        assert model_config.moe_layer_freq == [0, 1, 1, 1]
+        assert model_config.moe_shared_expert_intermediate_size == 2048
+        assert model_config.moe_router_topk_scaling_factor == 2.827
+        assert model_config.moe_token_dispatcher_type == "flex"
+        assert model_config.moe_flex_dispatcher_backend == "hybridep"
+        # MLA attention applies the checkpoint's YaRN from the nested transformer config.
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.transformer.rotary_base == 50000.0
+        assert model_config.rotary_scaling_factor == 64.0
+        assert model_config.original_max_position_embeddings == 4096
+        # Provider values that the builder defaults differ from.
+        assert model_config.deallocate_pipeline_outputs is False
+        assert model_config.rope_scaling_factor == 1.0
+        assert model_config.seq_length == 4096
+        assert model_config.params_dtype is torch.bfloat16
+        # Vision-language settings on the outer config.
+        assert model_config.scatter_embedding_sequence_parallel is False
+        assert model_config.vision_config.vt_hidden_size == 1152
+        assert model_config.hf_model_path == "moonshotai/Kimi-K2.5"
+        assert model_config.media_placeholder_token_id == model_config.image_token_id == 163605
+        assert (model_config.bos_token_id, model_config.eos_token_id) == (163584, 163585)
+        assert (model_config.pad_token_id, model_config.ignore_index) == (163839, -100)
+        assert "vision_config" not in {field.name for field in fields(model_config.transformer)}
+
+    def test_remote_code_trust_follows_the_bridge_source(self):
+        bridge = KimiK25VLBridge()
+        assert bridge.hf_config_to_model_config(_kimi_k25_config()).trust_remote_code is False
+
+        bridge.trust_remote_code = True
+        assert bridge.hf_config_to_model_config(_kimi_k25_config()).trust_remote_code is True
+
+    def test_auto_bridge_passes_remote_code_trust_to_the_model_config(self):
+        source = _kimi_k25_config()
+        config = PretrainedConfig(name_or_path="/ckpt/kimi_k25", architectures=source.architectures)
+        for name in ("text_config", "vision_config", "media_placeholder_token_id", "pad_token_id", "ignore_index"):
+            setattr(config, name, getattr(source, name))
+        config.torch_dtype = "bfloat16"
+        auto_bridge = AutoBridge.from_hf_config(config)
+
+        model_config = auto_bridge.get_model_config()
+        assert (model_config.hf_model_path, model_config.trust_remote_code) == ("/ckpt/kimi_k25", False)
+
+        auto_bridge.trust_remote_code = True
+        assert auto_bridge.get_model_config().trust_remote_code is True
+
+    def test_model_config_matches_provider(self):
+        hf_config = _kimi_k25_config()
+        bridge = KimiK25VLBridge()
+        bridge.trust_remote_code = True
+        model_config = bridge.hf_config_to_model_config(hf_config)
+        provider = _deprecated_provider(hf_config)
+
+        model_fields = {f.name for f in fields(model_config)} | {f.name for f in fields(model_config.transformer)}
+        shared = ({f.name for f in fields(provider)} & model_fields) - {"transformer_layer_spec"}
+        assert {"vision_config", "hf_model_path", "trust_remote_code", "media_placeholder_token_id"} <= shared
+        for name in sorted(shared):
+            assert getattr(model_config, name) == getattr(provider, name), name
+
+    def test_provider_keeps_its_source_settings(self):
+        provider = _deprecated_provider(_kimi_k25_config(), trust_remote_code=False)
+
+        assert isinstance(provider, KimiK25VLModelProvider)
+        assert provider.transformer_layer_spec.func is get_gpt_decoder_block_spec
+        assert provider.hf_model_path == "moonshotai/Kimi-K2.5"
+        assert provider.trust_remote_code is False
+        assert provider.generation_config.eos_token_id == 163586
+
+    def test_provider_kwargs_add_the_decoder_block_spec(self):
+        bridge = KimiK25VLBridge()
+        hf_config = _kimi_k25_config()
+
+        provider_kwargs = bridge.hf_config_to_provider_kwargs(hf_config)
+        spec = provider_kwargs.pop("transformer_layer_spec")
+
+        assert isinstance(spec, partial) and spec.func is get_gpt_decoder_block_spec
+        assert provider_kwargs == bridge.hf_config_to_model_config_kwargs(hf_config)

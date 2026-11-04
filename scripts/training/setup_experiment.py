@@ -126,7 +126,7 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         dest="peak_mem_clk",
         help=(
             "Lock the GPU memory clock to a fixed frequency in MHz once per node. "
-            "Defaults to 4752 for VR200 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
+            "Defaults to 4752 for VRNVL72 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
         ),
     )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
@@ -218,12 +218,12 @@ def _resolve_peak_mem_clk(
     requested_peak_mem_clk: int | None,
     benchmark_metadata: BenchmarkRecipeMetadata | None,
 ) -> int | None:
-    """Resolve the explicit memory clock or the VR200 benchmark default."""
+    """Resolve the explicit memory clock or the VRNVL72 benchmark default."""
     if requested_peak_mem_clk == -1:
         return None
     if requested_peak_mem_clk is not None:
         return requested_peak_mem_clk
-    if benchmark_metadata is not None and benchmark_metadata.hardware == "vr200":
+    if benchmark_metadata is not None and benchmark_metadata.hardware == "vrnvl72":
         return 4752
     return None
 

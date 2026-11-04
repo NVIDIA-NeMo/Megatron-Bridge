@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Tuple, TypeVar
 import torch
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
 from hydra.core.override_parser.overrides_parser import OverridesParser
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 # Re-export so existing callers (e.g. transformer_config.py) keep working.
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable  # noqa: F401
@@ -41,6 +41,12 @@ _EXCLUDE_FIELD = object()
 
 # Fields whose callables should be serialized as strings (not excluded)
 _SERIALIZABLE_CALLABLE_FIELDS: frozenset[str] = frozenset({"activation_func"})
+
+# Builder-backed model configs keep Megatron-Core transformer settings in this nested field...
+_TRANSFORMER_KEY = "transformer"
+# ...and record the Hugging Face source, which providers declare as these fields, in this mapping.
+_METADATA_KEY = "extra_checkpoint_metadata"
+_METADATA_FIELDS = frozenset({"hf_model_id", "hf_model_revision"})
 
 
 def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dict[str, Any]]:
@@ -115,6 +121,17 @@ def process_config_with_overrides(
     3. Apply optional CLI overrides using Hydra syntax
     4. Apply the final configuration back to the original object
 
+    Builder-backed model configs keep transformer settings in a nested
+    ``transformer`` field. A flat key for one of those settings, such as
+    ``model.tensor_model_parallel_size``, is routed to
+    ``model.transformer.tensor_model_parallel_size`` in the YAML file and in
+    CLI overrides; fields the model config declares itself stay outer. The
+    provider fields ``hf_model_id`` and ``hf_model_revision`` are routed to
+    ``model.extra_checkpoint_metadata``, where builder-backed configs record
+    them. CLI overrides apply after the YAML file and in order, so the last one
+    wins whichever spelling it uses. Within the YAML file, a flat key wins over
+    its nested spelling.
+
     Args:
         config: The dataclass configuration instance to process
         config_filepath: Optional path to a YAML config file to merge
@@ -146,6 +163,7 @@ def process_config_with_overrides(
 
         yaml_conf = OmegaConf.load(config_filepath)
         omega_conf = OmegaConf.merge(omega_conf, yaml_conf)
+        _nest_flat_builder_fields(omega_conf)
         logger.debug(f"Merged configuration from {config_filepath}")
 
     # Apply CLI overrides if provided
@@ -166,6 +184,11 @@ def parse_hydra_overrides(cfg: DictConfig, overrides: List[str]) -> DictConfig:
     This function uses Hydra's override parser to support advanced override syntax
     including additions (+), deletions (~), and complex nested operations.
 
+    A flat override of a builder-backed model's transformer setting or HF
+    source is routed to where that config declares it, as are flat keys that a
+    merged YAML file left in ``cfg``. See :func:`process_config_with_overrides`
+    for the routing and precedence rules.
+
     Args:
         cfg: OmegaConf config to apply overrides to
         overrides: List of Hydra override strings
@@ -177,6 +200,8 @@ def parse_hydra_overrides(cfg: DictConfig, overrides: List[str]) -> DictConfig:
         OverridesError: If there's an error parsing or applying overrides
     """
     try:
+        _nest_flat_builder_fields(cfg)
+        overrides = [_route_flat_builder_override(cfg, override) for override in overrides]
         OmegaConf.set_struct(cfg, True)
         parser = OverridesParser.create()
         parsed = parser.parse_overrides(overrides=overrides)
@@ -190,6 +215,76 @@ class OverridesError(Exception):
     """Custom exception for Hydra override parsing errors."""
 
     pass
+
+
+def _nested_transformer(cfg: DictConfig, section_name: str) -> DictConfig | None:
+    """Return the ``transformer`` mapping of a builder-backed model section, or ``None``."""
+    if section_name not in cfg or OmegaConf.is_interpolation(cfg, section_name):
+        return None
+    section = cfg[section_name]
+    if (
+        not isinstance(section, DictConfig)
+        or _TRANSFORMER_KEY not in section
+        or OmegaConf.is_interpolation(section, _TRANSFORMER_KEY)
+    ):
+        return None
+    transformer = section[_TRANSFORMER_KEY]
+    return transformer if isinstance(transformer, DictConfig) else None
+
+
+def _nest_flat_builder_fields(cfg: DictConfig) -> None:
+    """Move flat keys of builder-backed model sections to where the config declares them.
+
+    No builder config declares a field both on itself and on its transformer
+    config, or declares the provider's HF source fields, so such a key is a
+    flat override, for example from a merged YAML file. The flat value wins.
+    """
+    for section_name in list(cfg.keys()):
+        transformer = _nested_transformer(cfg, section_name)
+        if transformer is None:
+            continue
+        section = cfg[section_name]
+        flat_keys = [key for key in section.keys() if key != _TRANSFORMER_KEY and key in transformer]
+        metadata_keys = [key for key in section.keys() if key in _METADATA_FIELDS]
+        if not flat_keys and not metadata_keys:
+            continue
+        with open_dict(section):
+            if flat_keys:
+                transformer.merge_with(OmegaConf.masked_copy(section, flat_keys))
+            if metadata_keys:
+                if section.get(_METADATA_KEY) is None:
+                    section[_METADATA_KEY] = {}
+                section[_METADATA_KEY].merge_with(OmegaConf.masked_copy(section, metadata_keys))
+            for key in (*flat_keys, *metadata_keys):
+                del section[key]
+
+
+def _route_flat_builder_override(cfg: DictConfig, override: str) -> str:
+    """Spell a flat override of a builder-backed model where the config declares the field.
+
+    For a builder-backed ``model``, ``model.tensor_model_parallel_size=2``
+    becomes ``model.transformer.tensor_model_parallel_size=2``, keeping any
+    ``+``, ``++`` or ``~`` prefix, and ``model.hf_model_id=org/name`` becomes
+    ``++model.extra_checkpoint_metadata.hf_model_id=org/name``. Other overrides
+    are returned unchanged.
+    """
+    body = override.lstrip("+~")
+    prefix = override[: len(override) - len(body)]
+    key, separator, value = body.partition("=")
+    section_name, dot, field_path = key.strip().partition(".")
+    if not dot or "@" in key:
+        return override
+    transformer = _nested_transformer(cfg, section_name)
+    if transformer is None:
+        return override
+    field_name = field_path.split(".", 1)[0]
+    if field_name in transformer:
+        return f"{prefix}{section_name}.{_TRANSFORMER_KEY}.{field_path}{separator}{value}"
+    if field_name in _METADATA_FIELDS and field_name not in cfg[section_name]:
+        # The recorded metadata may lack the key or be None, so an assignment force-adds it.
+        prefix = "~" if prefix.startswith("~") else "++"
+        return f"{prefix}{section_name}.{_METADATA_KEY}.{field_path}{separator}{value}"
+    return override
 
 
 def _is_omegaconf_problematic(val: Any) -> bool:

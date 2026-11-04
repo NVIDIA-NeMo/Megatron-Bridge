@@ -21,10 +21,10 @@ Quantize LLM:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/quantize.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
+    --hf-model-id Qwen/Qwen3-0.6B \
     --export-quant-cfg fp8 \
     --tp 2 \
-    --megatron-save-path ./llama3_2_1b_fp8
+    --megatron-save-path ./qwen3_0_6b_fp8
 ```
 
 Quantize VLM:
@@ -45,8 +45,8 @@ Resume and generate with quantized LLM:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/ptq_generate.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
     --tp 2
 ```
 
@@ -76,13 +76,13 @@ uv run python -m torch.distributed.run pretrain_quantized_llama3_8b.py \
 
 ### 4. Export to HuggingFace
 
-Export unified Huggingface checkpoint:
+Export a quantized Huggingface checkpoint (packed weights and scales, with the `quantization_config` in
+`config.json`) at any parallelism:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/export.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
-    --export-dir ./llama3_2_1b_fp8_hf \
-    --pp 2 \
-    --dtype bfloat16
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
+    --export-dir ./qwen3_0_6b_fp8_hf \
+    --pp 2
 ```

@@ -15,7 +15,7 @@
 """MLA (Multi-Latent Attention) Model Provider.
 
 This module provides a minimal provider for models using Multi-Latent Attention,
-such as DeepSeek V2/V3 and Kimi K2.
+such as DeepSeek V3 and Kimi K2.
 """
 
 from dataclasses import dataclass
@@ -36,7 +36,7 @@ class MLAModelProvider(MLATransformerConfig, GPTModelProvider):
     configured via MEGATRON_DEFAULTS in the respective bridge classes.
 
     Used by:
-        - DeepSeek V2/V3
+        - DeepSeek V3
         - Kimi K2
         - Other MLA-based models
     """
