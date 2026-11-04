@@ -1367,6 +1367,10 @@ class ConfigContainer(Container):
                 )
         capacity = pool * model.max_seqlen_per_dp_cp_rank
         seq_length = getattr(self.dataset, "seq_length", None) or model.seq_length
+        offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+        if getattr(self.dataset, "enable_offline_packing", False) and offline_packing_specs is not None:
+            # A sequence of an offline packed row can be as long as the row.
+            seq_length = max(seq_length, offline_packing_specs.packed_sequence_size)
         if capacity < seq_length:
             raise ValueError(
                 f"Bin capacity too small: {pool} ranks x max_seqlen_per_dp_cp_rank "
@@ -1374,7 +1378,10 @@ class ConfigContainer(Container):
                 "could never be scheduled."
             )
         if seq_length > model.seq_length:
-            raise ValueError(f"dataset.seq_length={seq_length} exceeds model.seq_length={model.seq_length}.")
+            raise ValueError(
+                f"Samples of up to {seq_length} tokens (dataset.seq_length or the offline packed row length) exceed "
+                f"model.seq_length={model.seq_length}."
+            )
 
     def _apply_global_batch_packing_padding(self, collate_padding_multiple: int) -> None:
         """Push the CP alignment multiple to the dataset that yields unpacked samples."""
@@ -1481,11 +1488,11 @@ class ConfigContainer(Container):
 
         if enable_offline_packing and enable_in_batch_packing:
             raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
-        if enable_global_batch_packing and (
-            enable_offline_packing or enable_in_batch_packing or enable_energon_packing
-        ):
+        # Offline packing combines with global-batch packing: each packed row yields its sequences, and the
+        # scheduler re-bins them. In-batch and Energon packing already emit THD bins.
+        if enable_global_batch_packing and (enable_in_batch_packing or enable_energon_packing):
             raise ValueError(
-                "enable_global_batch_packing is mutually exclusive with offline, in-batch, and Energon packing: "
+                "enable_global_batch_packing is mutually exclusive with in-batch and Energon packing: "
                 "the scheduler packs unpacked samples itself."
             )
         if not enable_global_batch_packing and (

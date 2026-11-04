@@ -18,6 +18,10 @@ The samples exercise global-batch packing and dynamic context parallelism withou
 is random token IDs whose length is drawn from three buckets defined by the context-parallel capacity it needs: at most
 ``seq_length // 4`` tokens (fits one rank of a CP4 group), at most ``seq_length // 2`` (CP2), or up to ``seq_length``
 (CP4). Lengths are uniform within each bucket, and only the final ``completion_fraction`` of each sample is supervised.
+
+With ``enable_offline_packing``, the samples are first packed offline into rows of at most
+``offline_packing_specs.packed_sequence_size`` tokens, and each dataset item is one row that yields its samples, so the
+global batch counts packed rows as in offline packed SFT.
 """
 
 import math
@@ -29,6 +33,8 @@ import numpy as np
 import torch
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
+from megatron.bridge.data.packing.algorithms import first_fit_decreasing
+from megatron.bridge.data.packing.config import PackedSequenceSpecs
 from megatron.bridge.data.packing.global_batch import build_unpacked_sequence_sample, fold_alignment_padding
 
 
@@ -50,6 +56,11 @@ class MockGPTSFTDatasetConfig(DataloaderConfig):
         global_batch_packing_pad_to_multiple_of: Per-sequence CP alignment, set by ``ConfigContainer.validate``.
         fold_alignment_padding: Report alignment padding as part of each sequence, as for
             :class:`~megatron.bridge.data.builders.GPTSFTDatasetConfig`.
+        enable_offline_packing: Pack the samples offline into rows before training; each dataset item is one row
+            and the global batch counts rows.
+        offline_packing_specs: Row settings for ``enable_offline_packing``. Only ``packed_sequence_size`` (the row
+            capacity, at least ``seq_length``) and ``pad_seq_to_mult`` (alignment of each sample's length when
+            packing) apply.
     """
 
     seq_length: int
@@ -61,6 +72,8 @@ class MockGPTSFTDatasetConfig(DataloaderConfig):
     global_batch_packing_pad_to_multiple_of: int = 1
     fold_alignment_padding: bool = False
     dataloader_type: Literal["single", "cyclic"] | None = "single"
+    enable_offline_packing: bool = False
+    offline_packing_specs: PackedSequenceSpecs | None = None
 
     @property
     def yields_unpacked_samples(self) -> bool:
@@ -88,6 +101,14 @@ class MockGPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("global_batch_packing_pad_to_multiple_of must be at least 1.")
         if self.dataloader_type not in ("single", "cyclic"):
             raise ValueError("Global-batch packing needs dataloader_type 'single' or 'cyclic'.")
+        if self.enable_offline_packing != (self.offline_packing_specs is not None):
+            raise ValueError("Set offline_packing_specs exactly when enable_offline_packing is True.")
+        specs = self.offline_packing_specs
+        if specs is not None:
+            if specs.packed_sequence_size < self.seq_length:
+                raise ValueError("offline_packing_specs.packed_sequence_size must be at least seq_length.")
+            if specs.pad_cu_seqlens:
+                raise ValueError("offline_packing_specs.pad_cu_seqlens is not supported with global-batch packing.")
 
     def finalize(self) -> None:
         """Finalize dataloader settings and validate this config."""
@@ -132,29 +153,92 @@ def mock_sft_sequence_lengths(config: MockGPTSFTDatasetConfig, num_samples: int,
     return lengths
 
 
+def _mean_sample_length(config: MockGPTSFTDatasetConfig) -> float:
+    """Expected sample length under the bucket fractions."""
+    return sum(
+        fraction * (low + high) / 2
+        for fraction, (low, high) in zip(config.length_bucket_fractions, length_bucket_bounds(config.seq_length))
+    )
+
+
+def mock_sft_packed_rows(
+    config: MockGPTSFTDatasetConfig, num_rows: int, split: str = "train"
+) -> tuple[np.ndarray, list[list[int]]]:
+    """Pack mock samples offline into ``num_rows`` rows.
+
+    Draws a pool of samples large enough to fill ``num_rows`` rows, packs the pool first-fit decreasing on lengths
+    aligned to ``offline_packing_specs.pad_seq_to_mult``, shuffles the rows with the seed, and keeps the first
+    ``num_rows``.
+
+    Returns:
+        The pool's sample lengths and, per row, the indices of its samples into that pool.
+
+    Raises:
+        ValueError: If offline packing is not enabled or ``num_rows`` is negative.
+    """
+    specs = config.offline_packing_specs
+    if not config.enable_offline_packing or specs is None:
+        raise ValueError("mock_sft_packed_rows needs enable_offline_packing and offline_packing_specs.")
+    if num_rows < 0:
+        raise ValueError("num_rows must be non-negative.")
+    if num_rows == 0:
+        return np.zeros(0, dtype=np.int64), []
+    align = specs.pad_seq_to_mult or 1
+    num_samples = math.ceil(num_rows * specs.packed_sequence_size / _mean_sample_length(config))
+    while True:
+        lengths = mock_sft_sequence_lengths(config, num_samples, split)
+        aligned = [math.ceil(int(length) / align) * align for length in lengths]
+        rows = first_fit_decreasing(list(range(num_samples)), specs.packed_sequence_size, item_lengths=aligned)
+        if len(rows) >= num_rows:
+            break
+        num_samples = math.ceil(num_samples * 1.25)
+    rng = np.random.default_rng((config.random_seed, _SPLITS.index(split), len(rows)))
+    order = rng.permutation(len(rows))
+    return lengths, [sorted(rows[index]) for index in order[:num_rows]]
+
+
 class MockGPTSFTDataset(torch.utils.data.Dataset):
-    """Random-token SFT samples of fixed per-index length, collated as unpacked global-batch packing samples."""
+    """Random-token SFT samples of fixed per-index length, collated as unpacked global-batch packing samples.
+
+    With offline packing, ``num_samples`` counts packed rows and each item is the samples of one row.
+    """
 
     def __init__(self, config: MockGPTSFTDatasetConfig, num_samples: int, split: str) -> None:
         self.config = config
         self.split = split
-        self.lengths = mock_sft_sequence_lengths(config, num_samples, split)
+        if config.enable_offline_packing:
+            self.lengths, self.rows = mock_sft_packed_rows(config, num_samples, split)
+        else:
+            self.lengths = mock_sft_sequence_lengths(config, num_samples, split)
+            self.rows = None
 
     def __len__(self) -> int:
-        """Return the number of samples."""
-        return len(self.lengths)
+        """Return the number of samples, or of packed rows with offline packing."""
+        return len(self.lengths) if self.rows is None else len(self.rows)
 
-    def __getitem__(self, index: int) -> dict[str, Any]:
+    def _input_ids(self, index: int) -> torch.Tensor:
         """Return ``length + 1`` token IDs for sample ``index``; the same index always yields the same tokens."""
         length = int(self.lengths[index])
         rng = np.random.default_rng((self.config.random_seed, _SPLITS.index(self.split), int(index)))
-        return {"input_ids": torch.from_numpy(rng.integers(1, self.config.vocab_size, size=length + 1))}
+        return torch.from_numpy(rng.integers(1, self.config.vocab_size, size=length + 1))
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        """Return the token IDs of sample ``index``, or of every sample in packed row ``index``."""
+        if self.rows is None:
+            return {"input_ids": self._input_ids(index)}
+        return {"packed_input_ids": [self._input_ids(sample) for sample in self.rows[index]]}
 
     def collate_fn(self, batch: list[dict[str, Any]]) -> list[dict[str, torch.Tensor]]:
-        """Shift once, supervise the completion, and pad each sequence to the CP alignment multiple."""
-        samples = []
+        """Shift once, supervise the completion, and pad each sequence to the CP alignment multiple.
+
+        Packed rows contribute one sample per sequence they hold.
+        """
+        sequences = []
         for item in batch:
-            input_ids = torch.as_tensor(item["input_ids"], dtype=torch.long)
+            sequences.extend(item["packed_input_ids"] if "packed_input_ids" in item else [item["input_ids"]])
+        samples = []
+        for sequence in sequences:
+            input_ids = torch.as_tensor(sequence, dtype=torch.long)
             tokens, labels = input_ids[:-1], input_ids[1:]
             loss_mask = torch.zeros(tokens.numel(), dtype=torch.float32)
             supervised = max(1, round(tokens.numel() * self.config.completion_fraction))

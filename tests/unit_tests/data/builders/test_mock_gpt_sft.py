@@ -25,8 +25,10 @@ from megatron.bridge.data.builders.mock_gpt_sft import (
     length_bucket_bounds,
     length_bucket_counts,
     mock_gpt_sft_train_valid_test_datasets_provider,
+    mock_sft_packed_rows,
     mock_sft_sequence_lengths,
 )
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.packing.global_batch import REQUIRED_SAMPLE_KEYS
 from megatron.bridge.data.utils import get_dataset_provider
 
@@ -75,6 +77,18 @@ def test_lengths_follow_the_bucket_split_and_are_deterministic():
         ({"completion_fraction": 0.0}, "completion_fraction"),
         ({"enable_global_batch_packing": False}, "enable_global_batch_packing"),
         ({"global_batch_packing_pad_to_multiple_of": 0}, "global_batch_packing_pad_to_multiple_of"),
+        ({"enable_offline_packing": True}, "offline_packing_specs"),
+        (
+            {"enable_offline_packing": True, "offline_packing_specs": PackedSequenceSpecs(packed_sequence_size=512)},
+            "at least seq_length",
+        ),
+        (
+            {
+                "enable_offline_packing": True,
+                "offline_packing_specs": PackedSequenceSpecs(packed_sequence_size=1024, pad_cu_seqlens=True),
+            },
+            "pad_cu_seqlens",
+        ),
     ],
 )
 def test_invalid_settings_are_rejected(overrides, match):
@@ -131,3 +145,36 @@ def test_builder_builds_requested_splits_and_dispatch_finds_the_provider():
     assert (len(train), valid, len(test)) == (12, None, 3)
     assert get_dataset_provider(config) is mock_gpt_sft_train_valid_test_datasets_provider
     assert config.yields_unpacked_samples is True
+
+
+def _offline_config(**overrides) -> MockGPTSFTDatasetConfig:
+    specs = PackedSequenceSpecs(packed_sequence_size=1024, pad_seq_to_mult=8)
+    return _config(enable_offline_packing=True, offline_packing_specs=specs, **overrides)
+
+
+def test_offline_rows_pack_every_sample_once_within_the_row_capacity():
+    config = _offline_config()
+    lengths, rows = mock_sft_packed_rows(config, 40)
+    assert len(rows) == 40
+    members = [sample for row in rows for sample in row]
+    assert len(members) == len(set(members))
+    for row in rows:
+        assert sum(-(-int(lengths[sample]) // 8) * 8 for sample in row) <= 1024
+    # First-fit decreasing fills rows well on this mix, so a row averages more than one sample.
+    assert len(members) > 60
+    again_lengths, again_rows = mock_sft_packed_rows(config, 40)
+    assert again_rows == rows and np.array_equal(again_lengths, lengths)
+    assert mock_sft_packed_rows(config, 40, split="validation")[1] != rows
+
+
+def test_offline_dataset_items_are_rows_and_collate_to_one_sample_per_sequence():
+    config = _offline_config(global_batch_packing_pad_to_multiple_of=8)
+    dataset = MockGPTSFTDataset(config, 12, "train")
+    assert len(dataset) == 12
+    samples = dataset.collate_fn([dataset[0], dataset[1]])
+    expected = [int(dataset.lengths[i]) for i in dataset.rows[0] + dataset.rows[1]]
+    assert [sample["original_seq_len"].item() for sample in samples] == expected
+    assert all(sample["padded_seq_len"].item() % 8 == 0 for sample in samples)
+    # A packed sample carries the same tokens as that sample read on its own.
+    first = dataset.rows[0][0]
+    assert torch.equal(samples[0]["tokens"][: expected[0]], dataset._input_ids(first)[:-1])

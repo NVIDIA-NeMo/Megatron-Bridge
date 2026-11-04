@@ -13,18 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compare the steady-state step time of two training logs, for example static versus dynamic context parallelism.
+"""Compare the steady-state throughput of two training logs, for example static versus dynamic context parallelism.
 
-Both runs must have consumed the same data in the same order. The script reads Bridge's per-iteration log lines, drops
-the warmup iterations (which include one-time compilation), and reports seconds per step. For runs of
-``qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config`` it also reports runtime tokens per second: the
-``MockGPTSFTDatasetConfig`` lengths are deterministic, and samples are consumed in order, so iteration ``i`` processes
-samples ``(i - 1) * global_batch_size`` to ``i * global_batch_size - 1``.
+The script reads Bridge's per-iteration log lines, drops the warmup iterations (which include one-time compilation),
+and reports seconds per step. For runs of the ``qwen35_text_35b_a3b_4gpu_gb200_fp8mx_*dynamic_cp_config`` recipes it
+also reports runtime tokens per second: the ``MockGPTSFTDatasetConfig`` lengths are deterministic, and samples (or,
+with offline packing, packed rows) are consumed in order, so iteration ``i`` processes items
+``(i - 1) * global_batch_size`` to ``i * global_batch_size - 1``. The gain is then the ratio of tokens per second, so
+runs that process different work per step, such as online and offline packing, can be compared. Without token counts,
+both runs must have consumed the same data in the same order and the gain is the ratio of step times.
 
 Example::
 
-    python examples/agentic_sft/compare_runs.py --baseline static.log --candidate dynamic.log --warmup 10 \\
-        --mock-seq-length 65536 --train-iters 200 --global-batch-size 32
+    python examples/agentic_sft/compare_runs.py --baseline online.log --candidate offline.log --warmup 10 \\
+        --mock-seq-length 65536 --train-iters 200 --baseline-global-batch-size 32 \\
+        --candidate-global-batch-size 8 --candidate-packed-sequence-size 65536
 """
 
 from __future__ import annotations
@@ -102,8 +105,38 @@ def summarize(
 
 
 def relative_gain(baseline: dict[str, float | int], candidate: dict[str, float | int]) -> float:
-    """Throughput change of ``candidate`` over ``baseline`` on identical work: ``baseline_time / candidate_time - 1``."""
+    """Throughput change of ``candidate`` over ``baseline``.
+
+    The ratio of runtime tokens per second when both summaries have token counts; otherwise, for identical work,
+    ``baseline_time / candidate_time - 1``.
+    """
+    if "tokens_per_s" in baseline and "tokens_per_s" in candidate:
+        return float(candidate["tokens_per_s"]) / float(baseline["tokens_per_s"]) - 1.0
     return float(baseline["total_s"]) / float(candidate["total_s"]) - 1.0
+
+
+def mock_item_lengths(
+    seq_length: int, seed: int, num_items: int, packed_sequence_size: int | None, pad_seq_to_mult: int
+) -> list[int]:
+    """Runtime tokens of each item a mock run consumes: samples, or packed rows with offline packing."""
+    from megatron.bridge.data.builders import MockGPTSFTDatasetConfig
+    from megatron.bridge.data.builders.mock_gpt_sft import mock_sft_packed_rows, mock_sft_sequence_lengths
+    from megatron.bridge.data.packing import PackedSequenceSpecs
+
+    if packed_sequence_size is None:
+        mock = MockGPTSFTDatasetConfig(seq_length=seq_length, vocab_size=2, random_seed=seed)
+        return mock_sft_sequence_lengths(mock, num_items).tolist()
+    mock = MockGPTSFTDatasetConfig(
+        seq_length=seq_length,
+        vocab_size=2,
+        random_seed=seed,
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(
+            packed_sequence_size=packed_sequence_size, pad_seq_to_mult=pad_seq_to_mult
+        ),
+    )
+    lengths, rows = mock_sft_packed_rows(mock, num_items)
+    return [int(sum(lengths[sample] for sample in row)) for row in rows]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -122,22 +155,40 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--train-iters", type=int, help="train.train_iters of the runs; required with --mock-seq-length."
     )
-    parser.add_argument("--global-batch-size", type=int, help="Required with --mock-seq-length.")
+    parser.add_argument(
+        "--global-batch-size",
+        type=int,
+        help="Global batch size of both runs; with --mock-seq-length, unless set per run.",
+    )
+    parser.add_argument("--packed-pad-to-multiple-of", type=int, default=8, help="Offline packing alignment.")
+    for run in ("baseline", "candidate"):
+        parser.add_argument(f"--{run}-global-batch-size", type=int, help=f"Global batch size of the {run} run.")
+        parser.add_argument(
+            f"--{run}-packed-sequence-size", type=int, help=f"Offline packed row size of the {run} run, if packed."
+        )
     args = parser.parse_args(argv)
-    if args.mock_seq_length is not None and (args.train_iters is None or args.global_batch_size is None):
-        parser.error("--mock-seq-length needs --train-iters and --global-batch-size")
+    batch_sizes = {
+        run: getattr(args, f"{run}_global_batch_size") or args.global_batch_size for run in ("baseline", "candidate")
+    }
+    if args.mock_seq_length is not None and (args.train_iters is None or None in batch_sizes.values()):
+        parser.error("--mock-seq-length needs --train-iters and a global batch size for each run")
 
     runs = {"baseline": parse_log(args.baseline.read_text()), "candidate": parse_log(args.candidate.read_text())}
     common = sorted(set(runs["baseline"]) & set(runs["candidate"]))
-    tokens = None
+    tokens: dict[str, dict[int, int] | None] = {"baseline": None, "candidate": None}
     if args.mock_seq_length is not None:
-        from megatron.bridge.data.builders import MockGPTSFTDatasetConfig
-        from megatron.bridge.data.builders.mock_gpt_sft import mock_sft_sequence_lengths
-
-        mock = MockGPTSFTDatasetConfig(seq_length=args.mock_seq_length, vocab_size=2, random_seed=args.mock_seed)
-        lengths = mock_sft_sequence_lengths(mock, args.train_iters * args.global_batch_size).tolist()
-        tokens = tokens_per_step(lengths, args.global_batch_size, common)
-    summaries = {name: summarize({i: steps[i] for i in common}, args.warmup, tokens) for name, steps in runs.items()}
+        for run, batch_size in batch_sizes.items():
+            lengths = mock_item_lengths(
+                args.mock_seq_length,
+                args.mock_seed,
+                args.train_iters * batch_size,
+                getattr(args, f"{run}_packed_sequence_size"),
+                args.packed_pad_to_multiple_of,
+            )
+            tokens[run] = tokens_per_step(lengths, batch_size, common)
+    summaries = {
+        name: summarize({i: steps[i] for i in common}, args.warmup, tokens[name]) for name, steps in runs.items()
+    }
     for name, summary in summaries.items():
         line = (
             f"{name:9s} steps {summary['first_step']}-{summary['last_step']} ({summary['steps']}): "
@@ -147,7 +198,8 @@ def main(argv: list[str] | None = None) -> None:
             line += f", {summary['tokens_per_s']:,.0f} runtime tokens/s"
         logger.info(line)
     gain = relative_gain(summaries["baseline"], summaries["candidate"])
-    logger.info("candidate vs baseline on identical inputs: %+.2f%% throughput", 100 * gain)
+    basis = "runtime tokens/s" if "tokens_per_s" in summaries["candidate"] else "step time on identical inputs"
+    logger.info("candidate vs baseline: %+.2f%% throughput (%s)", 100 * gain, basis)
 
 
 if __name__ == "__main__":

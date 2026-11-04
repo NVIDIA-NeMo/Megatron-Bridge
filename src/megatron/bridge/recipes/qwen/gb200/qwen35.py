@@ -23,6 +23,7 @@ from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import MockGPTSFTDatasetConfig
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_coderforge_config
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
@@ -603,4 +604,22 @@ def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config() -> ConfigContainer:
         "OMP_NUM_THREADS": 12,
         "OPENBLAS_NUM_THREADS": 1,
     }
+    return cfg
+
+
+def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config() -> ConfigContainer:
+    """Return :func:`qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config` with offline packed mock rows.
+
+    The mock samples are packed offline, first-fit decreasing, into 64K-token rows. Each step takes a global batch of
+    eight rows, and the global-batch scheduler unpacks them and runs every packed bin on a CP1, CP2 or CP4 group sized
+    for its longest sequence. Offline packing decides which samples share a step; dynamic CP still re-bins them.
+    Steps therefore carry a nearly constant number of tokens instead of 32 samples of varying total length.
+    """
+    cfg = qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config()
+    cfg.dataset.enable_offline_packing = True
+    # Pack on lengths aligned like the runtime samples: 2 x the four-rank dynamic-CP pool.
+    cfg.dataset.offline_packing_specs = PackedSequenceSpecs(
+        packed_sequence_size=cfg.dataset.seq_length, pad_seq_to_mult=2 * cfg.model.context_parallel_size
+    )
+    cfg.train.global_batch_size = 8
     return cfg

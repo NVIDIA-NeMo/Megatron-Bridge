@@ -80,6 +80,12 @@ def recipe(monkeypatch: pytest.MonkeyPatch):
     return cfg, requested
 
 
+@pytest.fixture
+def offline_recipe(recipe):
+    """Build the offline packed variant under the same patched construction dependencies."""
+    return qwen35.qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config()
+
+
 def test_model_comes_from_the_pinned_hf_config_through_the_qwen35_bridge(recipe):
     cfg, requested = recipe
 
@@ -202,3 +208,19 @@ def test_nothing_is_saved_or_loaded_by_default(recipe):
 
     assert cfg.checkpoint.save is None and cfg.checkpoint.load is None
     assert cfg.checkpoint.pretrained_checkpoint is None
+
+
+def test_offline_variant_packs_64k_rows_and_counts_the_global_batch_in_rows(recipe, offline_recipe):
+    online, _ = recipe
+    offline = offline_recipe
+
+    assert offline.dataset.enable_offline_packing is True
+    specs = offline.dataset.offline_packing_specs
+    assert (specs.packed_sequence_size, specs.pad_seq_to_mult) == (65536, 8)
+    assert offline.train.global_batch_size == 8
+    # Everything else matches the online recipe: the same samples, model and dynamic CP.
+    assert offline.dataset.enable_global_batch_packing is True
+    assert offline.model.dynamic_context_parallel is True
+    for field in ("seq_length", "length_bucket_fractions", "completion_fraction", "random_seed"):
+        assert getattr(offline.dataset, field) == getattr(online.dataset, field)
+    assert offline.model.num_layers == online.model.num_layers
