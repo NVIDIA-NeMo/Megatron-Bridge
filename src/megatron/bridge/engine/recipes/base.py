@@ -72,7 +72,9 @@ class TrainingRecipe:
             term then carries more total weight relative to the primary loss (it is still divided by the
             primary denominator). Padding is excluded either way; the user's loss methods are unaffected.
         hf_path: HF checkpoint directory or model ID matching ``model``; ``export`` reads its config,
-            tokenizer files and weight layout from it. ``None`` disables ``export``.
+            tokenizer files and weight layout from it. ``None`` disables ``export``. It must be the
+            text-only causal-LM checkpoint; a multimodal wrapper (one with ``text_config``) is rejected.
+        hf_revision: HF revision of ``hf_path`` when it is a model ID; ``None`` for a local directory.
     """
 
     model: ModelProviderMixin
@@ -87,6 +89,7 @@ class TrainingRecipe:
     pad_to_max_length: bool = False
     mtp_target_scope: Literal["primary", "all_valid"] = "primary"
     hf_path: str | None = None
+    hf_revision: str | None = None
 
 
 SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")

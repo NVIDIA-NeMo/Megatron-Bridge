@@ -129,4 +129,5 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
         env_vars=env_vars,
         pad_to_max_length=pad_to_max_length,
         hf_path=hf_path,
+        hf_revision=hf_revision,
     )

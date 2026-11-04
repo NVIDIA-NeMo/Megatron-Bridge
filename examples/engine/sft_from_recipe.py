@@ -328,11 +328,12 @@ def train(args: argparse.Namespace, recipe) -> None:
 
     first_step = 1
     if args.resume_from:
+        # The data cursor and the schedule step come from the saved user state. engine.step counts
+        # successful updates only, so it falls behind after a skipped update and is not a data cursor.
         user_state = engine.load_state(args.resume_from)
-        first_step = engine.step + 1
-        expected = {"consumed_steps": engine.step}
-        assert user_state == expected, f"user_state {user_state!r} does not match the restored step {engine.step}"
-        print_rank_0(f"[ckpt] resumed from {args.resume_from}: step {engine.step}, user_state {user_state}")
+        assert user_state is not None and "consumed_steps" in user_state, f"no data cursor in {user_state!r}"
+        first_step = user_state["consumed_steps"] + 1
+        print_rank_0(f"[ckpt] resumed from {args.resume_from}: updates {engine.step}, user_state {user_state}")
     batches = iter_pack_batches(args.parquet, args.packs_per_step, skip_steps=first_step - 1)
     handle = None
     for step in range(first_step, args.iters + 1):

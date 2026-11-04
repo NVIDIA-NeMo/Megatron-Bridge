@@ -31,6 +31,27 @@ def test_make_export_state_requires_hf_path_and_rejects_param_gather_overlap():
         make_export_state(SimpleNamespace(hf_path="x", ddp=SimpleNamespace(overlap_param_gather=True)))
 
 
+def test_make_export_state_rejects_multimodal_sources_and_passes_the_revision(monkeypatch):
+    configs = {"vlm": SimpleNamespace(text_config=SimpleNamespace()), "text": SimpleNamespace()}
+    loaded = []
+    built = []
+    monkeypatch.setattr(
+        "megatron.bridge.engine.export.AutoConfig.from_pretrained",
+        lambda path, revision=None: loaded.append((path, revision)) or configs[path],
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.engine.export.AutoBridge.from_hf_pretrained",
+        lambda path, revision=None: built.append((path, revision)) or _Bridge(),
+    )
+    ddp = SimpleNamespace(overlap_param_gather=False)
+    with pytest.raises(NotImplementedError, match="text-only"):
+        make_export_state(SimpleNamespace(hf_path="vlm", hf_revision="r1", ddp=ddp))
+    assert built == []
+    state = make_export_state(SimpleNamespace(hf_path="text", hf_revision="r2", ddp=ddp))
+    assert isinstance(state.bridge, _Bridge) and state.tasks is None
+    assert loaded == [("vlm", "r1"), ("text", "r2")] and built == [("text", "r2")]
+
+
 def test_export_streams_with_cached_tasks_and_writes_directories():
     bridge = _Bridge()
     state = ExportState(bridge=bridge)

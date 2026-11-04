@@ -48,8 +48,11 @@ def test_user_state_sidecar_round_trip(tmp_path):
     assert user_state_file(root, 25, 0).endswith("user_state_0000025/rank_00000.pt")
     restored = read_user_state(root, 25, 0)
     assert restored["cursor"] == 7 and restored["weights"].tolist() == [0, 1, 2]
+    assert (tmp_path / "user_state_0000025" / "rank_00001.pt").exists()
     assert read_user_state(root, 25, 1) is None
     assert read_user_state(root, 26, 0) is None
+    write_user_state(root, 25, 0, None)
+    assert read_user_state(root, 25, 0) is None
     assert checkpoint_root(root + "/iter_0000025") == root
     assert checkpoint_root(root + "/") == root
 

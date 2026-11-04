@@ -13,9 +13,10 @@
 # limitations under the License.
 """HF weight export over AutoBridge: directory mode and streaming mode with cached conversion tasks.
 
-The bridge is rebuilt from the recipe's ``hf_path`` on first use (config and weight layout only; no
-weights are read), so the exported layout is the one the recipe was built from, for example the
-text-only Qwen3.5 checkpoint rather than the vision-language one.
+The bridge is rebuilt from the recipe's ``hf_path`` and ``hf_revision`` on first use (config and
+weight layout only; no weights are read). The source must be the text-only causal-LM checkpoint: a
+multimodal wrapper would select a different bridge with different parameter names than the model
+the recipe built, so it is rejected.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from typing import Any
 
 import torch
 from megatron.core.transformer import MegatronModule
+from transformers import AutoConfig
 
 from megatron.bridge.engine.recipes.base import TrainingRecipe
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -40,13 +42,26 @@ class ExportState:
 
 
 def make_export_state(recipe: TrainingRecipe) -> ExportState:
-    """Build the bridge for ``recipe.hf_path``; raises when the recipe names no HF source."""
+    """Build the bridge for ``recipe.hf_path`` at ``recipe.hf_revision``.
+
+    Raises:
+        ValueError: If the recipe names no HF source.
+        NotImplementedError: With ``ddp.overlap_param_gather``, or when the source is a multimodal
+            wrapper (its config carries ``text_config``) rather than the text-only checkpoint.
+    """
     if recipe.hf_path is None:
         raise ValueError("export needs recipe.hf_path (the HF checkpoint whose layout is written).")
     if getattr(recipe.ddp, "overlap_param_gather", False):
         # TODO(export): force start_param_sync(force_sync=True) on every chunk before reading the weights.
         raise NotImplementedError("export with ddp.overlap_param_gather=True is not supported yet.")
-    return ExportState(bridge=AutoBridge.from_hf_pretrained(recipe.hf_path))
+    revision = getattr(recipe, "hf_revision", None)
+    if hasattr(AutoConfig.from_pretrained(recipe.hf_path, revision=revision), "text_config"):
+        # TODO(export): export through a multimodal source needs the bridge built from its extracted
+        # text config (as the recipe does) plus the tokenizer files copied separately.
+        raise NotImplementedError(
+            f"export needs a text-only HF source; {recipe.hf_path} is a multimodal wrapper with text_config."
+        )
+    return ExportState(bridge=AutoBridge.from_hf_pretrained(recipe.hf_path, revision=revision))
 
 
 def export_hf_weights(

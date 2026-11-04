@@ -170,16 +170,16 @@ def user_state_file(root: str, step: int, rank: int) -> str:
 
 
 def write_user_state(root: str, step: int, rank: int, user_state: Any) -> None:
-    """Write this rank's user state for ``step``; nothing is written for ``None``."""
-    if user_state is None:
-        return
+    """Write this rank's user state for ``step``. ``None`` is written too, so saving the same step
+    again replaces an older sidecar instead of leaving it to be restored."""
     path = user_state_file(root, step, rank)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save(user_state, path)
 
 
 def read_user_state(root: str, step: int, rank: int) -> Any | None:
-    """This rank's user state for ``step``, or ``None`` when none was saved."""
+    """This rank's user state for ``step``. A missing file reads as ``None`` so checkpoints written by
+    Bridge's own trainer (no sidecar) load as well."""
     path = user_state_file(root, step, rank)
     if not os.path.exists(path):
         return None
