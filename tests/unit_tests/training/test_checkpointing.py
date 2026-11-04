@@ -4248,6 +4248,7 @@ class TestMegatronLMCompatibility:
 
         # Create mocks with necessary methods
         mock_model = Mock()
+        mock_model.parameters.return_value = []
         mock_model.load_state_dict = Mock()
 
         mock_optimizer = Mock()

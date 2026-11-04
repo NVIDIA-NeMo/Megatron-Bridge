@@ -2271,6 +2271,134 @@ class TestGroupedExpertLinearAdapter:
         helper.prepare_forward.assert_called_once_with(x, num_gemms=3)
         helper.end_forward.assert_called_once_with()
 
+    @pytest.mark.parametrize("grad_enabled", [False, True])
+    @pytest.mark.parametrize("active_expert_indices", [(0, 2), (2, 0)])
+    @pytest.mark.parametrize("backward_override", [None, "high_precision", "dequantized"])
+    def test_grouped_expert_linear_adapter_fp8_te221_contract(
+        self, grad_enabled: bool, active_expert_indices: tuple[int, ...], backward_override: str | None
+    ) -> None:
+        """TE 2.21 receives active expert views and retains gradients on adapter parameters."""
+        from types import SimpleNamespace
+
+        dispatches: list[str] = []
+        calls: list[tuple[SimpleNamespace, tuple[torch.Tensor, ...]]] = []
+
+        class TE221GroupedLinear:
+            @staticmethod
+            def apply(
+                inp: torch.Tensor, fwd_args: SimpleNamespace, *weights_and_biases: torch.Tensor
+            ) -> tuple[torch.Tensor, list[object]]:
+                dispatches.append("apply")
+                return TE221GroupedLinear.compute(inp, fwd_args, weights_and_biases)
+
+            @staticmethod
+            def forward(
+                ctx: object, inp: torch.Tensor, fwd_args: SimpleNamespace, *weights_and_biases: torch.Tensor
+            ) -> tuple[torch.Tensor, list[object]]:
+                assert ctx is None
+                dispatches.append("inference")
+                return TE221GroupedLinear.compute(inp, fwd_args, weights_and_biases)
+
+            @staticmethod
+            def compute(
+                inp: torch.Tensor, fwd_args: SimpleNamespace, weights_and_biases: tuple[torch.Tensor, ...]
+            ) -> tuple[torch.Tensor, list[object]]:
+                calls.append((fwd_args, weights_and_biases))
+                # Use the explicit tensor arguments, just as TE does, so gradients
+                # must reach the original adapter parameters through expert selection.
+                chunks = inp.split(fwd_args.m_splits)
+                return torch.cat(
+                    [nn.functional.linear(chunk, w) for chunk, w in zip(chunks, weights_and_biases[:2])]
+                ), []
+
+        helper = Mock()
+        helper.prepare_forward.side_effect = lambda inp, *, num_gemms: inp
+        helper._get_quantizers.return_value = tuple(
+            [f"quantizer-{group_idx}-{expert_idx}" for expert_idx in range(3)] for group_idx in range(6)
+        )
+        helper.apply_bias = False
+        helper.fp8 = True
+        helper.fp8_calibration = False
+        helper.fuse_wgrad_accumulation = False
+        helper.activation_dtype = torch.float32
+        helper.save_original_input = False
+        recipe = SimpleNamespace(backward_override=backward_override)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        x = torch.randn(3, 2, requires_grad=True)
+        reference_x = x.detach().clone().requires_grad_()
+        reference_weight = adapter.linear_in.weight.detach().clone().requires_grad_()
+        reference = torch.cat(
+            [
+                nn.functional.linear(chunk, reference_weight[expert])
+                for chunk, expert in zip(reference_x.split([1, 2]), active_expert_indices)
+            ]
+        )
+        reference.sum().backward()
+        with (
+            patch.object(adapter, "_get_te_grouped_linear_helper", return_value=helper),
+            patch.object(peft_utils, "TEPytorchGroupedLinearAutograd", TE221GroupedLinear),
+            patch.object(peft_utils, "TEPytorchGroupedLinearFwdArgs", SimpleNamespace),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_FWD_ARGS", True),
+            patch.object(peft_utils, "TEPytorchIsCPUOffloadEnabled", return_value=False),
+            patch.object(peft_utils.TEFP8GlobalStateManager, "get_fp8_recipe", return_value=recipe),
+            torch.set_grad_enabled(grad_enabled),
+        ):
+            weight = adapter.linear_in(list(active_expert_indices))
+            output = adapter._forward_te_grouped_linear_fp8(
+                x,
+                weight=weight,
+                m_splits=[1, 2],
+                projection="linear_in",
+                active_expert_indices=active_expert_indices,
+            )
+        torch.testing.assert_close(output, reference)
+        assert dispatches == ["apply" if grad_enabled else "inference"]
+        assert len(calls) == 1
+        args, tensors = calls[0]
+        assert len(tensors) == 4
+        assert args.inp is x
+        assert args.input_requires_grad is True
+        assert args.weights_requires_grad is weight.requires_grad
+        assert args.is_grad_enabled is grad_enabled
+        assert args.num_gemms == 2
+        assert args.m_splits == [1, 2]
+        torch.testing.assert_close(args.m_splits_tensor, torch.tensor([1, 2], dtype=torch.int64))
+        assert args.m_splits_tensor.device.type == "cpu"
+        assert args.fp8_recipe is recipe
+        assert args.backward_override == backward_override
+        assert args.save_original_input is (backward_override == "high_precision")
+        assert args.use_grouped_tensor_path is False
+        assert args.single_grouped_weight is False and args.single_grouped_bias is False
+        assert args.cache_weight is False and args.skip_fp8_weight_update is None
+        assert args.out is None and args.dgrad_out is None
+        assert args.weight_workspaces == [None, None]
+        for i, name in enumerate(("input", "weight", "output", "grad_input", "grad_weight", "grad_output")):
+            assert getattr(args, name + "_quantizers") == [
+                f"quantizer-{i}-{expert}" for expert in active_expert_indices
+            ]
+        for i in range(2):
+            assert args.weights[i] is tensors[i]
+            assert args.biases[i] is tensors[i + 2]
+            assert tensors[i + 2].numel() == 0
+        if grad_enabled:
+            output.sum().backward()
+            torch.testing.assert_close(x.grad, reference_x.grad)
+            torch.testing.assert_close(adapter.linear_in.weight.grad, reference_weight.grad)
+        else:
+            assert not output.requires_grad
+            assert x.grad is None and adapter.linear_in.weight.grad is None
+        helper.prepare_forward.assert_called_once_with(x, num_gemms=3)
+        helper.end_forward.assert_called_once_with()
+
     def test_grouped_expert_linear_adapter_fp8_te_rocm_contract(self):
         """FP8 dispatch should supply the extra non-tensor fields ROCm Transformer Engine unpacks."""
         calls = []

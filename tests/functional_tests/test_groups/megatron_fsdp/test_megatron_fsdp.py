@@ -14,6 +14,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 import pytest
@@ -24,6 +25,7 @@ from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -510,6 +512,75 @@ class TestMegatronFSDP:
         pretrain(cfg, forward_step)
 
         torch.distributed.barrier()
+
+    @pytest.mark.run_only_on("GPU")
+    def test_fsdp_v2_moe_ep2_save_resume(self, tmp_path: Path) -> None:
+        """Match resumed MoE losses to uninterrupted training, including optimizer updates."""
+        initialize_distributed()
+        if torch.distributed.get_world_size() != 2:
+            pytest.skip("This test requires two GPUs for EP=2.")
+        shared_base_dir = broadcast_path(tmp_path)
+        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
+        total_iters = 4
+        checkpoint_iters = 2
+
+        def train(
+            *, train_iters: int, save_dir: str | None = None, load_dir: str | None = None
+        ) -> dict[int, torch.Tensor]:
+            cfg = create_fsdp_config_container(
+                seq_length=32,
+                train_iters=train_iters,
+                checkpoint_dir=save_dir,
+                load_dir=load_dir,
+                save_interval=checkpoint_iters,
+                train={"global_batch_size": 4, "micro_batch_size": 2},
+                optimizer={"clip_grad": 0.0, "use_precision_aware_optimizer": True},
+                scheduler={
+                    "lr_decay_iters": total_iters,
+                    "lr_warmup_iters": 0,
+                    "override_opt_param_scheduler": False,
+                    "use_checkpoint_opt_param_scheduler": True,
+                },
+                ddp={"megatron_fsdp_version": 2},
+                dataset={"num_workers": 0},
+                logger={"log_params_norm": False},
+                tokenizer={"vocab_size": 128},
+                checkpoint={"exit_on_missing_checkpoint": True},
+            )
+            cfg.model = MoEHybridSmokeModelProvider(
+                seq_length=32,
+                attention_backend=AttnBackend.unfused,
+                moe_grouped_gemm=True,
+                moe_token_dispatcher_type="alltoall",
+                use_cpu_initialization=False,
+            )
+            losses: dict[int, torch.Tensor] = {}
+
+            def record_loss(context: CallbackContext) -> None:
+                assert not context.skipped_iter
+                assert context.loss_dict is not None
+                # The callback runs before the training step counter is incremented.
+                step = context.state.train_state.step + 1
+                losses[step] = context.loss_dict["lm loss"].detach().clone()
+
+            callbacks = CallbackManager()
+            callbacks.register("on_train_step_end", record_loss)
+            pretrain(cfg, forward_step, callbacks=callbacks)
+            return losses
+
+        try:
+            before_save = train(train_iters=checkpoint_iters, save_dir=checkpoint_dir)
+            verify_checkpoint_files(checkpoint_dir, checkpoint_iters, ckpt_format="fsdp_dtensor")
+            resumed = train(train_iters=total_iters, load_dir=checkpoint_dir)
+            uninterrupted = train(train_iters=total_iters)
+
+            assert list(before_save) == [1, 2]
+            assert list(resumed) == [3, 4]
+            assert list(uninterrupted) == [1, 2, 3, 4]
+            for step, loss in (before_save | resumed).items():
+                torch.testing.assert_close(loss, uninterrupted[step], rtol=0, atol=0, msg=f"Step {step}")
+        finally:
+            clear_directories(shared_base_dir)
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("outer_dp_sharding_strategy", ["no_shard", "optim"], ids=["hsdp", "hfsdp"])
