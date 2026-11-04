@@ -4466,8 +4466,9 @@ class TestRuntimeConfigUpdate:
 
             # Verify configs are finalized
             if isinstance(full_cfg.dataset, GPTDatasetConfig):
-                # Computed fields should now be set
-                assert getattr(full_cfg.dataset, "split", None) is not None
+                # Megatron Core leaves ``split`` as given and derives the split matrix;
+                # mock data always uses an even split.
+                assert full_cfg.dataset.split_matrix is not None
 
             # Verify model config is finalized (computed fields set)
             assert full_cfg.model.num_query_groups is not None

@@ -35,6 +35,8 @@ from megatron.bridge.models.deepseek.attention import (
     replace_mla_self_attention,
 )
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTMLAModelConfig
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
 def _mla_submodules():
@@ -180,6 +182,24 @@ class TestSpecBuilderContract:
         """The provider inspects the partial, so binding use_transformer_engine must not hide it."""
         bound = partial(get_deepseek_decoder_block_spec, use_transformer_engine=True)
         assert "vp_stage" in inspect.signature(bound).parameters
+
+    def test_builder_model_config_builds_from_its_transformer_config(self, monkeypatch):
+        """The GPT builder passes its model config; MCore builds the layers from the nested transformer config."""
+        seen = {}
+
+        def _capture(config, **kwargs):
+            seen["config"] = config
+            return SimpleNamespace(layer_specs=[])
+
+        monkeypatch.setattr(attention_module, "get_gpt_decoder_block_spec", _capture)
+        transformer = MLATransformerConfig(
+            num_layers=2, hidden_size=128, num_attention_heads=4, q_lora_rank=None, kv_lora_rank=32
+        )
+        model_config = BridgeGPTMLAModelConfig(transformer=transformer, vocab_size=256)
+
+        get_deepseek_decoder_block_spec(model_config, use_transformer_engine=True, vp_stage=None)
+
+        assert seen["config"] is transformer
 
 
 class TestLocalBackend:

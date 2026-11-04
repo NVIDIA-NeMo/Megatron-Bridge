@@ -177,6 +177,10 @@ class _OfflineModelProvider:
         """Match multimodal provider conversion without initializing a model."""
         return self
 
+    def to_text_config(self) -> "_OfflineModelProvider":
+        """Match multimodal model-config conversion without initializing a model."""
+        return self
+
     def finalize(self) -> None:
         """Match the model-provider interface without initializing a model."""
 
