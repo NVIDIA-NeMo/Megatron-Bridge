@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 from megatron.core import InferenceParams, tensor_parallel
@@ -275,6 +275,8 @@ class Qwen3VLModel(MegatronModule):
         model_config (ModelConfig, optional): Builder-backed model config. It owns the construction settings
             (token IDs, vocabulary, RoPE and vision-encoder options) that a provider carries on
             ``language_transformer_config``. Defaults to None, which reads them from ``language_transformer_config``.
+        language_model_kwargs (dict, optional): Additional decoder constructor arguments supplied by the builder,
+            such as a Hybrid layer pattern. Defaults to None.
     """
 
     language_model_class = Qwen3VLGPTModel
@@ -293,6 +295,7 @@ class Qwen3VLModel(MegatronModule):
         mtp_block_spec: Optional[ModuleSpec] = None,
         vp_stage: Optional[int] = None,
         model_config: Optional[ModelConfig] = None,
+        language_model_kwargs: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
         # A builder-backed model config also exposes its nested transformer settings, so the
@@ -409,6 +412,7 @@ class Qwen3VLModel(MegatronModule):
                 mtp_block_spec=mtp_block_spec,
                 vp_stage=vp_stage,
                 pg_collection=pg_collection,
+                **(language_model_kwargs or {}),
             )
             if pre_process:
                 deepstack_indexes = getattr(vision_transformer_config, "deepstack_visual_indexes", [])

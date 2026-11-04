@@ -63,7 +63,9 @@ class TestQwen35VLProviderMIMOAPI:
 
         params = spec.params
         assert params is not None
-        assert params["config"] is provider
+        assert params["config"] is not provider
+        assert params["config"].num_layers == 2 * provider.num_layers
+        assert len(params["hybrid_layer_pattern"].split("/")[0]) == 2 * provider.num_layers
         assert params["transformer_layer_spec"] is sentinel_block_spec
         assert params["vocab_size"] == provider.vocab_size
         assert params["max_sequence_length"] == provider.language_max_sequence_length
@@ -108,7 +110,8 @@ class TestMegatronMIMOProviderFactory:
         assert type(provider) is MegatronMIMOProvider
         assert provider.standard_provider is language_provider
         assert provider.megatron_mimo_parallelism_config is parallelism_config
-        assert provider.language_model_spec.params["config"] is language_provider
+        assert provider.language_model_spec.params["config"].num_layers == 2 * language_provider.num_layers
+        assert provider.language_model_spec.params["config"].hidden_size == language_provider.hidden_size
         assert list(provider.modality_submodules_spec.keys()) == ["images"]
         assert provider.special_token_ids == {"images": language_provider.image_token_id}
         assert not hasattr(provider, "language_provider")

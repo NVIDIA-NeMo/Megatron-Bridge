@@ -17,7 +17,6 @@ Unit tests for Qwen3.5 bridge functionality.
 """
 
 from copy import deepcopy
-from dataclasses import fields
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -31,8 +30,8 @@ from transformers import Qwen3_5Config, Qwen3_5MoeConfig, Qwen3_5MoeTextConfig, 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.models.qwen.modeling_qwen35.hybrid import (
     qwen35_hybrid_mappings,
@@ -101,33 +100,33 @@ class TestQwen35DenseBridge:
         """Test that Qwen35Bridge is properly registered."""
         assert issubclass(Qwen35Bridge, MegatronModelBridge)
 
-    def test_provider_bridge_basic(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
-        """Test basic provider_bridge functionality."""
+    def test_model_config_basic(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+        """Test the canonical builder config mapping."""
         bridge = Qwen35Bridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5.config)
 
-        assert isinstance(result, HybridModelProvider)
+        assert isinstance(result, Qwen35HybridModelConfig)
         assert result.num_layers == 2 * mock_qwen3_5_config.num_hidden_layers
         assert result.hidden_size == mock_qwen3_5_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_5_config.num_attention_heads
         assert result.seq_length == mock_qwen3_5_config.max_position_embeddings
         assert result.rotary_base == mock_qwen3_5_config.rope_theta
 
-    def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+    def test_model_config_vocabulary(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test vocabulary size mapping."""
         bridge = Qwen35Bridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5.config)
 
         assert result.vocab_size == mock_qwen3_5_config.vocab_size
         assert result.share_embeddings_and_output_weights == mock_qwen3_5_config.tie_word_embeddings
 
-    def test_provider_bridge_attention_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+    def test_model_config_attention_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test attention configuration mapping."""
         bridge = Qwen35Bridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5.config)
 
         assert result.num_attention_heads == mock_qwen3_5_config.num_attention_heads
         assert result.num_query_groups == mock_qwen3_5_config.num_key_value_heads
@@ -135,11 +134,11 @@ class TestQwen35DenseBridge:
         assert result.layernorm_zero_centered_gamma is True
         assert result.attention_output_gate is True
 
-    def test_provider_bridge_linear_attention_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+    def test_model_config_linear_attention_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test linear attention (GDN) configuration mapping."""
         bridge = Qwen35Bridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5.config)
 
         expected = [int(i % 2 == 0 and (i // 2 + 1) % 4 != 0) for i in range(result.num_layers)]
         assert result.linear_attention_freq == expected
@@ -150,45 +149,45 @@ class TestQwen35DenseBridge:
         assert result.linear_num_value_heads == mock_qwen3_5_config.linear_num_value_heads
         assert result.experimental_attention_variant == "gdn"
 
-    def test_provider_bridge_mlp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+    def test_model_config_mlp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test MLP configuration mapping."""
         bridge = Qwen35Bridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5.config)
 
         assert result.ffn_hidden_size == mock_qwen3_5_config.intermediate_size
         assert result.gated_linear_unit is True
 
-    def test_provider_bridge_normalization(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+    def test_model_config_normalization(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test normalization configuration."""
         bridge = Qwen35Bridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5.config)
 
         assert result.layernorm_epsilon == mock_qwen3_5_config.rms_norm_eps
         assert result.init_method_std == mock_qwen3_5_config.initializer_range
 
-    def test_provider_bridge_position_embedding(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+    def test_model_config_position_embedding(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test position embedding configuration."""
         bridge = Qwen35Bridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5.config)
 
         # Check position embedding
         assert result.rotary_base == mock_qwen3_5_config.rope_theta
         assert result.rotary_percent == mock_qwen3_5_config.rope_parameters["partial_rotary_factor"]
         assert result.position_embedding_type == "rope"
 
-    def test_provider_bridge_mtp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+    def test_model_config_mtp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test MTP configuration mapping."""
         bridge = Qwen35Bridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5.config)
 
         # Check MTP configuration
         assert not result.mtp_num_layers
 
-    def test_provider_bridge_dtype_handling(self, qwen3_5_27b_config_dict):
+    def test_model_config_dtype_handling(self, qwen3_5_27b_config_dict):
         """Test dtype handling in provider_bridge."""
         config = Qwen3_5TextConfig(**qwen3_5_27b_config_dict)
         for key, value in qwen3_5_27b_config_dict.items():
@@ -200,20 +199,20 @@ class TestQwen35DenseBridge:
         mock_pretrained.config = config
 
         bridge = Qwen35Bridge()
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.bf16 is True
         assert result.fp16 is False
         assert result.params_dtype == torch.bfloat16
 
         config.torch_dtype = "float16"
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.fp16 is True
         assert result.bf16 is False
         assert result.params_dtype == torch.float16
 
-    def test_provider_bridge_tie_word_embeddings_true(self, mock_qwen3_5_config):
+    def test_model_config_tie_word_embeddings_true(self, mock_qwen3_5_config):
         """Test provider_bridge with tie_word_embeddings=True."""
         mock_qwen3_5_config.tie_word_embeddings = True
 
@@ -221,11 +220,11 @@ class TestQwen35DenseBridge:
         mock_pretrained.config = mock_qwen3_5_config
 
         bridge = Qwen35Bridge()
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.share_embeddings_and_output_weights is True
 
-    def test_provider_bridge_tie_word_embeddings_false(self, mock_qwen3_5_config):
+    def test_model_config_tie_word_embeddings_false(self, mock_qwen3_5_config):
         """Test provider_bridge with tie_word_embeddings=False."""
         mock_qwen3_5_config.tie_word_embeddings = False
 
@@ -233,11 +232,11 @@ class TestQwen35DenseBridge:
         mock_pretrained.config = mock_qwen3_5_config
 
         bridge = Qwen35Bridge()
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.share_embeddings_and_output_weights is False
 
-    def test_provider_bridge_27b_config(self, qwen3_5_27b_config_dict):
+    def test_model_config_27b_config(self, qwen3_5_27b_config_dict):
         """Test provider_bridge with Qwen3.5-27B dense configuration."""
         config = Qwen3_5TextConfig(**qwen3_5_27b_config_dict)
         for key, value in qwen3_5_27b_config_dict.items():
@@ -248,7 +247,7 @@ class TestQwen35DenseBridge:
         mock_pretrained.config = config
 
         bridge = Qwen35Bridge()
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.num_layers == 128
         assert result.hidden_size == 5120
@@ -477,33 +476,33 @@ class TestQwen35MoEBridge:
         """Test that Qwen3_5MoEBridge is properly registered."""
         assert issubclass(Qwen35MoEBridge, MegatronModelBridge)
 
-    def test_provider_bridge_basic(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
-        """Test basic provider_bridge functionality."""
+    def test_model_config_basic(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
+        """Test the canonical builder config mapping."""
         bridge = Qwen35MoEBridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5_moe.config)
 
-        assert isinstance(result, HybridModelProvider)
+        assert isinstance(result, Qwen35HybridModelConfig)
         assert result.num_layers == 2 * mock_qwen3_5_moe_config.num_hidden_layers
         assert result.hidden_size == mock_qwen3_5_moe_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_5_moe_config.num_attention_heads
         assert result.seq_length == mock_qwen3_5_moe_config.max_position_embeddings
         assert result.rotary_base == mock_qwen3_5_moe_config.rope_theta
 
-    def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
+    def test_model_config_vocabulary(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test vocabulary size mapping."""
         bridge = Qwen35MoEBridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5_moe.config)
 
         assert result.vocab_size == mock_qwen3_5_moe_config.vocab_size
         assert result.share_embeddings_and_output_weights == mock_qwen3_5_moe_config.tie_word_embeddings
 
-    def test_provider_bridge_attention_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
+    def test_model_config_attention_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test attention configuration mapping."""
         bridge = Qwen35MoEBridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5_moe.config)
 
         assert result.num_attention_heads == mock_qwen3_5_moe_config.num_attention_heads
         assert result.num_query_groups == mock_qwen3_5_moe_config.num_key_value_heads
@@ -511,11 +510,11 @@ class TestQwen35MoEBridge:
         assert result.layernorm_zero_centered_gamma is True
         assert result.attention_output_gate is True
 
-    def test_provider_bridge_linear_attention_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
+    def test_model_config_linear_attention_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test linear attention (GDN) configuration mapping."""
         bridge = Qwen35MoEBridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5_moe.config)
 
         expected = [int(i % 2 == 0 and (i // 2 + 1) % 4 != 0) for i in range(result.num_layers)]
         assert result.linear_attention_freq == expected
@@ -526,11 +525,11 @@ class TestQwen35MoEBridge:
         assert result.linear_num_value_heads == mock_qwen3_5_moe_config.linear_num_value_heads
         assert result.experimental_attention_variant == "gdn"
 
-    def test_provider_bridge_moe_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
+    def test_model_config_moe_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test MoE-specific configuration mapping."""
         bridge = Qwen35MoEBridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5_moe.config)
 
         assert result.num_moe_experts == mock_qwen3_5_moe_config.num_experts
         assert result.moe_router_topk == mock_qwen3_5_moe_config.num_experts_per_tok
@@ -540,34 +539,34 @@ class TestQwen35MoEBridge:
         assert result.moe_shared_expert_gate is True
         assert result.moe_router_dtype == "fp32"
 
-    def test_provider_bridge_normalization(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
+    def test_model_config_normalization(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test normalization configuration."""
         bridge = Qwen35MoEBridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5_moe.config)
 
         assert result.layernorm_epsilon == mock_qwen3_5_moe_config.rms_norm_eps
         assert result.init_method_std == mock_qwen3_5_moe_config.initializer_range
 
-    def test_provider_bridge_position_embedding(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
+    def test_model_config_position_embedding(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test position embedding configuration."""
         bridge = Qwen35MoEBridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5_moe.config)
 
         assert result.rotary_base == mock_qwen3_5_moe_config.rope_theta
         assert result.rotary_percent == mock_qwen3_5_moe_config.rope_parameters["partial_rotary_factor"]
         assert result.position_embedding_type == "rope"
 
-    def test_provider_bridge_mtp_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
+    def test_model_config_mtp_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test MTP configuration mapping."""
         bridge = Qwen35MoEBridge()
 
-        result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
+        result = bridge.hf_config_to_model_config(mock_pretrained_qwen3_5_moe.config)
 
         assert not result.mtp_num_layers
 
-    def test_provider_bridge_dtype_handling(self, qwen3_5_397b_a17b_config_dict):
+    def test_model_config_dtype_handling(self, qwen3_5_397b_a17b_config_dict):
         """Test dtype handling in provider_bridge."""
         config = Qwen3_5MoeTextConfig(**qwen3_5_397b_a17b_config_dict)
         for key, value in qwen3_5_397b_a17b_config_dict.items():
@@ -579,20 +578,20 @@ class TestQwen35MoEBridge:
         mock_pretrained.config = config
 
         bridge = Qwen35MoEBridge()
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.bf16 is True
         assert result.fp16 is False
         assert result.params_dtype == torch.bfloat16
 
         config.torch_dtype = "float16"
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.fp16 is True
         assert result.bf16 is False
         assert result.params_dtype == torch.float16
 
-    def test_provider_bridge_tie_word_embeddings_true(self, mock_qwen3_5_moe_config):
+    def test_model_config_tie_word_embeddings_true(self, mock_qwen3_5_moe_config):
         """Test provider_bridge with tie_word_embeddings=True."""
         mock_qwen3_5_moe_config.tie_word_embeddings = True
 
@@ -600,11 +599,11 @@ class TestQwen35MoEBridge:
         mock_pretrained.config = mock_qwen3_5_moe_config
 
         bridge = Qwen35MoEBridge()
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.share_embeddings_and_output_weights is True
 
-    def test_provider_bridge_tie_word_embeddings_false(self, mock_qwen3_5_moe_config):
+    def test_model_config_tie_word_embeddings_false(self, mock_qwen3_5_moe_config):
         """Test provider_bridge with tie_word_embeddings=False."""
         mock_qwen3_5_moe_config.tie_word_embeddings = False
 
@@ -612,11 +611,11 @@ class TestQwen35MoEBridge:
         mock_pretrained.config = mock_qwen3_5_moe_config
 
         bridge = Qwen35MoEBridge()
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.share_embeddings_and_output_weights is False
 
-    def test_provider_bridge_397b_a17b_config(self, qwen3_5_397b_a17b_config_dict):
+    def test_model_config_397b_a17b_config(self, qwen3_5_397b_a17b_config_dict):
         """Test provider_bridge with Qwen3.5-397B-A17B MoE configuration."""
         config = Qwen3_5MoeTextConfig(**qwen3_5_397b_a17b_config_dict)
         for key, value in qwen3_5_397b_a17b_config_dict.items():
@@ -627,7 +626,7 @@ class TestQwen35MoEBridge:
         mock_pretrained.config = config
 
         bridge = Qwen35MoEBridge()
-        result = bridge.provider_bridge(mock_pretrained)
+        result = bridge.hf_config_to_model_config(mock_pretrained.config)
 
         assert result.num_layers == 120
         assert result.hidden_size == 4096
@@ -961,8 +960,11 @@ class TestQwen35BuilderConfig:
     """Builder-backed ModelConfig path for the Qwen3.5 text bridges."""
 
     @pytest.mark.parametrize("bridge_class", [Qwen35Bridge, Qwen35MoEBridge])
-    def test_provider_bridge_is_inherited_compatibility_only(self, bridge_class):
-        assert "provider_bridge" not in bridge_class.__dict__
+    def test_removed_provider_path_directs_callers_to_builder(self, bridge_class):
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = _qwen35_text_config()
+        with pytest.warns(FutureWarning), pytest.raises(NotImplementedError, match="get_model_config"):
+            bridge_class().provider_bridge(pretrained)
 
     @pytest.mark.parametrize("bridge_class", [Qwen35Bridge, Qwen35MoEBridge])
     def test_conversion_uses_builder_config(self, bridge_class):
@@ -1013,23 +1015,16 @@ class TestQwen35BuilderConfig:
             assert model_config.ffn_hidden_size == 128
 
     @pytest.mark.parametrize(("bridge_class", "make_config"), _PARITY_CASES, ids=_PARITY_IDS)
-    def test_model_config_matches_provider_runtime_config(self, bridge_class, make_config):
-        config = make_config()
-        bridge = bridge_class()
-        model_config = bridge.hf_config_to_model_config(config)
-        pretrained = Mock(spec=PreTrainedCausalLM)
-        pretrained.config = config
-        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
-            provider = bridge.provider_bridge(pretrained)
-
-        model_config_fields = {field.name for field in fields(model_config)}
-        model_config_fields.update(field.name for field in fields(model_config.transformer))
-        shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
-        for field_name in sorted(shared):
-            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
-
-        assert provider.hybrid_stack_spec is qwen35_hybrid_stack_spec
-        assert model_config.hybrid_stack_spec is qwen35_hybrid_stack_spec
+    def test_hybrid_export_preserves_hf_layer_schedule(self, bridge_class, make_config):
+        hf_config = make_config()
+        model_config = bridge_class().hf_config_to_model_config(hf_config)
+        model_config.finalize()
+        exported = bridge_class.megatron_to_hf_config(model_config)
+        assert exported["num_hidden_layers"] == hf_config.num_hidden_layers
+        expected = full_attention_interval_from_hf(hf_config)
+        if isinstance(expected, int):
+            expected = [int((index + 1) % expected != 0) for index in range(hf_config.num_hidden_layers)]
+        assert exported["layer_types"] == ["linear_attention" if linear else "full_attention" for linear in expected]
 
     @pytest.mark.parametrize(
         ("bridge_class", "make_config"),
@@ -1151,19 +1146,17 @@ def test_split_layer_mapping_preserves_zero_centered_gdn_conversion():
     "pipeline",
     [
         dict(
-            pipeline_model_parallel_size=2, num_layers_in_first_pipeline_stage=17, num_layers_in_last_pipeline_stage=23
+            pipeline_model_parallel_size=2, num_layers_in_first_pipeline_stage=34, num_layers_in_last_pipeline_stage=46
         ),
         dict(pipeline_model_parallel_size=2, virtual_pipeline_model_parallel_size=2),
         dict(
-            pipeline_model_parallel_size=6,
-            account_for_embedding_in_pipeline_split=True,
-            account_for_loss_in_pipeline_split=True,
+            pipeline_model_parallel_size=2,
         ),
     ],
 )
 def test_pipeline_pattern_preserves_block_stage_assignment(pipeline):
     config = TransformerConfig(
-        num_layers=40, hidden_size=64, num_attention_heads=4, pipeline_dtype=torch.bfloat16, **pipeline
+        num_layers=80, hidden_size=64, num_attention_heads=4, pipeline_dtype=torch.bfloat16, **pipeline
     )
     pattern = "".join(("*" if (i + 1) % 4 == 0 else "G") + "E" for i in range(40))
     segments = qwen35_pipeline_pattern(config, pattern).split("|")
@@ -1174,4 +1167,4 @@ def test_pipeline_pattern_preserves_block_stage_assignment(pipeline):
     for index, segment in enumerate(segments):
         vp_stage, pp_rank = divmod(index, pp_size)
         offset = get_transformer_layer_offset(config, vp_stage if vp_size else None, pp_rank)
-        assert sum(map(len, segments[:index])) == 2 * offset
+        assert sum(map(len, segments[:index])) == offset

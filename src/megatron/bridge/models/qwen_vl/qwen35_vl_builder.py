@@ -22,20 +22,21 @@ from megatron.core.pipeline_parallel.utils import (
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
 
-from megatron.bridge.models.gpt.gpt_builder import GPTModelBuilder
+from megatron.bridge.models.hybrid.hybrid_builder import BridgeHybridModelBuilder
+from megatron.bridge.models.qwen.modeling_qwen35.model_config import prepare_qwen35_pipeline_config
 from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import (
     Qwen35VLHybridModel,
-    qwen35_vl_hybrid_stack_spec,
 )
 from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig
 
 
-class Qwen35VLModelBuilder(GPTModelBuilder):
+class Qwen35VLModelBuilder(BridgeHybridModelBuilder):
     """Combine the Qwen3.5 HybridModel language decoder with the Qwen3-VL vision encoder.
 
-    The config keeps the language fields in HF block units; the language model splits each
-    block into its Hybrid mixer and feed-forward positions, including the MTP layers.
+    Text and VL configs both count Hybrid mixer and feed-forward positions.
     """
+
+    model_class: type[Qwen35VLHybridModel] | None = None
 
     def build_model(
         self,
@@ -70,6 +71,8 @@ class Qwen35VLModelBuilder(GPTModelBuilder):
                 "leave transformer_layer_spec unset."
             )
 
+        model_config = prepare_qwen35_pipeline_config(model_config)
+
         vp_size = model_config.virtual_pipeline_model_parallel_size
         if pre_process is None:
             pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(pg_collection.pp)
@@ -78,21 +81,22 @@ class Qwen35VLModelBuilder(GPTModelBuilder):
 
         vision_config = model_config.vision_config
         vision_config.torch_dtype = model_config.params_dtype
-        model = Qwen35VLHybridModel(
+        model_class = self.model_class or Qwen35VLHybridModel
+        model = model_class(
             language_transformer_config=model_config.transformer,
-            language_transformer_layer_spec=qwen35_vl_hybrid_stack_spec(),
+            language_transformer_layer_spec=self._resolve_hybrid_stack_spec(),
             vision_transformer_config=vision_config,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=pg_collection,
             vp_stage=vp_stage,
             model_config=model_config,
+            language_model_kwargs={"hybrid_layer_pattern": model_config.hybrid_layer_pattern},
         )
         if vp_stage is not None:
             model.vp_stage = vp_stage
         if model.vision_model is not None:
-            # get_vision_model_config() leaves the vision encoder in fp32. The provider path relies on
-            # Float16Module to cast it with the rest of the model; conversion builds without that wrapper.
+            # Conversion builds without Float16Module, so cast the initially FP32 vision encoder here.
             model.vision_model.to(dtype=model_config.params_dtype)
 
         if (

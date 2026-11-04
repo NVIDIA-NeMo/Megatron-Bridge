@@ -46,6 +46,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <button type="button" class="is-active" data-hardware="">All</button>
         <button type="button" data-hardware="H100">H100</button>
         <button type="button" data-hardware="GB200">GB200</button>
+        <button type="button" data-hardware="GB300">GB300</button>
       </div>
       <span class="verification-combination-count" aria-live="polite"></span>
     </div>
@@ -93,6 +94,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB300" data-status="unverified" data-entry="qwen3-6-35b-a3b-pretrain-gb300" aria-controls="qwen3-6-35b-a3b-pretrain-gb300" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · GB300</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
     <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="qwen3-6-35b-a3b-sft-h100" aria-controls="qwen3-6-35b-a3b-sft-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · H100</strong>
@@ -107,10 +115,24 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB300" data-status="unverified" data-entry="qwen3-6-35b-a3b-sft-gb300" aria-controls="qwen3-6-35b-a3b-sft-gb300" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · GB300</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
     <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="qwen3-6-35b-a3b-sft-long-context-h100" aria-controls="qwen3-6-35b-a3b-sft-long-context-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · H100</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB300" data-status="unverified" data-entry="qwen3-6-35b-a3b-sft-long-context-gb300" aria-controls="qwen3-6-35b-a3b-sft-long-context-gb300" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · GB300</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -125,6 +147,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <span class="verification-combination-heading">
         <strong>LoRA · GB200</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB300" data-status="unverified" data-entry="qwen3-6-35b-a3b-peft-gb300" aria-controls="qwen3-6-35b-a3b-peft-gb300" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · GB300</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -153,6 +182,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>The pinned-revision import exited successfully in 14m39s and created iter_0000000. Model weights remained on CPU; exactly one shared runtime GPU was required because Transformer Engine constructs the Qwen vision modules through CUDA even for CPU-weight conversion. The resulting checkpoint was reloadable by the subsequent verified CPU export.
+
+
+Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
+Executed Qwen3.5 command(s):
+./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 4 --mem 512G --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/cpu-megatron
+
+Imported the complete pinned checkpoint with model weights on CPU in one process and saved iter_0000000. Transformer Engine vision-module construction required one runtime GPU; four GB300 GPUs were allocated to satisfy the minimum allocation. The subsequent CPU export reloaded the checkpoint successfully. The complete BF16 roundtrip preserves all 1,811 keys and shapes, with precision changes documented in megatron_to_hf_cpu; it is not a lossless mixed-dtype roundtrip.
 </p>
       </section>
     </article>
@@ -179,6 +215,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>The 16-H100 pinned-revision import exited successfully at TP2/PP1/EP8/ETP1 and created a 16-shard iter_0000000 distributed checkpoint. Subsequent verified GPU export and inference workloads reloaded this checkpoint successfully.
+
+
+Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
+Executed Qwen3.5 command(s):
+./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --ep 4 --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/gpu-megatron
+
+Imported the complete pinned checkpoint on four GB300 GPUs at TP1/PP1/EP4/ETP1 and saved iter_0000000 with four distributed shards. Subsequent GPU export, forward comparison, inference, SFT, and PEFT successfully reloaded the checkpoint. The BF16 roundtrip preserves all 1,811 tensor keys and shapes, with the precision changes documented in megatron_to_hf_gpu; it is not a lossless mixed-dtype roundtrip.
 </p>
       </section>
     </article>
@@ -205,6 +248,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>Export exited successfully in 6m42s with weights on CPU and exactly one shared runtime GPU for Transformer Engine vision-module construction. Transformers strictly reloaded all 1,045 BF16 tensors in 26 indexed shards as Qwen3_5MoeForConditionalGeneration. The exported config preserves 40 language layers, 256 experts, top-8 routing, 27 vision layers, and one MTP layer with dedicated embeddings disabled.
+
+
+Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
+Executed Qwen3.5 command(s):
+./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 4 --mem 512G --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/cpu-megatron/iter_0000000 --hf-path work/model-verification/qwen3.5-35b-a3b/cpu-hf-export
+
+Export completed with weights on CPU in one process and one runtime GPU from a four-GB300 allocation. Transformers independently reloaded the complete export with no missing, unexpected, mismatched, or error entries. All 1,811 keys and shapes match the pinned source. The source&#x27;s 30 GDN A_log tensors and 30 GDN output norm tensors change from FP32 to BF16; all other dtypes are preserved. Values of 1,781 tensors match exactly, including A_log. The 30 norm tensors exactly match BF16(FP32_source - 1) + BF16(1). Their maximum absolute source difference is 0.00390625, within an absolute tolerance of 1/256; no other tensor values differ. This verifies BF16 conversion, not lossless retention of the source&#x27;s mixed dtypes.
 </p>
       </section>
     </article>
@@ -231,6 +281,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>The 16-H100 distributed export exited successfully and wrote 26 indexed shards containing 1,045 BF16 tensors and 71,903,645,408 serialized tensor bytes. Transformers independently reloaded the persisted export as Qwen3_5MoeForConditionalGeneration with empty missing, unexpected, mismatched, and error sets.
+
+
+Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
+Executed Qwen3.5 command(s):
+./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --ep 4 --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --hf-path work/model-verification/qwen3.5-35b-a3b/gpu-hf-export
+
+GPU export completed on four GB300 GPUs at TP1/PP1/EP4/ETP1. All 1,811 keys and shapes match the pinned source. Transformers strictly reloaded the complete export with no missing, unexpected, mismatched, or error entries. The source&#x27;s 30 GDN A_log tensors and 30 GDN output norm tensors change from FP32 to BF16; all other dtypes are preserved. Values of 1,781 tensors match exactly, including A_log. The 30 norm tensors exactly match BF16(FP32_source - 1) + BF16(1), the implemented zero-centered norm roundtrip. Their maximum absolute source difference is 0.00390625, within an absolute tolerance of 1/256; no other tensor values differ. This verifies the BF16 conversion, not lossless retention of the source&#x27;s mixed dtypes.
 </p>
       </section>
     </article>
@@ -344,6 +401,64 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
 </p>
       </section>
     </article>
+    <article id="qwen3-6-35b-a3b-pretrain-gb300" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-pretrain-gb300" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · GB300</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB300</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config --mode pretrain --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 40 --lr 3e-4 --min_lr 3e-5 dataset.path=work/data/medpix/energon-pinned dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=100 checkpoint.load=null --save_dir work/model-verification/qwen3.6-35b-a3b/pretrain/checkpoints --save_interval 50 validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/pretrain/resolved-config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+
+Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: ad196b9a6d14ef62979fc8532af62a7d6ea0fe66. Verified on 2026-11-04.
+Executed Qwen3.5 command(s):
+./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config --mode pretrain --dataset energon --pretrained_checkpoint work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 40 --lr 3e-4 --min_lr 3e-5 dataset.path=work/data/medpix/energon-pinned dataset.task_encoder.hf_processor_path=Qwen/Qwen3.5-35B-A3B dataset.task_encoder.hf_processor_revision=59d61f3ce65a6d9863b86d2e96597125219dc754 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=100 checkpoint.load=null --save_dir work/model-verification/qwen3.5-35b-a3b/pretrain/checkpoints --save_interval 50 validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/pretrain/resolved-config.yaml
+
+Completed all 100 full-model continuation steps on 16 GB300 GPUs, warm-started from the pinned published weights, with finite losses and zero skipped or NaN iterations. The Energon input contains all 17,420 training rows of mmoukouba/MedPix-VQA revision 69eb219d477ab8699296da1fd6b89beb768042d3, reused for 204,800 consumed examples. This is a bounded VQA continuation cohort, not the RedPajama2 or DataComp pretraining cohorts and not full convergence. The saved runtime config records TP1/PP1/CP1/EP4/ETP1, MBS4/GBS2048, sequence length 4096, natural routing, FLA GDN, FP32 optimizer master parameters and gradients, BF16 Adam moments, selective core_attn and gdn_norm_out recompute, and separate vision attn/mlp CUDA graphs. Learning rate warms up for 40 steps to 3e-4 and decays to 3e-5 at step 100. Metrics average steps 91-100. Both step-50 and step-100 checkpoints saved all 16 distributed shards, optimizer/RNG state, and per-rank Energon data positions. A separate continuation successfully restored step 50; its loss-consistency result is tracked in checkpoint_resume.
+
+Qwen3.5 observed metrics: {&quot;final_loss&quot;: 0.03088333, &quot;initial_loss&quot;: 1.997142, &quot;last_10_steps_model_tflops_per_gpu_avg&quot;: 420.7, &quot;last_10_steps_step_time_ms_avg&quot;: 28666.45, &quot;last_10_steps_tokens_per_second_per_gpu_avg&quot;: 18289.255}.</p>
+      </section>
+    </article>
     <article id="qwen3-6-35b-a3b-sft-h100" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-sft-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · H100</h4>
@@ -446,6 +561,64 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
 </p>
       </section>
     </article>
+    <article id="qwen3-6-35b-a3b-sft-gb300" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-sft-gb300" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · GB300</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB300</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B &#x27;dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}&#x27; env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.6-35b-a3b/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/sft/resolved-config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+
+Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
+Executed Qwen3.5 command(s):
+./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.5-35B-A3B &#x27;dataset.hf_processor_kwargs={revision:59d61f3ce65a6d9863b86d2e96597125219dc754}&#x27; env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.5-35b-a3b/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/sft/resolved-config.yaml
+
+Completed all 100 full-model MedPix-VQA SFT steps on eight GB300 GPUs, including language, vision, projection, and one MTP layer, with finite losses and zero skipped or NaN iterations. The persisted runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096, MBS1/GBS32, natural routing, no CUDA graphs, FP32 optimizer states, and assistant-only loss. Adam learning rate warms up for 10 steps to 2e-5 and decays to 2e-6 at step 100. The combine chunk is explicitly 64 to match HybridEP fused dispatch and preprocessing; the inherited 128 fails its runtime check. Step 100 saved all eight distributed shards, optimizer and RNG state, and the checkpoint tracker selects iteration 100. These are bounded support-verification observations, not full convergence or optimized performance results.
+
+Qwen3.5 observed metrics: {&quot;final_loss&quot;: 0.9914345, &quot;initial_loss&quot;: 2.151638, &quot;last_10_steps_model_tflops_per_gpu_avg&quot;: 72.28, &quot;last_10_steps_step_time_ms_avg&quot;: 5216.92, &quot;last_10_steps_tokens_per_second_per_gpu_avg&quot;: 3140.55}.</p>
+      </section>
+    </article>
     <article id="qwen3-6-35b-a3b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-sft-long-context-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · H100</h4>
@@ -495,6 +668,64 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <h5>Expected result</h5>
         <p>The pinned 32-H100 run completed exactly 20 full-SFT steps at TP1/PP4/CP2/EP8/ETP1, dense DP4 and expert DP1, MBS2/GBS512, and 64-way gradient accumulation. It used 8192-token processor-native deferred in-batch packing with pad-to-multiple-of-4, fixed 448-by-448 MedPix images, per-token loss, and one-layer full-uniform activation recompute. The persisted post-setup config confirms every setting. Loss was finite from 1.997653 to 0.997894 with zero skipped or NaN iterations. After the compile-heavy first step, steps 11-20 averaged 36,847.110 ms and 84.830 TFLOP/s/GPU; the process exited successfully.
 </p>
+      </section>
+    </article>
+    <article id="qwen3-6-35b-a3b-sft-long-context-gb300" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-sft-long-context-gb300" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · GB300</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB300</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 scheduler.lr_decay_iters=20 model.pipeline_model_parallel_size=1 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B &#x27;dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}&#x27; dataset.do_validation=false dataset.seq_length=8192 dataset.enable_in_batch_packing=true dataset.defer_in_batch_packing_to_step=true dataset.in_batch_packing_pad_to_multiple_of=4 checkpoint.load=null checkpoint.save=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/long_context/resolved-config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+
+Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
+Executed Qwen3.5 command(s):
+./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 scheduler.lr_decay_iters=20 model.pipeline_model_parallel_size=1 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.5-35B-A3B &#x27;dataset.hf_processor_kwargs={revision:59d61f3ce65a6d9863b86d2e96597125219dc754}&#x27; dataset.do_validation=false dataset.seq_length=8192 dataset.enable_in_batch_packing=true dataset.defer_in_batch_packing_to_step=true dataset.in_batch_packing_pad_to_multiple_of=4 checkpoint.load=null checkpoint.save=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/long_context/resolved-config.yaml
+
+Completed all 20 MedPix-VQA SFT steps on eight GB300 GPUs with finite losses and zero skipped or NaN iterations. The H100 long-context recipe was resized to PP1 while retaining its MBS2/GBS512; the persisted runtime config records TP1/PP1/CP2/EP8/ETP1, alltoall dispatch, no CUDA graphs, one-layer full-uniform recompute, and learning rate 2e-5 to 2e-6 with two warmup steps. Qwen&#x27;s step-time THD packing pads each example to 8192 slots and preserves separate attention boundaries; CP2 was active throughout. Token-slot throughput uses 8192 times GBS512 per step. Metrics average steps 11-20. This verifies padded 8K execution with packing and CP, not long-document answer quality or full convergence; no checkpoint was requested for this item.
+
+Qwen3.5 observed metrics: {&quot;final_loss&quot;: 1.024277, &quot;initial_loss&quot;: 1.966061, &quot;last_10_steps_model_tflops_per_gpu_avg&quot;: 108.65, &quot;last_10_steps_step_time_ms_avg&quot;: 115083.29, &quot;last_10_steps_tokens_per_second_per_gpu_avg&quot;: 4555.727}.</p>
       </section>
     </article>
     <article id="qwen3-6-35b-a3b-peft-h100" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-peft-h100" tabindex="-1">
@@ -597,6 +828,64 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <h5>Expected result</h5>
         <p>On the same 8x GB200 topology and MedPix schedule as the controlled SFT item, LoRA completed exactly 100 finite steps with zero skipped or NaN iterations. The persisted configs differ only in the evidence-output path, the intended PEFT LR/min-LR, and the LoRA block; model, data, topology, batch, schedule, and safety settings match. Step-1 loss 2.214827 differs from SFT&#x27;s 2.212866 by only 0.001961, or 0.088618%, ruling out an initial-forward configuration mismatch. The later loss difference reflects LoRA&#x27;s trainable parameter set and learning rate. Steps 91-100 averaged 5,511.530 ms and 68.410 model TFLOP/s/GPU.
 </p>
+      </section>
+    </article>
+    <article id="qwen3-6-35b-a3b-peft-gb300" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-peft-gb300" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · GB300</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB300</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config --mode lora --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B &#x27;dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}&#x27; env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.6-35b-a3b/peft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/peft/resolved-config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+
+Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
+Executed Qwen3.5 command(s):
+./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config --mode lora --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.5-35B-A3B &#x27;dataset.hf_processor_kwargs={revision:59d61f3ce65a6d9863b86d2e96597125219dc754}&#x27; env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.5-35b-a3b/peft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/peft/resolved-config.yaml
+
+Completed all 100 MedPix-VQA LoRA steps on eight GB300 GPUs with finite losses and zero skipped or NaN iterations. The persisted runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096, MBS1/GBS32, natural routing, no CUDA graphs, rank 32, alpha 32, and targets linear_qkv, linear_proj, linear_fc1, and linear_fc2. Learning rate warms up for 10 steps to 2e-4 and decays to 3e-5 at step 100. Step 100 saved all eight distributed adapter/optimizer shards and the checkpoint tracker selects iteration 100. This verifies bounded adapter training, not full convergence.
+
+Qwen3.5 observed metrics: {&quot;final_loss&quot;: 1.313625, &quot;initial_loss&quot;: 2.151638, &quot;last_10_steps_model_tflops_per_gpu_avg&quot;: 77.2, &quot;last_10_steps_step_time_ms_avg&quot;: 4884.42, &quot;last_10_steps_tokens_per_second_per_gpu_avg&quot;: 3354.339}.</p>
       </section>
     </article>
   </div>

@@ -376,6 +376,13 @@ def _build_vl_parity_pair(pg, precision):
             deepstack_visual_indexes=[],
         )
         config.vision_config.torch_dtype = torch.bfloat16
+        if hybrid:
+            from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _qwen35_provider_model_config
+
+            model_config = _qwen35_provider_model_config(config)
+            module = model_config.get_builder_cls()(model_config).build_model(pg, True, True).cuda()
+            models.append(Float16Module(module.config, module))
+            continue
         module = model_class(
             language_transformer_config=config,
             language_transformer_layer_spec=spec,
