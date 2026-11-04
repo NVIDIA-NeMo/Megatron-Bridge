@@ -599,3 +599,109 @@ class TestInferredContextParallelInputs:
         cfg.finalize()
         assert not cfg._linear_cp_layout_explicit
         assert cfg.asdict()["linear_cp_layout"] == "contiguous"
+
+    @pytest.mark.parametrize("config_cls", [TransformerConfig, MLATransformerConfig])
+    def test_equal_value_assignments_remain_explicit(self, config_cls):
+        cfg = config_cls(num_layers=2, hidden_size=64, num_attention_heads=4, is_hybrid_model=True)
+        cfg.finalize()
+        cfg.linear_cp_mode = "chunkwise"
+        cfg.linear_cp_layout = "zigzag"
+        assert cfg.asdict()["linear_cp_mode"] == "chunkwise"
+        assert cfg.asdict()["linear_cp_layout"] == "zigzag"
+        with pytest.raises(ValueError, match="requires linear_cp_layout='contiguous'"):
+            cfg.finalize()
+
+    def test_equal_value_provider_overrides_remain_explicit(self):
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+        cfg = GPTModelProvider(num_layers=2, hidden_size=64, num_attention_heads=4, is_hybrid_model=True)
+        cfg.finalize()
+        with pytest.raises(ValueError, match="requires linear_cp_layout='contiguous'"):
+            cfg.apply_overrides_and_finalize(overrides={"linear_cp_mode": "chunkwise", "linear_cp_layout": "zigzag"})
+        assert cfg.asdict()["linear_cp_mode"] == "chunkwise"
+        assert cfg.asdict()["linear_cp_layout"] == "zigzag"
+
+    def test_equal_value_builder_overrides_remain_explicit(self):
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        cfg = BridgeGPTModelConfig(transformer=_make_config(is_hybrid_model=True))
+        cfg.transformer.finalize()
+        cfg.linear_cp_mode = "chunkwise"
+        cfg.linear_cp_layout = "zigzag"
+        serialized = cfg.as_dict()["transformer"]
+        assert serialized["linear_cp_mode"] == "chunkwise"
+        assert serialized["linear_cp_layout"] == "zigzag"
+        with pytest.raises(ValueError, match="requires linear_cp_layout='contiguous'"):
+            cfg.transformer.finalize()
+
+    @pytest.mark.parametrize(
+        "fields_to_assign", [("linear_cp_mode",), ("linear_cp_layout",), ("linear_cp_mode", "linear_cp_layout")]
+    )
+    def test_valid_equal_value_overrides_survive_repeated_finalize(self, fields_to_assign):
+        cfg = _make_config()
+        cfg.finalize()
+        values = {"linear_cp_mode": "headwise", "linear_cp_layout": "zigzag"}
+        for name in fields_to_assign:
+            setattr(cfg, name, values[name])
+        for _ in range(2):
+            cfg.finalize()
+            serialized = cfg.asdict()
+            for name, value in values.items():
+                assert serialized[name] == (value if name in fields_to_assign else None)
+
+    @pytest.mark.parametrize("deep", [False, True])
+    def test_copy_override_preserves_original_inferred_inputs(self, deep):
+        import copy
+
+        cfg = _make_config(is_hybrid_model=True)
+        cfg.finalize()
+        cloned = copy.deepcopy(cfg) if deep else copy.copy(cfg)
+        cloned.linear_cp_layout = "zigzag"
+        assert cloned.asdict()["linear_cp_layout"] == "zigzag"
+        assert cfg.asdict()["linear_cp_layout"] is None
+        cfg.finalize()
+        assert not cfg._linear_cp_layout_explicit
+
+    @pytest.mark.parametrize("use_builder", [False, True])
+    @pytest.mark.parametrize("override_source", ["none", "unrelated", "cli", "yaml"])
+    def test_omegaconf_reapplication_preserves_input_intent(self, use_builder, override_source, tmp_path):
+        from dataclasses import dataclass
+        from typing import Any
+
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        @dataclass
+        class Root:
+            model: Any
+
+        kwargs = dict(num_layers=2, hidden_size=64, num_attention_heads=4, is_hybrid_model=True)
+        model = (
+            BridgeGPTModelConfig(transformer=TransformerConfig(**kwargs))
+            if use_builder
+            else GPTModelProvider(**kwargs)
+        )
+        transformer = model.transformer if use_builder else model
+        transformer.finalize()
+        root = Root(model=model)
+        overrides = {}
+        if override_source == "cli":
+            overrides["cli_overrides"] = ["model.linear_cp_mode=chunkwise", "model.linear_cp_layout=zigzag"]
+        elif override_source == "yaml":
+            yaml = tmp_path / "overrides.yaml"
+            yaml.write_text("model:\n  linear_cp_mode: chunkwise\n  linear_cp_layout: zigzag\n")
+            overrides["config_filepath"] = str(yaml)
+        elif override_source == "unrelated":
+            overrides["cli_overrides"] = ["model.hidden_size=128"]
+        process_config_with_overrides(root, **overrides)
+        if override_source in ("cli", "yaml"):
+            with pytest.raises(ValueError, match="requires linear_cp_layout='contiguous'"):
+                transformer.finalize()
+        else:
+            for _ in range(2):
+                transformer.finalize()
+                assert transformer.linear_cp_mode == "chunkwise"
+                assert transformer.linear_cp_layout == "zigzag"
+                assert transformer.asdict()["linear_cp_mode"] is None
+                assert transformer.asdict()["linear_cp_layout"] is None

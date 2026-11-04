@@ -224,6 +224,14 @@ class TransformerConfig(MCoreTransformerConfig):
     yarn_mscale_all_dim: float | None = None
     yarn_correction_range_round_to_int: bool | None = None
 
+    def __setattr__(self, name: str, value: object) -> None:
+        """Treat reassigned inferred CP fields as explicit, even when the value is unchanged."""
+        inferred = self.__dict__.get("_inferred_cp_values", {})
+        if name in inferred:
+            # Replace the mapping so a shallow config copy cannot alter the original's inputs.
+            object.__setattr__(self, "_inferred_cp_values", {key: val for key, val in inferred.items() if key != name})
+        super().__setattr__(name, value)
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -259,7 +267,7 @@ class TransformerConfig(MCoreTransformerConfig):
             self.variable_seq_lengths = True
 
     def _inferred_cp_inputs(self) -> dict[str, None]:
-        """Recover unset CP inputs while their resolved values remain unchanged."""
+        """Recover unset CP inputs that have not been explicitly reassigned."""
         return {
             name: None
             for name, resolved in getattr(self, "_inferred_cp_values", {}).items()
