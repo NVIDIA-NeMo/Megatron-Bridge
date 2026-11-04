@@ -68,7 +68,19 @@ Validation applies every global-batch packing rule and adds these:
 - `min_dynamic_context_parallel_size` is a power of two no larger than the pool.
 - `dist.use_decentralized_pg=False`, because Megatron-Core resolves dynamic
   groups from its global parallel state.
-- The pool times `max_seqlen_per_dp_cp_rank` covers `seq_length`.
+- The pool times `max_seqlen_per_dp_cp_rank` covers `seq_length`, and the
+  offline packed row length when the dataset is offline packed.
+
+### Offline Packed Rows
+
+Dynamic CP also runs on offline packed data. Set `enable_offline_packing` with
+`offline_packing_specs` next to `enable_global_batch_packing`: each packed row
+then yields one sample per sequence it holds, and the scheduler re-bins those
+sequences and picks a CP group for every bin, exactly as for unpacked samples.
+`train.global_batch_size` counts packed rows, so offline packing only decides
+which sequences share a step. Each sequence is re-padded to the dynamic-CP
+alignment, `2 x dp x cp`, whatever `pad_seq_to_mult` the rows were prepared
+with. See [Offline Packed Rows](packed-sequences.md#offline-packed-rows).
 
 ## Reference Recipe
 
@@ -147,8 +159,34 @@ dropped, dynamic CP reaches 13,069 runtime tokens/s against 12,157 for static
 CP4 on identical samples: 7.5% more throughput (95% bootstrap interval +4.8%
 to +10.3%), with an 8.5% faster median step.
 
+`qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config` runs the same
+model on the same mock samples packed offline, first-fit decreasing, into 64K
+rows, with a global batch of eight rows:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
+  --recipe qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config --mode pretrain \
+  train.train_iters=200 scheduler.lr_decay_iters=200 scheduler.lr_warmup_iters=20
+```
+
+On one GB200 node per run with the NeMo 26.10 container, 200 steps with the
+first 10 dropped:
+
+| Packing | Static CP4 tokens/s | Dynamic CP tokens/s |
+|---|---:|---:|
+| Online, 32 samples per step | 12,157 | 13,301 |
+| Offline, eight 64K rows per step | 14,450 | 12,463 |
+
+First-fit decreasing fills each row to its 64K capacity, so static CP4 packs a
+step into eight full bins, the fastest setup here. Dynamic CP re-bins the same
+sequences into about nine microbatches and is 13.8% slower than static CP4 on
+identical rows. Its gain on online data comes from re-binning microbatches that
+the order-preserving static packer leaves partly empty, and offline rows leave
+no such gap. Dynamic CP also takes longer to warm up, because each new group
+size compiles on first use.
+
 `examples/agentic_sft` describes the setup and has a script that compares two
-runs' logs on identical inputs.
+runs' logs, by runtime tokens per second when they process different work.
 
 ## Models with Wide Attention Heads
 

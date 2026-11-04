@@ -48,6 +48,16 @@ uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_r
     model.dynamic_context_parallel=false
 ```
 
+Offline packing, as the original example's `offline_dynamic_cp` mode: the same samples are packed ahead of time,
+first-fit decreasing, into 64K-token rows, each step takes eight rows, and dynamic CP re-bins their samples. Add
+`model.dynamic_context_parallel=false` for static CP4 on the same rows:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
+    --recipe qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config --mode pretrain \
+    train.train_iters=200 scheduler.lr_decay_iters=200 scheduler.lr_warmup_iters=20
+```
+
 To start from converted weights, use `--mode sft` with `checkpoint.pretrained_checkpoint=/path/to/megatron/checkpoint`.
 Nothing is saved unless `checkpoint.save` is set; a full-model checkpoint with optimizer state is about 460 GB.
 
@@ -57,12 +67,20 @@ the first step (`NCCL WARN Cuda failure 2 'out of memory'`).
 
 ## Compare the two runs
 
-Keep each run's log and compare them on identical inputs. The first steps include one-time compilation, so they are
-excluded. With the mock dataset's settings, `compare_runs.py` also reports runtime tokens per second:
+Keep each run's log. The first steps include one-time compilation, so they are excluded. With the mock dataset's
+settings, `compare_runs.py` also reports runtime tokens per second and compares by it:
 
 ```bash
 uv run python examples/agentic_sft/compare_runs.py --baseline static.log --candidate dynamic.log --warmup 10 \
     --mock-seq-length 65536 --train-iters 200 --global-batch-size 32
+```
+
+Online and offline runs process different samples per step, so give each run its batch:
+
+```bash
+uv run python examples/agentic_sft/compare_runs.py --baseline online.log --candidate offline.log --warmup 10 \
+    --mock-seq-length 65536 --train-iters 200 --baseline-global-batch-size 32 \
+    --candidate-global-batch-size 8 --candidate-packed-sequence-size 65536
 ```
 
 Step times depend on the batch, and a batch can favor either mode, so compare over many steps (a few dozen is a limited
@@ -87,3 +105,26 @@ consecutive 38-step blocks (+3.9% to +11.0%).
 * The two runs used different nodes.
 * The original example reports +20.6% on its own mixed-length data (11.9K static tokens/s); its samples and order
   differ from this mock data, so the two gains are not directly comparable.
+
+### Offline packing
+
+Same model, samples, node type and container. The offline runs pack the samples into 1,600 rows of 64K tokens and take
+eight rows per step (524K runtime tokens per step, against 682K on average for 32 online samples). Steps 1–10 are
+excluded:
+
+| Packing | Mode | Mean s/step | Runtime tokens/s | Median model TFLOP/s per GPU |
+| --- | --- | ---: | ---: | ---: |
+| Online, GBS 32 samples | Static CP4 | 55.98 | 12,157 | 96 |
+| Online, GBS 32 samples | Dynamic CP | 51.16 | 13,301 | 106 |
+| Offline, GBS 8 rows | Static CP4 | 36.27 | 14,450 | 113 |
+| Offline, GBS 8 rows | Dynamic CP | 42.05 | 12,463 | 101 |
+
+* **Offline static CP4 is the fastest setup: +18.9% over online static CP4, +8.6% over online dynamic CP.**
+* On identical offline rows, dynamic CP is 13.8% slower than static CP4 (95% bootstrap interval −16.5% to −10.9%; it
+  wins 8 of 190 paired steps; −9.7% after its longer warmup, steps 41–200).
+* First-fit decreasing fills each row to its 64K capacity, and static CP4 keeps them as eight full CP4 bins per step.
+  Dynamic CP re-bins the same sequences into about nine microbatches (simulated with Megatron-Core's scheduler: 9.05
+  against 8.00; online it is the reverse, 11.3 against 13.7), with the same per-rank critical path.
+* The online dynamic CP run on this branch matches the earlier one (13,301 against 13,069 tokens/s).
+* The original example reports offline dynamic CP at 14,925 tokens/s against 14,342 online on its own mixed data; it
+  did not measure offline static CP4.
