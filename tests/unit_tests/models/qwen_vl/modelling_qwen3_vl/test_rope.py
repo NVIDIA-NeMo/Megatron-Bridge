@@ -216,3 +216,27 @@ class TestQwen3VLTextRotaryEmbedding:
         assert output.shape[1] == batch_size
         assert output.shape[2] == 1
         assert output.dtype == torch.float32 or output.dtype == torch.bfloat16 or output.dtype == torch.float16
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize("num_positions", [4096, 16384, 21845, 21846, 32768])
+    def test_qwen3_vl_rope_angles_exact_when_tf32_allowed(self, num_positions):
+        """Test that RoPE angles stay fp32-exact when TF32 is allowed for fp32 matmuls."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        rope = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=256, rotary_percent=0.25, rotary_base=10000000, cp_group=pg_collection.cp
+        )
+        positions = torch.arange(90000 - num_positions, 90000, device="cuda", dtype=torch.float32)
+        position_ids = positions[None, None, :].expand(3, 1, -1)
+        allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+        try:
+            outputs = {}
+            for tf32 in (True, False):
+                torch.backends.cuda.matmul.allow_tf32 = tf32
+                outputs[tf32] = rope(position_ids, [11, 11, 10])
+        finally:
+            torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        angles = positions.double()[:, None] * rope.inv_freq.double()[None, :]
+        expected = torch.cat((angles, angles), dim=-1)
+        torch.testing.assert_close(outputs[True][:, 0, 0].double(), expected, rtol=0, atol=1e-2)
+        assert torch.equal(outputs[True], outputs[False])

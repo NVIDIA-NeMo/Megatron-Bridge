@@ -573,6 +573,11 @@ class MegatronModelBridge(
     # changing how its checkpoints are constructed. Requires MODEL_CONFIG_CLASS to be set.
     USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
 
+    # Source modules intentionally absent from every target of this bridge.
+    # Strict export still requires all other source tensors. Prefixes must name
+    # complete modules (nonempty, ending in a dot), never a wildcard or all keys.
+    HF_EXPORT_IGNORED_SOURCE_PREFIXES: ClassVar[tuple[str, ...]] = ()
+
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
@@ -600,6 +605,10 @@ class MegatronModelBridge(
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
     hf_config = None
+
+    # Whether the Hugging Face source may run code from its repository. AutoBridge sets it from its
+    # source, so a bridge whose model loads modules from the checkpoint can record it on the model config.
+    trust_remote_code: bool = False
 
     # Optional MIMO conversion metadata. Subclasses set this when the standard
     # bridge registry can be split into MIMO component routes.
@@ -771,7 +780,8 @@ class MegatronModelBridge(
         if rope_scaling is not None and isinstance(rope_scaling, dict) and rope_scaling != {}:
             rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
 
-        if rope_type == "yarn":
+        # MLA attention implements DeepSeek's YaRN, which some MLA checkpoints (Sarvam MLA) name "deepseek_yarn".
+        if rope_type == "yarn" or (is_mla and rope_type == "deepseek_yarn"):
             # MLA configs use direct field names; GPT configs use yarn_ prefixed field names
             if is_mla:
                 # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)

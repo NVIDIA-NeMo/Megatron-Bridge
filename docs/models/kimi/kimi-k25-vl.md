@@ -1,6 +1,6 @@
 # Kimi-K2.5-VL
 
-[Kimi-K2.5-VL](https://huggingface.co/moonshotai/Kimi-K2.5) is a Moonshot AI vision-language model with a Kimi K2-style MoE + MLA language backbone and a vision encoder. Megatron Bridge supports it through a dedicated VLM bridge and provider.
+[Kimi-K2.5-VL](https://huggingface.co/moonshotai/Kimi-K2.5) is a Moonshot AI vision-language model with a Kimi K2-style MoE + MLA language backbone and a vision encoder. Megatron Bridge supports it through a dedicated VLM bridge and a builder-backed model config.
 
 ## Supported Variants
 
@@ -10,7 +10,7 @@
 
 - Uses `KimiK25ForConditionalGeneration` on the Hugging Face side and `KimiK25VLModel` on the Megatron side.
 - The language backbone shares Kimi K2's MoE + MLA structure.
-- The bridge carries top-level multimodal fields such as the media placeholder token ID into the provider.
+- The bridge carries top-level multimodal fields such as the media placeholder token ID into the model config.
 - INT4-packed expert weights are dequantized during import and re-quantized for compatible Hugging Face export.
 
 ## Examples

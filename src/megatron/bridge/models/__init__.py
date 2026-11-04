@@ -73,6 +73,8 @@ from megatron.bridge.models.exaone.exaone4 import (
 from megatron.bridge.models.exaone.exaone45 import (
     Exaone45Bridge,
     Exaone45Model,
+    Exaone45ModelBuilder,
+    Exaone45ModelConfig,
     Exaone45ModelProvider,
 )
 from megatron.bridge.models.exaone.exaone_moe import (
@@ -134,6 +136,7 @@ from megatron.bridge.models.kimi import (
 from megatron.bridge.models.kimi_vl import (
     KimiK25VLBridge,
     KimiK25VLModel,
+    KimiK25VLModelConfig,
     KimiK25VLModelProvider,
 )
 from megatron.bridge.models.llama import (
@@ -145,12 +148,15 @@ from megatron.bridge.models.mimo_v2_flash import (
     MiMoV2FlashBridge,
     MiMoV2FlashModelProvider,
 )
+from megatron.bridge.models.minicpmo import MiniCPMOBridge, MiniCPMOModelConfig
 from megatron.bridge.models.minimax_m2 import (
     MiniMaxM2Bridge,
 )
 from megatron.bridge.models.minimax_m3 import (
     MiniMaxM3Bridge,
+    MiniMaxM3ModelConfig,
     MiniMaxM3VLModel,
+    MiniMaxM3VLModelConfig,
     MiniMaxM3VLModelProvider,
 )
 from megatron.bridge.models.ministral3 import (
@@ -239,6 +245,8 @@ from megatron.bridge.models.stepfun import (
     Step35Bridge,
     Step37Bridge,
     Step37Model,
+    Step37ModelBuilder,
+    Step37ModelConfig,
     Step37ModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
@@ -246,6 +254,8 @@ from megatron.bridge.models.t5_provider import T5ModelProvider
 
 __all__ = [
     "AutoBridge",
+    "MiniCPMOBridge",
+    "MiniCPMOModelConfig",
     "MegatronMappingRegistry",
     "MegatronModelBridge",
     "ColumnParallelMapping",
@@ -291,6 +301,7 @@ __all__ = [
     "KimiK3ModelProvider",
     "KimiK25VLModel",
     "KimiK25VLBridge",
+    "KimiK25VLModelConfig",
     "KimiK25VLModelProvider",
     "LlamaBridge",
     "MistralModelProvider",
@@ -300,7 +311,9 @@ __all__ = [
     "Ministral3ModelProvider",
     "MiniMaxM2Bridge",
     "MiniMaxM3Bridge",
+    "MiniMaxM3ModelConfig",
     "MiniMaxM3VLModel",
+    "MiniMaxM3VLModelConfig",
     "MiniMaxM3VLModelProvider",
     # Muse Glimmer
     "MuseGlimmerBridge",
@@ -384,11 +397,15 @@ __all__ = [
     "Step35Bridge",
     "Step37Bridge",
     "Step37Model",
+    "Step37ModelBuilder",
+    "Step37ModelConfig",
     "Step37ModelProvider",
     # EXAONE
     "Exaone4Bridge",
     "Exaone45Bridge",
     "Exaone45Model",
+    "Exaone45ModelBuilder",
+    "Exaone45ModelConfig",
     "Exaone45ModelProvider",
     "ExaoneMoeBridge",
     "ExaoneMoeModelProvider",

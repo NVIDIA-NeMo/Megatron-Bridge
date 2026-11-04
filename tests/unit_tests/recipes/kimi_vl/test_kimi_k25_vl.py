@@ -15,7 +15,8 @@
 #
 # Test purpose:
 # - Cover the previously untested kimi_k25_vl SFT recipe (issue #3177).
-# - Monkeypatch AutoBridge to avoid HF Hub I/O.
+# - Monkeypatch AutoBridge to avoid HF Hub I/O; it serves a real, strict
+#   builder-backed model config and rejects the legacy provider API.
 # - Exercise the pipeline-layout helper (valid PP/VP combinations + the
 #   error path for an unknown combination).
 # - Sanity-check parallelism, MoE / Muon DDP wiring, mixed precision,
@@ -24,11 +25,14 @@
 #
 
 import importlib
+from types import SimpleNamespace
 
 import pytest
 import torch
+from transformers import PretrainedConfig
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge import KimiK25VLBridge
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_config import KimiK25VLModelConfig
 from megatron.bridge.recipes.kimi_vl.kimi_k25_vl import (
     _get_kimi_k25_vl_pipeline_layout,
     kimi_k25_vl_sft_config,
@@ -39,32 +43,70 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_globa
 from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
-class _FakeKimiK25VLProvider:
-    """Fake provider returned by AutoBridge.to_megatron_provider.
-
-    Mirrors the attribute surface the recipe touches so that mutation,
-    reads (vocab_size, apply_rope_fusion), and finalize() all succeed.
-    """
-
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-        self.vocab_size = 163840
-        self.apply_rope_fusion = False
-
-    def finalize(self):
-        return None
+def _kimi_k25_hf_config() -> SimpleNamespace:
+    """A config shaped like the remote ``KimiK25Config`` of moonshotai/Kimi-K2.5."""
+    text_config = SimpleNamespace(
+        num_hidden_layers=61,
+        hidden_size=7168,
+        intermediate_size=18432,
+        num_attention_heads=64,
+        num_key_value_heads=64,
+        q_lora_rank=1536,
+        kv_lora_rank=512,
+        qk_nope_head_dim=128,
+        qk_rope_head_dim=64,
+        v_head_dim=128,
+        n_routed_experts=384,
+        moe_intermediate_size=2048,
+        n_shared_experts=1,
+        first_k_dense_replace=1,
+        num_experts_per_tok=8,
+        n_group=1,
+        topk_group=1,
+        routed_scaling_factor=2.827,
+        vocab_size=163840,
+        rope_theta=50000.0,
+        rope_scaling={"type": "yarn", "factor": 64.0, "mscale": 1.0, "mscale_all_dim": 1.0},
+        rms_norm_eps=1e-5,
+        hidden_act="silu",
+        max_position_embeddings=262144,
+        num_nextn_predict_layers=0,
+        tie_word_embeddings=False,
+        torch_dtype="bfloat16",
+        bos_token_id=163584,
+        eos_token_id=163585,
+    )
+    return SimpleNamespace(
+        architectures=["KimiK25ForConditionalGeneration"],
+        name_or_path="moonshotai/Kimi-K2.5",
+        text_config=text_config,
+        vision_config=PretrainedConfig(vt_hidden_size=1152, merge_kernel_size=[2, 2]),
+        media_placeholder_token_id=163605,
+        pad_token_id=163839,
+        ignore_index=-100,
+        torch_dtype="bfloat16",
+    )
 
 
 class _FakeAutoBridge:
-    """AutoBridge stub that bypasses HF Hub network access."""
+    """AutoBridge stub that serves a strict builder-backed model config without HF Hub access."""
+
+    apply_rope_fusion = False
 
     @classmethod
     def from_hf_pretrained(cls, *args, **kwargs):
+        assert kwargs.get("trust_remote_code") is True
         return cls()
 
+    def get_model_config(self) -> KimiK25VLModelConfig:
+        bridge = KimiK25VLBridge()
+        bridge.trust_remote_code = True
+        model_config = bridge.hf_config_to_model_config(_kimi_k25_hf_config())
+        model_config.apply_rope_fusion = self.apply_rope_fusion
+        return model_config
+
     def to_megatron_provider(self, *args, **kwargs):
-        return _FakeKimiK25VLProvider()
+        raise AssertionError("recipes must use get_model_config()")
 
 
 @pytest.fixture(autouse=True)
@@ -76,15 +118,8 @@ def _patch_autobridge(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("use_context_parallel", [False, True])
-def test_kimi_vl_resolved_overlap_preserves_legacy_execution(monkeypatch, use_context_parallel):
-    """Exercise shared overlap setup without downloading a pretrained provider."""
-    monkeypatch.setattr(
-        _FakeAutoBridge,
-        "to_megatron_provider",
-        lambda *args, **kwargs: GPTModelProvider(
-            num_layers=64, hidden_size=128, num_attention_heads=4, vocab_size=163840, apply_rope_fusion=False
-        ),
-    )
+def test_kimi_vl_resolved_overlap_preserves_legacy_execution(use_context_parallel):
+    """Exercise shared overlap setup without downloading a pretrained model config."""
     cfg = kimi_k25_vl_sft_config()
     assert cfg.ddp.bucket_size is None
     tp_size = cfg.model.tensor_model_parallel_size
@@ -160,7 +195,8 @@ class TestKimiK25VLSftConfig:
         cfg = kimi_k25_vl_sft_config()
 
         assert isinstance(cfg, ConfigContainer)
-        assert cfg.model is not None
+        assert isinstance(cfg.model, KimiK25VLModelConfig)
+        assert cfg.model.trust_remote_code is True
         assert cfg.train is not None
         assert cfg.optimizer is not None
         assert cfg.scheduler is not None
@@ -268,7 +304,7 @@ class TestKimiK25VLSftConfig:
 
         assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
         assert cfg.tokenizer.tokenizer_model is None
-        # The fake provider exposes vocab_size=163840.
+        # The model config maps vocab_size=163840 from the checkpoint config.
         assert cfg.tokenizer.vocab_size == cfg.model.vocab_size == 163840
 
     def test_sft_config_mixed_precision(self):
@@ -356,17 +392,10 @@ class TestKimiK25VLSftConfig:
         assert cfg.dist.enable_megatron_core_experimental is False
 
     def test_sft_config_rope_fusion_on_enables_experimental(self, monkeypatch):
-        """When provider.apply_rope_fusion is True, the experimental dist flag is enabled."""
-
-        # Override the provider stub to flip apply_rope_fusion on.
-        class _FakeProviderRopeOn(_FakeKimiK25VLProvider):
-            def __init__(self, **kwargs):
-                super().__init__(**kwargs)
-                self.apply_rope_fusion = True
+        """When the model config enables apply_rope_fusion, the experimental dist flag is enabled."""
 
         class _FakeBridgeRopeOn(_FakeAutoBridge):
-            def to_megatron_provider(self, *args, **kwargs):
-                return _FakeProviderRopeOn()
+            apply_rope_fusion = True
 
         mod = importlib.import_module("megatron.bridge.recipes.kimi_vl.kimi_k25_vl")
         patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridgeRopeOn)
