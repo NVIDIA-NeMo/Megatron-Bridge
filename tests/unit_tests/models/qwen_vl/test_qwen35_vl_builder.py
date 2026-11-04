@@ -173,6 +173,9 @@ class TestQwen35VLModelConfig:
             "attention_softmax_in_fp32",
             "activation_func",
             "params_dtype",
+            "num_layers",
+            "hybrid_layer_pattern",
+            "hybrid_stack_spec",
         ):
             assert getattr(restored, name) == getattr(config, name), name
         assert yaml.safe_load((tmp_path / "run_config.yaml").read_text())["model"]["_builder_"] == config.builder
@@ -188,8 +191,10 @@ class TestQwen35VLModelBuilder:
 
         assert model is build_calls["model"]
         kwargs = build_calls["model_class"].call_args.kwargs
-        assert kwargs["language_transformer_config"] is config.transformer
-        assert kwargs["model_config"] is config
+        assert kwargs["language_transformer_config"] is not config.transformer
+        assert kwargs["language_transformer_config"].num_layers == config.num_layers
+        assert kwargs["model_config"] is not config
+        assert kwargs["language_model_kwargs"]["hybrid_layer_pattern"].startswith(config.hybrid_layer_pattern)
         assert kwargs["vision_transformer_config"] is config.vision_config
         assert config.vision_config.dtype == config.params_dtype
         assert (kwargs["pre_process"], kwargs["post_process"], kwargs["vp_stage"]) == (False, True, None)
@@ -226,12 +231,25 @@ class TestQwen35VLModelBuilder:
     ):
         # Megatron-Core reads stage ranks from the process group only once distributed is initialized.
         monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
-        config = _model_config(virtual_pipeline_model_parallel_size=vp_size)
+        config = _model_config(
+            pipeline_model_parallel_size=pp_size,
+            virtual_pipeline_model_parallel_size=vp_size,
+            pipeline_dtype=torch.bfloat16,
+        )
+        original_pattern = config.hybrid_layer_pattern
 
         model = Qwen35VLModelBuilder(config).build_model(_pg_collection(pp_rank, pp_size), vp_stage=vp_stage)
 
         kwargs = build_calls["model_class"].call_args.kwargs
         assert (kwargs["pre_process"], kwargs["post_process"]) == (pre_process, post_process)
+        pattern = kwargs["language_model_kwargs"]["hybrid_layer_pattern"]
+        main, mtp = pattern.split("/", 1)
+        segments = main.split("|")
+        assert len(segments) == pp_size * (vp_size or 1)
+        assert all(len(segment) == config.num_layers // len(segments) for segment in segments)
+        assert "".join(segments) == original_pattern
+        assert mtp == config.mtp_hybrid_override_pattern
+        assert config.hybrid_layer_pattern == original_pattern
         if vp_stage is not None:
             assert model.vp_stage == vp_stage
 

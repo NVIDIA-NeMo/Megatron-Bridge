@@ -39,12 +39,8 @@ class Qwen35HybridAttentionLayer(TransformerLayer):
     """
 
 
-def qwen35_pipeline_pattern(config: TransformerConfig, pattern: str, *, layer_width: int = 2) -> str:
-    """Assign Hybrid positions to PP/VPP stages using the config's layer units.
-
-    VL configs count HF blocks (two Hybrid positions); text Hybrid configs count
-    individual positions and pass ``layer_width=1``.
-    """
+def qwen35_pipeline_pattern(config: TransformerConfig, pattern: str) -> str:
+    """Assign Hybrid positions to PP/VPP stages without splitting HF blocks."""
     pp_size = config.pipeline_model_parallel_size
     vp_size = config.virtual_pipeline_model_parallel_size
     if pp_size * (vp_size or 1) == 1:
@@ -59,7 +55,7 @@ def qwen35_pipeline_pattern(config: TransformerConfig, pattern: str, *, layer_wi
                 count = layout.layout[pp_rank][vp_stage].count(LayerType.decoder)
             else:
                 count = get_num_layers_to_build(config, vp_stage if vp_size else None, pp_rank)
-            width = count * layer_width
+            width = count
             if width % 2:
                 raise ValueError("Qwen3.5 pipeline stages must contain whole mixer/feed-forward pairs.")
             segments.append(pattern[offset : offset + width])
@@ -109,6 +105,15 @@ def configure_qwen35_hybrid(config_kwargs: dict[str, Any], text_config: Pretrain
     )
     config_kwargs.pop("rope_scaling", None)
     config_kwargs.pop("rope_scaling_factor", None)
+
+
+def qwen35_hf_layer_config(pattern: str) -> dict[str, Any]:
+    """Recover HF block counts and attention order from a finalized Hybrid pattern."""
+    main_pattern = pattern.split("/")[0].replace("|", "")
+    return {
+        "num_hidden_layers": len(main_pattern) // 2,
+        "layer_types": ["linear_attention" if symbol == "G" else "full_attention" for symbol in main_pattern[::2]],
+    }
 
 
 def qwen35_hybrid_mappings(mappings: list[MegatronParamMapping], *, num_layers: int) -> list[MegatronParamMapping]:

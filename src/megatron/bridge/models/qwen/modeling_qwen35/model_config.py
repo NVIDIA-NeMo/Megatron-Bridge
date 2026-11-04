@@ -34,9 +34,25 @@ from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_pipeline_p
 
 @dataclass(kw_only=True)
 class Qwen35HybridModelConfig(BridgeHybridModelConfig):
-    """Text config whose layer counts and pipeline layouts use Hybrid positions."""
+    """Language config whose layer counts and pipeline layouts use Hybrid positions."""
 
     builder: ClassVar[str] = "megatron.bridge.models.qwen.modeling_qwen35.model_config.Qwen35HybridModelBuilder"
+
+
+def prepare_qwen35_pipeline_config(model_config: Qwen35HybridModelConfig) -> Qwen35HybridModelConfig:
+    """Finalize and partition a copy for construction, preserving the caller's config."""
+    config = copy(model_config)
+    config.transformer = copy(config.transformer)
+    config.finalize()
+    main_pattern, separator, mtp_pattern = config.hybrid_layer_pattern.partition("/")
+    if "|" not in main_pattern:
+        main_pattern = qwen35_pipeline_pattern(config.transformer, main_pattern)
+        config.hybrid_layer_pattern = main_pattern + separator + mtp_pattern
+    if "|" in main_pattern:
+        config.num_layers_in_first_pipeline_stage = None
+        config.num_layers_in_last_pipeline_stage = None
+        config.pipeline_model_parallel_layout = None
+    return config
 
 
 class Qwen35HybridModelBuilder(BridgeHybridModelBuilder):
@@ -50,16 +66,7 @@ class Qwen35HybridModelBuilder(BridgeHybridModelBuilder):
         vp_stage: int | None = None,
     ) -> HybridModel:
         """Build a stage without modifying the caller's pattern or pipeline settings."""
-        config = copy(self._model_config)
-        config.transformer = copy(config.transformer)
-        main_pattern, separator, mtp_pattern = config.hybrid_layer_pattern.partition("/")
-        if "|" not in main_pattern:
-            main_pattern = qwen35_pipeline_pattern(config.transformer, main_pattern, layer_width=1)
-            config.hybrid_layer_pattern = main_pattern + separator + mtp_pattern
-            if "|" in main_pattern:
-                config.num_layers_in_first_pipeline_stage = None
-                config.num_layers_in_last_pipeline_stage = None
-                config.pipeline_model_parallel_layout = None
+        config = prepare_qwen35_pipeline_config(self._model_config)
 
         vp_size = config.virtual_pipeline_model_parallel_size
         if pre_process is None:

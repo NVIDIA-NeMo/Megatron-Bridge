@@ -892,6 +892,16 @@ def _qwen35_vl_config(*, moe: bool, tie_word_embeddings: bool = False, **text_ov
 
 @pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
 class TestQwen35VLBridgeModelConfig:
+    @pytest.mark.parametrize(("bridge_class", "moe"), _BRIDGE_CASES, ids=_BRIDGE_IDS)
+    def test_hybrid_export_preserves_language_blocks_and_attention_order(self, bridge_class, moe):
+        hf_config = _qwen35_vl_config(moe=moe)
+        config = bridge_class().hf_config_to_model_config(hf_config)
+        config.finalize()
+        exported = bridge_class.megatron_to_hf_config(config)
+
+        assert exported["num_hidden_layers"] == hf_config.text_config.num_hidden_layers
+        assert exported["layer_types"] == hf_config.text_config.layer_types
+
     @pytest.mark.parametrize("bridge_class", [Qwen35VLBridge, Qwen35VLMoEBridge])
     def test_provider_bridge_is_inherited_compatibility_only(self, bridge_class):
         assert "provider_bridge" not in bridge_class.__dict__
@@ -915,9 +925,9 @@ class TestQwen35VLBridgeModelConfig:
         assert isinstance(model_config.transformer, Qwen35VLTransformerConfig)
         assert model_config.transformer_layer_spec is None
         # Language model: the text bridge's builder kwargs, read from text_config.
-        assert model_config.num_layers == 8
+        assert model_config.num_layers == 16
         assert model_config.experimental_attention_variant == "gdn"
-        assert model_config.linear_attention_freq == [1, 1, 1, 0, 1, 1, 1, 0]
+        assert model_config.linear_attention_freq == [1, 0, 1, 0, 1, 0, 0, 0] * 2
         assert model_config.layernorm_zero_centered_gamma is True
         assert model_config.mtp_num_layers == 1
         assert model_config.mtp_loss_scaling_factor == 0.1
@@ -961,7 +971,14 @@ class TestQwen35VLBridgeModelConfig:
         assert isinstance(provider, Qwen35VLMoEModelProvider if moe else Qwen35VLModelProvider)
         model_config_fields = {field.name for field in fields(model_config)}
         model_config_fields.update(field.name for field in fields(model_config.transformer))
-        shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
+        shared = ({field.name for field in fields(provider)} & model_config_fields) - {
+            "transformer_layer_spec",
+            "num_layers",
+            "linear_attention_freq",
+            "moe_layer_freq",
+            "is_hybrid_model",
+            "mtp_hybrid_override_pattern",
+        }
         assert {"vision_config", "image_token_id", "mrope_section", "apply_rotary_pos_emb_in_fp32"} <= shared
         for field_name in sorted(shared):
             assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
