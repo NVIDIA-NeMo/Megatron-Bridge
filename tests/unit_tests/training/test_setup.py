@@ -550,8 +550,6 @@ class TestBuildDistributedModel:
         mock_provider = MagicMock()
         # Ensure isinstance(mock_provider, ModelConfig) is False
         mock_provider.__class__ = type("FakeProvider", (), {})
-        mock_provider.dsa_indexer_loss_coeff = None
-        mock_provider._post_wrap_hooks = []
 
         mock_dist_model = [MagicMock()]
         mock_provider.provide_distributed_model.return_value = mock_dist_model
@@ -633,48 +631,6 @@ class TestBuildDistributedModel:
         assert len(expected) == model_config.num_layers
         for router, expert_bias in expected:
             torch.testing.assert_close(router.expert_bias, expert_bias, rtol=0, atol=0)
-
-    @pytest.mark.parametrize("use_provider", [True, False])
-    def test_dsa_tracker_initialized_by_post_wrap_hook(self, use_provider):
-        cfg, model_cfg = self._make_cfg_with_model_config()
-        if use_provider:
-            model_cfg = GPTModelProvider(num_layers=1, hidden_size=16, num_attention_heads=1, vocab_size=64)
-            cfg.model = model_cfg
-        model_cfg.dsa_indexer_loss_coeff = 1.0
-        initializer = Mock()
-        model = [Mock(), Mock()]
-
-        def build(**kwargs):
-            initializer.assert_not_called()
-            hooks = model_cfg._post_wrap_hooks if use_provider else model_cfg.post_wrap_hooks
-            for hook in hooks:
-                assert hook(model) is model
-            return model
-
-        with (
-            patch.dict(
-                "sys.modules",
-                {
-                    "megatron.core.transformer.experimental_attention_variant.dsa_logging": SimpleNamespace(
-                        initialize_dsa_metric_tracker=initializer
-                    )
-                },
-            ),
-            patch("megatron.bridge.training.setup.configure_gtp_remat"),
-            patch("megatron.bridge.training.setup.classify_gtp_remat_chains"),
-        ):
-            for _ in range(2):
-                initializer.reset_mock()
-                groups = Mock()
-                if use_provider:
-                    with patch.object(model_cfg, "provide_distributed_model", side_effect=build):
-                        assert _build_distributed_model(cfg, groups) is model
-                else:
-                    builder = Mock()
-                    builder.build_distributed_models.side_effect = build
-                    with patch.object(type(model_cfg), "get_builder_cls", return_value=Mock(return_value=builder)):
-                        assert _build_distributed_model(cfg, groups) is model
-                initializer.assert_called_once_with(model, groups)
 
     @pytest.mark.parametrize("use_provider", [True, False])
     def test_mtp_freeze_hook_registered_once_before_build(self, use_provider):

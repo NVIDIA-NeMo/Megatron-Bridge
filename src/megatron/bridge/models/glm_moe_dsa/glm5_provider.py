@@ -15,11 +15,13 @@
 """Hybrid model provider for the GLM-5 DSA family."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from megatron.core.transformer.experimental_attention_variant.dsa import is_dsa_skip_topk_layer
+from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.common.dsa_metrics import register_dsa_metric_hook
 from megatron.bridge.models.glm_moe_dsa.glm5_hybrid import glm_hybrid_stack_spec
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.transformer_config import MLATransformerConfig
@@ -182,6 +184,13 @@ def finalize_glm_hybrid_pattern(config: Any) -> None:
 @dataclass
 class GLM5ModelProvider(HybridModelProvider, MLATransformerConfig):
     """Construct GLM as DSA/dense/MoE Hybrid layers with MLA configuration."""
+
+    @property
+    def post_wrap_hook(self) -> Callable[[list[MegatronModule]], list[MegatronModule]] | None:
+        """Include DSA metric setup after distributed construction binds the process groups."""
+        if hasattr(self, "_pg_collection"):
+            register_dsa_metric_hook(self, self._pg_collection)
+        return super().post_wrap_hook
 
     def _resolve_hybrid_stack_spec(self) -> ModuleSpec:
         return glm_hybrid_stack_spec(self)

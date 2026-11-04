@@ -15,8 +15,13 @@
 """Builder-backed model config for DeepSeek-V4 expressed as a Megatron-Core ``HybridModel``."""
 
 from dataclasses import dataclass
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.process_groups_config import ProcessGroupCollection
+
+from megatron.bridge.models.common.dsa_metrics import register_dsa_metric_hook
+from megatron.bridge.models.hybrid import BridgeHybridModelBuilder
 from megatron.bridge.models.hybrid.model_config import BridgeHybridMLAModelConfig
 from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 
@@ -40,11 +45,31 @@ class DeepSeekV4ModelConfig(BridgeHybridMLAModelConfig):
 
     Each logical DeepSeek-V4 block is an attention-only Hybrid layer (``W``, ``C`` or ``H``)
     followed by a MoE-only layer (``E``), and each MTP depth appends ``WE``. Like the provider,
-    it adds nothing to the Hybrid construction and finalization; it nests the DeepSeek-V4 MLA
-    transformer config.
+    it uses Hybrid construction and finalization with the DeepSeek-V4 MLA config
+    and registers DSA metric setup after wrapping.
     """
+
+    builder: ClassVar[str] = "megatron.bridge.models.deepseek.deepseek_v4_config.DeepSeekV4ModelBuilder"
 
     transformer_config_class: ClassVar[type[TransformerConfig]] = DeepSeekV4TransformerConfig
 
+    def get_builder_cls(self) -> type:
+        """Use DSA setup when restoring an older config that saved the generic Hybrid builder."""
+        builder_cls = super().get_builder_cls()
+        if builder_cls is BridgeHybridModelBuilder:
+            return DeepSeekV4ModelBuilder
+        return builder_cls
 
-__all__ = ["DeepSeekV4ModelConfig", "DeepSeekV4TransformerConfig"]
+
+class DeepSeekV4ModelBuilder(BridgeHybridModelBuilder):
+    """Build DeepSeek-V4 with its DSA metric hook."""
+
+    def build_distributed_models(
+        self, pg_collection: ProcessGroupCollection, *args: Any, **kwargs: Any
+    ) -> list[HybridModel]:
+        """Register DSA metric setup for the complete list of wrapped model chunks."""
+        register_dsa_metric_hook(self._model_config, pg_collection)
+        return super().build_distributed_models(pg_collection, *args, **kwargs)
+
+
+__all__ = ["DeepSeekV4ModelBuilder", "DeepSeekV4ModelConfig", "DeepSeekV4TransformerConfig"]

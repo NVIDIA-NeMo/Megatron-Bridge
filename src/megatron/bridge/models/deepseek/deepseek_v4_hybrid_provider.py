@@ -34,7 +34,11 @@ the direct MLA field names.
 """
 
 from dataclasses import dataclass
+from typing import Callable
 
+from megatron.core.transformer.module import MegatronModule
+
+from megatron.bridge.models.common.dsa_metrics import register_dsa_metric_hook
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -44,8 +48,13 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
     """MLA-capable :class:`HybridModelProvider` for DeepSeek-V4.
 
     All configuration is supplied by :class:`DeepSeekV4Bridge.provider_bridge`;
-    this class only fixes the method-resolution order so a single provider is
-    both an MLA config carrier and a hybrid-model builder.
+    this class combines MLA configuration with Hybrid construction and registers
+    DSA metric setup after model wrapping.
     """
 
-    pass
+    @property
+    def post_wrap_hook(self) -> Callable[[list[MegatronModule]], list[MegatronModule]] | None:
+        """Include DSA metric setup after distributed construction binds the process groups."""
+        if hasattr(self, "_pg_collection"):
+            register_dsa_metric_hook(self, self._pg_collection)
+        return super().post_wrap_hook
