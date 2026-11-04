@@ -873,8 +873,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         """Restore the DSv4 source checkpoint's keys and quantized weight layout.
 
         Expert-bias buffers synthesized during import are omitted when the source
-        checkpoint did not contain them. Legacy indexer scorer names are restored
-        before selecting the export dtype. When ``task.weight_dtype`` is set, skip
+        checkpoint did not contain them. When ``task.weight_dtype`` is set, skip
         requantization and return the weights unchanged — the generic export path
         casts the dtype.
         """
@@ -885,19 +884,6 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             converted_weights_dict = {
                 key: value for key, value in converted_weights_dict.items() if key not in omitted_expert_biases
             }
-        native_scorer_key = next(
-            (
-                key
-                for key in converted_weights_dict
-                if ".indexer.scorer.weights_proj." in key and key not in hf_state_dict
-            ),
-            None,
-        )
-        if native_scorer_key is not None:
-            legacy_key = native_scorer_key.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
-            if legacy_key in hf_state_dict:
-                converted_weights_dict = dict(converted_weights_dict)
-                converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
         if task.weight_dtype is not None:
             return converted_weights_dict
 
