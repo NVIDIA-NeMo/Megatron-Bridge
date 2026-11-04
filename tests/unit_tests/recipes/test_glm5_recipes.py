@@ -14,98 +14,55 @@
 """Unit tests for GLM-5.2 recipes."""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
+from megatron.bridge.models.glm_moe_dsa.glm5_config import GLM5ModelConfig
 from megatron.bridge.recipes.glm import gb200
 from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
 from megatron.bridge.recipes.glm.h100 import glm5
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from tests.unit_tests.recipes.recipe_test_utils import GLM5BuilderOnlyBridge
 
 
 pytestmark = pytest.mark.unit
 
 
-class _FakeMegatronProvider(SimpleNamespace):
-    _KNOWN_FIELDS = {
-        "account_for_embedding_in_pipeline_split",
-        "account_for_loss_in_pipeline_split",
-        "apply_rope_fusion",
-        "bias_activation_fusion",
-        "bias_dropout_fusion",
-        "calculate_per_token_loss",
-        "context_parallel_size",
-        "cross_entropy_fusion_impl",
-        "cross_entropy_loss_fusion",
-        "deallocate_pipeline_outputs",
-        "dsa_indexer_loss_coeff",
-        "dsa_indexer_skip_topk_offset",
-        "dsa_indexer_topk_freq",
-        "dsa_indexer_use_sparse_loss",
-        "dsa_kernel_backend",
-        "expert_model_parallel_size",
-        "expert_tensor_parallel_size",
-        "gradient_accumulation_fusion",
-        "microbatch_group_size_per_vp_stage",
-        "moe_flex_dispatcher_backend",
-        "moe_grouped_gemm",
-        "moe_permute_fusion",
-        "moe_router_force_load_balancing",
-        "moe_shared_expert_overlap",
-        "moe_token_dispatcher_type",
-        "mtp_num_layers",
-        "hybrid_layer_pattern",
-        "num_layers_in_first_pipeline_stage",
-        "num_layers_in_last_pipeline_stage",
-        "persist_layer_norm",
-        "pipeline_model_parallel_layout",
-        "pipeline_model_parallel_size",
-        "recompute_granularity",
-        "recompute_method",
-        "recompute_num_layers",
-        "seq_length",
-        "sequence_parallel",
-        "tensor_model_parallel_size",
-        "virtual_pipeline_model_parallel_size",
-    }
-
-    def __init__(self, **kwargs: object) -> None:
-        unknown_fields = set(kwargs) - self._KNOWN_FIELDS
-        if unknown_fields:
-            raise AssertionError(f"Unexpected GLM-5.2 model config fields: {sorted(unknown_fields)}")
-        super().__init__(**kwargs)
-
-    def __setattr__(self, name: str, value: object) -> None:
-        if name not in self._KNOWN_FIELDS:
-            raise AssertionError(f"Unexpected GLM-5.2 model config field: {name}")
-        super().__setattr__(name, value)
-
-
-class _FakeAutoBridge:
+class _GLM52BuilderOnlyBridge(GLM5BuilderOnlyBridge):
     @classmethod
-    def from_hf_pretrained(cls, model_id: str, revision: str) -> "_FakeAutoBridge":
+    def from_hf_pretrained(cls, model_id: object, **kwargs: object) -> GLM5BuilderOnlyBridge:
         assert model_id == "zai-org/GLM-5.2"
-        assert len(revision) == 40
-        return cls()
-
-    def to_megatron_provider(self, load_weights: bool = False) -> _FakeMegatronProvider:
-        assert load_weights is False
-        return _FakeMegatronProvider(
-            dsa_indexer_loss_coeff=0.001,
-            dsa_indexer_use_sparse_loss=True,
-            dsa_indexer_topk_freq=4,
-            dsa_indexer_skip_topk_offset=3,
-            mtp_num_layers=None,
-            hybrid_layer_pattern="D-" * 3 + "DE" * 75,
-        )
+        assert len(kwargs["revision"]) == 40
+        return super().from_hf_pretrained(model_id, **kwargs)
 
 
 @pytest.fixture(autouse=True)
 def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(gb200_glm5, "AutoBridge", _FakeAutoBridge)
-    monkeypatch.setattr(glm5, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(gb200_glm5, "AutoBridge", _GLM52BuilderOnlyBridge)
+    monkeypatch.setattr(glm5, "AutoBridge", _GLM52BuilderOnlyBridge)
+
+
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        glm5.glm52_pretrain_416gpu_h100_bf16_config,
+        glm5.glm52_sft_416gpu_h100_bf16_config,
+        glm5.glm52_sft_608gpu_h100_bf16_200k_config,
+        glm5.glm52_peft_208gpu_h100_bf16_config,
+        gb200.glm52_pretrain_192gpu_gb200_bf16_config,
+        gb200.glm52_sft_192gpu_gb200_bf16_config,
+        gb200.glm52_sft_192gpu_gb200_bf16_128k_config,
+        gb200.glm52_peft_192gpu_gb200_bf16_config,
+    ],
+)
+def test_glm52_recipes_build_the_builder_model_config(recipe) -> None:
+    cfg = recipe()
+
+    assert isinstance(cfg.model, GLM5ModelConfig)
+    assert cfg.model.extra_checkpoint_metadata["hf_model_id"] == "zai-org/GLM-5.2"
+    assert cfg.model.extra_checkpoint_metadata["hf_model_revision"] == glm5._GLM52_MODEL_REVISION
+    assert cfg.model.transformer.rotary_base == 8_000_000
 
 
 @pytest.mark.parametrize(

@@ -86,6 +86,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="qwen3-6-35b-a3b-pretrain-gb200" aria-controls="qwen3-6-35b-a3b-pretrain-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · GB200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
     <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="qwen3-6-35b-a3b-sft-h100" aria-controls="qwen3-6-35b-a3b-sft-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · H100</strong>
@@ -275,6 +282,65 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>The 16-H100 command completed all 50 full-model DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the immutable imported checkpoint for natural routing. Loss remained finite from 3.604611 to 3.458849 with zero skipped or NaN iterations. The 519,827/5,173 train/validation split was prepared with the official DataComp downloader at commit 4a8df1992566, DataComp-1B metadata revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest 6e273a96a756. This verifies bounded full-model training, not canonical DataComp/CLIP convergence or checkpoint resume.
+</p>
+      </section>
+    </article>
+    <article id="qwen3-6-35b-a3b-pretrain-gb200" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-pretrain-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-28</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>2.203229</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>2.137179</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>24,539.100 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>240.070 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>10,682.706 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>124.928 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>132.527 GiB</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --additional-slurm-params segment=2 --recipe qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config --mode pretrain --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/text-megatron --max_steps 100 --warmup_iters 40 scheduler.lr_decay_iters=100 &#x27;dataset.blend=[[&quot;work/data/rp2-qwen35/head_01_qwen35_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/rp2-qwen35 validation.eval_iters=0 validation.eval_interval=0 checkpoint.save=null checkpoint.load=null ddp.check_for_nan_in_grad=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.log_memory_to_tensorboard=true logger.tensorboard_log_interval=1 logger.tensorboard_dir=work/model-verification/qwen3.6-35b-a3b/gb200-text-pretrain/tb logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-text-pretrain/resolved-config.yaml dist.distributed_timeout_minutes=30</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Early, unoptimized library recipe: on two four-GPU GB200 nodes in one segment-2 NVLink domain, the language-only Qwen3.5 text 35B-A3B recipe completes exactly 100 RedPajama2 pretraining steps at 240.070 model TFLOP/s/GPU, below the roughly 400 TFLOP/s/GPU BF16 readiness target, at TP1/PP1/CP1/EP8/ETP1 and MBS1/GBS512 (64 micro-batches per step), sequence length 4096, with HybridEP, Transformer Engine CUDA graphs over attention and the MoE router and preprocess, and no activation recompute. The recipe builds its model from the Qwen3.5-35B-A3B-Base text config at revision 0f0813072d23, which matches this card&#x27;s language model: 40 layers (30 Gated DeltaNet, 10 gated attention), 256 experts with natural top-8 routing, and one MTP layer. The command warm-starts weights only from a language checkpoint of the card&#x27;s pinned revision: scripts/conversion/extract_qwen35_text_checkpoint.py keeps the language model and its MTP layer, and a GPU import at EP4 writes the Megatron checkpoint. The vision tower is not part of this workload. The data is documents [0, 256498) of the RedPajama2 head_01 shard re-encoded with the Qwen3.5 Base tokenizer, which shares this model&#x27;s vocabulary and merges: 300,001,001 tokens, of which 100 steps read 209,715,200 token slots. The learning rate warms up for 40 steps to 3e-4 and decays (cosine) to 3e-5 at step 100. GBS 512, FP32 gradient reduction without the precision-aware optimizer, and no checkpoint saves differ from the text-pretraining cohort, so this is support verification, not cohort convergence evidence. LM loss is finite from 2.203229 to 2.137179 and MTP loss from 2.582565 to 2.414493, with zero skipped or NaN iterations. Steps 91-100 average 24,539.100 ms, 240.070 model TFLOP/s/GPU, and 10,682.706 token slots/s/GPU, with 124.928 GiB peak allocated and 132.527 GiB peak reserved memory on rank 0. The persisted post-setup config records the exact runtime. The run used a NeMo 26.10 release-candidate base container with the pinned Megatron-Core submodule, and the process exits successfully.
 </p>
       </section>
     </article>

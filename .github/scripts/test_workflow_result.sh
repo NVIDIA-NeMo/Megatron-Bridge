@@ -5,102 +5,137 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 mock_dir=$(mktemp -d)
 trap 'rm -rf "$mock_dir"' EXIT
 mkdir "$mock_dir/bin"
-cat > "$mock_dir/bin/gh" <<'EOF'
+# A summary must not depend on GitHub API availability, even for diagnostics.
+cat > "$mock_dir/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
-set -euo pipefail
-[[ "$*" == "run view 123 --json jobs" ]]
-calls=$(cat "$MOCK_DIR/calls")
-calls=$((calls + 1))
-echo "$calls" > "$MOCK_DIR/calls"
-if [ "$calls" -le "$MOCK_FAILURES" ]; then
-  echo '{"jobs":['
-  echo 'HTTP 502: Server Error' >&2
-  exit 1
-fi
-cat "$MOCK_DIR/jobs.json"
-EOF
-cat > "$mock_dir/bin/sleep" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-echo "$1" >> "$MOCK_DIR/delays"
-EOF
-chmod +x "$mock_dir/bin/gh" "$mock_dir/bin/sleep"
+echo 'Unexpected GitHub API call' >&2
+touch "$MOCK_DIR/api-called"
+exit 1
+MOCK
+chmod +x "$mock_dir/bin/gh"
 export MOCK_DIR="$mock_dir" PATH="$mock_dir/bin:$PATH"
-export GITHUB_RUN_ID=123 GH_REPO=NVIDIA-NeMo/Megatron-Bridge
+unset GITHUB_RUN_ID GH_TOKEN GH_REPO
 
 # Exercise the command actually wired into the required summary job.
-summary_command=$(awk '
+summary_job=$(awk '
   /^  Nemo_CICD_Test:/ { in_job=1; next }
-  in_job && /^  [[:alnum:]_-]+:/ { in_job=0 }
-  in_job && /^        run: \|/ { in_run=1; next }
+  in_job && /^  [[:alnum:]_-]+:/ { exit }
+  in_job { print }
+' .github/workflows/cicd-main.yml)
+summary_command=$(awk '
+  /^        run: \|/ { in_run=1; next }
   in_run && /^          / { sub(/^          /, ""); print; next }
   in_run { exit }
-' .github/workflows/cicd-main.yml)
+' <<< "$summary_job")
 [[ "$summary_command" == '.github/scripts/check_workflow_result.sh' ]]
+grep -Fq 'NEEDS_JSON: ${{ toJSON(needs) }}' <<< "$summary_job"
+if grep -Eq 'GH_TOKEN:|GH_REPO:|permissions: write-all' <<< "$summary_job"; then
+  echo 'The summary must not request API credentials or write permissions' >&2
+  exit 1
+fi
 grep -q '^          .github/scripts/test_workflow_result.sh$' .github/workflows/cicd-main.yml
 
+# needs omits transitive dependencies. Keep every preceding job in the summary,
+# including matrix generators, setup jobs, and opt-in flaky suites.
+upstream_jobs=$(awk '
+  /^jobs:/ { in_jobs=1; next }
+  /^  Nemo_CICD_Test:/ { exit }
+  in_jobs && /^  [[:alnum:]_-]+:/ { sub(":$", "", $1); print $1 }
+' .github/workflows/cicd-main.yml)
+summary_needs=$(awk '/^    if:/ { exit } /^      - / { print $2 }' <<< "$summary_job")
+[[ "$(sort <<< "$upstream_jobs")" == "$(sort <<< "$summary_needs")" ]]
+base_needs=$(printf '%s\n' "$summary_needs" | jq -Rn '
+  [inputs | {key: ., value: {result: "success", outputs: {}}}] | from_entries
+')
+
 run_case() {
-  local label="$1" expected_exit="$2" expected_calls="$3" expected_delays="$4"
-  echo 0 > "$mock_dir/calls"
-  : > "$mock_dir/delays"
+  local label="$1" expected_exit="$2"
   local actual_exit=0
   bash -e -u -o pipefail -c "$summary_command" > "$mock_dir/output" 2>&1 || actual_exit=$?
-  if [[ "$actual_exit" != "$expected_exit" || "$(cat "$mock_dir/calls")" != "$expected_calls" \
-      || "$(tr '\n' ' ' < "$mock_dir/delays")" != "$expected_delays" ]]; then
-    echo "FAIL: $label (exit=$actual_exit, calls=$(cat "$mock_dir/calls"))" >&2
+  if [[ "$actual_exit" != "$expected_exit" || -e "$mock_dir/api-called" ]]; then
+    echo "FAIL: $label (exit=$actual_exit)" >&2
     cat "$mock_dir/output" >&2
     exit 1
   fi
   if [ "$expected_exit" -eq 0 ]; then
-    grep -q 'All previous jobs completed successfully' "$mock_dir/output"
-  elif grep -q 'All previous jobs completed successfully' "$mock_dir/output"; then
+    grep -q 'All required jobs completed successfully' "$mock_dir/output"
+  elif grep -q 'All required jobs completed successfully' "$mock_dir/output"; then
     echo "FAIL: $label reported success" >&2
     exit 1
   fi
   echo "PASS: $label"
 }
 
-export EXPECT_L0=true EXPECT_L1=false EXPECT_L2=false IS_MEMBER=true DISABLE_GB200_TESTS=false MOCK_FAILURES=0
-cat > "$mock_dir/jobs.json" <<'EOF'
-{"jobs":[{"name":"L0_test","status":"completed","conclusion":"success"},{"name":"L1_optional","status":"completed","conclusion":"skipped"},{"name":"Nemo_CICD_Test","status":"in_progress","conclusion":""}]}
-EOF
-run_case 'passing jobs with disabled tiers and summary in progress' 0 1 ''
-export MOCK_FAILURES=1
-run_case 'transient API failure then success' 0 2 '5 '
-export MOCK_FAILURES=2
-run_case 'two API failures then success' 0 3 '5 10 '
-export MOCK_FAILURES=3
-run_case 'API retry exhaustion fails closed' 1 3 '5 10 '
-grep -q 'Unable to retrieve workflow jobs after 3 attempts' "$mock_dir/output"
-export MOCK_FAILURES=0
+export EXPECT_L0=true EXPECT_L1=true EXPECT_L2=true IS_MEMBER=true DISABLE_GB200_TESTS=false
+export NEEDS_JSON="$base_needs"
+run_case 'all dependency and matrix results pass without GitHub access' 0
 
-for conclusion in failure cancelled timed_out action_required stale startup_failure; do
-  printf '{"jobs":[{"name":"failed_test","status":"completed","conclusion":"%s"}]}\n' "$conclusion" > "$mock_dir/jobs.json"
-  run_case "$conclusion is still a failure" 1 1 ''
-  grep -q 'failed_test' "$mock_dir/output"
+# Check every required upstream failure, not just direct test dependencies.
+# A failed matrix shard blocks, but quarantined suites remain informational.
+for job in $summary_needs; do
+  for result in failure cancelled; do
+    NEEDS_JSON=$(jq --arg job "$job" --arg result "$result" '.[$job].result = $result' <<< "$base_needs")
+    case "$job" in
+      cicd-functional-tests-flaky | cicd-functional-tests-gb200-flaky)
+        run_case "$job $result remains informational" 0
+        ;;
+      *)
+        run_case "$job $result blocks the summary" 1
+        grep -Fq "$job: $result" "$mock_dir/output"
+        ;;
+    esac
+  done
 done
 
-for tier in L0 L1 L2; do
-  export EXPECT_L0=false EXPECT_L1=false EXPECT_L2=false
-  export "EXPECT_$tier=true"
-  printf '{"jobs":[{"name":"%s_test","status":"completed","conclusion":"skipped"}]}\n' "$tier" > "$mock_dir/jobs.json"
-  run_case "$tier unexpected skip" 1 1 ''
-  grep -q "${tier}_test" "$mock_dir/output"
-  export "EXPECT_$tier=false"
-  run_case "$tier intentional skip" 0 1 ''
+# Informational failures must neither hide required failures nor inflate their diagnostics.
+for result in failure cancelled; do
+  NEEDS_JSON=$(jq --arg result "$result" '
+    .configure.result = $result |
+    .["cicd-functional-tests-flaky"].result = "failure" |
+    .["cicd-functional-tests-gb200-flaky"].result = "cancelled"
+  ' <<< "$base_needs")
+  run_case "required $result still blocks alongside informational failures" 1
+  grep -Fq 'Found 1 failed job(s):' "$mock_dir/output"
+  grep -Fq "configure: $result" "$mock_dir/output"
+  if grep -Fq 'flaky:' "$mock_dir/output"; then
+    echo 'Informational suites must not appear in required failure diagnostics' >&2
+    exit 1
+  fi
+done
 
-  printf '{"jobs":[{"name":"gb200_%s_test","status":"completed","conclusion":"skipped"}]}\n' "$tier" > "$mock_dir/jobs.json"
-  export "EXPECT_$tier=true"
-  run_case "GB200 $tier unexpected skip" 1 1 ''
-  grep -q "gb200_${tier}_test" "$mock_dir/output"
+for tier in l0 l1 l2; do
+  variable="EXPECT_${tier^^}"
+  for prefix in cicd-functional-tests cicd-functional-tests-gb200; do
+    job="$prefix-$tier"
+    export EXPECT_L0=false EXPECT_L1=false EXPECT_L2=false "$variable=true"
+    NEEDS_JSON=$(jq --arg job "$job" '.[$job].result = "skipped"' <<< "$base_needs")
+    run_case "$job unexpected skip" 1
+    grep -Fq "$job" "$mock_dir/output"
+    export "$variable=false"
+    run_case "$job intentional skip" 0
+    export "$variable=true"
+    NEEDS_JSON=$(jq --arg job "$job" 'del(.[$job])' <<< "$base_needs")
+    run_case "$job missing expected result" 1
+  done
+  NEEDS_JSON=$(jq --arg job "cicd-functional-tests-gb200-$tier" '.[$job].result = "skipped"' <<< "$base_needs")
   export DISABLE_GB200_TESTS=true
-  run_case "GB200 $tier disabled" 0 1 ''
+  run_case "GB200 $tier disabled" 0
   export DISABLE_GB200_TESTS=false IS_MEMBER=false
-  run_case "GB200 $tier non-member" 0 1 ''
+  run_case "GB200 $tier non-member" 0
   export IS_MEMBER=true
 done
 
-for response in '' 'not json' '{}' '{"jobs":null}' '{"jobs":[]}' '{"jobs":{}}'; do
-  printf '%s\n' "$response" > "$mock_dir/jobs.json"
-  run_case "invalid response: $response" 1 1 ''
+export EXPECT_L0=false EXPECT_L1=false EXPECT_L2=false
+NEEDS_JSON=$(jq 'with_entries(.value.result = "skipped") | .["pre-flight"].result = "success" | .configure.result = "success"' <<< "$base_needs")
+run_case 'docs-only or deployment intentionally skips tests' 0
+NEEDS_JSON=$(jq '.["cicd-wait-in-queue"].result = "skipped" | .["cicd-functional-tests-flaky"].result = "skipped" | .["cicd-functional-tests-gb200-flaky"].result = "skipped"' <<< "$base_needs")
+export EXPECT_L0=true EXPECT_L1=true EXPECT_L2=true
+run_case 'queue bypass and disabled flaky suites' 0
+
+for response in '' 'not json' '{}' 'null' '[]' '1' '{"job":null}' '{"job":[]}' '{"job":{}}' '{"job":{"result":null}}' '{"job":{"result":"pending"}}' '{"job":{"result":"neutral"}}'; do
+  export NEEDS_JSON="$response"
+  run_case "invalid dependency results: $response" 1
+  grep -q 'Invalid workflow dependency results' "$mock_dir/output"
 done
+unset NEEDS_JSON
+run_case 'missing dependency results' 1

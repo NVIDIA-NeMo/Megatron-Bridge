@@ -40,6 +40,12 @@ _MODEL_COLLATE_SPECS = {
         "nemotron_omni_expanded_collate_fn",
         always_use_model_collate=True,
     ),
+    # Nemotron 3.5 Super VL reuses the Nemotron Omni model and its processor-expanded sequence contract.
+    "NemotronH_Omni_Reasoning_V3Processor": _ModelCollateSpec(
+        "megatron.bridge.models.nemotron_omni.data.collate_fn",
+        "nemotron_omni_expanded_collate_fn",
+        always_use_model_collate=True,
+    ),
     "PixtralProcessor": _ModelCollateSpec(
         "megatron.bridge.models.ministral3.data.collate_fn", "ministral3_collate_fn"
     ),
