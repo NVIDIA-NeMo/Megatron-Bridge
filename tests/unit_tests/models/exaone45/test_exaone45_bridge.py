@@ -33,6 +33,7 @@ from megatron.bridge.models.exaone.exaone45.exaone45_provider import (
     exaone_45_mtp_block_spec,
     exaone_45_transformer_layer_spec,
 )
+from megatron.bridge.models.exaone.exaone45.modelling_exaone45.rope import Exaone45MultimodalRotaryEmbedding
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.transformer_config import get_vision_model_config
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -412,3 +413,26 @@ class TestExaone45BridgeModelConfig:
         ):
             assert getattr(restored, name) == getattr(model_config, name), name
         assert tuple(restored.window_size) == model_config.window_size
+
+
+class TestExaone45MultimodalRotaryEmbedding:
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize("num_positions", [4096, 10922, 10923, 32768])
+    def test_angles_exact_when_tf32_allowed(self, num_positions):
+        rope = Exaone45MultimodalRotaryEmbedding(
+            kv_channels=128, rotary_base=1000000, cp_group=SimpleNamespace(size=lambda: 1)
+        )
+        positions = torch.arange(90000 - num_positions, 90000, device="cuda", dtype=torch.float32)
+        position_ids = positions[None, None, :].expand(3, 1, -1)
+        allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+        try:
+            outputs = {}
+            for tf32 in (True, False):
+                torch.backends.cuda.matmul.allow_tf32 = tf32
+                outputs[tf32] = rope(position_ids, None)
+        finally:
+            torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        angles = positions.double()[:, None] * rope.inv_freq.double()[None, :]
+        expected = torch.cat((angles, angles), dim=-1)
+        torch.testing.assert_close(outputs[True][:, 0, 0].double(), expected, rtol=0, atol=1e-2)
+        assert torch.equal(outputs[True], outputs[False])

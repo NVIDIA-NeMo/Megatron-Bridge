@@ -344,9 +344,7 @@ def setup(
     if hasattr(cfg.dataset, "tokenizer"):
         cfg.dataset.tokenizer = tokenizer
 
-    # Compute token_dtype_code for sequences_per_dataset support.
-    # Bridge skips MCoreGPTDatasetConfig.__post_init__() (tokenizer unavailable at
-    # finalize time), so this field must be set once the tokenizer is available.
+    # Older dev stores this field; newer MCore derives it from the tokenizer.
     if hasattr(cfg.dataset, "token_dtype_code") and cfg.dataset.token_dtype_code is None:
         vocab_size = getattr(tokenizer, "vocab_size", None)
         if vocab_size is not None:
