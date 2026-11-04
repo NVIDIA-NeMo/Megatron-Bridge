@@ -1,14 +1,18 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
 import torch.nn as nn
 from safetensors.torch import save_file
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion import quantization_utils
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.deepseek.deepseek_v41_bridge import (
     DeepSeekV41Bridge,
     _EngramEmbeddingMapping,
@@ -16,6 +20,7 @@ from megatron.bridge.models.deepseek.deepseek_v41_bridge import (
 )
 from megatron.bridge.models.deepseek.deepseek_v41_provider import DeepSeekV41ModelProvider
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
+from megatron.bridge.peft.lora import LoRA
 
 
 def _bridge() -> DeepSeekV41Bridge:
@@ -29,6 +34,43 @@ def _bridge() -> DeepSeekV41Bridge:
         vision_config=SimpleNamespace(num_hidden_layers=1),
     )
     return bridge
+
+
+@pytest.mark.unit
+def test_partial_hf_adapter_reloads_only_exported_modules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    peft = pytest.importorskip("peft")
+
+    class TinyModel(nn.Module):
+        config = {"tie_word_embeddings": False}
+
+        def prepare_inputs_for_generation(self, **kwargs: object) -> dict[str, object]:
+            return kwargs
+
+    def projection() -> nn.ModuleDict:
+        return nn.ModuleDict({"w1": nn.Linear(4, 4, bias=False)})
+
+    model = TinyModel()
+    model.layers = nn.ModuleList(
+        nn.ModuleDict({"ffn": nn.ModuleDict({"shared_experts": projection()})}) for _ in range(2)
+    )
+    model.vision = nn.ModuleDict({"blocks": nn.ModuleList([nn.ModuleDict({"mlp": projection()})])})
+    model.aligner = projection()
+
+    target = "layers.1.ffn.shared_experts.w1"
+    lora_a, lora_b = torch.randn(2, 4), torch.randn(4, 2)
+    weights = [HFWeightTuple(f"{target}.lora_A.weight", lora_a), HFWeightTuple(f"{target}.lora_B.weight", lora_b)]
+    bridge = AutoBridge.from_hf_config(PretrainedConfig(architectures=["DeepseekV41ForCausalLM"]))
+    monkeypatch.setattr(bridge, "export_adapter_weights", lambda *args, **kwargs: iter(weights))
+    bridge.save_hf_adapter([], tmp_path, LoRA(dim=1, alpha=2), base_model_name_or_path="tiny")
+    config = json.loads((tmp_path / "adapter_config.json").read_text())
+    assert config["target_modules"] == [target]
+    assert config["rank_pattern"] == {target: 2}
+
+    loaded = peft.PeftModel.from_pretrained(model, str(tmp_path)).get_base_model()
+    assert [name for name, module in loaded.named_modules() if hasattr(module, "lora_A")] == [target]
+    layer = loaded.get_submodule(target)
+    torch.testing.assert_close(layer.lora_A["default"].weight, lora_a, rtol=0, atol=0)
+    torch.testing.assert_close(layer.lora_B["default"].weight, lora_b, rtol=0, atol=0)
 
 
 def test_provider_freezes_v41_checkpoint_router_biases():

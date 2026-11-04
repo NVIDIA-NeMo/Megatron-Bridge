@@ -13,6 +13,7 @@ DSpark namespaces and decodes the checkpoint's 32-wide FP8 / packed FP4 storage.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from contextlib import ExitStack, contextmanager, nullcontext
 from copy import deepcopy
 from typing import Any, Dict, Mapping, Optional, Union
@@ -39,6 +40,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.peft_bridge import _split_hf_lora_weight_name
 from megatron.bridge.models.deepseek.deepseek_v41_provider import DeepSeekV41ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
@@ -307,6 +309,12 @@ def _moe_mappings(
 )
 class DeepSeekV41Bridge(MegatronModelBridge):
     """Convert the released V4.1 checkpoint to the native MCore model."""
+
+    def _adapter_target_modules(self, adapter_weight_names: Iterable[str]) -> list[str]:
+        """Keep PEFT reloads scoped to the exported layers, experts and modalities."""
+        return sorted(
+            {_split_hf_lora_weight_name(name)[0].removeprefix("base_model.model.") for name in adapter_weight_names}
+        )
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV41ModelProvider:
         hf_dict = hf_pretrained.config.to_dict()
