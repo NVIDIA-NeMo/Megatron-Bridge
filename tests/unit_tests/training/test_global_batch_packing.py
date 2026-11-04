@@ -108,6 +108,32 @@ def test_enabled_flags():
     assert not global_batch_packing.dynamic_context_parallel_enabled(Mock())
 
 
+@pytest.mark.parametrize(
+    "overrides, online_packing",
+    [
+        ({}, False),
+        ({"experimental_attention_variant": None}, True),
+        ({"sequence_packing_scheduler": "default_dynamic_cp"}, True),
+        ({"pipeline_p2p_fixed_shape": False}, True),
+        ({"cp_partition_mode": "zigzag"}, True),
+        ({"pad_packed_seq_alignment": "cp"}, True),
+        ({"dynamic_context_parallel": True}, True),
+    ],
+)
+def test_only_fixed_thd_dsv4_bypasses_online_scheduler(overrides, online_packing):
+    fields = {
+        "experimental_attention_variant": "dsv4_hybrid",
+        "pipeline_p2p_fixed_shape": True,
+        "cp_partition_mode": "contiguous",
+        "pad_packed_seq_alignment": "max",
+    }
+    fields.update(overrides)
+    model = _model(**fields)
+
+    assert global_batch_packing.global_batch_packing_enabled(model) is online_packing
+    assert global_batch_packing.fixed_thd_dsv4_packing_enabled(model) is not online_packing
+
+
 def test_wrap_passes_iterator_only_on_tp_rank_zero(monkeypatch):
     calls = []
 

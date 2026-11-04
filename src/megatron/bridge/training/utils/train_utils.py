@@ -42,6 +42,7 @@ from megatron.bridge.models.common.heads import (
     ensure_model_list,
 )
 from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
+from megatron.bridge.training.dsa_metrics import track_dsa_metrics
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
@@ -1137,6 +1138,18 @@ def training_log(
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
         )
+
+    # All PP ranks participate, including stages without an indexer or log writer.
+    # MCore normalizes Dynamic-CP metrics by the nominal, not packed, microbatch count.
+    track_dsa_metrics(
+        config.model,
+        iteration=iteration,
+        num_microbatches=get_num_microbatches(),
+        writer=_build_moe_metric_writer(writer, comet_logger, mlflow_logger),
+        wandb_writer=wandb_writer,
+        total_loss_dict=total_loss_dict,
+        pg_collection=pg_collection,
+    )
 
     if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)

@@ -47,8 +47,8 @@ and do not establish THD support for the native main-branch HybridModel.
 Pipeline layouts split complete attention/MoE pairs in `hybrid_layer_pattern`,
 with matching physical-layer metadata for embedding and MTP/loss placement.
 The Flash library recipe uses PP4/VPP4; the 128-GPU Flash benchmark uses PP1.
-The Pro benchmark also combines mHC CUDA graphs with recompute and activation
-offload, which remains unsupported by the main-based runtime above.
+The Pro benchmark uses the separate runtime described below, including mHC
+recompute with scoped attention CUDA graphs.
 
 `fast-hadamard-transform` is required by DSA and is installed from the pinned
 source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
@@ -143,6 +143,85 @@ Compatibility aliases such as `deepseek_v4_flash_pretrain_mxfp8_config` remain
 exported, but new launches should use the hardware-qualified names above.
 Canonical benchmark recipes under `src/megatron/bridge/perf_recipes/` are
 performance references, not substitutes for the library recipes.
+
+### GB300 Pro performance reproduction and debugging proxy
+
+These benchmark recipes reproduce the configuration of the supplied full and
+proxy MCore logs. The earlier 50-step GB300 runs used the private `dsv4` revision
+`d211e50e888fcb8640ddc9923e98940800afcfd3` and its compatible kernel container.
+They completed with finite reported losses and gradient norms and no skipped or
+NaN iterations; this is execution evidence, not convergence or numerical parity.
+
+The public-development validation target is MCore
+`159e66cd2491b1bf4fdb0fa0895dd58f4dd9e4ed`, GitHub's immutable merge revision of
+[PR #5722](https://github.com/NVIDIA/Megatron-LM/pull/5722) into `dev`
+`c0d3b03f584d07eb1ae94c576604cef4637c1be6`, with
+`nvcr.io/nvidian/nemo:nightly-2026-10-16`. The PR head alone predates necessary
+DSv4 fixes; use the merge revision when reproducing this target. Validation on
+this runtime is pending. It requires compatible Transformer Engine, HybridEP/MoK,
+fused mHC, cuDNN DSA, and emerging-optimizers implementations. The default
+main-branch MCore pin is not qualified for these recipes.
+
+Public `dev` also requires DSA metric initialization before attention graph
+capture and metric reduction/clearing during training. Bridge uses those APIs
+when available and retains compatibility with the earlier private revision.
+The recipes explicitly set MCore's `is_hybrid_model=True`, matching native MCore
+argument processing. This corrects hybrid output-weight initialization scaling
+and layer accounting; earlier Bridge runs inherited the non-hybrid default, so
+their initial weights are not reproduced by the updated recipes.
+The merge revision includes the batched grouped output projection, but does not
+include MCore [#5893](https://github.com/NVIDIA/Megatron-LM/pull/5893), which avoids
+TE parameter-gradient clones. Therefore the earlier runtime's memory and timing
+results are not guarantees for this public-development target.
+
+| Recipe | GPUs | Main logical blocks | TP / CP / EP | PP / VPP | GBS / MBS |
+|--------|------|---------------------|--------------|----------|-----------|
+| `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` | 256 | 61 | 1 / 16 / 64 | 4 / 4 | 256 / 1 |
+| `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config` | 64 | 16 | 1 / 16 / 64 | 1 / none | 256 / 1 |
+
+Both retain the Pro widths, expert count, one MTP module, 65,536-token sequence
+length, MXFP8 parameter gathering, and Muon with the `deepseekv4` coefficients
+and ten Newton–Schulz iterations. Each main logical block contains one attention
+layer and one MoE layer, so MCore reports 122 and 32 main physical layers,
+respectively. Both configurations have dense DP4, expert DP1, and 64
+microbatches per optimizer step. The full model splits its logical blocks across
+the sixteen VPP chunks as `[3] + [4] * 14 + [2]`.
+
+Both use selective `mla_up_proj` and mHC recompute with mHC group size two,
+Transformer Engine attention CUDA graphs with one warmup step and dynamic
+microbatches, and no activation offload or paged stash. The proxy reduces the
+allocation by four while retaining the long-context attention, MoE, mHC, MTP,
+and optimizer paths. Its PP1 schedule does not exercise the full recipe's
+pipeline communication or interleaved scheduling, and the smaller allocation
+does not guarantee a fourfold reduction in step time.
+
+Start with the proxy, then run the full recipe using the same runtime. With
+four GPUs per node, the canonical launches are:
+
+```bash
+./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
+  --recipe deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config \
+  --mode pretrain
+
+./scripts/training/train.sh --nodes 64 --gpus-per-node 4 \
+  --recipe deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config \
+  --mode pretrain
+```
+
+Use the account, partition, and container variables described above, and adjust
+the node count if the cluster exposes a different number of GPUs per node.
+These recipes own their mock dataset and 50-step benchmark schedule. Forced
+load balancing and disabled benchmark correctness checks mean a completed run
+is only an execution smoke test, not a convergence or numerical-parity test.
+For a stricter diagnostic run, enable `ddp.check_for_nan_in_grad=true` and
+`rerun_state_machine.check_for_nan_in_loss=true`; record those overrides when
+comparing performance.
+
+The launchers select `dsv4_step` automatically for these two recipes. The
+synthetic dataset emits fixed THD packed metadata, including boundaries on
+intermediate pipeline stages, with one full-length sequence per microbatch.
+It reproduces the fixed pack shape used in the logs, rather than their random
+token stream or the general variable-length `dp_balanced` data scheduler.
 
 ## Supervised Fine-Tuning
 

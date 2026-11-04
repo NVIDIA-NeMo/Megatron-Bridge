@@ -61,6 +61,21 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
     assert updated.dataset.seq_length == 128
 
 
+def test_mock_override_preserves_recipe_owned_thd_metadata(tmp_path):
+    from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import FixedTHDMockDatasetConfig
+
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    dataset = FixedTHDMockDatasetConfig(seq_length=128, vocab_size=256, seed=1234, metadata_capacity=8)
+    recipe.dataset = dataset
+    recipe.model.seq_length = 128
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path))
+
+    assert updated.dataset is dataset
+    assert updated.dataset.enable_offline_packing is True
+    assert updated.dataset.metadata_capacity == 8
+
+
 @pytest.mark.parametrize(
     ("backend", "visible", "expected"),
     [

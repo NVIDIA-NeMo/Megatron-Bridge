@@ -27,11 +27,11 @@ def test_unwrap_model_uses_fsdp_wrapper_types(monkeypatch):
         pass
 
     monkeypatch.setattr(
-        "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallelV1",
+        "megatron.bridge.utils.mcore_fsdp.FullyShardedDataParallelV1",
         FSDPV1,
     )
     monkeypatch.setattr(
-        "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallelV2",
+        "megatron.bridge.utils.mcore_fsdp.FullyShardedDataParallelV2",
         FSDPV2,
     )
 
