@@ -26,6 +26,7 @@ import torch
 from megatron.core.utils import get_pg_size
 
 from megatron.bridge.models.conversion import model_bridge as model_bridge_utils
+from megatron.bridge.models.conversion._modelopt_kv import _attach_kv_hooks, _KVExportHook, _local_kv_hooks
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
@@ -757,7 +758,9 @@ def build_modelopt_export_plan(
     planning_tasks = concrete_tasks
     local_specs = {}
     capture_error = None
+    local_kv_hooks = {}
     try:
+        local_kv_hooks = _local_kv_hooks(concrete_tasks, model)
         for task in concrete_tasks:
             mapping = getattr(task, "mapping", None)
             if mapping is None or not mapping.is_expert:
@@ -790,6 +793,26 @@ def build_modelopt_export_plan(
 
     pp_group = model_bridge_utils._get_pp_group(model) if torch.distributed.is_initialized() else None
     source_specs = _sync_source_specs(local_specs, pp_group)
+    kv_hooks = {}
+    kv_formats = []
+    kv_error = None
+    try:
+        kv_hooks = _attach_kv_hooks(concrete_tasks, local_kv_hooks, _world_group())
+        kv_formats = [hook.spec[0] for hook in kv_hooks.values() if hook.spec is not None]
+        if kv_formats:
+            from megatron.bridge.models.conversion.quant_mapping import derive_kv_bmm_amax_map
+
+            unmapped = [
+                task.global_param_name
+                for task in concrete_tasks
+                if derive_kv_bmm_amax_map([task.mapping])
+                and (task.global_param_name not in kv_hooks or kv_hooks[task.global_param_name].spec is None)
+            ]
+            if unmapped:
+                raise NotImplementedError(f"Partially quantized KV caches are not supported: {unmapped[:4]}")
+    except Exception as error:
+        kv_error = f"{type(error).__name__}: {error}"
+    _raise_distributed_errors(kv_error, _world_group(), "ModelOpt attention metadata validation failed")
 
     expert_mapping_error = None
     try:
@@ -863,7 +886,7 @@ def build_modelopt_export_plan(
             names = sorted(name for name, _ in named_module_specs)
             raise RuntimeError(f"Inconsistent ModelOpt export specs for fused expert module {module_name}: {names}")
 
-    if not any(spec is not None for spec in named_specs.values()):
+    if not kv_formats and not any(spec is not None for spec in named_specs.values()):
         raise RuntimeError("No supported ModelOpt quantized weights were found")
 
     from modelopt.torch.export.quantized_weight_export import build_hf_quantization_config
@@ -878,7 +901,10 @@ def build_modelopt_export_plan(
             raise ValueError(f"Inconsistent ModelOpt export spec for tied weight {alias}")
         named_specs[alias] = source_spec
 
-    quantization_config = build_hf_quantization_config(named_specs)
+    if kv_formats:
+        quantization_config = build_hf_quantization_config(named_specs, kv_cache_formats=kv_formats)
+    else:
+        quantization_config = build_hf_quantization_config(named_specs)
 
     export_tasks = []
     for task in concrete_tasks:
@@ -902,7 +928,9 @@ def build_modelopt_export_plan(
         weight_dtype = task.weight_dtype
         if weight_dtype is None and source is not None:
             weight_dtype = source.weight_dtype
-        export_tasks.append(replace(task, mapping=mapping, export_hook=None, weight_dtype=weight_dtype))
+        export_tasks.append(
+            replace(task, mapping=mapping, export_hook=kv_hooks.get(task.global_param_name), weight_dtype=weight_dtype)
+        )
 
     quantized_params = frozenset(name for name, source in source_specs.items() if source.state is not None)
     return ModelOptExportPlan(
@@ -916,13 +944,24 @@ def build_modelopt_export_plan(
 def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConversionTask]:
     """Attach fresh per-stream state capture hooks to a metadata-only plan."""
     validation_error = None
+    kv_values = {}
     try:
         for task in plan.conversion_tasks:
+            if isinstance(task.export_hook, _KVExportHook):
+                kv_values[task.global_param_name] = task.export_hook.capture()
             if task.global_param_name not in plan.local_quantization_specs:
                 continue
             source = _capture_source_spec(task)
             if source is None or source.state != plan.local_quantization_specs[task.global_param_name]:
                 raise ValueError(f"ModelOpt quantization configuration changed for {task.global_param_name}")
+        values_by_device = {}
+        for values in kv_values.values():
+            if values is not None:
+                values_by_device.setdefault(values.device, []).append(values)
+        for device_values in values_by_device.values():
+            values = torch.cat(device_values)
+            if not bool(torch.all(torch.isfinite(values) & (values > 0))):
+                raise ValueError("ModelOpt attention scales must be finite and positive")
     except Exception as error:
         validation_error = f"{type(error).__name__}: {error}"
     # Validate once per stream, including newly enabled weights. Every rank must
@@ -935,7 +974,18 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
 
     export_tasks = []
     for task in plan.conversion_tasks:
+        kv_finalizer = None
+        if isinstance(task.export_hook, _KVExportHook):
+            hook = replace(task.export_hook, values=kv_values[task.global_param_name])
+            kv_finalizer = _kv_finalizer(hook)
         if task.global_param_name not in plan.quantized_params:
+            if kv_finalizer is not None:
+                task = replace(
+                    task,
+                    export_hook=_compose_export_hooks(
+                        lambda name, tensor: (HFWeightTuple(name, tensor),), kv_finalizer
+                    ),
+                )
             export_tasks.append(task)
             continue
         _validate_quantized_task(task)
@@ -951,10 +1001,29 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
         export_tasks.append(
             replace(
                 task,
-                export_hook=_compose_export_hooks(_make_export_hook(task), finalizer),
+                export_hook=_compose_export_hooks(
+                    _make_export_hook(task),
+                    kv_finalizer if kv_finalizer is not None else finalizer,
+                ),
             )
         )
     return export_tasks
+
+
+def _kv_finalizer(hook: _KVExportHook) -> Callable[[Iterable[HFWeightTuple]], Iterable[HFWeightTuple]]:
+    emitted = False
+
+    def finalize(outputs: Iterable[HFWeightTuple]) -> Iterable[HFWeightTuple]:
+        nonlocal emitted
+        # A bridge may rename QKV outputs; the conversion task still owns the scales.
+        for name, tensor in outputs:
+            if emitted:
+                yield HFWeightTuple(name, tensor)
+            else:
+                emitted = True
+                yield from hook(name, tensor)
+
+    return finalize
 
 
 # HF projections that vLLM / TRT-LLM fuse into one GEMM, which takes a single scale per tensor.
