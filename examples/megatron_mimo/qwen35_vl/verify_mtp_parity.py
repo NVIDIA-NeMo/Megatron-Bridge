@@ -199,7 +199,10 @@ def run_standard(args: argparse.Namespace) -> None:
     batch = {key: value.cuda() if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
     encoder_inputs = batch["modality_inputs"][IMAGES][ENCODER]
     result: dict[str, Any] = {
-        "weights": {LANGUAGE: _weight_fingerprints(model.language_model), IMAGES: _weight_fingerprints(model.vision_model)}
+        "weights": {
+            LANGUAGE: _weight_fingerprints(model.language_model),
+            IMAGES: _weight_fingerprints(model.vision_model),
+        }
     }
     for variant, mtp_input_mask in (("masked", batch["input_ids"] != hf_config.image_token_id), ("unmasked", None)):
         wrapped.zero_grad(set_to_none=True)
@@ -221,7 +224,10 @@ def run_standard(args: argparse.Namespace) -> None:
             "mtp_losses": _pop_mtp_losses(),
         }
         if variant == "masked":
-            result[variant]["grads"] = {LANGUAGE: _gradients(model.language_model), IMAGES: _gradients(model.vision_model)}
+            result[variant]["grads"] = {
+                LANGUAGE: _gradients(model.language_model),
+                IMAGES: _gradients(model.vision_model),
+            }
         logger.info(f"standard ({variant}): lm loss {lm_loss.item():.6f}, mtp losses {result[variant]['mtp_losses']}")
 
     output_dir = Path(args.output_dir)
