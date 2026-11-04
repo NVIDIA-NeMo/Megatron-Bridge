@@ -701,6 +701,15 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         hf_config = self.hf_config
         num_hidden_layers = int(hf_config.num_hidden_layers)
         num_mtp = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+        # Released checkpoints keep the indexer score projection outside `scorer`. Map the name the source uses,
+        # so exports keyed by mapping name (e.g. the ModelOpt quantized export) need no rename.
+        hf_state = getattr(getattr(self, "hf_pretrained", None), "state", None)
+        state_source = getattr(hf_state, "source", None)
+        hf_keys = frozenset(state_source.get_all_keys()) if state_source is not None else frozenset()
+
+        def _indexer_weights_proj(ck: str) -> str:
+            legacy = f"{ck}.attn.indexer.weights_proj.weight"
+            return legacy if legacy in hf_keys else f"{ck}.attn.indexer.scorer.weights_proj.weight"
 
         def _hc_alpha_mappings(hc_prefix: str, hf_scale_param: str) -> list:
             """mHC alpha triplet: one 3-vector hc_*_scale <-> alpha_pre/post/res scalars."""
@@ -742,9 +751,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 _ReplicatedOptional(f"{core}.compressor.norm.weight", f"{ck}.attn.compressor.norm.weight"),
                 # Indexer (CSA layers only) and its own sub-compressor.
                 _ReplicatedOptional(f"{core}.indexer.linear_wq_b.weight", f"{ck}.attn.indexer.wq_b.weight"),
-                _ReplicatedOptional(
-                    f"{core}.indexer.linear_weights_proj.weight", f"{ck}.attn.indexer.scorer.weights_proj.weight"
-                ),
+                _ReplicatedOptional(f"{core}.indexer.linear_weights_proj.weight", _indexer_weights_proj(ck)),
                 _ReplicatedOptional(
                     f"{core}.indexer.compressor.linear_wkv.weight", f"{ck}.attn.indexer.compressor.wkv.weight"
                 ),

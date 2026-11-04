@@ -226,6 +226,17 @@ class TestDeepSeekV4QuantizedExport:
 
         assert result is weight
 
+    @pytest.mark.parametrize("source_name", ["weights_proj", "scorer.weights_proj"])
+    def test_indexer_mapping_uses_source_checkpoint_name(self, bridge_without_mtp, source_name):
+        """Exports keyed by mapping name, like the ModelOpt quantized export, must see the source's name."""
+        source_keys = [f"layers.{i}.attn.indexer.{source_name}.weight" for i in range(4)]
+        source = SimpleNamespace(get_all_keys=lambda: source_keys)
+        bridge_without_mtp.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        hf_params = [m.hf_param for m in bridge_without_mtp.mapping_registry().mappings]
+
+        assert [name for name in hf_params if isinstance(name, str) and "weights_proj" in name] == source_keys
+
     @pytest.mark.parametrize("weight_dtype", [None, torch.bfloat16])
     def test_export_uses_legacy_flat_indexer_weight_name_when_source_requires_it(self, weight_dtype):
         bridge = DeepSeekV4Bridge()
