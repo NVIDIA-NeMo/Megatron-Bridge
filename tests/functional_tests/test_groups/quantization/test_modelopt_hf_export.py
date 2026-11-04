@@ -141,9 +141,9 @@ PROJECTION = {
 @pytest.mark.parametrize(
     ("model", "config", "parallelisms"),
     [
-        # Nemotron-H, and Qwen3 with Qwen3.5-VL, cover TP, PP and EP; the other models one or two of them.
+        # Nemotron-H covers TP, PP and EP, Qwen3 with Qwen3.5-VL TP, PP and ETP; the other models one or two of them.
         ("qwen3", "fp8", [("--tp", "2")]),
-        ("qwen3_5_vl_moe", "mixed", [("--pp", "2"), ("--ep", "2")]),
+        ("qwen3_5_vl_moe", "mixed", [("--pp", "2"), ("--etp", "2")]),
         ("nemotron_h", "nvfp4", [("--tp", "2"), ("--pp", "2"), ("--ep", "2")]),
         ("glm5_next", "nvfp4", [("--ep", "2")]),
         # DeepSeek-V4 attention supports TP=1 only.
