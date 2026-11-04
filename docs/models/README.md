@@ -189,7 +189,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
       </a>
       <a class="verification-model-link" href="qwen/qwen3.5-35b-a3b.html#verified-qwen3.5-35b-a3b">
         <strong title="Qwen/Qwen3.5-35B-A3B">Qwen3.5-35B-A3B</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
       <a class="verification-model-link" href="qwen/qwen3.6-35b-a3b.html#verified-qwen3.6-35b-a3b">
         <strong title="Qwen/Qwen3.6-35B-A3B">Qwen3.6-35B-A3B</strong>
