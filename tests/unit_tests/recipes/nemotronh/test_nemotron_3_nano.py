@@ -33,6 +33,8 @@ import torch
 
 from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano import (
+    nemotron_3_5_lightning_pretrain_8k_config,
+    nemotron_3_5_lightning_pretrain_8k_deterministic_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config,
 )
@@ -653,5 +655,33 @@ def test_gb200_8gpu_deterministic_pretrain_applies_determinism():
     assert cfg.train.global_batch_size == base.train.global_batch_size
     for key, value in DETERMINISM_ENV_VARS.items():
         assert cfg.env_vars[key] == value
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.unit
+def test_gb200_lightning_8k_deterministic_pretrain_applies_determinism():
+    """The deterministic Lightning recipe keeps the 8K contract and layout and adds determinism settings."""
+    from megatron.bridge.recipes.nemotronh import (
+        nemotron_3_5_lightning_pretrain_8k_deterministic_config as exported_config,
+    )
+
+    base = nemotron_3_5_lightning_pretrain_8k_config()
+    cfg = nemotron_3_5_lightning_pretrain_8k_deterministic_config()
+
+    assert exported_config is nemotron_3_5_lightning_pretrain_8k_deterministic_config
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    assert cfg.comm_overlap.tp_comm_overlap is False
+    for field in ("seq_length", "expert_model_parallel_size", "mtp_num_layers", "moe_flex_dispatcher_backend"):
+        assert getattr(cfg.model, field) == getattr(base.model, field)
+    assert cfg.train.global_batch_size == base.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == base.train.micro_batch_size == 2
+    assert cfg.optimizer.lr == base.optimizer.lr
+    for key, value in DETERMINISM_ENV_VARS.items():
+        assert cfg.env_vars[key] == value
+    for key in ("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN", "NVLINK_DOMAIN_SIZE", "USE_MNNVL"):
+        assert cfg.env_vars[key] == base.env_vars[key]
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1

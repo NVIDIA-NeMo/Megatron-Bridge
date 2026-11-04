@@ -192,6 +192,22 @@ class TestTokenizers:
             use_gigatoken=False,
         )
 
+    @patch("megatron.core.tokenizers.utils.build_tokenizer.MegatronTokenizer.from_pretrained")
+    def test_build_sft_tokenizer_uses_prompt_format_set_after_construction(self, mock_from_pretrained):
+        """A prompt format overridden after construction reaches MCore's SFT builder."""
+        mock_from_pretrained.return_value = sentinel.tokenizer
+        config = TokenizerConfig(tokenizer_type="SFTTokenizer", tokenizer_model="tokenizer.model")
+        config.tokenizer_prompt_format = "chatml"
+
+        assert build_tokenizer(config) is sentinel.tokenizer
+
+        mock_from_pretrained.assert_called_once_with(
+            tokenizer_path="tokenizer.model",
+            metadata_path={"library": "sft"},
+            prompt_format="chatml",
+            use_gigatoken=False,
+        )
+
     @pytest.mark.timeout(30)
     def test_hf_tokenizer_as_local_path_object(self, tmp_path):
         # Cover the user case where a user has made a local path object of a WIP tokenizer and wants

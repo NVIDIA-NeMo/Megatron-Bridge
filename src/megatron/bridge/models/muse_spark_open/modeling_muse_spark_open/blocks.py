@@ -29,6 +29,7 @@ from megatron.core.extensions.transformer_engine import (
     TERowParallelLinear,
 )
 from megatron.core.models.hybrid.hybrid_block import HybridStack, HybridStackSubmodules
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.attention import SelfAttentionSubmodules
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.module import mark_keep_in_fp32
@@ -200,17 +201,27 @@ class MuseSparkMoE(MoELayer):
         self.pre_expert_norm = TENorm(config, config.moe_latent_size, eps=config.layernorm_epsilon)
 
     def preprocess(
-        self, hidden_states: Tensor, probs: Tensor, routing_map: Tensor, padding_mask: Tensor | None = None
+        self,
+        hidden_states: Tensor,
+        probs: Tensor,
+        routing_map: Tensor,
+        padding_mask: Tensor | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
     ) -> tuple[Tensor, Tensor]:
         """Normalize the shared latent representation before dispatching tokens.
 
-        As in ``MoELayer.preprocess``, only the flex dispatcher takes the batch-first padding mask.
+        As in ``MoELayer.preprocess``, only the flex dispatcher takes the batch-first padding mask
+        and the packed-sequence metadata.
         """
         hidden_states, _ = self.fc1_latent_proj(hidden_states)
         hidden_states = self.pre_expert_norm(hidden_states)
         if isinstance(self.token_dispatcher, MoEFlexTokenDispatcher):
             return self.token_dispatcher.dispatch_preprocess(
-                hidden_states, routing_map, probs, padding_mask=padding_mask
+                hidden_states,
+                routing_map,
+                probs,
+                padding_mask=padding_mask,
+                packed_seq_params=packed_seq_params,
             )
         return self.token_dispatcher.dispatch_preprocess(hidden_states, routing_map, probs)
 

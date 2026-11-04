@@ -17,9 +17,11 @@ from unittest.mock import MagicMock
 import pytest
 from megatron.training.config.instantiate_utils import instantiate
 
+import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 from megatron.bridge.data import DatasetBuildContext
 from megatron.bridge.data.builders import MockVLMSFTDatasetBuilder, MockVLMSFTDatasetConfig
 from megatron.bridge.data.builders import mock_vlm_sft as builder_module
+from megatron.bridge.data.collators.registry import resolve_model_collate
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -101,6 +103,30 @@ def test_builder_loads_processor_at_runtime_and_builds_requested_splits(monkeypa
         assert kwargs["pad_to_max_length"] is True
         assert kwargs["pad_to_multiple_of"] == 64
         assert kwargs["in_batch_packing_pad_to_multiple_of"] == 8
+
+
+def test_builder_collates_super_vl_processor_with_nemotron_omni_collator(monkeypatch: pytest.MonkeyPatch):
+    processor = type("NemotronH_Omni_Reasoning_V3Processor", (), {})()
+    calls = []
+
+    def expanded_collate(examples, processor, **kwargs):
+        calls.append((examples, processor))
+        return {}
+
+    monkeypatch.setattr(builder_module.AutoProcessor, "from_pretrained", MagicMock(return_value=processor))
+    monkeypatch.setattr(nemotron_omni_collate, "nemotron_omni_expanded_collate_fn", expanded_collate)
+    resolve_model_collate.cache_clear()
+    try:
+        train, _, _ = MockVLMSFTDatasetBuilder(_config(trust_remote_code=True)).build(
+            DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0)
+        )
+        examples = [train[0]]
+        train.collate_fn(examples)
+    finally:
+        # Drop the cached test double before monkeypatch restores the real collator.
+        resolve_model_collate.cache_clear()
+
+    assert calls == [(examples, processor)]
 
 
 @pytest.mark.parametrize(
