@@ -7,7 +7,14 @@ import torch
 from megatron.bridge.engine import AdamParams, ModelOutput, NormalizationPolicy, PreparedMicrobatch
 from megatron.bridge.engine.accumulation import AccumulationWindow
 from megatron.bridge.engine.batching import MicrobatchMapping, SequenceMapping
-from megatron.bridge.engine.losses import cross_entropy, importance_sampling, ppo_clip, target_logprobs, value_loss
+from megatron.bridge.engine.losses import (
+    _bounded_exp,
+    cross_entropy,
+    importance_sampling,
+    ppo_clip,
+    target_logprobs,
+    value_loss,
+)
 from megatron.bridge.engine.optim import apply_adam_params
 from megatron.bridge.engine.schedule import model_loss_mask, scored_tensor, split_loss_return, to_model_output
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
@@ -146,6 +153,45 @@ def test_ppo_clip_overflowing_ratio_keeps_loss_finite_and_gradient_zero():
     loss.backward()
     assert torch.isfinite(output.logprobs.grad).all()
     assert output.logprobs.grad[0, 1].item() == 0.0
+
+
+def test_ppo_clip_large_gap_with_negative_advantage_keeps_a_corrective_gradient():
+    # Slot 1: logp -1.0 vs old -22.0 (log-ratio 21) on a negatively rewarded token: the unclipped
+    # branch applies, the loss must be finite and its gradient must push logp down (positive sign).
+    batch = _rl_batch(advantages=[0.0, -1.0, 0.0, 0.0], old_logprobs=[0.0, -22.0, -2.1, 0.0])
+    output = _rl_output()
+    loss, metrics = ppo_clip(batch, output, clip_low=0.2, clip_high=0.2)
+    assert math.isfinite(loss.item()) and loss.item() > 0
+    assert metrics["clipped_tokens"].item() == 1.0  # outside the clip range, yet the unclipped branch is used
+    loss.backward()
+    grad = output.logprobs.grad[0, 1].item()
+    assert math.isfinite(grad) and grad > 0
+    assert grad == pytest.approx(2.0 * math.exp(20.0), rel=1e-5)  # tangent-line slope beyond the bound
+
+
+def test_ppo_clip_kl_gradient_survives_large_negative_delta():
+    # logp -1.0 vs reference -22.0: delta = -21, k3 ~ 20, d(k3)/d(logp) = 1 - exp(delta) ~ +1.
+    batch = _rl_batch(
+        advantages=[0.0, 0.0, 0.0, 0.0],
+        old_logprobs=[0.0, -1.0, -2.1, 0.0],
+        reference_logprobs=[0.0, -22.0, -2.1, 0.0],
+    )
+    output = _rl_output()
+    loss, metrics = ppo_clip(batch, output, clip_low=0.2, clip_high=0.2, kl_beta=0.5)
+    assert metrics["kl_sum"].item() == pytest.approx(math.exp(-21.0) + 21.0 - 1.0, rel=1e-6)
+    loss.backward()
+    assert output.logprobs.grad[0, 1].item() == pytest.approx(0.5 * (1.0 - math.exp(-21.0)), rel=1e-6)
+
+
+def test_bounded_exp_is_exact_below_the_bound_and_linear_above():
+    x = torch.tensor([-30.0, 0.0, 19.0, 20.0, 21.0, 99.0], requires_grad=True)
+    y = _bounded_exp(x)
+    assert torch.allclose(y[:4], x[:4].exp())
+    assert y[4].item() == pytest.approx(math.exp(20.0) * 2.0, rel=1e-6)
+    assert math.isfinite(y[5].item())
+    y.sum().backward()
+    assert torch.allclose(x.grad[:4], x[:4].detach().exp())
+    assert x.grad[4].item() == pytest.approx(math.exp(20.0), rel=1e-6) and x.grad[5].item() == x.grad[4].item()
 
 
 def test_truncated_importance_weight_overflow_stays_finite():

@@ -24,6 +24,7 @@ active positions). The engine reduces them over DP x CP alongside the loss and r
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 import torch
@@ -33,14 +34,18 @@ from megatron.bridge.engine.datum import ModelOutput, PreparedMicrobatch
 
 LossReturn = tuple[torch.Tensor, dict[str, torch.Tensor]]
 
-# Log-ratios are clamped to this magnitude before exponentiating. exp(20) is about 5e8, finite in FP32
-# with a finite gradient; without the clamp a large logprob gap gives an infinite ratio and, through
-# the clipped branch, a NaN gradient (0 times inf) even when the forward loss is finite.
+# Above this log-ratio, exponentials continue linearly (slope exp(20), about 5e8) instead of growing
+# to inf. Loss and gradient stay finite and keep their sign, so a token the policy drove far from the
+# old or reference distribution still receives a corrective (if large) gradient; gradient clipping
+# handles the magnitude. Below the bound the exponential is exact; nothing is clamped on the negative
+# side, where exp decays to zero on its own.
 LOG_RATIO_BOUND = 20.0
 
 
-def _safe_exp(log_ratio: torch.Tensor) -> torch.Tensor:
-    return log_ratio.clamp(-LOG_RATIO_BOUND, LOG_RATIO_BOUND).exp()
+def _bounded_exp(x: torch.Tensor) -> torch.Tensor:
+    """``exp(x)`` up to ``LOG_RATIO_BOUND``, then its tangent line: finite, monotone, non-zero gradient."""
+    capped = x.clamp(max=LOG_RATIO_BOUND)
+    return capped.exp() + math.exp(LOG_RATIO_BOUND) * (x - capped)
 
 
 def cross_entropy(batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
@@ -80,9 +85,10 @@ def _importance_weights(
     if tis_coef is None:
         return None, {}
     rollout = _active_field(batch, "rollout_logprobs", active, needed_by=needed_by)
-    weights = _safe_exp(old - rollout)
-    truncated = (weights > tis_coef).float().sum()
-    return weights.clamp(max=tis_coef), {"tis_truncated_tokens": truncated}
+    log_weights = old - rollout
+    log_cap = math.log(tis_coef)
+    truncated = (log_weights > log_cap).float().sum()
+    return log_weights.clamp(max=log_cap).exp(), {"tis_truncated_tokens": truncated}  # truncated in log space
 
 
 def importance_sampling(
@@ -90,15 +96,15 @@ def importance_sampling(
 ) -> LossReturn:
     """Importance-weighted policy gradient: ``-(exp(logp - old) * advantage)`` summed over active positions.
 
-    ``tis_coef`` enables truncated importance sampling against ``rollout_logprobs``. Log-ratios are
-    clamped to ``LOG_RATIO_BOUND`` before exponentiating. Metrics: ``abs_logprob_diff_sum``
+    ``tis_coef`` enables truncated importance sampling against ``rollout_logprobs``. The ratio grows
+    linearly past ``LOG_RATIO_BOUND`` (see ``_bounded_exp``). Metrics: ``abs_logprob_diff_sum``
     (``|logp - old|``) and, with TIS, ``tis_truncated_tokens``.
     """
     active = batch.active_mask
     logp = output.logprobs[active].float()
     old = _active_field(batch, "old_logprobs", active, needed_by="importance_sampling")
     advantages = _active_field(batch, "advantages", active, needed_by="importance_sampling")
-    ratio = _safe_exp(logp - old)
+    ratio = _bounded_exp(logp - old)
     weights, metrics = _importance_weights(batch, old, active, tis_coef, needed_by="importance_sampling")
     per_token = ratio * advantages
     if weights is not None:
@@ -121,7 +127,10 @@ def ppo_clip(
     Per token: ``-w * min(r * A, clamp(r, 1 - clip_low, 1 + clip_high) * A) + kl_beta * k3`` where
     ``r = exp(logp - old)``, ``k3 = exp(ref - logp) - (ref - logp) - 1`` against ``reference_logprobs``
     (only when ``kl_beta > 0``) and ``w`` the truncated importance weight (only with ``tis_coef``).
-    Log-ratios are clamped to ``LOG_RATIO_BOUND`` before exponentiating, far outside any clip range.
+    The clipped branch is formed in log space, so it never overflows and has PPO's zero gradient
+    outside the clip range; the branch is chosen in log space too, and the unclipped ratio is only
+    evaluated where it is selected, through ``_bounded_exp`` (linear past ``LOG_RATIO_BOUND``), so a
+    large gap gives a finite, corrective gradient instead of inf or NaN.
     Metrics: ``clipped_tokens`` (ratio outside the clip range), ``abs_logprob_diff_sum``, ``kl_sum`` when
     the KL term is on, ``tis_truncated_tokens`` with TIS.
     """
@@ -129,20 +138,25 @@ def ppo_clip(
     logp = output.logprobs[active].float()
     old = _active_field(batch, "old_logprobs", active, needed_by="ppo_clip")
     advantages = _active_field(batch, "advantages", active, needed_by="ppo_clip")
-    ratio = _safe_exp(logp - old)
-    clipped_ratio = ratio.clamp(1.0 - clip_low, 1.0 + clip_high)
-    surrogate = torch.minimum(ratio * advantages, clipped_ratio * advantages)
+    log_ratio = logp - old
+    log_low, log_high = math.log(1.0 - clip_low), math.log(1.0 + clip_high)
+    clipped_ratio = log_ratio.clamp(log_low, log_high).exp()
+    # min(r*A, clip(r)*A) picks the unclipped branch when A >= 0 and r is below the upper clip, or when
+    # A < 0 and r is above the lower clip; decided on log_ratio so no overflowing value is needed.
+    use_unclipped = torch.where(advantages >= 0, log_ratio <= log_high, log_ratio >= log_low)
+    ratio = _bounded_exp(torch.where(use_unclipped, log_ratio, torch.zeros_like(log_ratio)))
+    surrogate = torch.where(use_unclipped, ratio * advantages, clipped_ratio * advantages)
     weights, metrics = _importance_weights(batch, old, active, tis_coef, needed_by="ppo_clip")
     if weights is not None:
         surrogate = weights * surrogate
     loss = -surrogate.sum()
     if kl_beta > 0.0:
         reference = _active_field(batch, "reference_logprobs", active, needed_by="ppo_clip with kl_beta > 0")
-        delta = (reference - logp).clamp(-LOG_RATIO_BOUND, LOG_RATIO_BOUND)
-        kl = delta.exp() - delta - 1.0
+        delta = reference - logp
+        kl = _bounded_exp(delta) - delta - 1.0  # k3; the linear term keeps its gradient for any delta
         loss = loss + kl_beta * kl.sum()
         metrics["kl_sum"] = kl.detach().sum()
-    outside = (ratio < 1.0 - clip_low) | (ratio > 1.0 + clip_high)
+    outside = (log_ratio < log_low) | (log_ratio > log_high)
     metrics["clipped_tokens"] = outside.detach().float().sum()
     metrics["abs_logprob_diff_sum"] = (logp - old).detach().abs().sum()
     return loss, metrics
