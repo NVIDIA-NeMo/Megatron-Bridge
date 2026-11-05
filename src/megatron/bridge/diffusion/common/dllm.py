@@ -23,12 +23,35 @@ calls these helpers to score confidence and choose which masked positions to
 unmask at each step.
 """
 
-from typing import Optional
+from collections.abc import Callable
+from typing import Optional, cast
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn.attention.flex_attention import create_block_mask
+from torch.nn.attention.flex_attention import BlockMask, create_block_mask
+
+
+# Compile the predicate and tile reduction together, avoiding the eager dense
+# token-pair mask. Dynamic shapes avoid one compilation per microbatch length.
+_COMPILED_CREATE_BLOCK_MASK = torch.compile(create_block_mask, dynamic=True)
+
+
+def build_block_mask(
+    mask_mod: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor],
+    *,
+    batch_size: int | None,
+    query_length: int,
+    key_value_length: int,
+    device: torch.device | str,
+) -> BlockMask:
+    """Build a compiled attention block mask, shared across attention heads."""
+    return cast(
+        BlockMask,
+        _COMPILED_CREATE_BLOCK_MASK(
+            mask_mod, B=batch_size, H=None, Q_LEN=query_length, KV_LEN=key_value_length, device=device
+        ),
+    )
 
 
 def forward_process_simple_masking(input_ids, mask_token_id, eps=1e-3, loss_mask=None, generator=None):
@@ -178,7 +201,13 @@ def get_transfer_index(
     return x0, transfer_index
 
 
-def compute_block_mask(block_size, max_seq_length):
+def compute_block_mask(
+    block_size: int,
+    max_seq_length: int,
+    *,
+    device: torch.device | str = "cuda",
+    padding_mask: torch.Tensor | None = None,
+) -> BlockMask:
     """Compute the sbd_block_diff attention mask.
 
     The semi-block-diffusion mask is composed of three sub-masks over a
@@ -190,13 +219,23 @@ def compute_block_mask(block_size, max_seq_length):
     Args:
         block_size: Block size for block-based attention.
         max_seq_length: Length of one half (xt or x0) of the sequence.
+        padding_mask: Optional boolean [batch, 2*max_seq_length] mask; True
+            excludes padding as keys. Padded queries attend only themselves.
 
     Returns:
         BlockMask for use with ``flex_attention``.
     """
     n = max_seq_length
+    if block_size <= 0 or n <= 0:
+        raise ValueError("Block size and half-sequence length must be positive")
+    if padding_mask is not None and (
+        padding_mask.ndim != 2 or padding_mask.shape[1] != 2 * n or padding_mask.dtype != torch.bool
+    ):
+        raise ValueError("padding_mask must be boolean [batch, 2*max_seq_length]")
 
-    def sbd_block_diff_mask(b, h, q_idx, kv_idx):
+    def sbd_block_diff_mask(
+        b: torch.Tensor, h: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+    ) -> torch.Tensor:
         x0_flag_q = q_idx >= n
         x0_flag_kv = kv_idx >= n
 
@@ -207,7 +246,19 @@ def compute_block_mask(block_size, max_seq_length):
         offset_block_causal = (block_q > block_kv) & x0_flag_kv & (~x0_flag_q)
         fully_causal = (q_idx >= kv_idx) & x0_flag_kv & x0_flag_q
 
-        return block_diagonal | offset_block_causal | fully_causal
+        allowed = block_diagonal | offset_block_causal | fully_causal
+        if padding_mask is not None:
+            # FlexAttention evaluates rounded tiles, including indices past 2*n.
+            q_pad = padding_mask[b, q_idx.clamp_max(2 * n - 1)]
+            kv_pad = padding_mask[b, kv_idx.clamp_max(2 * n - 1)]
+            allowed = (allowed & ~q_pad & ~kv_pad) | (q_pad & (q_idx == kv_idx))
+        return allowed
 
     q_len = max_seq_length * 2
-    return create_block_mask(sbd_block_diff_mask, B=None, H=None, Q_LEN=q_len, KV_LEN=q_len)
+    return build_block_mask(
+        sbd_block_diff_mask,
+        batch_size=None if padding_mask is None else padding_mask.shape[0],
+        query_length=q_len,
+        key_value_length=q_len,
+        device=device,
+    )

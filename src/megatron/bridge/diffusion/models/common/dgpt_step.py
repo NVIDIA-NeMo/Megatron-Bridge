@@ -240,7 +240,9 @@ class DGPTStep:
         input_ids_len = noisy_inputs.shape[1]
         # sbd_block_diff doubles the sequence: [xt | x0]
         noisy_inputs = torch.cat([noisy_inputs, tokens], dim=1)
-        return noisy_inputs, labels, loss_mask, attention_mask, position_ids, masked_indices, p_mask, input_ids_len
+        # The dataset's causal mask describes undoubled tokens. The diffusion
+        # attention layer builds its own block mask for these unpadded halves.
+        return noisy_inputs, labels, loss_mask, None, position_ids, masked_indices, p_mask, input_ids_len
 
 
 # ---------------------------------------------------------------------------

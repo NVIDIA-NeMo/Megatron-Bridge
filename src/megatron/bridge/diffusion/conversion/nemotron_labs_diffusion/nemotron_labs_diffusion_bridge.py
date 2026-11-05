@@ -75,33 +75,54 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
         # Auto-detect checkpoint format: VLM configs nest text params under text_config
         self._is_text_only = not hasattr(hf_config, "text_config")
 
-        # NemotronLabsDiffusionConfig (a trust_remote_code config) does not declare
-        # model-specific fields as dataclass fields.  In transformers 5.x
-        # PretrainedConfig is a dataclass, so MLM's _convert_value_to_dict uses the
-        # dataclass-fields path and silently drops all model-specific attributes
-        # (hidden_size, rope_parameters, etc.).  Adding to_cfg_dict to the class
-        # makes the serializer use PretrainedConfig.to_dict() which captures everything.
-        cfg_cls = type(hf_config)
-        if not hasattr(cfg_cls, "to_cfg_dict") and hasattr(hf_config, "to_dict"):
+        # Resolve checkpoint metadata into native provider fields once. Attention
+        # consumes these fields, never the original mutable HF configuration.
+        rope = text_config.rope_parameters
+        rope_type = rope.get("rope_type", "default")
+        if rope_type not in ("default", "yarn"):
+            raise ValueError(f"Unsupported NemotronLabsDiffusion RoPE type: {rope_type}")
+        rope_kwargs = {"rope_type": rope_type}
+        if rope_type == "yarn":
+            rope_kwargs.update(
+                yarn_rotary_scaling_factor=rope["factor"],
+                yarn_original_max_position_embeddings=rope["original_max_position_embeddings"],
+                yarn_beta_fast=rope.get("beta_fast", 32.0),
+                yarn_beta_slow=rope.get("beta_slow", 1.0),
+                yarn_mscale=rope.get("mscale"),
+                yarn_mscale_all_dim=rope.get("mscale_all_dim"),
+                yarn_attention_factor=rope.get("attention_factor"),
+                yarn_correction_range_round_to_int=rope.get("truncate", True),
+            )
+        beta = rope.get("llama_4_scaling_beta")
+        if beta is not None:
+            rope_kwargs.update(
+                apply_llama4_style_query_key_layer_scaling=True,
+                llama4_scaling_beta=beta,
+                yarn_original_max_position_embeddings=rope["original_max_position_embeddings"],
+            )
 
-            def _to_cfg_dict(self):
-                cls = self.__class__
-                return {
-                    "_target_": f"{cls.__module__}.{cls.__qualname__}.from_dict",
-                    "_call_": True,
-                    "config_dict": self.to_dict(),
-                }
-
-            cfg_cls.to_cfg_dict = _to_cfg_dict
+        model_kwargs = {}
+        for hf_key, provider_key in (
+            ("num_attention_heads", "num_attention_heads"),
+            ("num_key_value_heads", "num_query_groups"),
+            ("head_dim", "kv_channels"),
+            ("rms_norm_eps", "layernorm_epsilon"),
+            ("max_position_embeddings", "seq_length"),
+            ("block_size", "block_size"),
+        ):
+            value = getattr(text_config, hf_key, None)
+            if value is not None:
+                model_kwargs[provider_key] = value
 
         return NemotronLabsDiffusionModelProvider(
+            **rope_kwargs,
+            **model_kwargs,
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,
             num_layers=text_config.num_hidden_layers,
             share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
-            rotary_base=text_config.rope_parameters["rope_theta"],
+            rotary_base=rope["rope_theta"],
             vocab_size=text_config.vocab_size,
-            hf_config=hf_config,
         )
 
     def _text_only_mappings(self) -> list:

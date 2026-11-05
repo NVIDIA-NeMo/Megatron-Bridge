@@ -158,6 +158,14 @@ class TestDGPTStepApplyNoise:
         position_ids = torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)
         return step._apply_noise(tokens, labels, loss_mask, attention_mask, position_ids)
 
+    def test_undoubled_dataset_mask_is_not_forwarded_to_block_attention(self):
+        step = self._make_step()
+        tokens = torch.arange(8)[None]
+        dataset_mask = ~torch.ones(8, 8, dtype=torch.bool).tril()[None, None]
+        result = step._apply_noise(tokens, tokens, torch.ones_like(tokens), dataset_mask, tokens)
+        assert result[0].shape == (1, 16)
+        assert result[3] is None
+
     def test_output_sequence_is_doubled(self):
         """_apply_noise concatenates [noisy | clean], doubling the sequence length."""
         step = self._make_step()
