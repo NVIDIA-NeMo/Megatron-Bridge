@@ -73,7 +73,6 @@ def llama3_8b_pretrain_8gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
 def llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VRNVL72, FP8-MX (alias of GB300)."""
     cfg = llama3_8b_pretrain_8gpu_gb300_fp8mx_config()
-    # Run dot-product attention in FP8 as well; the GB300 recipe leaves it in BF16.
     cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
