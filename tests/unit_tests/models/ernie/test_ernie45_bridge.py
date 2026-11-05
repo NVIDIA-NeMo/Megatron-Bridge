@@ -558,12 +558,17 @@ class TestErnie45DecoderBlockSpec:
         bias = torch.tensor([0.0, 0.08, 0.0, -0.02])
         router = Ernie45InferenceTopKRouter.__new__(Ernie45InferenceTopKRouter)
         torch.nn.Module.__init__(router)
-        router.config = SimpleNamespace(
-            moe_router_pre_softmax=False,
-            moe_router_num_groups=None,
-            moe_router_group_topk=None,
-            moe_router_topk_scaling_factor=None,
-            moe_router_fusion=False,
+        router.config = TransformerConfig(
+            num_layers=1,
+            hidden_size=16,
+            num_attention_heads=4,
+            num_moe_experts=4,
+            moe_router_topk=2,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            add_bias_linear=False,
+            use_cpu_initialization=True,
         )
         router.is_hash_layer = False
         router.qb_beta = None
