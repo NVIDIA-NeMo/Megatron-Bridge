@@ -86,10 +86,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="gpt-oss-20b-sft-long-context-h100" aria-controls="gpt-oss-20b-sft-long-context-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="gpt-oss-20b-sft-long-context-h100" aria-controls="gpt-oss-20b-sft-long-context-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -311,35 +311,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="gpt-oss-20b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="gpt-oss-20b-sft-long-context-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-10</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>2.235548</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.175326</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>306,108.170 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>13.430 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>428.189 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -355,7 +355,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 20 optimizer steps using the 32K SFT recipe, immutable Tulu3 data selection, offline packing, TP4, CP2, sequence parallelism, non-fused cross entropy, and full activation recompute. The run loaded 120 packed rows, recorded 99.79% packing efficiency with 83.333 source sequences per pack on average, produced finite loss from 2.235548 to 1.175326, and reported zero skipped and zero NaN iterations.
+        <p>Verification is pending on the card default revision, which contains the 32K recipe. The original recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete 20 optimizer steps with the pinned Tulu3 selection, offline packing, TP4/CP2, sequence parallelism, non-fused cross entropy, and full activation recompute, with finite losses and zero skipped or NaN iterations. Record all five metrics from that run before marking this item verified.
 </p>
       </section>
     </article>

@@ -687,12 +687,12 @@ class TestSetupOptimizerWithPgCollection:
         assert call_kwargs["pg_collection"] is None
 
     @patch("megatron.bridge.training.optim.get_model_config")
-    @patch("megatron.bridge.training.optim.get_megatron_muon_optimizer")
+    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
     def test_setup_optimizer_passes_pg_collection_to_muon_optimizer(
-        self, mock_scheduler, mock_get_muon_optimizer, mock_get_model_config
+        self, mock_scheduler, mock_get_optimizer, mock_get_model_config
     ):
-        """Test that setup_optimizer passes pg_collection to muon optimizer."""
+        """Test that setup_optimizer passes pg_collection for Muon construction."""
         from megatron.core.optimizer import OptimizerConfig
 
         from megatron.bridge.training.config import SchedulerConfig
@@ -703,7 +703,7 @@ class TestSetupOptimizerWithPgCollection:
         mock_model = MagicMock()
         mock_pg_collection = MagicMock()
         mock_optimizer = MagicMock()
-        mock_get_muon_optimizer.return_value = mock_optimizer
+        mock_get_optimizer.return_value = mock_optimizer
 
         optimizer_config = OptimizerConfig(optimizer="muon", lr=1e-3)
         scheduler_config = SchedulerConfig()
@@ -717,9 +717,10 @@ class TestSetupOptimizerWithPgCollection:
             pg_collection=mock_pg_collection,
         )
 
-        # Verify pg_collection was passed to muon optimizer
-        mock_get_muon_optimizer.assert_called_once()
-        call_kwargs = mock_get_muon_optimizer.call_args[1]
+        # Verify pg_collection was passed through the unified optimizer factory.
+        mock_get_optimizer.assert_called_once()
+        call_kwargs = mock_get_optimizer.call_args[1]
+        assert call_kwargs["config"] is optimizer_config
         assert call_kwargs["pg_collection"] == mock_pg_collection
 
     @patch("megatron.bridge.training.optim.get_model_config")

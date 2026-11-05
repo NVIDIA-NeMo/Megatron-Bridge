@@ -26,6 +26,48 @@ def test_native_adapter_preserves_schema_for_preprocessing_validation():
     assert adapt_hf_dataset([row], adapter_name=None) == [row]
 
 
+def test_native_adapter_retains_all_columns_for_preprocessing_validation():
+    row = {"messages": "question", "conversation": None, "conversations": [], "answer": "answer"}
+
+    assert adapt_hf_dataset([row], adapter_name=None) == [row]
+
+
+def test_native_adapter_renames_all_custom_columns_without_mutating_input():
+    row = {"dialogue": "question", "history": "answer", "id": 7}
+    adapted = adapt_hf_dataset(
+        [row], adapter_name=None, adapter_kwargs={"messages_column": "dialogue", "conversation_column": "history"}
+    )
+
+    assert adapted == [{"messages": "question", "conversation": "answer", "id": 7}]
+    assert row == {"dialogue": "question", "history": "answer", "id": 7}
+
+
+def test_native_adapter_rejects_populated_custom_column_destination_collision():
+    with pytest.raises(ValueError, match="overwrite populated conversation column"):
+        adapt_hf_dataset(
+            [{"dialogue": [{"role": "user", "content": "question"}], "messages": "other"}],
+            adapter_name=None,
+            adapter_kwargs={"messages_column": "dialogue"},
+        )
+
+
+@pytest.mark.parametrize(("custom", "canonical"), [(None, "answer"), ("answer", None)])
+def test_native_adapter_null_alias_does_not_discard_populated_column(custom, canonical):
+    assert adapt_hf_dataset(
+        [{"dialogue": custom, "messages": canonical}],
+        adapter_name=None,
+        adapter_kwargs={"messages_column": "dialogue"},
+    ) == [{"messages": "answer"}]
+
+
+def test_native_adapter_supports_swapped_conversation_column_names():
+    assert adapt_hf_dataset(
+        [{"messages": "answer", "conversation": "question"}],
+        adapter_name=None,
+        adapter_kwargs={"messages_column": "conversation", "conversation_column": "messages"},
+    ) == [{"messages": "question", "conversation": "answer"}]
+
+
 def test_text_adapters_normalize_squad_and_gsm8k():
     squad = adapt_hf_dataset(
         [{"context": "ctx", "question": "q", "answers": {"text": ["a", "also a"]}}],

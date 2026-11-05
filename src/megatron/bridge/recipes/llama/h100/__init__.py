@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.llama.h100.llama2 import *  # noqa: F403
 from megatron.bridge.recipes.llama.h100.llama3 import *  # noqa: F403
 
 
 __all__ = [
-    "llama2_7b_pretrain_2gpu_h100_bf16_config",
     "llama31_405b_peft_32gpu_h100_bf16_config",
     "llama31_405b_pretrain_256gpu_h100_bf16_config",
     "llama31_405b_pretrain_256gpu_h100_bf16_deterministic_config",

@@ -71,6 +71,8 @@ class TestGptOssBridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+        # The mock config has no rope_scaling; GPT-OSS still uses YaRN.
+        assert provider.position_embedding_type == "yarn"
 
     def test_megatron_to_hf_config_preserves_attention_bias(self, mock_pretrained):
         bridge = GPTOSSBridge()
@@ -79,6 +81,139 @@ class TestGptOssBridge:
         hf_config = bridge.megatron_to_hf_config(provider)
 
         assert hf_config["attention_bias"] is True
+
+
+def _gpt_oss_config(**overrides):
+    from transformers import GptOssConfig
+
+    values = dict(
+        hidden_size=64,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        num_local_experts=4,
+        num_experts_per_tok=2,
+        vocab_size=128,
+        sliding_window=32,
+        torch_dtype="bfloat16",
+    )
+    values.update(overrides)
+    config = GptOssConfig(**values)
+    config.architectures = ["GptOssForCausalLM"]
+    return config
+
+
+class TestGptOssBuilderConfig:
+    """Builder-backed ModelConfig path for GPT-OSS."""
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in GPTOSSBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        assert GPTOSSBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert GPTOSSBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        from unittest.mock import patch
+
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+        from megatron.bridge.models.gpt_oss.gpt_oss_bridge import quick_gelu
+
+        config = _gpt_oss_config()
+        bridge = GPTOSSBridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(config)
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.num_moe_experts == config.num_local_experts
+        assert model_config.moe_ffn_hidden_size == config.intermediate_size
+        assert model_config.activation_func is quick_gelu
+        assert model_config.activation_func_clamp_value == 7.0
+        assert model_config.glu_linear_offset == 1.0
+        assert model_config.softmax_type == "learnable"
+        assert model_config.window_size == (config.sliding_window - 1, 0)
+        assert model_config.window_attn_skip_freq == 2
+        assert model_config.position_embedding_type == "yarn"
+        assert model_config.yarn_rotary_scaling_factor == 32.0
+        assert model_config.yarn_correction_range_round_to_int is False
+        assert model_config.add_qkv_bias is True
+        assert model_config.share_embeddings_and_output_weights is False
+        assert model_config.params_dtype == torch.bfloat16
+
+    def test_model_config_matches_provider_runtime_config(self):
+        from dataclasses import fields
+
+        config = _gpt_oss_config()
+        bridge = GPTOSSBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = config
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(pretrained)
+
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
+        for field_name in sorted(shared):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+        assert model_config.transformer_layer_spec is None
+
+    @pytest.mark.parametrize(
+        "rope_scaling",
+        [
+            "missing",
+            None,
+            {},
+            {"rope_type": "yarn", "factor": 32.0, "original_max_position_embeddings": 4096, "truncate": False},
+        ],
+        ids=["missing", "none", "empty", "hf_yarn"],
+    )
+    def test_both_paths_use_yarn_regardless_of_hf_rope_scaling(self, rope_scaling):
+        config = SimpleNamespace(
+            architectures=["GptOssForCausalLM"],
+            hidden_size=64,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=16,
+            num_local_experts=4,
+            num_experts_per_tok=2,
+            vocab_size=128,
+            max_position_embeddings=4096,
+            sliding_window=32,
+            hidden_act="silu",
+            attention_bias=True,
+            torch_dtype="bfloat16",
+        )
+        if rope_scaling != "missing":
+            config.rope_scaling = rope_scaling
+        bridge = GPTOSSBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = config
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(pretrained)
+
+        for built in (model_config, provider):
+            assert built.position_embedding_type == "yarn"
+            assert built.yarn_rotary_scaling_factor == 32.0
+            assert built.yarn_original_max_position_embeddings == 4096
+
+    def test_megatron_to_hf_config_from_model_config(self):
+        model_config = GPTOSSBridge().hf_config_to_model_config(_gpt_oss_config())
+
+        hf_config = GPTOSSBridge.megatron_to_hf_config(model_config)
+
+        assert hf_config["attention_bias"] is True
+        assert hf_config["num_hidden_layers"] == 2
 
 
 @pytest.mark.parametrize("bias", [False, True])

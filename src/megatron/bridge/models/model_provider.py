@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import abc
+import dataclasses
 import os
 import warnings
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
@@ -46,6 +48,7 @@ from megatron.core.quantization.utils import get_quant_config_or_none
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
@@ -103,6 +106,44 @@ def _apply_mixed_precision_wrapper(
         getattr(submodule, parameter_name).data = fp32_data
 
     return wrapped_model
+
+
+def _wrap_keeping_float32_tensors(
+    mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule],
+    config: Any,
+    module: MegatronModule,
+) -> MegatronModule:
+    """Wrap one model stage through ``_apply_mixed_precision_wrapper``."""
+    return _apply_mixed_precision_wrapper([module], config, mixed_precision_wrapper)[0]
+
+
+def build_distributed_models(
+    model_config: ModelConfig,
+    pg_collection: ProcessGroupCollection,
+    **kwargs: Any,
+) -> list[MegatronModule]:
+    """Build a builder-backed config through its ``ModelBuilder``, keeping FP32-marked tensors exact.
+
+    Megatron Core's builders apply ``mixed_precision_wrapper`` directly, so ``Float16Module`` rounds
+    router ``expert_bias`` values loaded before the wrap (Hugging Face or PEFT base weights) and casts
+    parameters listed in ``_keep_in_float32_parameter_names`` to the model dtype. The wrapper is
+    applied through ``_apply_mixed_precision_wrapper`` instead, which restores both after the cast,
+    as the provider path does.
+
+    Args:
+        model_config: Builder-backed model config.
+        pg_collection: Model communication process groups.
+        **kwargs: Arguments for ``ModelBuilder.build_distributed_models``. Its
+            ``mixed_precision_wrapper`` is ``Float16Module`` when omitted; ``None`` skips wrapping.
+
+    Returns:
+        Model stages created by the configured builder.
+    """
+    mixed_precision_wrapper = kwargs.get("mixed_precision_wrapper", Float16Module)
+    if mixed_precision_wrapper is not None:
+        kwargs["mixed_precision_wrapper"] = partial(_wrap_keeping_float32_tensors, mixed_precision_wrapper)
+    builder = model_config.get_builder_cls()(model_config)
+    return builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
@@ -213,6 +254,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         pg_collection: ProcessGroupCollection | None = None,
+        *,
+        use_layer_wise_distributed_optimizer: bool = False,
+        use_layer_wise_param_layout: bool = False,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -222,6 +266,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         in the Megatron ecosystem.
 
         Args:
+            use_layer_wise_distributed_optimizer: Build DDP layouts for layer-wise optimizer state.
+            use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+                False retains compact DDP buffers and variable-size parameter synchronization.
             ddp_config: Configuration for distributed data parallel.
             model_type: Type of model (encoder, decoder, or both).
             overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
@@ -303,6 +350,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
             pg_collection=pg_collection,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
         )
 
         if final_post_wrap_hook:
@@ -531,6 +580,8 @@ class GetModelKwargs(TypedDict, total=False):
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
         mixed_precision_wrapper: Module wrapper to apply for fp16/bf16. None to skip.
+        use_layer_wise_distributed_optimizer: Enable LayerWise optimizer model wrapping.
+        use_layer_wise_param_layout: Opt into shard-aligned LayerWise buffers instead of compact buffers.
     """
 
     ddp_config: DistributedDataParallelConfig | None
@@ -553,6 +604,8 @@ class GetModelKwargs(TypedDict, total=False):
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
+    use_layer_wise_distributed_optimizer: bool
+    use_layer_wise_param_layout: bool
 
 
 class ModelParallelKwargs(TypedDict, total=False):
@@ -608,6 +661,7 @@ def get_model(
     *,
     pg_collection: ProcessGroupCollection,
     use_layer_wise_distributed_optimizer: bool = False,
+    use_layer_wise_param_layout: bool = False,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -631,6 +685,8 @@ def get_model(
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
         use_layer_wise_distributed_optimizer: Build shard-aligned DDP layouts for layer-wise optimizers.
+        use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+            False retains compact DDP buffers and variable-size parameter synchronization.
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
@@ -728,14 +784,24 @@ def get_model(
         correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
+        effective_ddp_config = ddp_config
+        if use_layer_wise_distributed_optimizer and not use_megatron_fsdp and not use_torch_fsdp2:
+            # Direct callers can bypass ConfigContainer normalization. Keep the
+            # ordinary DistOpt flag aligned with the requested LayerWise layout
+            # without mutating their configuration object.
+            effective_ddp_config = dataclasses.replace(
+                ddp_config,
+                use_distributed_optimizer=use_layer_wise_param_layout,
+            )
         model = _ddp_wrap(
             model,
             data_parallel_random_init,
-            ddp_config,
+            effective_ddp_config,
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
             pg_collection=pg_collection,
         )
 

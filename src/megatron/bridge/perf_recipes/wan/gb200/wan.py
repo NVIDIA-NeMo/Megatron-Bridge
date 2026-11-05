@@ -23,20 +23,41 @@ from megatron.bridge.perf_recipes.wan.common import (
 
 
 def wan_14b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
-    """Wan 14B pretrain: 16× GB200, BF16, TP=1 CP=4."""
+    """Wan 14B pretrain: 16× GB200, BF16, TP=1 CP=2, FSDP, recompute block/1."""
     cfg = wan_14b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 4
+    cfg.model.context_parallel_size = 2
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 64
     cfg.train.micro_batch_size = 1
+    cfg.dataset.global_batch_size = 64
+    cfg.dataset.micro_batch_size = 1
+
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "block"
+    cfg.model.recompute_num_layers = 1
+
+    cfg.dist.use_megatron_fsdp = True
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.keep_fp8_transpose_cache = False
+    cfg.ddp.average_in_collective = False
+    cfg.model.init_model_with_meta_device = True
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+
+    cfg.optimizer.lr = 5e-6
+    cfg.optimizer.min_lr = 5e-6
 
     _benchmark_common(cfg)
-    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.logger.log_throughput = True
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.scheduler.lr_decay_style = "constant"
+    cfg.scheduler.lr_warmup_iters = 0
     cfg.model.cuda_graph_scope = []
     cfg.model.moe_token_dispatcher_type = "alltoall"
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -50,8 +71,11 @@ def wan_14b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Transformer Engine overlap and kernel settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_FUSED_ATTN": 1,
     }
     return cfg

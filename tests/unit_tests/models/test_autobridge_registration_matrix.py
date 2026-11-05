@@ -31,11 +31,13 @@ REGISTRATION_CHECK_SCRIPT = Path(__file__).with_name("autobridge_registration_ch
 
 
 EXPECTED_REGISTRATIONS = {
+    "MistralForCausalLM": "megatron.bridge.models.mistral.mistral_bridge.MistralBridge",
     "BailingMoeV2ForCausalLM": "megatron.bridge.models.bailing.bailing_moe2_bridge.BailingMoeV2Bridge",
     "DeepseekV3ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v3_bridge.DeepSeekV3Bridge",
     "DeepseekV4ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v4_bridge.DeepSeekV4Bridge",
     "Ernie4_5_MoeForCausalLM": "megatron.bridge.models.ernie.ernie_45_bridge.Ernie45Bridge",
     "Ernie4_5_VLMoeForConditionalGeneration": ("megatron.bridge.models.ernie_vl.ernie45_vl_bridge.Ernie45VLBridge"),
+    "Ernie5_5_MoeForCausalLM": "megatron.bridge.models.ernie.ernie55_bridge.Ernie55Bridge",
     "Exaone4ForCausalLM": "megatron.bridge.models.exaone.exaone4.exaone4_bridge.Exaone4Bridge",
     "Exaone4_5_ForConditionalGeneration": "megatron.bridge.models.exaone.exaone45.exaone45_bridge.Exaone45Bridge",
     "ExaoneMoEForCausalLM": "megatron.bridge.models.exaone.exaone_moe.exaone_moe_bridge.ExaoneMoeBridge",
@@ -105,6 +107,7 @@ STRING_REGISTRATIONS = {
     "DeepseekV4ForCausalLM",
     "Ernie4_5_MoeForCausalLM",
     "Ernie4_5_VLMoeForConditionalGeneration",
+    "Ernie5_5_MoeForCausalLM",
     "Exaone4ForCausalLM",
     "ExaoneMoEForCausalLM",
     "FalconH1ForCausalLM",
@@ -135,13 +138,11 @@ STRING_REGISTRATIONS = {
     "Step3p7ForConditionalGeneration",
 }
 
-DEPRECATED_REGISTRATIONS = {
+REMOVED_REGISTRATIONS = {
     "DeciLMForCausalLM",
     "DeepseekV2ForCausalLM",
     "Gemma2ForCausalLM",
     "GemmaForCausalLM",
-    "MistralForCausalLM",
-    "NemotronH_Nano_VL_V2",
     "NemotronForCausalLM",
 }
 
@@ -154,7 +155,7 @@ def test_public_autobridge_import_registers_every_supported_model() -> None:
             str(REGISTRATION_CHECK_SCRIPT),
             json.dumps(EXPECTED_REGISTRATIONS, sort_keys=True),
             json.dumps(sorted(STRING_REGISTRATIONS)),
-            json.dumps(sorted(DEPRECATED_REGISTRATIONS)),
+            json.dumps(sorted(REMOVED_REGISTRATIONS)),
         ],
         capture_output=True,
         text=True,

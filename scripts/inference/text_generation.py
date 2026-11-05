@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 import sys
 from pathlib import Path
 
@@ -29,6 +30,7 @@ for _path in (G_SRC_ROOT, G_MCORE_ROOT):
     if _path.exists() and str(_path) not in sys.path:
         sys.path.append(str(_path))
 
+import torch
 import torch.distributed as dist
 from megatron.core.inference.apis import MegatronLLM, SamplingParams
 from megatron.core.inference.contexts import StaticInferenceContext
@@ -151,12 +153,18 @@ def _generate_with_dynamic_engine(
         return_log_probs=args.return_log_probs,
         enable_chunked_prefill=args.enable_chunked_prefill,
     )
+    coordinator_host = args.coordinator_host
+    if args.use_coordinator and coordinator_host is None:
+        # ZMQ binds local interfaces or numeric addresses, not DNS hostnames.
+        coordinator_host = socket.gethostbyname(socket.gethostname())
+    # Release unused checkpoint-loading buffers for NCCL communicator allocations.
+    torch.cuda.empty_cache()
     with MegatronLLM(
         model=model,
         tokenizer=tokenizer,
         inference_config=inference_config,
         use_coordinator=args.use_coordinator,
-        coordinator_host=args.coordinator_host,
+        coordinator_host=coordinator_host,
         coordinator_port=args.coordinator_port,
     ) as llm:
         if llm.is_primary_rank:
@@ -165,6 +173,12 @@ def _generate_with_dynamic_engine(
             if failed_outputs:
                 details = ", ".join(f"request {output.request_id}={output.status.name}" for output in failed_outputs)
                 raise RuntimeError(f"Inference failed: {details}")
+            if len(outputs) != len(prompts):
+                # Requests rejected at admission are never returned by the engine.
+                raise RuntimeError(
+                    f"Inference failed: engine returned {len(outputs)} result(s) for {len(prompts)} prompt(s); "
+                    f"{len(prompts) - len(outputs)} request(s) were rejected before generation"
+                )
             _print_results(prompts, outputs)
 
 

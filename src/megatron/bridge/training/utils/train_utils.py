@@ -615,6 +615,24 @@ def _build_moe_metric_writer(
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
 
 
+def _step_num_microbatches(global_state: GlobalState) -> int:
+    """Return the microbatches this step ran: the packing scheduler's count, else the configured one."""
+    return getattr(global_state, "global_batch_packing_num_microbatches", None) or get_num_microbatches()
+
+
+def _mtp_loss_scale(global_state: GlobalState) -> float:
+    """Return the factor that turns the MTP loss tracker into a per-step loss for logging.
+
+    Megatron-Core releases that track MTP loss per token (with ``calculate_per_token_loss``)
+    already reduce raw loss sums and token counts into a per-token mean; earlier releases, and
+    microbatch-normalized training, accumulate one normalized loss per microbatch, which is
+    averaged over the microbatches this step ran. Megatron-LM's training loop applies the same rule.
+    """
+    if MTPLossLoggingHelper.tracker.get("calculate_per_token_loss", False):
+        return 1.0
+    return 1 / _step_num_microbatches(global_state)
+
+
 def _track_moe_metrics_supports_num_moe_layers() -> bool:
     """Return whether the active MCore accepts explicit MoE layer counts."""
     return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
@@ -654,6 +672,124 @@ def _get_num_moe_layers(model_config: Any) -> int:
         mtp_moe_layers *= mtp_depth
 
     return main_moe_layers + mtp_moe_layers
+
+
+def _dsa_indexer_metric_num_layers(model_config: Any) -> Optional[int]:
+    """Divisor of the logged DSA indexer loss, or ``None`` for Megatron-Core's (the tracker size).
+
+    A model config may define ``dsa_indexer_metric_num_layers()`` to choose its convention; ERNIE 5.5
+    divides the sum over its indexer layers by its layer count plus MTP depths, as its reference does.
+    """
+    divisor = getattr(model_config, "dsa_indexer_metric_num_layers", None)
+    return divisor() if callable(divisor) else None
+
+
+def initialize_dsa_indexer_metric_tracker(model_config: Any, model: list[MegatronModule], pg_collection: Any) -> int:
+    """Fix the DSA indexer-loss tracker's capacity for a new model, before its first forward.
+
+    Megatron-Core's training setup does the same (``initialize_dsa_metric_tracker``): the capacity is agreed over the
+    pipeline stages once, so no stage grows (rebinds) the tracker later, when :func:`_track_dsa_indexer_metrics`
+    first reduces it, and CUDA graphs captured before that keep writing into the tensor that is logged. Only models
+    that train an indexer loss (``dsa_indexer_loss_coeff > 0``) are affected. The tracker is process-wide, so what an
+    earlier model in this process left in it is cleared first. Megatron-Core builds without the function (main)
+    keep their lazily sized tracker.
+
+    Args:
+        model_config: The run's model config (``dsa_indexer_loss_coeff``), the one the logging reads.
+        model: This rank's model chunks, wrapped or not.
+        pg_collection: The model's process groups.
+
+    Returns:
+        The tracker capacity, or 0 when nothing was initialized.
+    """
+    if (getattr(model_config, "dsa_indexer_loss_coeff", None) or 0.0) <= 0:
+        return 0
+    try:
+        from megatron.core.transformer.experimental_attention_variant.dsa_logging import (
+            DSAIndexerLossLoggingHelper,
+            initialize_dsa_metric_tracker,
+        )
+    except ImportError:
+        return 0
+    DSAIndexerLossLoggingHelper.tracker.clear()
+    return initialize_dsa_metric_tracker(model, pg_collection)
+
+
+def _track_dsa_indexer_metrics(
+    config: ConfigContainer,
+    global_state: GlobalState,
+    iteration: int,
+    writer: Optional[Any],
+    wandb_writer: Optional[Any],
+    total_loss_dict: dict[str, Any],
+    pg_collection: Optional[Any],
+) -> None:
+    """Log the DSA indexer loss of models that train one (``dsa_indexer_loss_coeff > 0``).
+
+    Megatron-Core's DSA layers record their indexer losses in ``DSAIndexerLossLoggingHelper``'s tracker; this
+    reduces them over the pipeline and data-parallel ranks and logs ``indexer loss`` (and ``indexer raw loss``,
+    before the coefficient), averaged over the step's micro-batches. Dynamic context parallelism needs its
+    physical DP x CP group for the reduction and is left out.
+    """
+    if (getattr(config.model, "dsa_indexer_loss_coeff", None) or 0.0) <= 0:
+        return
+    if getattr(config.model, "dynamic_context_parallel", False):
+        return
+    from megatron.core.process_groups_config import ProcessGroupCollection
+    from megatron.core.transformer.experimental_attention_variant.dsa import DSAIndexerLossLoggingHelper
+
+    DSAIndexerLossLoggingHelper.track_indexer_metrics(
+        loss_scale=1 / _step_num_microbatches(global_state),
+        iteration=iteration,
+        writer=writer,
+        pg_collection=pg_collection if pg_collection is not None else ProcessGroupCollection.use_mpu_process_groups(),
+        wandb_writer=wandb_writer,
+        total_loss_dict=total_loss_dict,
+        num_indexer_layers=_dsa_indexer_metric_num_layers(config.model),
+        preserve_groups=getattr(config.model, "cuda_graph_impl", "none") not in (None, "none"),
+    )
+
+
+# Attribute on GlobalState holding the running count of steps whose global token
+# count was zero. GlobalState clears it when restarting an interrupted attempt.
+ZERO_TOKEN_ITERS_ATTR = "_zero_token_iters"
+
+
+def accumulate_zero_token_step(global_state: GlobalState, zero_token_step: torch.Tensor) -> None:
+    """Record whether this step reduced an empty global token count.
+
+    A zero global token count means every rank in the data-parallel x context-parallel
+    group had a fully masked batch, so the reported loss is a substituted zero rather
+    than a measured value. Counting these keeps a data or masking bug visible instead
+    of it reading as a genuine 0.0 loss.
+
+    The count stays on device and is only read back at the logging interval, so the
+    training step itself never synchronizes with the host.
+
+    Args:
+        global_state: The global training state the counter is attached to.
+        zero_token_step: Bool tensor that is True when the step had no tokens.
+    """
+    counter = getattr(global_state, ZERO_TOKEN_ITERS_ATTR, None)
+    # isinstance rather than "is None" so a mocked state does not masquerade as a counter.
+    if not isinstance(counter, torch.Tensor):
+        counter = torch.zeros((), dtype=torch.int32, device=zero_token_step.device)
+        setattr(global_state, ZERO_TOKEN_ITERS_ATTR, counter)
+    counter += zero_token_step
+
+
+def _consume_zero_token_iters(global_state: GlobalState) -> int:
+    """Read and reset the zero-token step counter. Returns 0 when never recorded.
+
+    Only pipeline-last-stage ranks compute a reduced loss, so ranks without a counter
+    report zero.
+    """
+    counter = getattr(global_state, ZERO_TOKEN_ITERS_ATTR, None)
+    if not isinstance(counter, torch.Tensor):
+        return 0
+    count = int(counter.item())
+    counter.zero_()
+    return count
 
 
 def training_log(
@@ -1038,7 +1174,7 @@ def training_log(
 
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
     if num_moe_experts is not None:
-        moe_loss_scale = 1 / get_num_microbatches()
+        moe_loss_scale = 1 / _step_num_microbatches(global_state)
         track_names = []
 
         moe_router_load_balancing_type = getattr(config.model, "moe_router_load_balancing_type", "")
@@ -1072,11 +1208,20 @@ def training_log(
             track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
         track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
-        mtp_loss_scale = 1 / get_num_microbatches()
+        mtp_loss_scale = _mtp_loss_scale(global_state)
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
         )
+    _track_dsa_indexer_metrics(
+        config,
+        global_state,
+        iteration,
+        _build_moe_metric_writer(writer, comet_logger, mlflow_logger),
+        wandb_writer,
+        total_loss_dict,
+        pg_collection,
+    )
 
     if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)
@@ -1197,6 +1342,22 @@ def training_log(
             log_string += f" max attention logit: {log_max_attention_logit:.3f} |"
         log_string += " number of skipped iterations: {:3d} |".format(total_loss_dict[skipped_iters_key])
         log_string += " number of nan iterations: {:3d} |".format(total_loss_dict[nan_iters_key])
+        # Only surfaced when non-zero: these steps report a substituted 0.0 loss, which
+        # is otherwise indistinguishable from a real one. Keeping the field out of the
+        # normal log line leaves existing log output unchanged.
+        zero_token_iters = _consume_zero_token_iters(global_state)
+        if zero_token_iters > 0:
+            log_string += " number of zero-token iterations: {:3d} |".format(zero_token_iters)
+            # The substituted 0.0 loss also reaches the metric writers, so record the count
+            # next to it there. Written only when non-zero, so healthy runs log the same metrics.
+            if writer:
+                writer.add_scalar("zero-token-iterations", zero_token_iters, iteration)
+            if wandb_writer:
+                wandb_writer.log({"zero-token-iterations": zero_token_iters}, iteration)
+            if mlflow_logger:
+                mlflow_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0
@@ -1214,7 +1375,7 @@ def training_log(
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
             cuda_graphs_enabled = (
-                config.model.cuda_graph_impl != "none"
+                getattr(config.model, "cuda_graph_impl", "none") != "none"
                 or config.optimizer.optimizer_cuda_graph
                 or getattr(config.model, "vision_cuda_graph_impl", None) == "transformer_engine"
             )
@@ -1224,7 +1385,7 @@ def training_log(
                 # after that step, so warmup_steps + 1 is the post-capture iteration.
                 memory_reporting_iterations = max(
                     memory_reporting_iterations,
-                    config.model.cuda_graph_warmup_steps + 1,
+                    getattr(config.model, "cuda_graph_warmup_steps", 0) + 1,
                 )
             if iteration >= loaded_iteration + memory_reporting_iterations:
                 # Always include optimizer state memory and, when enabled, CUDA graph

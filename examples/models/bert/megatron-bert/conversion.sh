@@ -23,11 +23,11 @@ MODEL_NAME=megatron-bert-uncased-345m
 # Hub repo. See README.md for how to obtain one.
 HF_MODEL_PATH=${HF_MODEL_PATH:-"${WORKSPACE}/models/${MODEL_NAME}-hf"}
 
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model "$HF_MODEL_PATH" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}"
 
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model "$HF_MODEL_PATH" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}/iter_0000000" \
     --hf-path "${WORKSPACE}/models/${MODEL_NAME}-hf-export"

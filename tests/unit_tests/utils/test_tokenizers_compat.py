@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from tokenizers import processors
+from transformers import CLIPTokenizer
 
 
 class TestTokenizersCompat:
-    def test_roberta_processing_accepts_transformers_kwargs(self):
-        """The installed tokenizers must accept the exact kwargs transformers' CLIPTokenizer passes."""
-        # The assertion IS that this construction does not raise TypeError on the
-        # cls= kwarg (renamed to cls_token in tokenizers 0.23). A returned instance
-        # confirms the compatible API is installed.
-        processors.RobertaProcessing(
-            sep=("<|endoftext|>", 49407),
-            cls=("<|startoftext|>", 49406),
-            add_prefix_space=False,
-            trim_offsets=False,
+    def test_clip_tokenizer_special_tokens(self):
+        """CLIP constructs its postprocessor and inserts BOS/EOS with the installed Tokenizers."""
+        tokenizer = CLIPTokenizer(
+            vocab={"<|startoftext|>": 0, "<|endoftext|>": 1, "h": 2, "i</w>": 3},
+            merges=[],
         )
+        encoded = tokenizer("hi", return_special_tokens_mask=True)
+
+        assert encoded["input_ids"] == [0, 2, 3, 1]
+        assert encoded["special_tokens_mask"] == [1, 0, 0, 1]
+        assert tokenizer.decode(encoded["input_ids"], skip_special_tokens=True) == "hi"

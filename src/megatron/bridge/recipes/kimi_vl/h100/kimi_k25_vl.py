@@ -57,11 +57,11 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _sft_common_vlm()
 
-    # Model config — uses AutoBridge to extract HF config into provider
+    # Model config — uses AutoBridge to extract HF config into a builder-backed model config
     cfg.model = AutoBridge.from_hf_pretrained(
         "moonshotai/Kimi-K2.5",
         trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 2
@@ -121,6 +121,9 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
         max_lr=3e-4,
         min_lr=3e-5,
     )
+    # Preserve this recipe's established compact LayerWise layout until the
+    # shard-aligned layout is validated with its MoE/pipeline topology.
+    opt_cfg.use_layer_wise_param_layout = False
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
@@ -162,7 +165,7 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Communication overlap
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False, overlap_param_gather=False)
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.model.moe_shared_expert_overlap = True
@@ -171,7 +174,8 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 2000
     cfg.checkpoint.async_save = False
 
-    # DDP config — Muon requires distributed_optimizer=False and overlap_param_gather=False
+    # LayerWise Muon does not use DDP's ordinary DistributedOptimizer mode.
+    # Keep parameter-gather overlap disabled for this recipe's uneven MIMO inputs.
     cfg.ddp.use_distributed_optimizer = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.grad_reduce_in_fp32 = True

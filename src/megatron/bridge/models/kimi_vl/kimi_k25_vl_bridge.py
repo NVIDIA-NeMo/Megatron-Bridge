@@ -13,10 +13,11 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Dict, List, Mapping
+from typing import Any, Dict, List, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -31,6 +32,7 @@ from megatron.bridge.models.conversion.quantization_utils import (
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_config import KimiK25VLModelConfig
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
@@ -56,93 +58,101 @@ class KimiK25VLBridge(MegatronModelBridge):
     to Megatron format (KimiK25VLModel) and vice versa.
 
     The language backbone shares the same architecture as Kimi K2 (MoE with MLA).
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("moonshotai/Kimi-K2.5", trust_remote_code=True)
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK25VLModelProvider:
-        hf_config = hf_pretrained.config
+    MODEL_CONFIG_CLASS = KimiK25VLModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Map the Kimi K2 language config and the vision-language fields of the top-level config.
+
+        The model loads its vision tower and projector from the checkpoint's code, so the kwargs also
+        record the checkpoint and whether the bridge's source may run its code.
+        """
         text_config = hf_config.text_config
-        vision_config = hf_config.vision_config
-
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        mla_rope_params = provider_kwargs.pop("_mla_rope_params", None)
-        valid_fields = KimiK25VLModelProvider.__dataclass_fields__
-        provider = KimiK25VLModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
-
-        # --- Language model architecture defaults (MoE + MLA) ---
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.share_embeddings_and_output_weights = False
-        provider.qk_layernorm = True
-        provider.multi_latent_attention = True
-        provider.position_embedding_type = "rope"
-
-        # Apply MLA rope params, otherwise rope scaling factor will be wrong.
-        if mla_rope_params:
-            for key, value in mla_rope_params.items():
-                setattr(provider, key, value)
-
-        # MoE settings
-        provider.moe_grouped_gemm = True
-        provider.moe_router_pre_softmax = True
-        provider.moe_token_dispatcher_type = "flex"
-        provider.moe_flex_dispatcher_backend = "hybridep"
-        provider.moe_flex_dispatcher_num_sms = 16
-        provider.moe_permute_fusion_into_hybridep = False
-        provider.moe_router_load_balancing_type = "seq_aux_loss"
-        provider.moe_shared_expert_overlap = True
-        provider.moe_router_score_function = "sigmoid"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_dtype = "fp32"
-        provider.moe_permute_fusion = True
-        provider.moe_aux_loss_coeff = 1e-3
-        provider.moe_router_bias_update_rate = 1e-3
-        provider.moe_router_topk_scaling_factor = getattr(text_config, "routed_scaling_factor", 2.827)
-        provider.moe_shared_expert_intermediate_size = text_config.moe_intermediate_size * text_config.n_shared_experts
-        provider.moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
-            text_config.num_hidden_layers - text_config.first_k_dense_replace
-        )
-
-        # Fusions
-        provider.apply_rope_fusion = False
-        provider.bias_activation_fusion = True
-        provider.bias_dropout_fusion = True
-        provider.cross_entropy_fusion_impl = "te"
-        provider.cross_entropy_loss_fusion = True
-        provider.masked_softmax_fusion = True
-        provider.persist_layer_norm = True
-        provider.gradient_accumulation_fusion = True
-
-        # Misc
-        provider.hidden_dropout = 0.0
-        provider.attention_dropout = 0.0
-        provider.attention_softmax_in_fp32 = False
-        provider.make_vocab_size_divisible_by = 1280
-        provider.seq_length = 4096
-        provider.async_tensor_model_parallel_allreduce = True
-
-        # Precision
+        config_kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        first_k_dense_replace = text_config.first_k_dense_replace
+        # The precision and media_placeholder_token_id come from the top-level KimiK25Config.
         dtype = self.dtype_from_hf(hf_config, default=torch.float32)
-        provider.fp16 = dtype == torch.float16
-        provider.bf16 = dtype == torch.bfloat16
-        provider.params_dtype = dtype
+        media_placeholder_token_id = getattr(hf_config, "media_placeholder_token_id", 163605)
+        config_kwargs.update(
+            # Language model architecture (MoE + MLA)
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            multi_latent_attention=True,
+            # MoE
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_flex_dispatcher_num_sms=16,
+            moe_permute_fusion_into_hybridep=False,
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_shared_expert_overlap=True,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            moe_aux_loss_coeff=1e-3,
+            moe_router_bias_update_rate=1e-3,
+            moe_router_topk_scaling_factor=getattr(text_config, "routed_scaling_factor", 2.827),
+            moe_shared_expert_intermediate_size=text_config.moe_intermediate_size * text_config.n_shared_experts,
+            moe_layer_freq=[0] * first_k_dense_replace + [1] * (text_config.num_hidden_layers - first_k_dense_replace),
+            # Fusions
+            apply_rope_fusion=False,
+            bias_activation_fusion=True,
+            bias_dropout_fusion=True,
+            cross_entropy_fusion_impl="te",
+            cross_entropy_loss_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            gradient_accumulation_fusion=True,
+            # MLA providers keep Megatron Core's value, not GPTModelProvider's.
+            deallocate_pipeline_outputs=False,
+            # Misc
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            attention_softmax_in_fp32=False,
+            make_vocab_size_divisible_by=1280,
+            seq_length=4096,
+            rope_scaling_factor=1.0,
+            # Precision
+            fp16=dtype == torch.float16,
+            bf16=dtype == torch.bfloat16,
+            params_dtype=dtype,
+            # Vision-language
+            vision_config=hf_config.vision_config,
+            hf_model_path=getattr(hf_config, "name_or_path", None),
+            trust_remote_code=self.trust_remote_code,
+            bos_token_id=getattr(text_config, "bos_token_id", 163584),
+            eos_token_id=getattr(text_config, "eos_token_id", 163585),
+            image_token_id=media_placeholder_token_id,
+            media_placeholder_token_id=media_placeholder_token_id,
+            pad_token_id=getattr(hf_config, "pad_token_id", 163839),
+            ignore_index=getattr(hf_config, "ignore_index", -100),
+        )
+        return config_kwargs
 
-        # VL-specific overrides
-        provider.vision_config = vision_config
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Return the builder kwargs plus the provider's decoder block spec."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        provider_kwargs["transformer_layer_spec"] = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        return provider_kwargs
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK25VLModelProvider:
+        """Build the deprecated provider with the settings that the Hugging Face source carries."""
+        provider = super().provider_bridge(hf_pretrained)
         provider.hf_model_path = hf_pretrained.model_name_or_path
         provider.trust_remote_code = bool(getattr(hf_pretrained, "trust_remote_code", False))
         provider.generation_config = hf_pretrained.generation_config
-
-        # media_placeholder_token_id is on the top-level KimiK25Config, not on text_config
-        media_placeholder_token_id = getattr(hf_config, "media_placeholder_token_id", 163605)
-        provider.bos_token_id = getattr(text_config, "bos_token_id", 163584)
-        provider.eos_token_id = getattr(text_config, "eos_token_id", 163585)
-        provider.image_token_id = media_placeholder_token_id
-        provider.media_placeholder_token_id = media_placeholder_token_id
-        provider.pad_token_id = getattr(hf_config, "pad_token_id", 163839)
-        provider.ignore_index = getattr(hf_config, "ignore_index", -100)
-
         return provider
 
     def _load_and_dequantize(self, key: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
@@ -212,6 +222,9 @@ class KimiK25VLBridge(MegatronModelBridge):
         hf_pretrained,
         megatron_model,
         weight_dtype=None,
+        *,
+        exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
+        exclude_param_patterns: tuple[str, ...] = (),
     ) -> List:
         """Override to synthesize virtual weight keys from INT4 quantized triplets.
 
@@ -235,7 +248,13 @@ class KimiK25VLBridge(MegatronModelBridge):
 
         hf_pretrained.state.source.get_all_keys = _get_all_keys_with_virtual
         try:
-            return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
+            return super().build_conversion_tasks(
+                hf_pretrained,
+                megatron_model,
+                weight_dtype=weight_dtype,
+                **({"exclude_module_types": exclude_module_types} if exclude_module_types else {}),
+                **({"exclude_param_patterns": exclude_param_patterns} if exclude_param_patterns else {}),
+            )
         finally:
             hf_pretrained.state.source.get_all_keys = original_get_all_keys
 

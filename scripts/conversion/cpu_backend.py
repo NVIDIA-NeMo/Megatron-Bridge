@@ -11,19 +11,49 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Single-process CPU checkpoint conversion backend."""
+"""CPU checkpoint conversion with single-process or distributed import."""
 
+import datetime
 import logging
+import os
 import shutil
 from pathlib import Path
 
-from utils import parse_dtype, prepare_output_directory, resolve_hf_model_revision
+import torch
+from utils import (
+    _configure_distributed_env,
+    _configure_model_config,
+    _configure_model_provider,
+    _hf_tokenizer_kwargs,
+    _maybe_generate_pipeline_layout,
+    _uses_model_builder,
+    parse_dtype,
+    prepare_output_directory,
+    resolve_hf_model_revision,
+    validate_output_path,
+)
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_distributed_initialized(timeout_minutes: int | None) -> None:
+    """Initialize Gloo from torchrun or Slurm without selecting a CUDA device."""
+    if torch.distributed.is_initialized():
+        if torch.distributed.get_backend() != "gloo":
+            raise RuntimeError("Distributed CPU import requires a Gloo process group.")
+        return
+    _configure_distributed_env()
+    if os.environ.get("WORLD_SIZE") is None:
+        raise RuntimeError("Distributed CPU import must be launched through torchrun or Slurm.")
+    kwargs: dict[str, object] = {"backend": "gloo"}
+    if timeout_minutes is not None:
+        kwargs["timeout"] = datetime.timedelta(minutes=timeout_minutes)
+    torch.distributed.init_process_group(**kwargs)
 
 
 def _find_run_config(checkpoint_path: Path) -> Path:
@@ -52,6 +82,12 @@ def import_checkpoint(
     trust_remote_code: bool,
     overwrite: bool,
     text_only: bool = False,
+    use_distributed: bool = False,
+    tp: int = 1,
+    pp: int = 1,
+    ep: int = 1,
+    etp: int = 1,
+    distributed_timeout_minutes: int | None = None,
 ) -> None:
     """Import a Hugging Face model into a CPU-initialized Megatron checkpoint.
 
@@ -63,7 +99,67 @@ def import_checkpoint(
         trust_remote_code: Allow custom Hugging Face repository code.
         overwrite: Delete a non-empty destination before conversion.
         text_only: Convert only the supported model's language component.
+        use_distributed: Import CPU model shards across an existing launcher world.
+        tp: Tensor parallelism size for distributed import.
+        pp: Pipeline parallelism size for distributed import.
+        ep: Expert parallelism size for distributed import.
+        etp: Expert tensor parallelism size for distributed import.
+        distributed_timeout_minutes: Optional Gloo process-group timeout.
     """
+    if use_distributed:
+        # Keep elastic error handling and process-group cleanup specific to the
+        # distributed path; single-process callers retain ordinary exceptions.
+        @torchrun_main
+        def _import_distributed() -> None:
+            _ensure_distributed_initialized(distributed_timeout_minutes)
+            validate_output_path(megatron_path, source_paths=[hf_model])
+            rank = torch.distributed.get_rank()
+            if rank == 0:
+                prepare_output_directory(megatron_path, overwrite=overwrite, source_paths=[hf_model])
+                logger.info("Distributed CPU import: %s -> %s", hf_model, megatron_path)
+                logger.info("Parallelism: TP=%s PP=%s EP=%s ETP=%s; dtype=%s", tp, pp, ep, etp, torch_dtype)
+            torch.distributed.barrier()
+            dtype = parse_dtype(torch_dtype)
+            revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
+            if text_only:
+                revision_kwargs["text_only"] = True
+            bridge = AutoBridge.from_hf_pretrained(
+                hf_model,
+                trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model),
+                torch_dtype=dtype,
+                **revision_kwargs,
+            )
+            if _uses_model_builder(bridge):
+                model_config = bridge.get_model_config()
+                _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=True)
+                _maybe_generate_pipeline_layout(bridge, model_config, pp)
+                megatron_model = bridge.get_model(
+                    model_config,
+                    wrap_with_ddp=False,
+                    mixed_precision_wrapper=None,
+                )
+            else:
+                model_provider = bridge.to_megatron_provider(load_weights=True)
+                _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=True)
+                _maybe_generate_pipeline_layout(bridge, model_provider, pp)
+                model_provider.finalize()
+                model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
+                megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+
+            bridge.save_megatron_model(
+                megatron_model,
+                megatron_path,
+                hf_tokenizer_path=hf_model,
+                hf_tokenizer_kwargs=_hf_tokenizer_kwargs(bridge, trust_remote_code=trust_remote_code),
+                low_memory_save=False,
+            )
+            if rank == 0:
+                logger.info("Distributed CPU import complete: %s", megatron_path)
+
+        _import_distributed()
+        return
+    if any(size != 1 for size in (tp, pp, ep, etp)):
+        raise ValueError("CPU model parallelism requires use_distributed=True.")
     prepare_output_directory(megatron_path, overwrite=overwrite, source_paths=[hf_model])
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     logger.info("CPU import: %s -> %s", hf_model, megatron_path)

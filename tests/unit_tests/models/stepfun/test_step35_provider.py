@@ -347,6 +347,39 @@ class TestStep35DecoderLayerIsSliding:
         assert layer_1.config.activation_func_clamp_value == 7.0
         assert layer_1.config.activation_func_clamp_value_shared_expert == 16.0
 
+    def test_rope_settings_apply_to_layer_config_only(self):
+        """A builder config's model-level RoPE settings reach the layer's private config, not the shared one."""
+        config = _make_config(["full_attention", "sliding_attention"])
+        rope_settings = {
+            "position_embedding_type": "rope",
+            "rope_scaling": False,
+            "rope_scaling_factor": 1.0,
+            "rotary_scaling_factor": None,
+        }
+        recorder = _SuperInitRecorder()
+
+        with (
+            patch.object(TransformerLayer, "__init__", lambda self, config, **kw: recorder(self, config, **kw)),
+            patch("megatron.bridge.models.stepfun.step35_provider.get_pg_rank", return_value=0),
+            patch(
+                "megatron.bridge.models.stepfun.step35_provider.get_transformer_layer_offset",
+                return_value=0,
+            ),
+        ):
+            Step35DecoderLayer(
+                config=config,
+                submodules=None,
+                layer_number=2,
+                pg_collection=SimpleNamespace(pp="dummy"),
+                rope_settings=rope_settings,
+            )
+
+        captured = recorder.captured_config
+        assert {name: getattr(captured, name) for name in rope_settings} == rope_settings
+        assert captured.rotary_percent == 1.0
+        assert not any(hasattr(config, name) for name in ("rope_scaling", "rotary_scaling_factor"))
+        assert "rope_settings" not in recorder.captured_kwargs
+
 
 # ---------------------------------------------------------------------------
 # Step35SharedExpertMLP.forward
@@ -399,9 +432,9 @@ class TestStep35SharedExpertMLPForward:
         # Output is forwarded back from super().
         assert output == "sentinel-out"
 
-    def test_no_shared_clamp_passes_through_to_super(self):
-        """``activation_func_clamp_value_shared_expert=None`` -> fall through to
-        the ``else`` branch: no override, no try/finally."""
+    def test_no_shared_clamp_runs_unclamped(self):
+        """``activation_func_clamp_value_shared_expert=None`` (no ``swiglu_limits_shared`` for the layer): the shared
+        expert runs unclamped, as in Hugging Face, not with the routed experts' clamp."""
         instance = self._make_instance(shared_clamp=None, base_clamp=7.0)
         captured = {}
 
@@ -412,14 +445,14 @@ class TestStep35SharedExpertMLPForward:
         with self._patch_super_forward(fake_super_forward):
             output = instance.forward(hidden_states="x")
 
-        assert captured["clamp_during_call"] == 7.0
+        assert captured["clamp_during_call"] is None
         assert instance.config.activation_func_clamp_value == 7.0
         assert output == "passthrough"
 
-    def test_missing_shared_clamp_attribute_passes_through(self):
+    def test_missing_shared_clamp_attribute_runs_unclamped(self):
         """When the config has no ``activation_func_clamp_value_shared_expert``
-        attribute at all, ``getattr(..., None)`` returns None and the bridge
-        must not plant the attribute on the config."""
+        attribute at all, ``getattr(..., None)`` returns None, the shared expert
+        runs unclamped, and the bridge must not plant the attribute on the config."""
         instance = self._make_instance(shared_clamp=_UNSET, base_clamp=7.0)
         captured = {}
 
@@ -430,7 +463,7 @@ class TestStep35SharedExpertMLPForward:
         with self._patch_super_forward(fake_super_forward):
             instance.forward(hidden_states="x")
 
-        assert captured["clamp_during_call"] == 7.0
+        assert captured["clamp_during_call"] is None
         assert instance.config.activation_func_clamp_value == 7.0
         assert not hasattr(instance.config, "activation_func_clamp_value_shared_expert")
 

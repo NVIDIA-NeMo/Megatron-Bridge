@@ -46,6 +46,35 @@ row). The MTP supervision mask does not suppress that token's router auxiliary
 loss. Full padding exclusion with MTP therefore also requires an upstream MTP
 mask-shift fix; the decoder mask alone does not provide it.
 
+## Padding masks for padded VLM batches (HF Energon)
+
+For padded (unpacked) Qwen3-VL MoE batches from the generic Hugging Face
+Energon task encoder, opt into a token padding mask:
+
+```python
+cfg.dataset.task_encoder.return_padding_mask = True
+```
+
+The command-line override is `dataset.task_encoder.return_padding_mask=true`.
+The option belongs to `HFEnergonTaskEncoderConfig`, which `--dataset energon`
+uses for recipes without their own Energon dataset config;
+`QwenVLEnergonTaskEncoderConfig` does not have it. The task encoder derives
+the mask from the collate function's 2D `attention_mask`, and the Qwen3-VL
+training step passes it to the model's MoE layers. Padding tokens then leave
+the router auxiliary-loss, z-loss, and expert-bias statistics, and dropless
+HybridEP skips their rows before dispatch. The option defaults to `False`
+because it changes these statistics. It is rejected together with
+`enable_in_batch_packing`, which marks padding through its sequence
+boundaries instead.
+
+Unlike the GPT SFT path above, the Qwen3-VL step works with
+`moe_router`-scoped Transformer Engine CUDA graphs at the pinned Megatron-Core
+version. A router graph takes the mask as an input only if the eager warm-up
+steps before its capture saw one, so keep `model.cuda_graph_warmup_steps`
+above 0 (the default is 3). The pinned version also shifts the mask together
+with the tokens in MTP layers, so the sequence-end positions that MTP fills in
+stay padding.
+
 ## LLM Pretraining Data
 
 LLM pretraining uses Megatron binary indexed datasets. Each dataset is represented by a prefix with matching `.bin` and `.idx` files:
