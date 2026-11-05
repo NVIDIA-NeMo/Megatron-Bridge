@@ -186,11 +186,11 @@ class WanModel(VisionModule):
         """Forward pass.
 
         Args:
-            x List[Tensor]: list of vae encoded data (in_channel, f, h, w)
-            grid_sizes List[Tuple[int, int, int]]: list of grid sizes (f, h, w)
-            t Tensor: timesteps
-            context List[Tensor]: list of context (text_len, hidden_size)
-            packed_seq_params PackedSeqParams: packed sequence parameters
+            x: VAE encoded data (in_channel, f, h, w).
+            grid_sizes: Grid sizes (f, h, w).
+            t: Timesteps.
+            context: Context (text_len, hidden_size).
+            packed_seq_params: Packed sequence parameters.
 
         Returns:
             Tensor: output tensor (still patchified) of shape [seq_len, batch_size, hidden_size]
