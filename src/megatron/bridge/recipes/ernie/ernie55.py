@@ -14,6 +14,10 @@
 
 """ERNIE 5.5 recipe on GB300: supervised fine-tuning of a Hugging Face checkpoint.
 
+This is an early SFT recipe and has not yet been optimized for training throughput or memory efficiency.
+It requires Megatron-Core's ``dev`` branch at commit ``f78809f6d`` or later. Kernel fusion, expert
+communication, and activation recomputation settings may change as performance tuning progresses.
+
 The recipe trains with the reference implementation's settings: the per-row SFT loss
 (``ernie_per_row_loss``), MTP loss scale 0.1, the sparse DSA indexer loss at 0.01, no auxiliary or z loss
 (the z loss is still tracked), a router expert-bias update rate of 1e-4, full uniform recompute of every
@@ -38,9 +42,6 @@ every Bridge recipe it builds without arguments; without ``hf_path`` and ``$ERNI
 The tokenizer is ``NullTokenizer`` with the model's unpadded vocabulary; the data is SFT JSONL (``dataset.path``,
 text rows with ``dataset.hf_tokenizer`` or pre-tokenized rows) or synthetic rows
 (:class:`~megatron.bridge.models.ernie.ernie55_data.Ernie55SFTDatasetConfig`).
-
-ERNIE 5.5 needs Megatron-Core dev at or after f78809f6d, which has the
-``DSv4HybridAttention._post_o_group_proj`` hook.
 """
 
 from __future__ import annotations
