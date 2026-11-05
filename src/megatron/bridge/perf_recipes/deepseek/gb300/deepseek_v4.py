@@ -60,8 +60,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Pro pretrain: 256× GB300, MXFP8, native HybridModel layout.
 
-    Requires mHC PP/VPP and CUDA graphs with recompute and activation offload;
-    the main-branch MCore pin does not yet support this combination.
+    Uses eager execution and mHC recompute without fine-grained activation
+    offloading. Paged expert activations can spill to pinned host memory.
     """
     cfg = deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config()
 
@@ -87,7 +87,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
 
-    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = []
     cfg.model.cuda_graph_warmup_steps = 3
     cfg.model.use_te_rng_tracker = True
@@ -96,8 +96,9 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
     cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.0
+    # Preserve total stash capacity while moving half of it to pinned host memory.
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 0.6
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.6
 
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.dsa_kernel_backend = "cudnn"
@@ -118,8 +119,9 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.dist.enable_megatron_core_experimental = True
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.model.fine_grained_activation_offloading = True
-    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    # core_r0.20.0 does not support mHC recompute with fine-grained activation offloading.
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = []
     cfg.model.fine_grained_offloading_max_inflight_offloads = 2
     cfg.comm_overlap.overlap_grad_reduce = True
 
