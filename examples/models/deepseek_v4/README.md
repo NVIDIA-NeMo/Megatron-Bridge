@@ -157,7 +157,8 @@ support remains a work in progress and is not supported on `main`:
 | `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | Offline-packed THD (WIP) | On | 32-GPU GB200 |
 
 The recipes select fused mHC only when the runtime supports the Blackwell
-kernel; Hopper uses the unfused fallback. The GB200 packed recipe additionally
+kernel; Hopper uses the unfused path, which matches DeepSeek-V4's mHC
+normalization (see Known Limitations). The GB200 packed recipe additionally
 enables HybridEP, uneven-dispatch padding, DSA fusion, grouped GEMM, selective
 recompute, and attention activation offload.
 
@@ -256,5 +257,12 @@ required storage and validate checkpoint resume explicitly.
   `srun --ntasks-per-node=1 bash -c 'NNODES=$SLURM_JOB_NUM_NODES NODE_RANK=$SLURM_NODEID MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1) examples/models/deepseek_v4/inference.sh'`.
   With the variables unset the script launches all ranks on the current node.
 - Fused mHC requires Blackwell (`sm_100`). Hopper uses the unfused path.
+- DeepSeek-V4 normalizes the mHC mapping input as
+  `x * rsqrt(mean(x^2) + rms_norm_eps)`. Only the unfused mHC path computes
+  this (`mhc_norm_eps_inside_sqrt=True`); the fused kernels add epsilon outside
+  the square root. The bridge's model config therefore uses the unfused path
+  on every GPU. Recipes enable fused mHC on Blackwell for speed; for exact
+  reference numerics there, override
+  `model.use_fused_mhc=False model.mhc_norm_eps_inside_sqrt=True`.
 - CPU import and export require enough RAM for the full BF16 model plus
   conversion workspace and remain unverified in the current card.
