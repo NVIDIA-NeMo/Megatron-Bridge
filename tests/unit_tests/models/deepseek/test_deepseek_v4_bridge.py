@@ -31,7 +31,9 @@ from megatron.core.transformer.pipeline_parallel_layer_layout import PipelinePar
 from transformers import DeepseekV4Config
 
 from megatron.bridge.models.common.base import ModelConfig
+from megatron.bridge.models.conversion import model_bridge as model_bridge_module
 from megatron.bridge.models.conversion import quantization_utils
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
@@ -236,6 +238,44 @@ class TestDeepSeekV4QuantizedExport:
         hf_params = [m.hf_param for m in bridge_without_mtp.mapping_registry().mappings]
 
         assert [name for name in hf_params if isinstance(name, str) and "weights_proj" in name] == source_keys
+
+    @pytest.mark.parametrize("source_name", ["weights_proj", "scorer.weights_proj"])
+    def test_fp8_export_tasks_use_source_checkpoint_indexer_name(self, monkeypatch, source_name):
+        """AutoBridge's FP8 export builds tasks on a fresh bridge, which must see the source's indexer name."""
+        megatron_name = "decoder.layers.2.inner_layer.self_attention.core_attention.indexer.linear_weights_proj.weight"
+        source_key = f"layers.1.attn.indexer.{source_name}.weight"
+        weight = torch.ones(4, 4)
+        model_config = SimpleNamespace(num_moe_experts=0, pipeline_model_parallel_size=1)
+        model = SimpleNamespace(config=model_config, named_parameters=lambda: iter([(megatron_name, weight)]))
+        hf_pretrained = SimpleNamespace(
+            config=SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=0),
+            state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: [source_key])),
+        )
+        # Like get_model_bridge, the fresh bridge knows the config but not the source.
+        fresh_bridge = DeepSeekV4Bridge()
+        fresh_bridge.hf_config = hf_pretrained.config
+        monkeypatch.setattr(fresh_bridge, "_share_embeddings_and_output_weights", lambda _model: False)
+        monkeypatch.setattr(fresh_bridge, "_megatron_global_param_names_all_pp_ranks", lambda _model: [megatron_name])
+        monkeypatch.setattr(fresh_bridge, "_detect_fp8_params", lambda *_args: {})
+        monkeypatch.setattr(model_bridge_module, "unwrap_model", lambda _model: [model])
+        monkeypatch.setattr(
+            model_bridge_module, "_megatron_local_name_to_global", lambda _models, _config, name, _vp_stage: name
+        )
+        monkeypatch.setattr(model_bridge_module, "persistent_buffers", lambda _model: [])
+        monkeypatch.setattr(
+            model_bridge_module,
+            "get_module_and_param_from_name",
+            lambda _model, _name, _vp_stage: (SimpleNamespace(config=model_config), weight),
+        )
+        monkeypatch.setattr(model_bridge_module.parallel_state, "get_pipeline_model_parallel_rank", lambda: 0)
+        monkeypatch.setattr(model_bridge_module.parallel_state, "get_pipeline_model_parallel_group", lambda: None)
+        auto_bridge = AutoBridge.__new__(AutoBridge)
+        auto_bridge.hf_pretrained = hf_pretrained
+        monkeypatch.setattr(AutoBridge, "_model_bridge", property(lambda _self: fresh_bridge))
+
+        tasks = auto_bridge.get_export_fp8_tasks(model)
+
+        assert [task.mapping.hf_param for task in tasks] == [source_key]
 
     def test_export_quantizes_fp8_weight_and_emits_scale(self):
         bridge = DeepSeekV4Bridge()
