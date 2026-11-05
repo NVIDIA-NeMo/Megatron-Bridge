@@ -71,6 +71,9 @@ class MiMoV2FlashModelProvider(GPTModelProvider):
     # Attention value scale
     attention_value_scale: Optional[float] = None
 
+    # V2 multimodal/quantization metadata for source-format text checkpoint export.
+    mimo_v2_hf_config: dict[str, object] | None = None
+
     # Architecture defaults that differ from GPTModelProvider
     normalization: str = "RMSNorm"
     gated_linear_unit: bool = True
