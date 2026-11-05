@@ -219,9 +219,10 @@ def test_llama3_vrnvl72_fp8mx_perf_settings(
 
 @pytest.mark.unit
 def test_llama3_vrnvl72_nvfp4_perf_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The VRNVL72 NVFP4 recipe adds fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
+    """The VRNVL72 NVFP4 recipe adds MXFP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
 
-    Attention stays in BF16, and the mixed-precision settings and the parallel layout match GB300.
+    ``NVTE_DPA_FP8_RECIPE`` selects block-scaled MXFP8 for that attention path. Apart from the FP8 attention
+    flag, the mixed-precision settings and the parallel layout match GB300.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
@@ -233,7 +234,10 @@ def test_llama3_vrnvl72_nvfp4_perf_settings(monkeypatch: pytest.MonkeyPatch) -> 
     assert vrnvl72_cfg.model.bias_activation_fusion is False
     assert vrnvl72_cfg.dataset.create_attention_mask is False
 
-    assert vrnvl72_cfg.mixed_precision.fp8_dot_product_attention is False
+    assert vrnvl72_cfg.mixed_precision.fp8_dot_product_attention is True
+    assert gb300_cfg.mixed_precision.fp8_dot_product_attention is False
+    assert vrnvl72_cfg.env_vars["NVTE_DPA_FP8_RECIPE"] == "MXFP8BlockScaling"
+    vrnvl72_cfg.mixed_precision.fp8_dot_product_attention = False
     assert vrnvl72_cfg.mixed_precision == gb300_cfg.mixed_precision
     for name in (
         "tensor_model_parallel_size",
