@@ -25,12 +25,14 @@ from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
 )
 from megatron.bridge.perf_recipes.llama.gb300.llama3 import (
     llama3_8b_pretrain_8gpu_gb300_fp8mx_config,
+    llama3_8b_pretrain_8gpu_gb300_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.llama.h100.llama3 import (
     llama3_70b_pretrain_64gpu_h100_fp8cs_config,
 )
 from megatron.bridge.perf_recipes.llama.vrnvl72.llama3 import (
     llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
@@ -203,6 +205,36 @@ def test_llama3_vrnvl72_fp8mx_perf_settings(
     assert vrnvl72_cfg.model.bias_activation_fusion is False
     assert vrnvl72_cfg.dataset.create_attention_mask is False
 
+    for name in (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "virtual_pipeline_model_parallel_size",
+        "context_parallel_size",
+        "cuda_graph_impl",
+    ):
+        assert getattr(vrnvl72_cfg.model, name) == getattr(gb300_cfg.model, name), name
+    assert vrnvl72_cfg.train.global_batch_size == gb300_cfg.train.global_batch_size
+    assert vrnvl72_cfg.train.micro_batch_size == gb300_cfg.train.micro_batch_size
+
+
+@pytest.mark.unit
+def test_llama3_vrnvl72_nvfp4_perf_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The VRNVL72 NVFP4 recipe adds fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
+
+    Attention stays in BF16, and the mixed-precision settings and the parallel layout match GB300.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    vrnvl72_cfg = llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config()
+    gb300_cfg = llama3_8b_pretrain_8gpu_gb300_nvfp4_config()
+
+    assert vrnvl72_cfg.model.fused_single_qkv_rope is True
+    assert vrnvl72_cfg.model.use_te_activation_func is True
+    assert vrnvl72_cfg.model.bias_activation_fusion is False
+    assert vrnvl72_cfg.dataset.create_attention_mask is False
+
+    assert vrnvl72_cfg.mixed_precision.fp8_dot_product_attention is False
+    assert vrnvl72_cfg.mixed_precision == gb300_cfg.mixed_precision
     for name in (
         "tensor_model_parallel_size",
         "pipeline_model_parallel_size",

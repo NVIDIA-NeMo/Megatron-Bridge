@@ -100,6 +100,11 @@ def llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 def llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VRNVL72, NVFP4 (alias of GB300)."""
     cfg = llama3_8b_pretrain_8gpu_gb300_nvfp4_config()
+    cfg.model.fused_single_qkv_rope = True
+    # TE SwiGLU kernel; MCore requires bias_activation_fusion off with it.
+    cfg.model.use_te_activation_func = True
+    cfg.model.bias_activation_fusion = False
+    cfg.dataset.create_attention_mask = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
