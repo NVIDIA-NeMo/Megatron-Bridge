@@ -612,7 +612,8 @@ class TestDeepSeekV4MhcNormalization:
         assert transformer.mhc_norm_eps_inside_sqrt is True
         assert transformer.use_fused_mhc is False
         assert transformer.layernorm_epsilon == hf_config.rms_norm_eps
-        # The reference casts the mHC mappings to the activation dtype before mixing the streams.
+        # BF16 mappings and stream mixing. DeepSeek's inference code keeps both in FP32, which differs
+        # from this path only by rounding.
         assert transformer.mhc_keep_mappings_in_fp32 is False
 
 
