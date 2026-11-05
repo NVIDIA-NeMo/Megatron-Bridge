@@ -97,6 +97,20 @@ def test_local_unpack_follows_cp_indices():
     assert entries[0].values.tolist() == [0.0, 10.0, 40.0, 50.0]
 
 
+def test_filler_microbatch_copies_the_field_schema():
+    real = Datum(
+        input_ids=torch.zeros(3, dtype=torch.int64),
+        target_ids=torch.zeros(3, dtype=torch.int64),
+        loss_mask=torch.ones(3),
+        advantages=torch.ones(3),
+        loss_inputs={"returns": torch.ones(3, dtype=torch.float64)},
+    )
+    mb = filler_microbatch(pad_multiple=4, device=CPU, layout="thd", schema_from=real)
+    assert mb.mapping.filler and not mb.active_mask.any()
+    assert mb.advantages is not None and mb.advantages.abs().sum() == 0 and mb.old_logprobs is None
+    assert mb.loss_inputs["returns"].dtype == torch.float64 and mb.loss_inputs["returns"].shape == mb.input_ids.shape
+
+
 def test_filler_microbatch_contributes_nothing():
     mb = filler_microbatch(pad_multiple=4, device=CPU, layout="thd")
     assert mb.mapping.filler and mb.input_ids.shape == (1, 4)

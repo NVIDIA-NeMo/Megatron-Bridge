@@ -33,6 +33,15 @@ from megatron.bridge.engine.datum import ModelOutput, PreparedMicrobatch
 
 LossReturn = tuple[torch.Tensor, dict[str, torch.Tensor]]
 
+# Log-ratios are clamped to this magnitude before exponentiating. exp(20) is about 5e8, finite in FP32
+# with a finite gradient; without the clamp a large logprob gap gives an infinite ratio and, through
+# the clipped branch, a NaN gradient (0 times inf) even when the forward loss is finite.
+LOG_RATIO_BOUND = 20.0
+
+
+def _safe_exp(log_ratio: torch.Tensor) -> torch.Tensor:
+    return log_ratio.clamp(-LOG_RATIO_BOUND, LOG_RATIO_BOUND).exp()
+
 
 def cross_entropy(batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
     """Negative log-likelihood summed over active positions."""
@@ -41,10 +50,25 @@ def cross_entropy(batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tenso
 
 
 def _active_field(batch: PreparedMicrobatch, name: str, active: torch.Tensor, *, needed_by: str) -> torch.Tensor:
-    """The active positions of a per-token Datum field; raises when the Datums did not carry it."""
+    """The active positions of a per-token Datum field; raises when the Datums did not carry it.
+
+    A microbatch with no active position (a filler) never needs the field: an empty tensor is returned
+    so the loss evaluates to a graph-connected zero with its usual metric keys."""
     field = getattr(batch, name)
     if field is None:
+        if not bool(active.any()):
+            return torch.zeros(0, dtype=torch.float32, device=active.device)
         raise ValueError(f"{needed_by} needs Datum.{name}, but the batch does not carry it.")
+    return field[active].float()
+
+
+def _active_loss_input(batch: PreparedMicrobatch, key: str, active: torch.Tensor, *, needed_by: str) -> torch.Tensor:
+    """Like ``_active_field`` for a custom ``loss_inputs`` tensor."""
+    field = batch.loss_inputs.get(key)
+    if field is None:
+        if not bool(active.any()):
+            return torch.zeros(0, dtype=torch.float32, device=active.device)
+        raise ValueError(f"{needed_by} needs Datum.loss_inputs[{key!r}], but the batch does not carry it.")
     return field[active].float()
 
 
@@ -56,7 +80,7 @@ def _importance_weights(
     if tis_coef is None:
         return None, {}
     rollout = _active_field(batch, "rollout_logprobs", active, needed_by=needed_by)
-    weights = (old - rollout).exp()
+    weights = _safe_exp(old - rollout)
     truncated = (weights > tis_coef).float().sum()
     return weights.clamp(max=tis_coef), {"tis_truncated_tokens": truncated}
 
@@ -66,14 +90,15 @@ def importance_sampling(
 ) -> LossReturn:
     """Importance-weighted policy gradient: ``-(exp(logp - old) * advantage)`` summed over active positions.
 
-    ``tis_coef`` enables truncated importance sampling against ``rollout_logprobs``. Metrics:
-    ``abs_logprob_diff_sum`` (``|logp - old|``) and, with TIS, ``tis_truncated_tokens``.
+    ``tis_coef`` enables truncated importance sampling against ``rollout_logprobs``. Log-ratios are
+    clamped to ``LOG_RATIO_BOUND`` before exponentiating. Metrics: ``abs_logprob_diff_sum``
+    (``|logp - old|``) and, with TIS, ``tis_truncated_tokens``.
     """
     active = batch.active_mask
     logp = output.logprobs[active].float()
     old = _active_field(batch, "old_logprobs", active, needed_by="importance_sampling")
     advantages = _active_field(batch, "advantages", active, needed_by="importance_sampling")
-    ratio = (logp - old).exp()
+    ratio = _safe_exp(logp - old)
     weights, metrics = _importance_weights(batch, old, active, tis_coef, needed_by="importance_sampling")
     per_token = ratio * advantages
     if weights is not None:
@@ -96,6 +121,7 @@ def ppo_clip(
     Per token: ``-w * min(r * A, clamp(r, 1 - clip_low, 1 + clip_high) * A) + kl_beta * k3`` where
     ``r = exp(logp - old)``, ``k3 = exp(ref - logp) - (ref - logp) - 1`` against ``reference_logprobs``
     (only when ``kl_beta > 0``) and ``w`` the truncated importance weight (only with ``tis_coef``).
+    Log-ratios are clamped to ``LOG_RATIO_BOUND`` before exponentiating, far outside any clip range.
     Metrics: ``clipped_tokens`` (ratio outside the clip range), ``abs_logprob_diff_sum``, ``kl_sum`` when
     the KL term is on, ``tis_truncated_tokens`` with TIS.
     """
@@ -103,7 +129,7 @@ def ppo_clip(
     logp = output.logprobs[active].float()
     old = _active_field(batch, "old_logprobs", active, needed_by="ppo_clip")
     advantages = _active_field(batch, "advantages", active, needed_by="ppo_clip")
-    ratio = (logp - old).exp()
+    ratio = _safe_exp(logp - old)
     clipped_ratio = ratio.clamp(1.0 - clip_low, 1.0 + clip_high)
     surrogate = torch.minimum(ratio * advantages, clipped_ratio * advantages)
     weights, metrics = _importance_weights(batch, old, active, tis_coef, needed_by="ppo_clip")
@@ -112,7 +138,7 @@ def ppo_clip(
     loss = -surrogate.sum()
     if kl_beta > 0.0:
         reference = _active_field(batch, "reference_logprobs", active, needed_by="ppo_clip with kl_beta > 0")
-        delta = reference - logp
+        delta = (reference - logp).clamp(-LOG_RATIO_BOUND, LOG_RATIO_BOUND)
         kl = delta.exp() - delta - 1.0
         loss = loss + kl_beta * kl.sum()
         metrics["kl_sum"] = kl.detach().sum()
@@ -133,15 +159,11 @@ def value_loss(batch: PreparedMicrobatch, output: ModelOutput, *, clip: float | 
         raise ValueError("value_loss needs a value-head engine (from_recipe(output_head='value')).")
     active = batch.active_mask
     values = output.values[active].float()
-    if "returns" not in batch.loss_inputs:
-        raise ValueError("value_loss needs Datum.loss_inputs['returns'] (per-token return targets).")
-    returns = batch.loss_inputs["returns"][active].float()
+    returns = _active_loss_input(batch, "returns", active, needed_by="value_loss")
     error = (values - returns) ** 2
     metrics = {"value_abs_error_sum": (values - returns).detach().abs().sum()}
     if clip is not None:
-        if "old_values" not in batch.loss_inputs:
-            raise ValueError("value_loss with clip needs Datum.loss_inputs['old_values'].")
-        old = batch.loss_inputs["old_values"][active].float()
+        old = _active_loss_input(batch, "old_values", active, needed_by="value_loss with clip")
         clipped = old + (values - old).clamp(-clip, clip)
         clipped_error = (clipped - returns) ** 2
         metrics["value_clipped_tokens"] = (clipped_error > error).detach().float().sum()

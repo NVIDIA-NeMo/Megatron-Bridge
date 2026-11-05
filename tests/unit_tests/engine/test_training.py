@@ -136,6 +136,44 @@ def test_ppo_clip_unclipped_gradient_kl_and_tis():
     assert grad[2].item() == pytest.approx((ratios[1] * 1.0).item(), rel=1e-6)
 
 
+def test_ppo_clip_overflowing_ratio_keeps_loss_finite_and_gradient_zero():
+    # Slot 1: logp -1.0 vs old -100.0 is a log-ratio of 99; the clipped branch wins the minimum.
+    batch = _rl_batch(advantages=[0.0, 1.0, 0.0, 0.0], old_logprobs=[0.0, -100.0, -2.1, 0.0])
+    output = _rl_output()
+    loss, metrics = ppo_clip(batch, output, clip_low=0.2, clip_high=0.2)
+    assert loss.item() == pytest.approx(-1.2)
+    assert metrics["clipped_tokens"].item() == 1.0
+    loss.backward()
+    assert torch.isfinite(output.logprobs.grad).all()
+    assert output.logprobs.grad[0, 1].item() == 0.0
+
+
+def test_truncated_importance_weight_overflow_stays_finite():
+    batch = _rl_batch(
+        advantages=[0.0, 1.0, 1.0, 0.0],
+        old_logprobs=[0.0, -1.5, -2.0, 0.0],
+        rollout_logprobs=[0.0, -100.5, -2.0, 0.0],  # old - rollout = 99 at slot 1
+    )
+    loss, metrics = importance_sampling(batch, _rl_output(), tis_coef=2.0)
+    assert math.isfinite(loss.item()) and metrics["tis_truncated_tokens"].item() == 1.0
+
+
+def test_losses_on_a_filler_give_zero_with_their_metric_keys():
+    batch = _rl_batch()  # no optional fields at all, as a filler built by a custom pipeline
+    batch.loss_mask = torch.zeros(1, 4)
+    output = _rl_output()
+    loss, metrics = importance_sampling(batch, output, tis_coef=1.0)
+    assert loss.item() == 0.0 and loss.requires_grad
+    assert set(metrics) == {"abs_logprob_diff_sum", "tis_truncated_tokens"}
+    loss, metrics = ppo_clip(batch, output, clip_low=0.2, clip_high=0.2, kl_beta=0.1, tis_coef=1.0)
+    assert loss.item() == 0.0 and loss.requires_grad
+    assert set(metrics) == {"clipped_tokens", "abs_logprob_diff_sum", "kl_sum", "tis_truncated_tokens"}
+    assert all(value.item() == 0.0 for value in metrics.values())
+    values = ModelOutput(logprobs=None, values=torch.zeros(1, 4, requires_grad=True))
+    loss, metrics = value_loss(batch, values, clip=0.5)
+    assert loss.item() == 0.0 and set(metrics) == {"value_abs_error_sum", "value_clipped_tokens"}
+
+
 def test_ppo_clip_kl_term_value_and_requirement():
     batch = _rl_batch(
         advantages=[0.0, 0.0, 0.0, 0.0],

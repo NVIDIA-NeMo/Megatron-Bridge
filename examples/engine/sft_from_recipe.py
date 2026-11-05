@@ -75,7 +75,13 @@ class PackReplayEngine(TrainingEngine):
         filler_width = seq_length if pad_to_max_length else None
         for group in assign_to_dp_ranks(groups, dp.size())[dp.rank()]:
             if group is None:
-                mb = filler_microbatch(pad_multiple=self.pad_multiple, device=device, layout="thd", width=filler_width)
+                mb = filler_microbatch(
+                    pad_multiple=self.pad_multiple,
+                    device=device,
+                    layout="thd",
+                    width=filler_width,
+                    schema_from=datums[0],
+                )
             else:
                 mb = pack_sequences(
                     datums,

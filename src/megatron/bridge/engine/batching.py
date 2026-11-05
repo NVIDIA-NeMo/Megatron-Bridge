@@ -227,12 +227,20 @@ def pad_sequence(datum: Datum, index: int, *, pad_multiple: int, device: torch.d
 
 
 def filler_microbatch(
-    *, pad_multiple: int, device: torch.device, layout: str, width: int | None = None
+    *,
+    pad_multiple: int,
+    device: torch.device,
+    layout: str,
+    width: int | None = None,
+    schema_from: Datum | None = None,
 ) -> PreparedMicrobatch:
     """A zero-contribution microbatch so every DP replica runs the same number of forward passes.
 
     ``width`` sets the physical token count (default ``pad_multiple``); pass ``seq_length`` to keep the
-    fixed-width shape of the real microbatches.
+    fixed-width shape of the real microbatches. ``schema_from`` is one of the call's Datums: the filler
+    then carries the same optional fields and ``loss_inputs`` keys, zero-filled, so a loss that reads
+    them (``ppo_clip``, ``value_loss``, custom losses) runs on every rank with an empty active set
+    instead of failing on the rank that drew the filler.
     """
     width = width or pad_multiple
     datum = Datum(
@@ -240,6 +248,13 @@ def filler_microbatch(
         target_ids=torch.full((width,), PAD_TOKEN_ID, dtype=torch.int64),
         loss_mask=torch.zeros(width),
     )
+    if schema_from is not None:
+        for name in COMMON_FIELDS:
+            if getattr(schema_from, name) is not None:
+                setattr(datum, name, torch.zeros(width, dtype=torch.float32))
+        datum.loss_inputs = {
+            key: torch.zeros(width, dtype=value.dtype) for key, value in schema_from.loss_inputs.items()
+        }
     if layout == "thd":
         microbatch = pack_sequences([datum], [0], seq_length=width, pad_multiple=pad_multiple, device=device)
     elif layout == "bshd":
@@ -455,7 +470,9 @@ def default_preprocess(
     filler_width = seq_length if pad_to_max_length else None
     for group in assign_to_dp_ranks(groups, dp_size)[dp_rank]:
         if group is None:
-            mb = filler_microbatch(pad_multiple=pad_multiple, device=device, layout=layout, width=filler_width)
+            mb = filler_microbatch(
+                pad_multiple=pad_multiple, device=device, layout=layout, width=filler_width, schema_from=datums[0]
+            )
         elif layout == "thd":
             mb = pack_sequences(
                 datums,
