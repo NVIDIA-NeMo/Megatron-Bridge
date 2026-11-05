@@ -44,8 +44,11 @@ LOG_RATIO_BOUND = 20.0
 
 def _bounded_exp(x: torch.Tensor) -> torch.Tensor:
     """``exp(x)`` up to ``LOG_RATIO_BOUND``, then its tangent line: finite, monotone, non-zero gradient."""
-    capped = x.clamp(max=LOG_RATIO_BOUND)
-    return capped.exp() + math.exp(LOG_RATIO_BOUND) * (x - capped)
+    # Explicit branches: a single clamp-based formula adds and subtracts exp(20) in the backward pass,
+    # and FP32 cancellation then zeroes the ordinary exp(x) gradient near a ratio of 1.
+    exponential = x.clamp(max=LOG_RATIO_BOUND).exp()
+    linear = math.exp(LOG_RATIO_BOUND) * (1.0 + (x - LOG_RATIO_BOUND))
+    return torch.where(x <= LOG_RATIO_BOUND, exponential, linear)
 
 
 def cross_entropy(batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
@@ -134,12 +137,16 @@ def ppo_clip(
     Metrics: ``clipped_tokens`` (ratio outside the clip range), ``abs_logprob_diff_sum``, ``kl_sum`` when
     the KL term is on, ``tis_truncated_tokens`` with TIS.
     """
+    if not (0.0 <= clip_low <= 1.0) or clip_high < 0.0:
+        raise ValueError(f"ppo_clip needs 0 <= clip_low <= 1 and clip_high >= 0, got {clip_low}, {clip_high}.")
     active = batch.active_mask
     logp = output.logprobs[active].float()
     old = _active_field(batch, "old_logprobs", active, needed_by="ppo_clip")
     advantages = _active_field(batch, "advantages", active, needed_by="ppo_clip")
     log_ratio = logp - old
-    log_low, log_high = math.log(1.0 - clip_low), math.log(1.0 + clip_high)
+    # clip_low == 1 means a lower ratio bound of zero, i.e. no lower clip.
+    log_low = -math.inf if clip_low == 1.0 else math.log1p(-clip_low)
+    log_high = math.log1p(clip_high)
     clipped_ratio = log_ratio.clamp(log_low, log_high).exp()
     # min(r*A, clip(r)*A) picks the unclipped branch when A >= 0 and r is below the upper clip, or when
     # A < 0 and r is above the lower clip; decided on log_ratio so no overflowing value is needed.

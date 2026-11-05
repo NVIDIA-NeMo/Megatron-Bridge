@@ -161,12 +161,12 @@ def test_ppo_clip_large_gap_with_negative_advantage_keeps_a_corrective_gradient(
     batch = _rl_batch(advantages=[0.0, -1.0, 0.0, 0.0], old_logprobs=[0.0, -22.0, -2.1, 0.0])
     output = _rl_output()
     loss, metrics = ppo_clip(batch, output, clip_low=0.2, clip_high=0.2)
-    assert math.isfinite(loss.item()) and loss.item() > 0
+    assert loss.item() == pytest.approx(2.0 * math.exp(20.0), rel=1e-5)  # tangent-line value at log-ratio 21
     assert metrics["clipped_tokens"].item() == 1.0  # outside the clip range, yet the unclipped branch is used
     loss.backward()
     grad = output.logprobs.grad[0, 1].item()
     assert math.isfinite(grad) and grad > 0
-    assert grad == pytest.approx(2.0 * math.exp(20.0), rel=1e-5)  # tangent-line slope beyond the bound
+    assert grad == pytest.approx(math.exp(20.0), rel=1e-5)  # tangent-line slope beyond the bound
 
 
 def test_ppo_clip_kl_gradient_survives_large_negative_delta():
@@ -192,6 +192,14 @@ def test_bounded_exp_is_exact_below_the_bound_and_linear_above():
     y.sum().backward()
     assert torch.allclose(x.grad[:4], x[:4].detach().exp())
     assert x.grad[4].item() == pytest.approx(math.exp(20.0), rel=1e-6) and x.grad[5].item() == x.grad[4].item()
+
+
+def test_ppo_clip_rejects_clip_values_outside_the_supported_range():
+    batch = _rl_batch(advantages=[0.0, 1.0, 1.0, 0.0], old_logprobs=[0.0, -1.0, -2.1, 0.0])
+    with pytest.raises(ValueError, match="clip_low"):
+        ppo_clip(batch, _rl_output(), clip_low=1.5, clip_high=0.2)
+    with pytest.raises(ValueError, match="clip_high"):
+        ppo_clip(batch, _rl_output(), clip_low=0.2, clip_high=-0.1)
 
 
 def test_truncated_importance_weight_overflow_stays_finite():
