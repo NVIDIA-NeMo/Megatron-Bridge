@@ -14,18 +14,20 @@
 
 from __future__ import annotations
 
+import functools
 import itertools
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 from string import digits
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple, TypeVar, Union
 
 import torch
 from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_pg_rank, unwrap_model
 
+from megatron.bridge.models.conversion.gtp import _gather_gtp_weight
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -148,6 +150,42 @@ def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expecte
 
 class MegatronPeftBridge:
     """Mixin providing adapter-aware utilities for Megatron model bridges."""
+
+    def _adapter_target_modules(self, adapter_weight_names: Iterable[str]) -> list[str]:
+        """Return the ``target_modules`` written to an exported ``adapter_config.json``.
+
+        ``AutoBridge.save_hf_adapter`` calls this hook with the Hugging Face PEFT names of
+        the exported adapter weights (for example
+        ``base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight``). The default
+        keeps PEFT's usual leaf-name selectors (``q_proj``, ``gate_proj``, ...), inferred by
+        :func:`infer_target_modules_from_adapter_weights`.
+
+        Override it when a leaf name is shared by modules the adapter does not cover. PEFT
+        matches ``target_modules`` by suffix, so a bare leaf name attaches an untrained
+        adapter to every module with that name when the adapter is loaded.
+
+        Example: Beam has an attention output gate ``self_attn.gate_proj`` and an MLP
+        ``mlp.gate_proj``. For an adapter trained on attention only, the default returns
+        ``["gate_proj", "k_proj", "o_proj", "q_proj", "v_proj"]``, which also wraps every
+        ``mlp.gate_proj`` on load. ``BeamBridge`` returns full module paths instead::
+
+            def _adapter_target_modules(self, adapter_weight_names):
+                return sorted(
+                    {
+                        _split_hf_lora_weight_name(name)[0].removeprefix("base_model.model.")
+                        for name in adapter_weight_names
+                    }
+                )
+
+        which yields ``["model.layers.0.self_attn.gate_proj", "model.layers.0.self_attn.q_proj", ...]``.
+
+        Args:
+            adapter_weight_names: Hugging Face PEFT names of the exported LoRA weights.
+
+        Returns:
+            Sorted ``target_modules`` entries for the PEFT adapter config.
+        """
+        return infer_target_modules_from_adapter_weights(adapter_weight_names)
 
     def _get_lora_unwrapped_name(self, megatron_param: str) -> str:
         """Remove `.to_wrap` from LoRA parameter names."""
@@ -369,10 +407,21 @@ class MegatronPeftBridge:
         """Split a fused LoRA linear_out tensor for QKV adapters."""
 
         model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
-        # Pass the LoRA rank as feature_dim so split_qkv_weights doesn't
-        # mistake it for an FP8 compressed hidden_size.
-        feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
-        q_out, k_out, v_out = split_qkv_weights(model.config, linear_out_weight, feature_dim=feature_dim)
+        config = model.config
+        if getattr(config, "kda_two_stage_gates", False):
+            # ColumnParallelMapping gathers [Q_rank | K_rank | V_rank] in TP-rank order.
+            q_dim = config.linear_num_key_heads * config.linear_key_head_dim
+            v_dim = config.linear_num_value_heads * config.linear_value_head_dim
+            tp_size = parallel_state.get_tensor_model_parallel_world_size()
+            shards = linear_out_weight.reshape(tp_size, -1, *linear_out_weight.shape[1:])
+            q_out, k_out, v_out = (
+                section.flatten(0, 1)
+                for section in shards.split((q_dim // tp_size, q_dim // tp_size, v_dim // tp_size), dim=1)
+            )
+        else:
+            # LoRA rank is the feature width, not an FP8-compressed hidden size.
+            feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
+            q_out, k_out, v_out = split_qkv_weights(config, linear_out_weight, feature_dim=feature_dim)
         return {"q_proj": q_out, "k_proj": k_out, "v_proj": v_out}
 
     def _split_gdn_in_proj_linear_out_weight(
@@ -802,12 +851,14 @@ class MegatronPeftBridge:
                 )
             else:
                 linear_in_dict = adapter_task.linear_in_task.mapping.megatron_to_hf(
-                    adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_in_task.param_weight),
+                    adapter_task.linear_in_task.megatron_module,
                 )
                 linear_in_tensor = next(iter(linear_in_dict.values()))
 
                 linear_out_dict = adapter_task.linear_out_task.mapping.megatron_to_hf(
-                    adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_out_task.param_weight),
+                    adapter_task.linear_out_task.megatron_module,
                 )
                 linear_out_tensor = next(iter(linear_out_dict.values()))
 
@@ -841,12 +892,34 @@ class MegatronPeftBridge:
         """Broadcast and gather grouped-expert adapter weights on their real expert-TP axis."""
 
         mapping = task.mapping
-        tensor = mapping.broadcast_from_pp_rank(task.param_weight, cache_key=task.global_param_name)
+        tensor = mapping.broadcast_from_pp_rank(
+            _gather_gtp_weight(task.param_weight), cache_key=task.global_param_name
+        )
         assert tensor is not None, f"Expected adapter tensor for {task.global_param_name}"
         tensor = mapping.maybe_dequantize(tensor)
         if mapping.tp_size > 1:
             tensor = torch.cat(mapping.gather_from_tp_ranks(tensor), dim=tp_axis)
         return tensor
+
+    @staticmethod
+    def _make_hf_weight(
+        megatron_param_name: Optional[str],
+        with_megatron_names: bool,
+        hf_name: str,
+        tensor: torch.Tensor,
+    ) -> "HFWeightTuple":
+        """Build the exported tuple, attaching the source Megatron name only when requested.
+
+        Adapter weights always come from exactly one Megatron parameter, so the sourced tuple
+        carries a one-element ``megatron_param_names``; a missing source (not expected on any
+        current path) is reported as an empty tuple rather than silently dropping the flag.
+        """
+        from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple
+
+        if with_megatron_names:
+            sources = (megatron_param_name,) if megatron_param_name is not None else ()
+            return HFSourcedWeightTuple(hf_name, tensor, sources)
+        return HFWeightTuple(hf_name, tensor)
 
     def stream_adapter_weights_megatron_to_hf(
         self,
@@ -856,6 +929,7 @@ class MegatronPeftBridge:
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
         stack_3d_moe: bool = False,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Stream only adapter weights without merging them into base tensors.
 
@@ -868,9 +942,12 @@ class MegatronPeftBridge:
         for gate_up_proj, bare ``...experts`` for down_proj), instead of the per-expert
         2D ``pack_moe`` layout. It is the vLLM-3D-MoE analogue of ``expand_shared_outer``
         and takes precedence over it for shared-outer adapters.
-        """
-        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 
+        ``with_megatron_names`` yields :class:`HFSourcedWeightTuple` values whose
+        ``megatron_param_names`` is the one-element tuple holding the adapter's ``linear_in``
+        (lora_A) or ``linear_out`` (lora_B) Megatron weight name; the default keeps the
+        two-field :class:`HFWeightTuple`.
+        """
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
@@ -891,6 +968,10 @@ class MegatronPeftBridge:
 
             linear_in_tensor = adapter_weight.linear_in_weight.weight
             linear_out_tensor = adapter_weight.linear_out_weight.weight
+            # Megatron weight names behind lora_A / lora_B, surfaced with ``with_megatron_names``.
+            source_names = (adapter_weight.linear_in_weight.param_name, adapter_weight.linear_out_weight.param_name)
+            emit_in = functools.partial(self._make_hf_weight, source_names[0], with_megatron_names)
+            emit_out = functools.partial(self._make_hf_weight, source_names[1], with_megatron_names)
             is_expert = is_expert_linear(adapter_task.global_base_prefix)
             is_grouped_expert = is_expert and ".local_experts." not in adapter_task.global_base_prefix
             is_shared_outer_lora = is_grouped_expert and linear_in_tensor.ndim != linear_out_tensor.ndim
@@ -906,6 +987,8 @@ class MegatronPeftBridge:
                     cpu,
                     expand_shared_outer=expand_shared_outer,
                     stack_3d_moe=stack_3d_moe,
+                    source_names=source_names,
+                    with_megatron_names=with_megatron_names,
                 )
                 continue
 
@@ -973,8 +1056,8 @@ class MegatronPeftBridge:
                     linear_out_stacked = linear_out_by_base[base_name]
                     if cpu:
                         linear_out_stacked = linear_out_stacked.cpu()
-                    yield HFWeightTuple(linear_in_hf_names[index], linear_in_stacked)
-                    yield HFWeightTuple(linear_out_hf_names[index], linear_out_stacked)
+                    yield emit_in(linear_in_hf_names[index], linear_in_stacked)
+                    yield emit_out(linear_out_hf_names[index], linear_out_stacked)
 
                 continue
 
@@ -1029,12 +1112,12 @@ class MegatronPeftBridge:
                                 "Return ABSENT_PROJECTION from _split_qkv_linear_out_weight "
                                 "to intentionally skip a projection."
                             )
-                            yield HFWeightTuple(linear_in_hf_names[index], current_linear_in_tensor)
-                            yield HFWeightTuple(linear_out_hf_names[index], current_linear_out_tensor)
+                            yield emit_in(linear_in_hf_names[index], current_linear_in_tensor)
+                            yield emit_out(linear_out_hf_names[index], current_linear_out_tensor)
                         continue
 
-                yield HFWeightTuple(linear_in_hf_names[0], current_linear_in_tensor)
-                yield HFWeightTuple(linear_out_hf_names[0], current_linear_out_tensor)
+                yield emit_in(linear_in_hf_names[0], current_linear_in_tensor)
+                yield emit_out(linear_out_hf_names[0], current_linear_out_tensor)
 
     def _stream_shared_outer_adapter_weights(
         self,
@@ -1047,6 +1130,8 @@ class MegatronPeftBridge:
         cpu: bool,
         expand_shared_outer: bool,
         stack_3d_moe: bool = False,
+        source_names: Optional[Tuple[str, str]] = None,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Stream a shared-outer grouped-expert LoRA adapter (SGLang PR #21466).
 
@@ -1065,9 +1150,8 @@ class MegatronPeftBridge:
         mixed MoE LoRA format.
         """
 
-        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
-
         is_expert = is_expert_linear(adapter_task.global_base_prefix)
+        in_name, out_name = source_names if source_names is not None else (None, None)
 
         if stack_3d_moe:
             yield from self._stream_shared_outer_adapter_weights_3d_moe(
@@ -1079,13 +1163,16 @@ class MegatronPeftBridge:
                 num_moe_experts,
                 cpu,
                 is_expert,
+                source_names=source_names,
+                with_megatron_names=with_megatron_names,
             )
             return
 
-        for side_tensor, side_suffix in (
-            (linear_in_tensor, ".linear_in.weight"),
-            (linear_out_tensor, ".linear_out.weight"),
+        for side_tensor, side_suffix, side_source in (
+            (linear_in_tensor, ".linear_in.weight", in_name),
+            (linear_out_tensor, ".linear_out.weight", out_name),
         ):
+            emit = functools.partial(self._make_hf_weight, side_source, with_megatron_names)
             if side_tensor.ndim == 2 and not expand_shared_outer:
                 # Shared side: emit one [1, out, in] tensor. A shared linear_in
                 # feeding a fused gate/up FC1 maps to two HF names, so the same
@@ -1098,7 +1185,7 @@ class MegatronPeftBridge:
                 )
                 for base_name in base_hf_weight_names:
                     hf_name = self._make_lora_param_name(self._strip_hf_expert_index(base_name), side_suffix)
-                    yield HFWeightTuple(hf_name, current)
+                    yield emit(hf_name, current)
                 continue
 
             if side_tensor.ndim == 2 and expand_shared_outer:
@@ -1116,7 +1203,7 @@ class MegatronPeftBridge:
                         hf_name = self._make_lora_param_name(base_name, side_suffix)
                         if hf_name is None:
                             continue
-                        yield HFWeightTuple(hf_name, shared_current)
+                        yield emit(hf_name, shared_current)
                 continue
 
             # Per-expert side: emit one slice per global expert. A fused FC1
@@ -1139,12 +1226,12 @@ class MegatronPeftBridge:
                         megatron_model, base_hf_weight_names, current, is_expert=is_expert
                     )
                 if per_base is None:
-                    yield HFWeightTuple(side_hf_names[0], current)
+                    yield emit(side_hf_names[0], current)
                     continue
                 for index, base_name in enumerate(base_hf_weight_names):
                     chunk = per_base.get(base_name)
                     assert chunk is not None, f"unknown projection name: {base_name!r}"
-                    yield HFWeightTuple(side_hf_names[index], chunk)
+                    yield emit(side_hf_names[index], chunk)
 
     def _stream_shared_outer_adapter_weights_3d_moe(
         self,
@@ -1156,6 +1243,8 @@ class MegatronPeftBridge:
         num_moe_experts: int,
         cpu: bool,
         is_expert: bool,
+        source_names: Optional[Tuple[str, str]] = None,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Emit a shared-outer routed-expert LoRA adapter in vLLM 3D-MoE layout.
 
@@ -1177,7 +1266,7 @@ class MegatronPeftBridge:
         ``linear_out`` carries gate+up on its output dim already, matching vLLM's
         ``2*moe_intermediate`` w13 fused stack, so no gate/up re-split is needed.
         """
-        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
+        in_name, out_name = source_names if source_names is not None else (None, None)
 
         # Resolve the HF base names for expert 0 to discover this adapter's projection
         # (gate_up vs down) and the expert-agnostic stem (...experts).
@@ -1236,8 +1325,8 @@ class MegatronPeftBridge:
             lora_b_3d = lora_b_3d.cpu()
 
         suffix = "base_layer." if is_gate_up else ""
-        yield HFWeightTuple(f"{stem}.{suffix}lora_A.weight", lora_a_3d)
-        yield HFWeightTuple(f"{stem}.{suffix}lora_B.weight", lora_b_3d)
+        yield self._make_hf_weight(in_name, with_megatron_names, f"{stem}.{suffix}lora_A.weight", lora_a_3d)
+        yield self._make_hf_weight(out_name, with_megatron_names, f"{stem}.{suffix}lora_B.weight", lora_b_3d)
 
     def _get_fused_adapter_linear_out_slices(
         self,
@@ -1754,11 +1843,18 @@ def _pack_target_parameter_adapter_weights(
     lora_a: torch.Tensor,
     lora_b: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout."""
+    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout.
+
+    Exported factors are ``lora_A [E, r, in]`` and ``lora_B [E, out, r]``. ParamWrapper
+    reads ``lora_A`` as ``(E, r, in)`` and ``lora_B`` as ``(out, r, E)``, so the columns
+    of the packed ``lora_B`` must be expert-fastest.
+    """
 
     if lora_a.ndim == 3 and lora_b.ndim == 3:
-        packed_lora_a = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_b], dim=0)
-        packed_lora_b = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_a], dim=1)
+        num_experts, rank, in_features = lora_a.shape
+        out_features = lora_b.shape[1]
+        packed_lora_a = lora_a.reshape(num_experts * rank, in_features).contiguous()
+        packed_lora_b = lora_b.permute(1, 2, 0).reshape(out_features, rank * num_experts).contiguous()
         return packed_lora_a, packed_lora_b
 
     return lora_a, lora_b

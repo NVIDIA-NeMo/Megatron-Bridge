@@ -21,6 +21,7 @@ override system while maintaining compatibility with Megatron Core's post_init b
 import copy
 from dataclasses import dataclass, field, fields, is_dataclass
 
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.heterogeneous.heterogeneous_config import (
     HeterogeneousTransformerConfig as MCoreHeterogeneousTransformerConfig,
 )
@@ -69,6 +70,16 @@ def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
         from megatron.bridge.utils.activation_map import str_to_dtype
 
         config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
+
+
+def _normalize_attention_backend(config: MCoreTransformerConfig) -> None:
+    """Resolve an unset recipe backend to MCore's supported automatic selection.
+
+    Explicit backend choices and Transformer Engine environment variables are
+    left unchanged. MCore validates that those process-wide settings agree.
+    """
+    if config.attention_backend is None:
+        config.attention_backend = AttnBackend.auto
 
 
 _HYBRIDEP_PADDING_FIELDS = (
@@ -134,6 +145,41 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig, *, uses_thd: 
             setattr(config, padding_field, True)
 
 
+def _patch_yarn_concentration_factor() -> None:
+    """Patch MCore _yarn_get_concentration_factor_from_config for None handling.
+
+    TransformerConfig declares yarn_rotary_scaling_factor as ``float | None = None``,
+    but MCore uses hasattr(), which returns True for dataclass fields set to None.
+    This causes a crash for non-YaRN models. Use getattr + is not None instead.
+
+    TODO: Remove once upstream MCore merges the fix.
+    """
+    try:
+        import megatron.core.models.common.embeddings.yarn_rotary_pos_embedding as _yarn_mod
+        import megatron.core.transformer.attention as _attn_mod
+
+        _get_factor = _yarn_mod._yarn_get_concentration_factor
+
+        def _fixed_from_config(config):
+            yarn_scaling = getattr(config, "yarn_rotary_scaling_factor", None)
+            if yarn_scaling is not None:
+                return _get_factor(
+                    yarn_scaling,
+                    getattr(config, "yarn_mscale", None),
+                    getattr(config, "yarn_mscale_all_dim", None),
+                )
+            return 1.0
+
+        _yarn_mod._yarn_get_concentration_factor_from_config = _fixed_from_config
+        _attn_mod._yarn_get_concentration_factor_from_config = _fixed_from_config
+    except ImportError:
+        pass
+
+
+# Applied at import so every config that declares the YaRN fields below is covered.
+_patch_yarn_concentration_factor()
+
+
 @dataclass
 class TransformerConfig(MCoreTransformerConfig):
     """Megatron Core TransformerConfig with deferred post-init.
@@ -164,6 +210,17 @@ class TransformerConfig(MCoreTransformerConfig):
     gtp_weight_remat_size: int = field(init=False, default=1)
     expert_gtp_weight_remat_size: int = field(init=False, default=1)
 
+    # YaRN (Yet another RoPE extensioN) parameters, used when position_embedding_type == "yarn".
+    # Megatron Core models read these from their transformer config, so builder-backed
+    # configs declare them here rather than on the outer model config.
+    yarn_rotary_scaling_factor: float | None = None
+    yarn_original_max_position_embeddings: int | None = None
+    yarn_beta_fast: float | None = None
+    yarn_beta_slow: float | None = None
+    yarn_mscale: float | None = None
+    yarn_mscale_all_dim: float | None = None
+    yarn_correction_range_round_to_int: bool | None = None
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -181,6 +238,7 @@ class TransformerConfig(MCoreTransformerConfig):
         called multiple times safely.
         """
         _resolve_string_fields(self)
+        _normalize_attention_backend(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
@@ -259,6 +317,9 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         config.finalize()
     """
 
+    # Redeclared so the reverse-MRO dataclass field walk cannot revert MCore's MLA default to False.
+    multi_latent_attention: bool = True
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -276,6 +337,7 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         called multiple times safely.
         """
         _resolve_string_fields(self)
+        _normalize_attention_backend(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
@@ -333,6 +395,7 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         It can be called multiple times safely.
         """
         _resolve_string_fields(self)
+        _normalize_attention_backend(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:

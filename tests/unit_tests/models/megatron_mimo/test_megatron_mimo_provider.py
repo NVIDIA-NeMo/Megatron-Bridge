@@ -3,6 +3,7 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.megatron_mimo import (
@@ -137,6 +138,7 @@ class TestMegatronMIMOProvider:
 
         pp_group = MagicMock(name="pp_group")
         mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
         mock_grid.is_current_rank_in_grid.return_value = True
         mock_grid.get_pg.side_effect = lambda dims, *, view=None: pp_group if dims == ["pp"] else MagicMock()
         mock_build_grids.return_value = {"language": mock_grid}
@@ -878,3 +880,112 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
             assert pgc.tp_ep_pp_with_egtp_remat == mock_tp_ep_pp
         assert pgc.intra_expt_dp == mock_expt_dp
         assert pgc.intra_dist_opt == mock_intra_dist_opt
+
+
+@pytest.mark.parametrize("offset", [0, 4])
+def test_build_infra_selects_language_representative_log_rank(offset):
+    from types import SimpleNamespace
+
+    from megatron.core._rank_utils import get_default_log_ranks, set_default_log_ranks
+
+    provider = MegatronMIMOProvider(
+        language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
+        megatron_mimo_parallelism_config=Mock(),
+    )
+    original = get_default_log_ranks()
+    try:
+        with (
+            patch(
+                "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids",
+                return_value={"language": SimpleNamespace(rank_offset=offset)},
+            ),
+            patch.object(provider, "_get_pg_collections_from_grids", return_value={}),
+        ):
+            provider.build_infra()
+        assert set(get_default_log_ranks()) == {0, offset}
+        provider.megatron_mimo_parallelism_config = None
+        provider.build_infra()
+        assert get_default_log_ranks() == (0,)
+    finally:
+        set_default_log_ranks(original)
+
+
+class TestStandardProviderMTPHandling:
+    """MIMO keeps MTP only for standard providers that advertise MIMO MTP support."""
+
+    @staticmethod
+    def _standard_provider(*, supports_mtp: bool):
+        provider = Mock()
+        provider.mtp_num_layers = 2
+        provider.modality_keys = {"images": "enc"}
+        provider.special_token_ids = {"images": 7}
+        provider.build_language_model_spec = Mock(return_value=ModuleSpec(module=object, params={}))
+        provider.build_mimo_modality_submodules_spec = Mock(
+            return_value={"images": ModuleSpec(module=object, params={}, submodules={"encoders": {}})}
+        )
+        if supports_mtp:
+            provider.mimo_supports_mtp = True
+        else:
+            del provider.mimo_supports_mtp
+        return provider
+
+    def test_mtp_disabled_without_opt_in(self):
+        standard_provider = self._standard_provider(supports_mtp=False)
+        MegatronMIMOProvider.from_standard_provider(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                    "images": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                }
+            ),
+        )
+        assert standard_provider.mtp_num_layers is None
+
+    def test_mtp_kept_with_opt_in(self):
+        standard_provider = self._standard_provider(supports_mtp=True)
+        MegatronMIMOProvider.from_standard_provider(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                    "images": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                }
+            ),
+        )
+        assert standard_provider.mtp_num_layers == 2
+
+
+class TestCastModelDtypeExceptFp32Marked:
+    @pytest.mark.parametrize("dtype_name", ["float16", "bfloat16"])
+    def test_router_expert_bias_and_marked_tensors_stay_fp32(self, dtype_name):
+        import torch
+        from megatron.core.transformer.module import mark_keep_in_fp32
+
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import _cast_model_dtype_except_fp32_marked
+
+        class _Router(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.ones(4, 8))
+                self.register_buffer("expert_bias", torch.full((4,), 33.1473))
+
+            def _maintain_float32_expert_bias(self):
+                pass
+
+        model = torch.nn.Module()
+        model.router = _Router()
+        model.linear = torch.nn.Linear(8, 8)
+        model.marked = torch.nn.Parameter(torch.ones(3))
+        mark_keep_in_fp32(model.marked)
+        expected_bias = model.router.expert_bias.clone()
+
+        dtype = getattr(torch, dtype_name)
+        (cast,) = _cast_model_dtype_except_fp32_marked([model], dtype)
+
+        assert cast is model
+        assert model.router.weight.dtype == dtype
+        assert model.linear.weight.dtype == dtype
+        assert model.marked.dtype == torch.float32
+        assert model.router.expert_bias.dtype == torch.float32
+        assert torch.equal(model.router.expert_bias, expected_bias)

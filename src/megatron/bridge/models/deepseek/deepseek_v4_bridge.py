@@ -48,9 +48,9 @@ except the MXFP4 expert path, where scale is per-row over 32-element K-tiles.
 F32 via ``.to(torch.float32)`` and selects the tile expansion automatically.
 All weights are dequantised to bfloat16 during import.
 
-MoE router note: Hash-routing layers (layer_number <= moe_n_hash_layers)
-contain a `tid2eid` buffer (int32 vocab→expert lookup table).  Buffers are not
-parameters, so Megatron does not expose them via `named_parameters()`.
+MoE router note: The first ``moe_num_hash_layers`` MoE positions in the hybrid
+pattern contain a `tid2eid` buffer (int32 vocab→expert lookup table). Buffers are
+not parameters, so Megatron does not expose them via `named_parameters()`.
 The bridge handles `tid2eid` via `maybe_modify_loaded_hf_weight()` and
 a dedicated `_Tid2EidMapping` that writes it into `state_dict` directly.
 
@@ -61,14 +61,14 @@ Megatron-Core prerequisites:
   - Separate MTP e_proj / h_proj modules with hyper-connections
 """
 
-import inspect
-from typing import Dict, Mapping
+from collections.abc import Sequence
+from typing import Any, Dict, Mapping
 
 import torch
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec as _get_exp_attn_spec,
-)
-from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.transformer.enums import AttnBackend
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -77,11 +77,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
     GatedMLPMapping,
-    MegatronParamMapping,
+    HCAlphaMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mla_provider import MLAModelProvider
+from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelConfig
+from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import transformer_engine_hybrid_stack_spec
 
 
 try:
@@ -102,6 +103,19 @@ _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
     ratio: layer_type for layer_type, ratio in _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO.items()
 }
 
+_DSV4_FUSED_DSA_WRAPPERS = (
+    "compactify_wrapper",
+    "dense_attn_score_recompute_wrapper",
+    "dense_indexer_backward_wrapper",
+    "dense_indexer_score_recompute_wrapper",
+    "indexer_backward_wrapper",
+    "indexer_forward_wrapper",
+    "indexer_top_k_wrapper",
+    "sparse_attention_backward_wrapper",
+    "sparse_attn_score_recompute_wrapper",
+    "sparse_indexer_score_recompute_wrapper",
+)
+
 
 def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
     """Return whether DSv4 Blackwell-only fused kernels should default on."""
@@ -116,58 +130,104 @@ def deepseek_v4_supports_fused_dsa_kernels() -> bool:
     """Return whether DSv4 fused DSA kernels can be enabled."""
     try:
         from cudnn import DSA
-        from flash_mla import flash_mla_sparse_fwd  # noqa: F401
+        from flash_mla import flash_mla_sparse_fwd
     except ImportError:
         return False
 
-    compact_wrapper = getattr(DSA, "indexer_forward_top_k_wrapper", None)
-    if not callable(compact_wrapper):
-        return False
-    try:
-        return "deterministic" in inspect.signature(compact_wrapper).parameters
-    except (TypeError, ValueError):
-        return False
+    return callable(flash_mla_sparse_fwd) and all(
+        callable(getattr(DSA, wrapper, None)) for wrapper in _DSV4_FUSED_DSA_WRAPPERS
+    )
 
 
-def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
-    """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
+def set_deepseek_v4_pipeline_model_parallel_layout(
+    model_cfg: DeepSeekV4HybridModelProvider | DeepSeekV4ModelConfig,
+    *,
+    logical_layers_per_stage: Sequence[int] | None = None,
+) -> None:
+    """Set matching native hybrid segments and pipeline layout metadata.
 
-    DeepSeek-V4 uses hash-routed MoE layers that must co-locate with the
-    embedding on the first pipeline stage, so an explicit
-    ``pipeline_model_parallel_layout`` is required whenever
-    ``pipeline_model_parallel_size > 1``. This builds an even decoder split with
-    the embedding on the first stage and the MTP/loss layers on the last stage.
+    DSv4 logical blocks contain an attention layer followed by a MoE layer.
+    Keep those pairs together while splitting across PP/VPP stages. The native
+    pattern controls MCore's layer allocation; the layout metadata records one
+    decoder entry per physical layer, plus embedding and MTP/loss placement.
+    Configurations without a hybrid pattern retain the legacy GPT layout.
 
     Args:
-        model_cfg: The DeepSeek-V4 model provider to configure in place.
+        model_cfg: DeepSeek-V4 provider or model config to configure in place.
+        logical_layers_per_stage: Optional block counts in VPP-major, PP-minor
+            order. Otherwise distribute logical blocks as evenly as possible
+            while keeping the hash-routed MoE blocks on the embedding stage.
     """
     pp_size = model_cfg.pipeline_model_parallel_size or 1
-    if pp_size <= 1:
+    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None) or 1
+    if pp_size < 1 or vp_size < 1:
+        raise ValueError("Pipeline and virtual pipeline sizes must be positive.")
+
+    pattern = getattr(model_cfg, "hybrid_layer_pattern", None)
+    main_pattern, separator, mtp_pattern = (pattern or "").partition(Symbols.MTP_SEPARATOR)
+    main_pattern = main_pattern.replace(Symbols.PIPE, "")
+    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
+    if pattern:
+        blocks = [main_pattern[i : i + 2] for i in range(0, len(main_pattern), 2)]
+        if any(
+            len(block) != 2 or block[0] not in {Symbols.WINDOW, Symbols.CSA, Symbols.HCA} or block[1] != Symbols.MOE
+            for block in blocks
+        ):
+            raise ValueError("DSv4 hybrid layers must alternate W/C/H attention and E MoE layers.")
+        if num_layers and num_layers != len(main_pattern):
+            raise ValueError("num_layers must match the physical DSv4 hybrid layer count.")
+    else:
+        blocks = ["decoder"] * num_layers
+
+    if pp_size == 1:
+        if vp_size != 1:
+            raise ValueError("DSv4 virtual pipeline parallelism requires PP > 1.")
+        model_cfg.pipeline_model_parallel_layout = None
+        if pattern:
+            model_cfg.hybrid_layer_pattern = main_pattern + separator + mtp_pattern
+        return
+    if not blocks:
         model_cfg.pipeline_model_parallel_layout = None
         return
 
-    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
-    if num_layers <= 0:
-        model_cfg.pipeline_model_parallel_layout = None
-        return
+    num_stages = pp_size * vp_size
+    if logical_layers_per_stage is None:
+        # MCore requires every hash-routed MoE layer on the embedding stage, the only one that owns the token
+        # IDs. Grow that stage when an even split would leave hash layers behind; otherwise the split is even.
+        num_hash_blocks = min(len(blocks), int(getattr(model_cfg, "moe_num_hash_layers", 0) or 0))
+        base, extra = divmod(len(blocks), num_stages)
+        first = max(base + int(extra > 0), num_hash_blocks)
+        base, extra = divmod(len(blocks) - first, num_stages - 1)
+        counts = [first] + [base + int(stage < extra) for stage in range(num_stages - 1)]
+    else:
+        counts = list(logical_layers_per_stage)
+        if (
+            len(counts) != num_stages
+            or any(not isinstance(count, int) or count < 0 for count in counts)
+            or sum(counts) != len(blocks)
+        ):
+            raise ValueError(
+                f"Expected {num_stages} nonnegative stage counts summing to {len(blocks)} logical layers."
+            )
 
     mtp_layers = int(getattr(model_cfg, "mtp_num_layers", 0) or 0)
-    base_layers, extra_layers = divmod(num_layers, pp_size)
     layout: list[list[str]] = []
-    for pp_rank in range(pp_size):
-        stage: list[str] = []
-        if pp_rank == 0:
-            stage.append("embedding")
-
-        decoder_layers = base_layers + int(pp_rank < extra_layers)
-        stage.extend(["decoder"] * decoder_layers)
-
-        if pp_rank == pp_size - 1:
+    segments: list[str] = []
+    offset = 0
+    for stage_idx, count in enumerate(counts):
+        stage = ["embedding"] if stage_idx == 0 else []
+        stage.extend(["decoder"] * count * (2 if pattern else 1))
+        if stage_idx == num_stages - 1:
             stage.extend(["mtp"] * mtp_layers)
             stage.append("loss")
         layout.append(stage)
+        if pattern:
+            segments.append("".join(blocks[offset : offset + count]))
+        offset += count
 
     model_cfg.pipeline_model_parallel_layout = layout
+    if pattern:
+        model_cfg.hybrid_layer_pattern = Symbols.PIPE.join(segments) + separator + mtp_pattern
 
 
 def _dsv4_num_hash_layers(hf_config) -> int:
@@ -231,6 +291,73 @@ def _dsv4_compress_ratios(hf_config) -> list[int]:
     return ratios[:expected_len]
 
 
+# ---------------------------------------------------------------------------
+# Hybrid layer-pattern helpers
+#
+# DeepSeek-V4 is expressed on Megatron's ``HybridModel`` by splitting every
+# logical DSv4 block into TWO hybrid layers: an attention-only layer whose symbol
+# encodes the per-layer compression (W=sliding-window/ratio 0, C=CSA/ratio 4,
+# H=HCA/ratio 128) followed by a MoE-only layer (E). A DSv4 model with a flat
+# per-layer compress-ratio list ``[0, 4, 128, ...]`` therefore becomes the pattern
+# ``WE CE HE ...`` (and ``/WE`` per MTP depth). This mirrors the GPT-form-to-hybrid
+# translation used by the upstream ``hybrid_dsv4`` recipe.
+# ---------------------------------------------------------------------------
+
+# Native symbols are available in both supported MCore pins.
+_DSV4_RATIO_TO_HYBRID_SYMBOL = {0: Symbols.WINDOW, 4: Symbols.CSA, 128: Symbols.HCA}
+_DSV4_HYBRID_SYMBOL_TO_RATIO = {symbol: ratio for ratio, symbol in _DSV4_RATIO_TO_HYBRID_SYMBOL.items()}
+_DSV4_MTP_HYBRID_PATTERN = Symbols.WINDOW + Symbols.MOE
+
+
+def _dsv4_hybrid_layer_pattern(compress_ratios: list[int], num_hidden_layers: int) -> str:
+    """Build the main hybrid ``hybrid_layer_pattern`` from flat per-layer compress ratios.
+
+    Each logical DSv4 layer contributes an attention symbol (from its compression
+    ratio) immediately followed by a MoE symbol, e.g. ratio list ``[0, 4, 128]`` ->
+    ``"WECEHE"``.
+
+    Args:
+        compress_ratios: Flat per-logical-layer compression ratios (0, 4, or 128).
+        num_hidden_layers: Number of logical DSv4 decoder layers.
+
+    Returns:
+        The main-decoder hybrid layer pattern string (2 * ``num_hidden_layers`` symbols).
+    """
+    parts = []
+    for ratio in compress_ratios[:num_hidden_layers]:
+        try:
+            attn_symbol = _DSV4_RATIO_TO_HYBRID_SYMBOL[int(ratio)]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported DeepSeek-V4 compression ratio {ratio!r}; expected one of "
+                f"{sorted(_DSV4_RATIO_TO_HYBRID_SYMBOL)}."
+            ) from exc
+        parts.append(attn_symbol + Symbols.MOE)
+    return "".join(parts)
+
+
+def _dsv4_hybrid_csa_compress_ratios(main_pattern: str, mtp_pattern: str, num_mtp: int) -> list[int]:
+    """Per-hybrid-layer compression ratios covering the main decoder and every MTP depth.
+
+    Produces one entry per actual hybrid layer (C->4, H->128, everything else->0),
+    matching the length MCore's ``dsv4_hybrid`` validation expects
+    (``>= num_layers + mtp_num_layers``). MoE (``E``) and window (``W``) layers map
+    to ratio 0.
+
+    Args:
+        main_pattern: Main-decoder hybrid pattern (e.g. ``"WECEHE"``).
+        mtp_pattern: Per-MTP-depth hybrid pattern (e.g. ``"WE"``); may be empty.
+        num_mtp: Number of MTP depths.
+
+    Returns:
+        Per-hybrid-layer compression ratios for the full (main + MTP) layer set.
+    """
+    ratios = [_DSV4_HYBRID_SYMBOL_TO_RATIO.get(symbol, 0) for symbol in main_pattern]
+    for _ in range(num_mtp):
+        ratios += [_DSV4_HYBRID_SYMBOL_TO_RATIO.get(symbol, 0) for symbol in mtp_pattern]
+    return ratios
+
+
 def _dsv4_use_mxfp4_export(hf_param: str, weight: torch.Tensor, source_scale: torch.Tensor) -> bool:
     """Routed DSv4 experts use packed MXFP4; all other scaled weights export as FP8."""
     if ".ffn.experts." not in hf_param or ".shared_experts." in hf_param:
@@ -241,93 +368,6 @@ def _dsv4_use_mxfp4_export(hf_param: str, weight: torch.Tensor, source_scale: to
 # ---------------------------------------------------------------------------
 # Custom mapping helpers
 # ---------------------------------------------------------------------------
-
-
-class _HCAlphaMapping(MegatronParamMapping):
-    """Map Megatron's three scalar HC alpha parameters to/from the V4 checkpoint's
-    3-element hc_*_scale tensor.
-
-    V4 checkpoint  :  layers.N.hc_attn_scale  shape [3]  = [alpha_pre, alpha_post, alpha_res]
-    Megatron       :  three separate nn.Parameter([1]) tensors
-    """
-
-    def __init__(self, megatron_pre: str, megatron_post: str, megatron_res: str, hf_param: str):
-        # We register under the alpha_pre path; the others are handled inside hf_to_megatron.
-        super().__init__(megatron_param=megatron_pre, hf_param=hf_param)
-        self._megatron_post = megatron_post
-        self._megatron_res = megatron_res
-
-    @staticmethod
-    def _resolve_single(pattern: str, captures) -> str:
-        result = pattern
-        ci = 0
-        while "**" in result and ci < len(captures):
-            result = result.replace("**", captures[ci], 1)
-            ci += 1
-        ci = 0
-        while "*" in result and ci < len(captures):
-            result = result.replace("*", captures[ci], 1)
-            ci += 1
-        return result
-
-    def resolve(self, captures):
-        resolved_mg, resolved_hf = self._resolve_names(captures)
-        resolved_post = self._resolve_single(self._megatron_post, captures)
-        resolved_res = self._resolve_single(self._megatron_res, captures)
-        return _HCAlphaMapping(
-            megatron_pre=resolved_mg,
-            megatron_post=resolved_post,
-            megatron_res=resolved_res,
-            hf_param=resolved_hf,
-        )
-
-    def hf_to_megatron(self, hf_weights, megatron_module):
-        # hf_weights is hc_*_scale [3]; we write alpha_pre here (index 0).
-        # alpha_post and alpha_res are handled by their own mappings when registered.
-        target = hf_weights.to(megatron_module.alpha_pre.device)
-        return target[0:1]
-
-    def megatron_to_hf(self, megatron_weights, megatron_module):
-        # megatron_weights is alpha_pre [1]; gather all 3 from the same module.
-        # With PP > 1, megatron_module may be None on non-owning ranks,
-        # so we broadcast alpha_post and alpha_res alongside alpha_pre.
-        post_tensor = megatron_module.alpha_post.detach() if megatron_module is not None else None
-        res_tensor = megatron_module.alpha_res.detach() if megatron_module is not None else None
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
-        post = self.broadcast_from_pp_rank(post_tensor, cache_key=str(self.hf_param) + "_post")
-        res = self.broadcast_from_pp_rank(res_tensor, cache_key=str(self.hf_param) + "_res")
-        if megatron_weights is None:
-            return {}
-        megatron_weights = self.maybe_dequantize(megatron_weights)
-        return {self.hf_param: torch.cat([megatron_weights.float(), post.float(), res.float()])}
-
-
-class _HCAlphaSecondaryMapping(MegatronParamMapping):
-    """Secondary mapping for alpha_post (index=1) or alpha_res (index=2).
-
-    Import: extracts element [index] from the 3-element hc_*_scale tensor.
-    Export: returns {} because the primary _HCAlphaMapping (alpha_pre) already
-    exports all three alpha values together. This mapping just suppresses the
-    "No mapping found" warning for the secondary Megatron params during export.
-    """
-
-    def __init__(self, megatron_param: str, hf_scale_param: str, index: int):
-        super().__init__(megatron_param=megatron_param, hf_param=hf_scale_param)
-        self._index = index
-        self.allow_hf_name_mismatch = True  # export is no-op; skip hf_keys check
-
-    def hf_to_megatron(self, hf_weights, megatron_module):
-        attr = "alpha_post" if self._index == 1 else "alpha_res"
-        target = hf_weights.to(getattr(megatron_module, attr).device)
-        return target[self._index : self._index + 1]
-
-    def resolve(self, captures):
-        resolved_mg, resolved_hf = self._resolve_names(captures)
-        return _HCAlphaSecondaryMapping(resolved_mg, resolved_hf, self._index)
-
-    def megatron_to_hf(self, megatron_weights, megatron_module):
-        # Already handled by the primary alpha_pre _HCAlphaMapping
-        return {}
 
 
 class _ReplicatedOptional(ReplicatedMapping):
@@ -363,97 +403,60 @@ class _AutoOptional(AutoMapping):
 
 @MegatronModelBridge.register_bridge(
     source="DeepseekV4ForCausalLM",
-    target=GPTModel,
-    provider=MLAModelProvider,
+    target=HybridModel,
+    provider=DeepSeekV4HybridModelProvider,
     model_type="deepseek_v4",
 )
 class DeepSeekV4Bridge(MegatronModelBridge):
-    """Megatron Bridge implementation for DeepSeek-V4 causal language models."""
+    """Megatron Bridge implementation for DeepSeek-V4 causal language models.
+
+    DeepSeek-V4 is built on Megatron-Core's :class:`HybridModel`: each logical
+    DSv4 block is expressed as an attention-only hybrid layer (``W``/``C``/``H``)
+    followed by a MoE-only hybrid layer (``E``), driven by ``hybrid_layer_pattern``
+    and :func:`transformer_engine_hybrid_stack_spec`. See the module docstring for the checkpoint
+    naming implications of this split.
+    """
+
+    MODEL_CONFIG_CLASS = DeepSeekV4ModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     # ------------------------------------------------------------------
     # Provider configuration
     # ------------------------------------------------------------------
 
     @staticmethod
-    def generate_pipeline_layout(num_layers: int, pp: int, mtp_layers: int = 1) -> list[list[str]]:
-        """Generate a pipeline-parallel layout for DSv4 models.
+    def configure_pipeline_layout(model_cfg: DeepSeekV4HybridModelProvider) -> None:
+        """Set the pipeline stages of a DSv4 model for checkpoint conversion.
 
-        DSv4 with hash MoE routing requires an explicit pipeline layout when PP > 1.
-        The layout distributes decoder layers across PP stages, placing the embedding
-        on the first stage and MTP + loss on the last stage.
+        MCore's HybridModel takes its stage boundaries from the ``|`` segments of
+        ``hybrid_layer_pattern``, and the layout must list one decoder entry per
+        physical layer, so conversion uses the same segmentation as the recipes.
 
         Args:
-            num_layers: Number of decoder layers (e.g. 43 for Flash, 61 for Pro).
-            pp: Pipeline parallel size.
-            mtp_layers: Number of MTP layers (default 1).
-
-        Returns:
-            List of lists, where each inner list describes one pipeline stage.
+            model_cfg: DeepSeek-V4 provider or model config with its pipeline
+                parallel size set; updated in place.
         """
-        base, rem = num_layers // pp, num_layers % pp
-        layout = []
-        for i in range(pp):
-            n = base + (1 if i < rem else 0)
-            stage = ["decoder"] * n
-            if i == 0:
-                stage = ["embedding"] + stage
-            if i == pp - 1:
-                stage = stage + ["mtp"] * mtp_layers + ["loss"]
-            layout.append(stage)
-        return layout
+        set_deepseek_v4_pipeline_model_parallel_layout(model_cfg)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
-        provider_field_names = getattr(type(provider), "__dataclass_fields__", {})
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Map a DeepSeek-V4 HF config to ``DeepSeekV4ModelConfig`` kwargs.
+
+        The provider path reuses these kwargs, so ``DeepSeekV4HybridModelProvider`` keeps its
+        configuration.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
         use_dsa_kernel_fusion = (
-            use_blackwell_fused_kernels
-            and "apply_dsa_kernel_fusion" in provider_field_names
+            torch.cuda.is_available()
+            and torch.cuda.get_device_capability()[0] >= 9
             and deepseek_v4_supports_fused_dsa_kernels()
         )
-
-        # ---- Attention ----
-        provider.experimental_attention_variant = "dsv4_hybrid"
-        provider.multi_latent_attention = True
-        # V4 uses a heterogeneous per-layer spec (hash vs MLA layers differ);
-        # override the default transformer_engine_layer_spec with the experimental
-        # attention variant block spec builder.
-        # GPTModelProvider IS the TransformerConfig (not cfg.transformer)
-        provider.transformer_layer_spec = _get_exp_attn_spec
-        provider.qk_layernorm = True
-        provider.normalization = "RMSNorm"
-        provider.add_bias_linear = False
-
-        # V4 MLA geometry
-        # head_dim = 512 (nope_dim + rope_dim = 448 + 64)
-        provider.v_head_dim = hf_config.head_dim  # 512
-        provider.qk_pos_emb_head_dim = hf_config.qk_rope_head_dim  # 64
-        # HF's partial_rotary_factor (0.125) is relative to head_dim (512); the rope split is
-        # already fully encoded by qk_pos_emb_head_dim (64). The generic partial_rotary_factor
-        # -> rotary_percent mapping would shrink the rope cache to 64*0.125 = 8 dims: the
-        # unfused path then silently rotates only 8 of 64 rope dims, and the fused MLA rope
-        # kernel reads cos/sin out of bounds (garbage values -> the SFT loss NaN).
-        provider.rotary_percent = 1.0
-        # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
-        provider.q_lora_rank = hf_config.q_lora_rank  # 1024
-        # MCore renamed the grouped output-projection fields on dev. Populate the
-        # names supported by the selected ref so the HF geometry is not replaced
-        # by TransformerConfig defaults on main.
-        if hasattr(provider, "output_projection_groups"):
-            provider.output_projection_groups = hf_config.o_groups  # 8
-            provider.output_projection_lora_rank = hf_config.o_lora_rank  # 1024
-        else:
-            provider.o_groups = hf_config.o_groups  # 8
-            provider.o_lora_rank = hf_config.o_lora_rank  # 1024
 
         # ---- Rotary embeddings (YaRN) ----
         # Two separate RoPE bases in V4:
         #   - compress_rope_theta for compressed-KV layers
         #   - rope_theta for pure sliding-window layers (layers 0,1)
         # Megatron keeps the regular and compressed CSA RoPE bases separately.
-        provider.apply_rope_fusion = True
-        provider.rope_type = "yarn"
         rope_params = getattr(hf_config, "rope_scaling", None) or getattr(hf_config, "rope_parameters", None) or {}
         if "compress" in rope_params:
             main_rope_params = rope_params.get("main", {})
@@ -461,19 +464,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         else:
             main_rope_params = rope_params
             compress_rope_params = rope_params
-        provider.rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
-        provider.csa_compress_rotary_base = float(
-            getattr(hf_config, "compress_rope_theta", compress_rope_params.get("rope_theta", provider.rotary_base))
-        )  # 160000
-        provider.rotary_scaling_factor = float(compress_rope_params["factor"])  # 16
-        provider.original_max_position_embeddings = int(
-            compress_rope_params["original_max_position_embeddings"]
-        )  # 65536
-        provider.beta_fast = float(compress_rope_params.get("beta_fast", 32))
-        provider.beta_slow = float(compress_rope_params.get("beta_slow", 1))
-        # DSv4 has no mscale in HF config; Set both equal to cancel out (like DSv3).
-        provider.mscale = 1.0
-        provider.mscale_all_dim = 1.0
+        rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
 
         # ---- CSA (Compressed Sparse Attention) ----
         # Legacy configs ship compress_ratios, while native Transformers configs
@@ -488,119 +479,180 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 "DeepSeek-V4-Flash uses num_nextn_predict_layers=1."
             )
             _mtp = 0
-        _expected = hf_config.num_hidden_layers + _mtp
-        provider.csa_compress_ratios = _cr[:_expected]
-        provider.csa_window_size = hf_config.sliding_window  # 128
+        num_hidden_layers = hf_config.num_hidden_layers
 
-        # DSA indexer geometry (matches index_n_heads / index_head_dim / index_topk in config)
-        provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
-        provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
-        provider.dsa_indexer_topk = hf_config.index_topk  # 512
-        provider.dsa_kernel_backend = "cudnn" if use_dsa_kernel_fusion else "none"
-        if "apply_dsa_kernel_fusion" in provider_field_names:
-            provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
+        # ---- Hybrid layer pattern ----
+        # Split each logical DSv4 layer into an attention-only layer (symbol from its
+        # compression ratio) + a MoE-only layer, then append one "/WE" MTP depth per
+        # nextn-predict layer. The Hybrid finalize() combines the main pattern with
+        # mtp_hybrid_override_pattern and derives num_layers from it.
+        main_pattern = _dsv4_hybrid_layer_pattern(_cr, num_hidden_layers)
+        mtp_pattern = _DSV4_MTP_HYBRID_PATTERN if _mtp else ""
+        if _mtp:
+            config_kwargs["mtp_hybrid_override_pattern"] = mtp_pattern
 
-        # ---- Hyper-Connections (mHC) ----
-        if "enable_hyper_connections" in provider_field_names:
-            provider.enable_hyper_connections = True
-            provider.num_residual_streams = hf_config.hc_mult  # 4
-        else:
-            provider.enable_mhc_connections = True
-            provider.mhc_num_residual_streams = hf_config.hc_mult  # 4
-        provider.use_fused_mhc = use_blackwell_fused_kernels
-        provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
+        config_kwargs.update(
+            # ---- Attention ----
+            experimental_attention_variant="dsv4_hybrid",
+            multi_latent_attention=True,
+            # HybridModel builds its heterogeneous per-layer stack from the hybrid layer
+            # pattern (set below) via the standard hybrid stack. That config-aware spec
+            # reuses GPT's dsv4_hybrid attention module for the C/H/W symbols, so the
+            # attention layers are numerically identical to the GPT-form dsv4_hybrid path.
+            # Keep a named factory so checkpoint reload does not deserialize the
+            # unused module templates in the expanded MCore stack.
+            hybrid_stack_spec=transformer_engine_hybrid_stack_spec,
+            qk_layernorm=True,
+            normalization="RMSNorm",
+            add_bias_linear=False,
+            # V4 MLA geometry
+            # head_dim = 512 (nope_dim + rope_dim = 448 + 64)
+            v_head_dim=hf_config.head_dim,  # 512
+            qk_pos_emb_head_dim=hf_config.qk_rope_head_dim,  # 64
+            # HF's partial_rotary_factor (0.125) is relative to head_dim (512); the rope split is
+            # already fully encoded by qk_pos_emb_head_dim (64). The generic partial_rotary_factor
+            # -> rotary_percent mapping would shrink the rope cache to 64*0.125 = 8 dims: the
+            # unfused path then silently rotates only 8 of 64 rope dims, and the fused MLA rope
+            # kernel reads cos/sin out of bounds (garbage values -> the SFT loss NaN).
+            rotary_percent=1.0,
+            # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
+            q_lora_rank=hf_config.q_lora_rank,  # 1024
+            output_projection_groups=hf_config.o_groups,  # 8
+            output_projection_lora_rank=hf_config.o_lora_rank,  # 1024
+            apply_rope_fusion=True,
+            rope_type="yarn",
+            rotary_base=rotary_base,
+            csa_compress_rotary_base=float(
+                getattr(hf_config, "compress_rope_theta", compress_rope_params.get("rope_theta", rotary_base))
+            ),  # 160000
+            rotary_scaling_factor=float(compress_rope_params["factor"]),  # 16
+            original_max_position_embeddings=int(compress_rope_params["original_max_position_embeddings"]),  # 65536
+            beta_fast=float(compress_rope_params.get("beta_fast", 32)),
+            beta_slow=float(compress_rope_params.get("beta_slow", 1)),
+            # DSv4 has no mscale in HF config; Set both equal to cancel out (like DSv3).
+            mscale=1.0,
+            mscale_all_dim=1.0,
+            hybrid_layer_pattern=main_pattern,
+            num_layers=len(main_pattern),
+            # Per-hybrid-layer compression ratios (doubled relative to the flat GPT-form list:
+            # each logical layer -> [attn_ratio, 0]; each MTP depth -> [0, 0]).
+            csa_compress_ratios=_dsv4_hybrid_csa_compress_ratios(main_pattern, mtp_pattern, _mtp),
+            csa_window_size=hf_config.sliding_window,  # 128
+            # DSA indexer geometry (matches index_n_heads / index_head_dim / index_topk in config)
+            dsa_indexer_n_heads=hf_config.index_n_heads,  # 64
+            dsa_indexer_head_dim=hf_config.index_head_dim,  # 128
+            dsa_indexer_topk=hf_config.index_topk,  # 512
+            dsa_kernel_backend="cudnn" if use_dsa_kernel_fusion else "none",
+            # ---- Hyper-Connections (mHC) ----
+            enable_mhc_connections=True,
+            mhc_num_residual_streams=hf_config.hc_mult,  # 4
+            use_fused_mhc=use_blackwell_fused_kernels,
+            mhc_sinkhorn_iterations=hf_config.hc_sinkhorn_iters,  # 20
+            # ---- MoE ----
+            gated_linear_unit=True,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=False,  # V4 uses post-topk normalisation
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_flex_dispatcher_num_sms=16,
+            moe_permute_fusion_into_hybridep=False,
+            moe_router_load_balancing_type="noaux_tc",
+            moe_shared_expert_overlap=True,
+            moe_router_score_function=hf_config.scoring_func,  # "sqrtsoftplus"
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            moe_aux_loss_coeff=0.0,
+            moe_router_topk=hf_config.num_experts_per_tok,  # 6
+            moe_router_topk_scaling_factor=hf_config.routed_scaling_factor,  # 1.5
+            # Hash routing. MCore counts MoE positions in the hybrid pattern rather than all
+            # hybrid symbols, so this remains the logical HF hash-layer count.
+            moe_num_hash_layers=_dsv4_num_hash_layers(hf_config),  # 3 for DSv4 Flash
+            hash_moe_vocab_size=hf_config.vocab_size,  # 129280
+            # SwiGLU activation clamp
+            activation_func_clamp_value=hf_config.swiglu_limit,  # 10.0
+            # MoE placement is driven by the hybrid layer pattern (the E symbols), not by
+            # moe_layer_freq; keep it uniform so HybridModel never treats a layer as dense.
+            moe_layer_freq=1,
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size * hf_config.n_shared_experts,
+            # ---- MTP ----
+            mtp_num_layers=getattr(hf_config, "num_nextn_predict_layers", 0) or None,
+            # ---- Misc ----
+            share_embeddings_and_output_weights=bool(hf_config.tie_word_embeddings),
+            gradient_accumulation_fusion=True,
+            bias_dropout_fusion=True,
+            cross_entropy_fusion_impl="te",
+            cross_entropy_loss_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            hidden_dropout=0.0,
+            attention_softmax_in_fp32=False,
+            make_vocab_size_divisible_by=1280,
+            seq_length=4096,
+            # HybridModelProvider default that the builder config does not share.
+            attention_backend=AttnBackend.flash,
+        )
+        return config_kwargs
 
-        # ---- MoE ----
-        provider.gated_linear_unit = True
-        provider.moe_grouped_gemm = True
-        provider.moe_router_pre_softmax = False  # V4 uses post-topk normalisation
-        provider.moe_token_dispatcher_type = "flex"
-        provider.moe_flex_dispatcher_backend = "hybridep"
-        provider.moe_flex_dispatcher_num_sms = 16
-        provider.moe_permute_fusion_into_hybridep = False
-        provider.moe_router_load_balancing_type = "noaux_tc"
-        provider.moe_shared_expert_overlap = True
-        provider.moe_router_score_function = hf_config.scoring_func  # "sqrtsoftplus"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_dtype = "fp32"
-        provider.moe_permute_fusion = True
-        provider.moe_aux_loss_coeff = 0.0
-        provider.moe_router_topk = hf_config.num_experts_per_tok  # 6
-        provider.norm_topk_prob = hf_config.norm_topk_prob
-        provider.moe_router_topk_scaling_factor = hf_config.routed_scaling_factor  # 1.5
-
-        # Hash routing
-        provider.moe_n_hash_layers = _dsv4_num_hash_layers(hf_config)  # 3 for DSv4 Flash
-        provider.actual_vocab_size = hf_config.vocab_size  # 129280
-
-        # SwiGLU activation clamp
-        provider.activation_func_clamp_value = hf_config.swiglu_limit  # 10.0
-
-        # All 43 layers are MoE (no dense prefix unlike V3)
-        provider.moe_layer_freq = [1] * hf_config.num_hidden_layers
-        provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
-
-        # ---- MTP ----
-        provider.mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or None
-
-        # ---- Misc ----
-        provider.share_embeddings_and_output_weights = bool(hf_config.tie_word_embeddings)
-        provider.gradient_accumulation_fusion = True
-        provider.bias_dropout_fusion = True
-        provider.cross_entropy_fusion_impl = "te"
-        provider.cross_entropy_loss_fusion = True
-        provider.masked_softmax_fusion = True
-        provider.persist_layer_norm = True
-        provider.hidden_dropout = 0.0
-        provider.attention_softmax_in_fp32 = False
-        provider.make_vocab_size_divisible_by = 1280
-        provider.seq_length = 4096
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     # ------------------------------------------------------------------
     # Export: HF config reconstruction
     # ------------------------------------------------------------------
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: MLAModelProvider) -> dict:
+    def megatron_to_hf_config(cls, provider: DeepSeekV4HybridModelProvider | DeepSeekV4ModelConfig) -> dict:
         hf_cfg = super(DeepSeekV4Bridge, cls).megatron_to_hf_config(provider)
 
+        # Recover the flat GPT-form view (one entry per logical DSv4 layer) from the
+        # hybrid layer pattern. The main decoder alternates attention/MoE symbols, so the
+        # attention symbols (even positions) give the per-logical-layer compression.
+        hybrid_pattern = getattr(provider, "hybrid_layer_pattern", None) or ""
+        main_pattern = hybrid_pattern.split(Symbols.MTP_SEPARATOR)[0].replace(Symbols.PIPE, "")
+        attn_symbols = main_pattern[::2]
+        num_hidden_layers = len(attn_symbols)
+        symbol_to_ratio = {Symbols.WINDOW: 0, Symbols.CSA: 4, Symbols.HCA: 128}
+        flat_ratios = [symbol_to_ratio[symbol] for symbol in attn_symbols]
+
+        hf_cfg["num_hidden_layers"] = num_hidden_layers
         hf_cfg["num_nextn_predict_layers"] = getattr(provider, "mtp_num_layers", None) or 0
-        num_hidden_layers = hf_cfg.get("num_hidden_layers", getattr(provider, "num_layers", 0))
-        num_hash_layers = getattr(provider, "moe_n_hash_layers", 0)
+        num_mtp = hf_cfg["num_nextn_predict_layers"]
+
+        num_hash_layers = getattr(provider, "moe_num_hash_layers", 0)
         hf_cfg["num_hash_layers"] = num_hash_layers
         hf_cfg["mlp_layer_types"] = ["hash_moe"] * min(num_hidden_layers, num_hash_layers) + ["moe"] * max(
             0, num_hidden_layers - num_hash_layers
         )
         hf_cfg["swiglu_limit"] = getattr(provider, "activation_func_clamp_value", 0.0)
-        hf_cfg["o_groups"] = getattr(provider, "output_projection_groups", getattr(provider, "o_groups", 8))
-        hf_cfg["o_lora_rank"] = getattr(
-            provider, "output_projection_lora_rank", getattr(provider, "o_lora_rank", 1024)
-        )
+        hf_cfg["o_groups"] = provider.output_projection_groups
+        hf_cfg["o_lora_rank"] = provider.output_projection_lora_rank
 
-        compress_ratios = getattr(provider, "csa_compress_ratios", None)
-        if compress_ratios is not None:
-            num_mtp = hf_cfg.get("num_nextn_predict_layers", 0)
-            expected_len = num_hidden_layers + num_mtp
-            compress_ratios = list(compress_ratios)
-            if len(compress_ratios) == num_hidden_layers and num_mtp:
-                compress_ratios = compress_ratios + [0] * num_mtp
-            hf_cfg["compress_ratios"] = compress_ratios[:expected_len]
-            hf_cfg["layer_types"] = [
-                _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE[ratio] for ratio in hf_cfg["compress_ratios"][:num_hidden_layers]
-            ]
-            hf_cfg["compress_rates"] = {
-                "compressed_sparse_attention": _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO["compressed_sparse_attention"],
-                "heavily_compressed_attention": _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO["heavily_compressed_attention"],
-            }
+        hf_cfg["compress_ratios"] = flat_ratios + [0] * num_mtp
+        hf_cfg["layer_types"] = [_DSV4_COMPRESS_RATIO_TO_LAYER_TYPE[ratio] for ratio in flat_ratios]
+        hf_cfg["compress_rates"] = {
+            "compressed_sparse_attention": _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO["compressed_sparse_attention"],
+            "heavily_compressed_attention": _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO["heavily_compressed_attention"],
+        }
 
         hf_cfg["sliding_window"] = getattr(provider, "csa_window_size", 128)
-        hf_cfg["hc_mult"] = getattr(provider, "num_residual_streams", 4)
+        hf_cfg["hc_mult"] = getattr(provider, "mhc_num_residual_streams", 4)
         hf_cfg["hc_sinkhorn_iters"] = getattr(provider, "mhc_sinkhorn_iterations", 20)
         hf_cfg["n_shared_experts"] = getattr(provider, "moe_shared_expert_intermediate_size", 0) // hf_cfg.get(
             "moe_intermediate_size", 1
         )
+
+        # Invert the import's MLA geometry: head_dim -> v_head_dim, qk_rope_head_dim -> qk_pos_emb_head_dim.
+        # Import pins rotary_percent to 1.0, but Transformers derives qk_rope_head_dim as
+        # head_dim * partial_rotary_factor, so export the factor that reproduces the RoPE width.
+        hf_cfg["head_dim"] = provider.v_head_dim
+        hf_cfg["partial_rotary_factor"] = provider.qk_pos_emb_head_dim / provider.v_head_dim
+
+        # Import replaces the context length and router aux-loss coefficient with training settings, and this
+        # export keeps the reference config's RoPE parameters, so let the reference supply these fields as well.
+        for hf_name in ("max_position_embeddings", "router_aux_loss_coef", "aux_loss_alpha", "rope_theta"):
+            hf_cfg.pop(hf_name, None)
 
         return hf_cfg
 
@@ -636,339 +688,168 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     # ------------------------------------------------------------------
 
     def mapping_registry(self) -> MegatronMappingRegistry:  # noqa: C901
+        """HF-checkpoint <-> Megatron ``HybridModel`` weight mappings for DeepSeek-V4.
+
+        Each logical DSv4 layer ``i`` maps to two hybrid layers: the attention-only
+        layer at ``decoder.layers.{2*i}`` and the MoE-only layer at
+        ``decoder.layers.{2*i + 1}``. Because DSv4 always enables hyper-connections,
+        every hybrid layer is wrapped in a ``HyperConnectionHybridLayer``, so the inner
+        transformer weights live under ``...inner_layer.*`` and the per-layer mHC weights
+        under ``...hyper_connection.*``. MTP depths nest their own two-layer HybridStack
+        under ``mtp.layers.{k}.mtp_model_layer.layers.{0,1}.*``.
+        """
         hf_config = self.hf_config
-        num_mtp = getattr(hf_config, "num_nextn_predict_layers", 0)  # 1
+        num_hidden_layers = int(hf_config.num_hidden_layers)
+        num_mtp = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+
+        def _hc_alpha_mappings(hc_prefix: str, hf_scale_param: str) -> list:
+            """mHC alpha triplet: one 3-vector hc_*_scale <-> alpha_pre/post/res scalars."""
+            return [
+                HCAlphaMapping(f"{hc_prefix}.alpha_pre", hf_scale_param, 0),
+                HCAlphaMapping(f"{hc_prefix}.alpha_post", hf_scale_param, 1),
+                HCAlphaMapping(f"{hc_prefix}.alpha_res", hf_scale_param, 2),
+            ]
+
+        def _attention_layer_mappings(layer_prefix: str, ck: str) -> list:
+            """Mappings for one attention hybrid layer (wrapper prefix ``layer_prefix``).
+
+            ``ck`` is the HF checkpoint prefix (e.g. ``layers.3`` or ``mtp.0``). The
+            compressor/indexer weights only exist on CSA/HCA layers; they are declared
+            for every attention layer and tolerated-absent (``_ReplicatedOptional``) on
+            window-only layers.
+            """
+            inner = f"{layer_prefix}.inner_layer"
+            core = f"{inner}.self_attention.core_attention"
+            hc = f"{layer_prefix}.hyper_connection"
+            out = [
+                AutoMapping(f"{inner}.input_layernorm.weight", f"{ck}.attn_norm.weight"),
+                # Q down / Q norm / Q up (MLA)
+                AutoMapping(f"{inner}.self_attention.linear_q_down_proj.weight", f"{ck}.attn.wq_a.weight"),
+                AutoMapping(f"{inner}.self_attention.q_layernorm.weight", f"{ck}.attn.q_norm.weight"),
+                AutoMapping(f"{inner}.self_attention.linear_q_up_proj.weight", f"{ck}.attn.wq_b.weight"),
+                # KV (single projection) / KV norm
+                AutoMapping(f"{inner}.self_attention.linear_kv_proj.weight", f"{ck}.attn.wkv.weight"),
+                AutoMapping(f"{inner}.self_attention.kv_layernorm.weight", f"{ck}.attn.kv_norm.weight"),
+                # Factored output projection: wo_a (group param) + wo_b (row-parallel linear)
+                ReplicatedMapping(f"{inner}.self_attention.linear_o_group_proj", f"{ck}.attn.wo_a.weight"),
+                AutoMapping(f"{inner}.self_attention.linear_proj.weight", f"{ck}.attn.wo_b.weight"),
+                # Attention sink: split by TP (size = num_heads // TP on each rank)
+                ColumnParallelMapping(f"{core}.attn_sink", f"{ck}.attn.attn_sink"),
+                # Compressor (CSA/HCA layers only). All compressor linears are duplicated -> replicated.
+                _ReplicatedOptional(f"{core}.compressor.linear_wkv.weight", f"{ck}.attn.compressor.wkv.weight"),
+                _ReplicatedOptional(f"{core}.compressor.linear_wgate.weight", f"{ck}.attn.compressor.wgate.weight"),
+                _ReplicatedOptional(f"{core}.compressor.ape", f"{ck}.attn.compressor.ape"),
+                _ReplicatedOptional(f"{core}.compressor.norm.weight", f"{ck}.attn.compressor.norm.weight"),
+                # Indexer (CSA layers only) and its own sub-compressor.
+                _ReplicatedOptional(f"{core}.indexer.linear_wq_b.weight", f"{ck}.attn.indexer.wq_b.weight"),
+                _ReplicatedOptional(
+                    f"{core}.indexer.linear_weights_proj.weight", f"{ck}.attn.indexer.scorer.weights_proj.weight"
+                ),
+                _ReplicatedOptional(
+                    f"{core}.indexer.compressor.linear_wkv.weight", f"{ck}.attn.indexer.compressor.wkv.weight"
+                ),
+                _ReplicatedOptional(
+                    f"{core}.indexer.compressor.linear_wgate.weight", f"{ck}.attn.indexer.compressor.wgate.weight"
+                ),
+                _ReplicatedOptional(f"{core}.indexer.compressor.ape", f"{ck}.attn.indexer.compressor.ape"),
+                _ReplicatedOptional(
+                    f"{core}.indexer.compressor.norm.weight", f"{ck}.attn.indexer.compressor.norm.weight"
+                ),
+                # Hyper-connection wrapping the attention residual (mHC not in AutoMapping registry).
+                ReplicatedMapping(f"{hc}.mapping_proj.weight", f"{ck}.hc_attn_fn"),
+                ReplicatedMapping(f"{hc}.bias", f"{ck}.hc_attn_base"),
+            ]
+            out += _hc_alpha_mappings(hc, f"{ck}.hc_attn_scale")
+            return out
+
+        def _moe_layer_mappings(layer_prefix: str, ck: str, *, sequential_experts: bool) -> list:
+            """Mappings for one MoE hybrid layer (wrapper prefix ``layer_prefix``).
+
+            ``sequential_experts`` also emits the per-local-expert (non-grouped) form used
+            by ModelOpt pruning; MTP layers ship grouped experts only.
+            """
+            inner = f"{layer_prefix}.inner_layer"
+            hc = f"{layer_prefix}.hyper_connection"
+            out = [
+                AutoMapping(f"{inner}.pre_mlp_layernorm.weight", f"{ck}.ffn_norm.weight"),
+                # MoE router weight, expert bias, and hash-routing lookup table (buffer).
+                AutoMapping(f"{inner}.mlp.router.weight", f"{ck}.ffn.gate.weight"),
+                _AutoOptional(f"{inner}.mlp.router.expert_bias", f"{ck}.ffn.gate.bias"),
+                AutoMapping(f"{inner}.mlp.router.tid2eid", f"{ck}.ffn.gate.tid2eid"),
+                # Routed expert MLP (w1=gate, w3=up, w2=down in V4 naming).
+                GatedMLPMapping(
+                    megatron_param=f"{inner}.mlp.experts.linear_fc1.weight*",
+                    gate=f"{ck}.ffn.experts.*.w1.weight",
+                    up=f"{ck}.ffn.experts.*.w3.weight",
+                ),
+                AutoMapping(f"{inner}.mlp.experts.linear_fc2.weight*", f"{ck}.ffn.experts.*.w2.weight"),
+                # Shared expert MLP.
+                GatedMLPMapping(
+                    megatron_param=f"{inner}.mlp.shared_experts.linear_fc1.weight",
+                    gate=f"{ck}.ffn.shared_experts.w1.weight",
+                    up=f"{ck}.ffn.shared_experts.w3.weight",
+                ),
+                AutoMapping(f"{inner}.mlp.shared_experts.linear_fc2.weight", f"{ck}.ffn.shared_experts.w2.weight"),
+                # Hyper-connection wrapping the MoE residual.
+                ReplicatedMapping(f"{hc}.mapping_proj.weight", f"{ck}.hc_ffn_fn"),
+                ReplicatedMapping(f"{hc}.bias", f"{ck}.hc_ffn_base"),
+            ]
+            if sequential_experts:
+                out += [
+                    GatedMLPMapping(
+                        megatron_param=f"{inner}.mlp.experts.local_experts.*.linear_fc1.weight",
+                        gate=f"{ck}.ffn.experts.*.w1.weight",
+                        up=f"{ck}.ffn.experts.*.w3.weight",
+                    ),
+                    AutoMapping(
+                        f"{inner}.mlp.experts.local_experts.*.linear_fc2.weight",
+                        f"{ck}.ffn.experts.*.w2.weight",
+                    ),
+                ]
+            out += _hc_alpha_mappings(hc, f"{ck}.hc_ffn_scale")
+            return out
 
         mappings = []
 
-        # ------ Embeddings / LM head / final norm ------
+        # ------ Embeddings / LM head / final norm / global HC head ------
         mappings += [
             AutoMapping("embedding.word_embeddings.weight", "embed.weight"),
             AutoMapping("output_layer.weight", "head.weight"),
-            AutoMapping("decoder.final_layernorm.weight", "norm.weight"),
-            # Global HC head (lives on TransformerBlock, not a parallel module → replicated)
+            # HybridModel names the final normalization weight differently from GPTModel.
+            AutoMapping("decoder.final_norm.weight", "norm.weight"),
+            # Global HC head (lives on the HybridStack, not a parallel module -> replicated).
             ReplicatedMapping("decoder.hc_head_fn", "hc_head_fn"),
             ReplicatedMapping("decoder.hc_head_base", "hc_head_base"),
             ReplicatedMapping("decoder.hc_head_scale", "hc_head_scale"),
         ]
 
-        # ------ Per-layer mappings ------
-        mappings += [
-            # Layer norms
-            AutoMapping(
-                "decoder.layers.*.input_layernorm.weight",
-                "layers.*.attn_norm.weight",
-            ),
-            AutoMapping(
-                "decoder.layers.*.pre_mlp_layernorm.weight",
-                "layers.*.ffn_norm.weight",
-            ),
-            # Q down / Q norm / Q up (MLA)
-            AutoMapping(
-                "decoder.layers.*.self_attention.linear_q_down_proj.weight",
-                "layers.*.attn.wq_a.weight",
-            ),
-            AutoMapping(
-                "decoder.layers.*.self_attention.q_layernorm.weight",
-                "layers.*.attn.q_norm.weight",
-            ),
-            AutoMapping(
-                "decoder.layers.*.self_attention.linear_q_up_proj.weight",
-                "layers.*.attn.wq_b.weight",
-            ),
-            # KV (single projection) / KV norm
-            AutoMapping(
-                "decoder.layers.*.self_attention.linear_kv_proj.weight",
-                "layers.*.attn.wkv.weight",
-            ),
-            AutoMapping(
-                "decoder.layers.*.self_attention.kv_layernorm.weight",
-                "layers.*.attn.kv_norm.weight",
-            ),
-            # Factored output projection: wo_a (group param) + wo_b (row-parallel linear)
-            # linear_o_group_proj is a plain nn.Parameter (all o_groups on every TP rank)
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention.linear_o_group_proj",
-                "layers.*.attn.wo_a.weight",
-            ),
-            AutoMapping(
-                "decoder.layers.*.self_attention.linear_proj.weight",
-                "layers.*.attn.wo_b.weight",
-            ),
-            # Attention sink: split by TP (size = num_heads // TP on each rank)
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.core_attention.attn_sink",
-                "layers.*.attn.attn_sink",
-            ),
-            # Compressor (compress_ratio > 1 layers: 128x and 4x)
-            # All compressor linears use parallel_mode="duplicated" -> ReplicatedMapping
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.compressor.linear_wkv.weight",
-                "layers.*.attn.compressor.wkv.weight",
-            ),
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.compressor.linear_wgate.weight",
-                "layers.*.attn.compressor.wgate.weight",
-            ),
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.compressor.ape",
-                "layers.*.attn.compressor.ape",
-            ),
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.compressor.norm.weight",
-                "layers.*.attn.compressor.norm.weight",
-            ),
-            # Indexer (compress_ratio == 4 layers only)
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.indexer.linear_wq_b.weight",
-                "layers.*.attn.indexer.wq_b.weight",
-            ),
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.indexer.linear_weights_proj.weight",
-                "layers.*.attn.indexer.scorer.weights_proj.weight",
-            ),
-            # Indexer sub-compressor (each indexer has its own compressor)
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.indexer.compressor.linear_wkv.weight",
-                "layers.*.attn.indexer.compressor.wkv.weight",
-            ),
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.indexer.compressor.linear_wgate.weight",
-                "layers.*.attn.indexer.compressor.wgate.weight",
-            ),
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.indexer.compressor.ape",
-                "layers.*.attn.indexer.compressor.ape",
-            ),
-            _ReplicatedOptional(
-                "decoder.layers.*.self_attention.core_attention.indexer.compressor.norm.weight",
-                "layers.*.attn.indexer.compressor.norm.weight",
-            ),
-            # MoE router weight and expert bias
-            AutoMapping(
-                "decoder.layers.*.mlp.router.weight",
-                "layers.*.ffn.gate.weight",
-            ),
-            _AutoOptional(
-                "decoder.layers.*.mlp.router.expert_bias",
-                "layers.*.ffn.gate.bias",
-            ),
-            # Hash-routing lookup table (buffer, not a parameter)
-            AutoMapping(
-                "decoder.layers.*.mlp.router.tid2eid",
-                "layers.*.ffn.gate.tid2eid",
-            ),
-            # Routed expert MLP (w1=gate, w3=up, w2=down in V4 naming)
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                gate="layers.*.ffn.experts.*.w1.weight",
-                up="layers.*.ffn.experts.*.w3.weight",
-            ),
-            AutoMapping(
-                "decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                "layers.*.ffn.experts.*.w2.weight",
-            ),
-            # Sequential (non-grouped) experts <-> per-expert HF (e.g. ModelOpt pruning).
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
-                gate="layers.*.ffn.experts.*.w1.weight",
-                up="layers.*.ffn.experts.*.w3.weight",
-            ),
-            AutoMapping(
-                "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
-                "layers.*.ffn.experts.*.w2.weight",
-            ),
-            # Shared expert MLP
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                gate="layers.*.ffn.shared_experts.w1.weight",
-                up="layers.*.ffn.shared_experts.w3.weight",
-            ),
-            AutoMapping(
-                "decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
-                "layers.*.ffn.shared_experts.w2.weight",
-            ),
-            # Hyper-Connections: attn HC (HyperConnectionModule not in AutoMapping registry → replicated)
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention_hyper_connection.mapping_proj.weight",
-                "layers.*.hc_attn_fn",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention_hyper_connection.bias",
-                "layers.*.hc_attn_base",
-            ),
-            # Hyper-Connections: FFN HC
-            ReplicatedMapping(
-                "decoder.layers.*.mlp_hyper_connection.mapping_proj.weight",
-                "layers.*.hc_ffn_fn",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.mlp_hyper_connection.bias",
-                "layers.*.hc_ffn_base",
-            ),
-        ]
+        # ------ Main decoder layers (attention at 2*i, MoE at 2*i + 1) ------
+        for i in range(num_hidden_layers):
+            ck = f"layers.{i}"
+            mappings += _attention_layer_mappings(f"decoder.layers.{2 * i}", ck)
+            mappings += _moe_layer_mappings(f"decoder.layers.{2 * i + 1}", ck, sequential_experts=True)
 
-        # HC alpha scalars need custom concatenation mapping (per-layer, both attn and ffn)
-        # These are wildcarded across all layers.
-        mappings += [
-            _HCAlphaMapping(
-                megatron_pre="decoder.layers.*.self_attention_hyper_connection.alpha_pre",
-                megatron_post="decoder.layers.*.self_attention_hyper_connection.alpha_post",
-                megatron_res="decoder.layers.*.self_attention_hyper_connection.alpha_res",
-                hf_param="layers.*.hc_attn_scale",
-            ),
-            _HCAlphaMapping(
-                megatron_pre="decoder.layers.*.mlp_hyper_connection.alpha_pre",
-                megatron_post="decoder.layers.*.mlp_hyper_connection.alpha_post",
-                megatron_res="decoder.layers.*.mlp_hyper_connection.alpha_res",
-                hf_param="layers.*.hc_ffn_scale",
-            ),
-        ]
-
-        # HC alpha secondary: register alpha_post and alpha_res to suppress export warnings
-        mappings += [
-            _HCAlphaSecondaryMapping(
-                "decoder.layers.*.self_attention_hyper_connection.alpha_post",
-                "layers.*.hc_attn_scale",
-                1,
-            ),
-            _HCAlphaSecondaryMapping(
-                "decoder.layers.*.self_attention_hyper_connection.alpha_res",
-                "layers.*.hc_attn_scale",
-                2,
-            ),
-            _HCAlphaSecondaryMapping(
-                "decoder.layers.*.mlp_hyper_connection.alpha_post",
-                "layers.*.hc_ffn_scale",
-                1,
-            ),
-            _HCAlphaSecondaryMapping(
-                "decoder.layers.*.mlp_hyper_connection.alpha_res",
-                "layers.*.hc_ffn_scale",
-                2,
-            ),
-        ]
-
-        # ------ MTP layer mappings ------
-        # MTP layers mirror the main layer structure under mtp.layers.N.*
-        for mtp_idx in range(num_mtp):
-            ck_pfx = f"mtp.{mtp_idx}"  # checkpoint prefix
-            mg_pfx = f"mtp.layers.{mtp_idx}"  # Megatron prefix
-
-            # Standard transformer weights (shared pattern with main layers)
-            _mtp_plain = [
-                (f"{mg_pfx}.mtp_model_layer.input_layernorm.weight", f"{ck_pfx}.attn_norm.weight"),
-                (f"{mg_pfx}.mtp_model_layer.pre_mlp_layernorm.weight", f"{ck_pfx}.ffn_norm.weight"),
-                (f"{mg_pfx}.mtp_model_layer.self_attention.linear_q_down_proj.weight", f"{ck_pfx}.attn.wq_a.weight"),
-                (f"{mg_pfx}.mtp_model_layer.self_attention.q_layernorm.weight", f"{ck_pfx}.attn.q_norm.weight"),
-                (f"{mg_pfx}.mtp_model_layer.self_attention.linear_q_up_proj.weight", f"{ck_pfx}.attn.wq_b.weight"),
-                (f"{mg_pfx}.mtp_model_layer.self_attention.linear_kv_proj.weight", f"{ck_pfx}.attn.wkv.weight"),
-                (f"{mg_pfx}.mtp_model_layer.self_attention.kv_layernorm.weight", f"{ck_pfx}.attn.kv_norm.weight"),
-                (f"{mg_pfx}.mtp_model_layer.self_attention.linear_proj.weight", f"{ck_pfx}.attn.wo_b.weight"),
-                (f"{mg_pfx}.mtp_model_layer.mlp.router.weight", f"{ck_pfx}.ffn.gate.weight"),
-                (f"{mg_pfx}.mtp_model_layer.mlp.router.expert_bias", f"{ck_pfx}.ffn.gate.bias"),
-                (f"{mg_pfx}.mtp_model_layer.mlp.router.tid2eid", f"{ck_pfx}.ffn.gate.tid2eid"),
-                (
-                    f"{mg_pfx}.mtp_model_layer.mlp.shared_experts.linear_fc2.weight",
-                    f"{ck_pfx}.ffn.shared_experts.w2.weight",
-                ),
-                # MTP-specific norms / projections
-                (f"{mg_pfx}.enorm.weight", f"{ck_pfx}.enorm.weight"),
-                (f"{mg_pfx}.hnorm.weight", f"{ck_pfx}.hnorm.weight"),
-                (f"{mg_pfx}.final_layernorm.weight", f"{ck_pfx}.norm.weight"),
-            ]
-            # MTP HC params use ReplicatedMapping (HyperConnectionModule not in AutoMapping registry)
-            _mtp_hc_plain = [
-                (
-                    f"{mg_pfx}.mtp_model_layer.self_attention_hyper_connection.mapping_proj.weight",
-                    f"{ck_pfx}.hc_attn_fn",
-                ),
-                (f"{mg_pfx}.mtp_model_layer.self_attention_hyper_connection.bias", f"{ck_pfx}.hc_attn_base"),
-                (f"{mg_pfx}.mtp_model_layer.mlp_hyper_connection.mapping_proj.weight", f"{ck_pfx}.hc_ffn_fn"),
-                (f"{mg_pfx}.mtp_model_layer.mlp_hyper_connection.bias", f"{ck_pfx}.hc_ffn_base"),
-                # Per-MTP-layer HC head (output contraction); mirrors decoder.hc_head_* mappings.
-                (f"{mg_pfx}.hc_head_fn", f"{ck_pfx}.hc_head_fn"),
-                (f"{mg_pfx}.hc_head_base", f"{ck_pfx}.hc_head_base"),
-                (f"{mg_pfx}.hc_head_scale", f"{ck_pfx}.hc_head_scale"),
-            ]
-            for mg, hf in _mtp_plain:
-                mappings.append(AutoMapping(mg, hf))
-            for mg, hf in _mtp_hc_plain:
-                mappings.append(ReplicatedMapping(mg, hf))
-            # MTP attn_sink: TP-split like the main model attn_sink
-            mappings.append(
-                ColumnParallelMapping(
-                    f"{mg_pfx}.mtp_model_layer.self_attention.core_attention.attn_sink",
-                    f"{ck_pfx}.attn.attn_sink",
-                )
-            )
-            # linear_o_group_proj is a plain nn.Parameter (all o_groups on every TP rank)
-            mappings.append(
-                ReplicatedMapping(
-                    f"{mg_pfx}.mtp_model_layer.self_attention.linear_o_group_proj",
-                    f"{ck_pfx}.attn.wo_a.weight",
-                )
-            )
-
-            # MTP e_proj + h_proj are separate ColumnParallelLinear projections
-            # when the MTP layer uses hyper-connections.
-            # AutoMapping auto-detects ColumnParallelLinear and shards along dim 0.
+        # ------ MTP layers ------
+        # Each MTP depth owns its embed/hidden norms, e/h projections, final norm, and HC
+        # head, plus a nested two-layer HybridStack (window attention + MoE) under
+        # ``mtp_model_layer.layers.{0,1}``.
+        for k in range(num_mtp):
+            ck = f"mtp.{k}"
+            mg = f"mtp.layers.{k}"
             mappings += [
-                AutoMapping(f"{mg_pfx}.e_proj.weight", f"{ck_pfx}.e_proj.weight"),
-                AutoMapping(f"{mg_pfx}.h_proj.weight", f"{ck_pfx}.h_proj.weight"),
+                AutoMapping(f"{mg}.enorm.weight", f"{ck}.enorm.weight"),
+                AutoMapping(f"{mg}.hnorm.weight", f"{ck}.hnorm.weight"),
+                AutoMapping(f"{mg}.final_layernorm.weight", f"{ck}.norm.weight"),
+                # e_proj / h_proj are separate ColumnParallelLinear modules (mHC MTP path).
+                AutoMapping(f"{mg}.e_proj.weight", f"{ck}.e_proj.weight"),
+                AutoMapping(f"{mg}.h_proj.weight", f"{ck}.h_proj.weight"),
+                # Per-MTP-layer HC head (output contraction); mirrors decoder.hc_head_*.
+                ReplicatedMapping(f"{mg}.hc_head_fn", f"{ck}.hc_head_fn"),
+                ReplicatedMapping(f"{mg}.hc_head_base", f"{ck}.hc_head_base"),
+                ReplicatedMapping(f"{mg}.hc_head_scale", f"{ck}.hc_head_scale"),
             ]
-
-            # MTP gated MLP (routed experts + shared expert)
-            mappings += [
-                GatedMLPMapping(
-                    megatron_param=f"{mg_pfx}.mtp_model_layer.mlp.experts.linear_fc1.weight*",
-                    gate=f"{ck_pfx}.ffn.experts.*.w1.weight",
-                    up=f"{ck_pfx}.ffn.experts.*.w3.weight",
-                ),
-                AutoMapping(
-                    f"{mg_pfx}.mtp_model_layer.mlp.experts.linear_fc2.weight*",
-                    f"{ck_pfx}.ffn.experts.*.w2.weight",
-                ),
-                GatedMLPMapping(
-                    megatron_param=f"{mg_pfx}.mtp_model_layer.mlp.shared_experts.linear_fc1.weight",
-                    gate=f"{ck_pfx}.ffn.shared_experts.w1.weight",
-                    up=f"{ck_pfx}.ffn.shared_experts.w3.weight",
-                ),
-            ]
-
-            # MTP HC alpha scalars
-            mappings += [
-                _HCAlphaMapping(
-                    megatron_pre=f"{mg_pfx}.mtp_model_layer.self_attention_hyper_connection.alpha_pre",
-                    megatron_post=f"{mg_pfx}.mtp_model_layer.self_attention_hyper_connection.alpha_post",
-                    megatron_res=f"{mg_pfx}.mtp_model_layer.self_attention_hyper_connection.alpha_res",
-                    hf_param=f"{ck_pfx}.hc_attn_scale",
-                ),
-                _HCAlphaMapping(
-                    megatron_pre=f"{mg_pfx}.mtp_model_layer.mlp_hyper_connection.alpha_pre",
-                    megatron_post=f"{mg_pfx}.mtp_model_layer.mlp_hyper_connection.alpha_post",
-                    megatron_res=f"{mg_pfx}.mtp_model_layer.mlp_hyper_connection.alpha_res",
-                    hf_param=f"{ck_pfx}.hc_ffn_scale",
-                ),
-            ]
-
-            # MTP HC alpha secondary: suppress export warnings for post/res
-            for _hc_mg_sub, _hc_hf_key in [
-                ("self_attention_hyper_connection", "hc_attn_scale"),
-                ("mlp_hyper_connection", "hc_ffn_scale"),
-            ]:
-                mappings += [
-                    _HCAlphaSecondaryMapping(
-                        f"{mg_pfx}.mtp_model_layer.{_hc_mg_sub}.alpha_post",
-                        f"{ck_pfx}.{_hc_hf_key}",
-                        1,
-                    ),
-                    _HCAlphaSecondaryMapping(
-                        f"{mg_pfx}.mtp_model_layer.{_hc_mg_sub}.alpha_res",
-                        f"{ck_pfx}.{_hc_hf_key}",
-                        2,
-                    ),
-                ]
+            mappings += _attention_layer_mappings(f"{mg}.mtp_model_layer.layers.0", ck)
+            mappings += _moe_layer_mappings(f"{mg}.mtp_model_layer.layers.1", ck, sequential_experts=False)
 
         return MegatronMappingRegistry(*mappings)
 

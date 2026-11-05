@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from megatron.bridge.recipes.qwen_vl.gb300.qwen35_vl import (
+    qwen35_vl_397b_a17b_pretrain_config,
+)
 from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_2b_peft_1gpu_h100_bf16_config as qwen35_vl_2b_peft_config,
 )
@@ -100,6 +103,7 @@ __all__ = [
     "qwen35_vl_35b_a3b_pretrain_mock_config",
     "qwen35_vl_35b_a3b_sft_config",
     "qwen35_vl_397b_a17b_peft_config",
+    "qwen35_vl_397b_a17b_pretrain_config",
     "qwen35_vl_397b_a17b_pretrain_mock_config",
     "qwen35_vl_397b_a17b_sft_config",
     "qwen35_vl_4b_peft_config",

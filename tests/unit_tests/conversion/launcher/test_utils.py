@@ -44,6 +44,13 @@ def test_resolve_hf_model_revision_downloads_exact_snapshot(monkeypatch):
     assert calls == [{"repo_id": "hf/model", "revision": "0123456789abcdef"}]
 
 
+def test_config_only_revision_never_downloads_weights(monkeypatch):
+    calls = []
+    monkeypatch.setattr("huggingface_hub.snapshot_download", lambda **kwargs: calls.append(kwargs) or "/cache/config")
+    assert resolve_hf_model_revision("hf/model", "pinned", config_only=True) == "/cache/config"
+    assert calls == [{"repo_id": "hf/model", "revision": "pinned", "allow_patterns": ["config.json", "*.py"]}]
+
+
 def test_resolve_hf_commit_revision_resolves_named_ref_without_downloading(monkeypatch):
     calls = []
 

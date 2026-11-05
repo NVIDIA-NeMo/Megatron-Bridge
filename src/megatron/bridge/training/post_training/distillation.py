@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from typing import Callable
 
 import modelopt.torch.distill as mtd
@@ -19,12 +20,30 @@ import modelopt.torch.distill.plugins.megatron as mtd_mcore
 import torch
 from megatron.core import parallel_state
 from megatron.core.transformer import MegatronModule
+from megatron.core.utils import unwrap_model
+
+from megatron.bridge.training.losses import create_masked_next_token_loss_function
 
 
 class ModelOptDistillConfig(mtd_mcore.DistillationConfig):
     """Configuration settings for Model Optimizer distillation."""
 
     pass
+
+
+def create_kd_loss_function(
+    loss_mask: torch.Tensor, model: MegatronModule, check_for_nan_in_loss: bool, check_for_spiky_loss: bool
+) -> Callable:
+    """Masked next-token loss, wrapped with the KD loss when the model is distilling.
+
+    Forward steps share this so a model family only has to supply its own batch handling to
+    become distillable; a step that builds its loss directly would silently train without KD.
+    """
+    original_loss_fn = create_masked_next_token_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+    unwrapped_model = unwrap_model(model)
+    if not isinstance(unwrapped_model, mtd.DistillationModel):
+        return original_loss_fn
+    return partial(loss_func_kd, loss_mask=loss_mask, original_loss_fn=original_loss_fn, model=unwrapped_model)
 
 
 def loss_func_kd(

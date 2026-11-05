@@ -43,7 +43,7 @@ def _offline_recipe_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
         "global_batch_size",
     ),
     [
-        (muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config, 4096, 8, 2, 1, 2),
+        (muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config, 4096, 4, 4, 1, 1024),
         (muse_glimmer_30b_sft_32gpu_h100_bf16_config, 4096, 8, 2, 1, 8),
         (muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config, 8192, 1, 4, 2, 8),
         (muse_glimmer_30b_peft_8gpu_h100_bf16_config, 8192, 8, 1, 1, 8),
@@ -90,7 +90,8 @@ def test_muse_glimmer_recipe_contracts(
     assert cfg.dataset.enable_in_batch_packing is is_long_context
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == global_batch_size
-    assert cfg.train.micro_batch_size == (2 if is_long_context else 1)
+    is_pretrain = recipe is muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config
+    assert cfg.train.micro_batch_size == (2 if is_long_context or is_pretrain else 1)
     assert cfg.validation.eval_iters == 0
     assert cfg.validation.eval_interval == 0
     assert cfg.logger.log_throughput is True
@@ -104,7 +105,7 @@ def test_muse_glimmer_pretrain_owns_resume_checkpoint_contract() -> None:
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.optimizer.lr == pytest.approx(3e-4)
     assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.dataset.num_workers == 0
+    assert cfg.dataset.num_workers == 4
     assert cfg.checkpoint.save_interval == 50
     assert cfg.checkpoint.load is None
 

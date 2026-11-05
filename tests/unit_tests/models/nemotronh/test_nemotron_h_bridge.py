@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+import dataclasses
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +20,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.activations import squared_relu
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models import AutoBridge
@@ -27,6 +28,7 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.conversion.quant_mapping import AmaxFanoutMapping, AmaxMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import (
     NemotronHBridge,
@@ -218,6 +220,43 @@ class TestNemotronHBridge:
         assert any([isinstance(m, AutoMapping) for m in mapping_registry.mappings])
         # assert any([isinstance(m, PrunedVocabMapping) for m in mapping_registry.mappings])
         assert any([isinstance(m, QKVMapping) for m in mapping_registry.mappings])
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("hf_embedding_key", ["backbone.embedding.weight", "backbone.embeddings.weight"])
+    def test_embedding_mapping_preserves_checkpoint_key(self, hf_embedding_key: str) -> None:
+        bridge = NemotronHBridge()
+        bridge.hf_pretrained = SimpleNamespace(
+            state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: [hf_embedding_key, "lm_head.weight"]))
+        )
+
+        registry = bridge.mapping_registry()
+        megatron_name = "embedding.word_embeddings.weight"
+        mapping = registry.megatron_to_hf_lookup(megatron_name)
+
+        assert mapping.hf_param == hf_embedding_key
+        assert registry.hf_to_megatron_lookup(hf_embedding_key).megatron_param == megatron_name
+        assert not mapping.allow_hf_name_mismatch
+        assert bridge._validate_conversion_mappings(registry, [megatron_name], [hf_embedding_key])
+
+    @pytest.mark.unit
+    def test_config_only_embedding_mapping_keeps_legacy_name(self) -> None:
+        registry = NemotronHBridge().mapping_registry()
+
+        assert (
+            registry.megatron_to_hf_lookup("embedding.word_embeddings.weight").hf_param == "backbone.embeddings.weight"
+        )
+
+    @pytest.mark.unit
+    def test_missing_embedding_remains_a_conversion_error(self) -> None:
+        bridge = NemotronHBridge()
+        bridge.hf_pretrained = SimpleNamespace(
+            state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: ["lm_head.weight"]))
+        )
+
+        with pytest.raises(ValueError, match="Hugging Face checkpoint is missing mapped parameter"):
+            bridge._validate_conversion_mappings(
+                bridge.mapping_registry(), ["embedding.word_embeddings.weight"], ["lm_head.weight"]
+            )
 
     def test_mapping_registry_contains_mamba_conv1d_compat_mappings(self):
         """Test that Mamba conv mappings support old and new Megatron-Core names."""
@@ -562,6 +601,60 @@ class TestNemotronHBridgeMegatronToHFConfig:
         assert hf_cfg["hybrid_override_pattern"] == "MEME"
         assert hf_cfg["mtp_hybrid_override_pattern"] == "*E"
         assert hf_cfg["num_nextn_predict_layers"] == 2
+
+    @pytest.mark.parametrize(
+        ("mtp_use_repeated_layer", "expected_num_nextn_predict_layers"),
+        [(True, 1), (False, 2)],
+    )
+    def test_megatron_to_hf_config_exports_physical_mtp_layer_count(
+        self,
+        mtp_use_repeated_layer,
+        expected_num_nextn_predict_layers,
+    ):
+        """Export shared and independent MTP modules at their physical depths."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="MEME/*E/*E",
+            mtp_num_layers=2,
+            mtp_use_repeated_layer=mtp_use_repeated_layer,
+        )
+
+        hf_cfg = NemotronHBridge.megatron_to_hf_config(provider)
+
+        assert hf_cfg["hybrid_override_pattern"] == "MEME"
+        assert hf_cfg["mtp_hybrid_override_pattern"] == "*E"
+        assert hf_cfg["num_nextn_predict_layers"] == expected_num_nextn_predict_layers
+
+    @pytest.mark.parametrize("depth", [0, 1, 2, 3])
+    @pytest.mark.parametrize("repeated", [False, True])
+    @pytest.mark.parametrize("text_only", [False, True])
+    def test_export_preserves_physical_mtp_block_count(self, depth, repeated, text_only):
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="MEME" + "/*E" * depth,
+            mtp_num_layers=depth,
+            mtp_use_repeated_layer=repeated,
+            hf_model_text_only=text_only,
+        )
+        config = NemotronHBridge.megatron_to_hf_config(provider)
+        physical_blocks = 1 if depth and repeated else depth
+        assert config["num_nextn_predict_layers"] == physical_blocks
+        reimported = SimpleNamespace()
+        # Reimport preserves stored blocks; the training recipe selects repetitions.
+        config["mtp_use_repeated_layer"] = repeated
+        NemotronHBridge._configure_mtp_provider(reimported, SimpleNamespace(**config))
+        assert reimported.mtp_num_layers == physical_blocks
+        assert reimported.mtp_use_repeated_layer is bool(depth and repeated)
+
+    def test_megatron_to_hf_config_disables_mtp_with_zero_physical_layers(self):
+        """Export zero physical MTP layers when MTP is disabled."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="MEME",
+            mtp_num_layers=0,
+            mtp_use_repeated_layer=False,
+        )
+
+        hf_cfg = NemotronHBridge.megatron_to_hf_config(provider)
+
+        assert hf_cfg["num_nextn_predict_layers"] == 0
 
     def test_megatron_to_hf_config_rejects_unknown_main_pattern_characters(self):
         """Preserve validation for unknown main hybrid_override_pattern characters."""
@@ -1031,6 +1124,22 @@ class TestMTPFlatteningQKVMapping:
 class TestNemotronHBridgeMTPIntegration:
     """Test NemotronHBridge methods related to MTP layer handling."""
 
+    def test_list_based_transformers_layer_schema_is_normalized(self):
+        hf_config = SimpleNamespace(
+            layers_block_type=["linear_attention", "moe", "full_attention", "mlp"],
+            num_nextn_predict_layers=1,
+            mtp_layers_block_type=["attention", "moe"],
+        )
+
+        assert NemotronHBridge._hf_hybrid_pattern(hf_config) == "ME*-"
+        assert NemotronHBridge._hf_mtp_config(hf_config) == (1, "*E")
+
+    def test_list_based_transformers_layer_schema_rejects_unknown_types(self):
+        hf_config = SimpleNamespace(layers_block_type=["mamba", "unknown"])
+
+        with pytest.raises(ValueError, match="Unknown layers_block_type entry at index 1"):
+            NemotronHBridge._hf_hybrid_pattern(hf_config)
+
     @pytest.mark.parametrize(
         ("hf_config", "expected_mtp_mappings"),
         [
@@ -1099,8 +1208,7 @@ class TestNemotronHBridgeMTPIntegration:
         bridge = NemotronHBridge()
         bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=1, mtp_hybrid_override_pattern="*E*M-")
 
-        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}):
-            registry = bridge.mapping_registry()
+        registry = bridge.mapping_registry()
 
         mlp_mapping = registry.megatron_to_hf_lookup(
             "mtp.layers.3.mtp_model_layer.layers.2.mlp.linear_fc1.weight_quantizer._amax"
@@ -1158,3 +1266,223 @@ class TestNemotronHBridgeMTPIntegration:
         assert len(mtp_mappings) == 0
         qkv_mappings = [m for m in registry.mappings if isinstance(m, _MTPFlatteningQKVMapping)]
         assert len(qkv_mappings) == 0
+
+
+_BUILDER_BASE_CONFIG = {
+    "architectures": ["NemotronHForCausalLM"],
+    "attention_bias": False,
+    "attention_dropout": 0.0,
+    "attention_head_dim": 128,
+    "chunk_size": 128,
+    "hidden_act": "relu2",
+    "hidden_dropout": 0.0,
+    "hidden_size": 2688,
+    "hybrid_override_pattern": "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
+    "initializer_range": 0.02,
+    "intermediate_size": 1856,
+    "layer_norm_epsilon": 1e-05,
+    "mamba_head_dim": 64,
+    "mamba_num_heads": 64,
+    "max_position_embeddings": 8192,
+    "mlp_bias": False,
+    "model_type": "nemotron_h",
+    "n_groups": 8,
+    "num_attention_heads": 32,
+    "num_hidden_layers": 52,
+    "num_key_value_heads": 2,
+    "residual_in_fp32": False,
+    "rms_norm_eps": 1e-05,
+    "ssm_state_size": 128,
+    "tie_word_embeddings": False,
+    "torch_dtype": "bfloat16",
+    "use_bias": False,
+    "vocab_size": 131072,
+}
+_BUILDER_MOE = {
+    "n_routed_experts": 128,
+    "num_experts_per_tok": 6,
+    "moe_intermediate_size": 1856,
+    "moe_shared_expert_intermediate_size": 3712,
+    "n_group": 1,
+    "topk_group": 1,
+    "routed_scaling_factor": 2.5,
+}
+_BUILDER_CONFIG_VARIANTS = {
+    "dense": {"n_routed_experts": None},
+    "moe": _BUILDER_MOE,
+    "moe_mtp_latent": {
+        **_BUILDER_MOE,
+        "num_nextn_predict_layers": 1,
+        "mtp_hybrid_override_pattern": "*E",
+        "moe_latent_size": 1024,
+        "moe_shared_expert_overlap": False,
+    },
+    "mtp_not_repeated": {
+        **_BUILDER_MOE,
+        "num_nextn_predict_layers": 2,
+        "mtp_hybrid_override_pattern": "*E",
+        "mtp_use_repeated_layer": False,
+        "keep_mtp_spec_in_bf16": False,
+        "mtp_loss_scaling_factor": 0.5,
+    },
+    "layer_types": {
+        **_BUILDER_MOE,
+        "hybrid_override_pattern": None,
+        "layers_block_type": ["mamba", "moe", "attention", "mlp"] * 13,
+        "num_nextn_predict_layers": 1,
+        "mtp_layers_block_type": ["attention", "moe"],
+    },
+    "chunk256_fp16": {"n_routed_experts": None, "chunk_size": 256, "torch_dtype": "float16"},
+    "no_moe_attributes": {},
+}
+
+
+def _builder_hf_config(variant: str) -> SimpleNamespace:
+    values = {**_BUILDER_BASE_CONFIG, **_BUILDER_CONFIG_VARIANTS[variant]}
+    if values["hybrid_override_pattern"] is None:
+        del values["hybrid_override_pattern"]
+    return SimpleNamespace(**values)
+
+
+def _native_hf_config():
+    from transformers import NemotronHConfig
+
+    config = NemotronHConfig(
+        hidden_size=256,
+        intermediate_size=512,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=32,
+        mamba_num_heads=8,
+        mamba_head_dim=32,
+        ssm_state_size=16,
+        n_groups=2,
+        chunk_size=256,
+        n_routed_experts=8,
+        num_experts_per_tok=2,
+        moe_intermediate_size=128,
+        moe_shared_expert_intermediate_size=256,
+        moe_latent_size=64,
+        vocab_size=1024,
+        hybrid_override_pattern="MEM*EM-E",
+        num_hidden_layers=8,
+        num_nextn_predict_layers=1,
+        mtp_hybrid_override_pattern="*E",
+        dtype="bfloat16",
+    )
+    config.architectures = ["NemotronHForCausalLM"]
+    return config
+
+
+def _builder_field_names(model_config) -> set[str]:
+    return {f.name for f in dataclasses.fields(model_config)} | {
+        f.name for f in dataclasses.fields(model_config.transformer)
+    }
+
+
+class TestNemotronHBuilderConfig:
+    """Builder-backed ModelConfig path for Nemotron-H."""
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in NemotronHBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert NemotronHBridge.MODEL_CONFIG_CLASS is BridgeHybridModelConfig
+        assert NemotronHBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        bridge = NemotronHBridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(_builder_hf_config("moe_mtp_latent"))
+
+        assert isinstance(model_config, BridgeHybridModelConfig)
+        assert model_config.hybrid_layer_pattern == _BUILDER_BASE_CONFIG["hybrid_override_pattern"]
+        assert model_config.position_embedding_type == "none"
+        assert model_config.activation_func is squared_relu
+        assert model_config.normalization == "RMSNorm"
+        assert model_config.is_hybrid_model is True
+        assert model_config.first_last_layers_bf16 is True
+        assert model_config.mamba_chunk_size == 128
+        assert model_config.mamba_num_groups == 8
+        assert model_config.kv_channels == 128
+        assert model_config.num_moe_experts == 128
+        assert model_config.moe_router_score_function == "sigmoid"
+        assert model_config.moe_router_load_balancing_type == "seq_aux_loss"
+        assert model_config.moe_latent_size == 1024
+        assert model_config.moe_shared_expert_overlap is False
+        assert model_config.mtp_num_layers == 1
+        assert model_config.mtp_hybrid_override_pattern == "*E"
+        assert model_config.mtp_use_repeated_layer is True
+        assert model_config.mtp_loss_scaling_factor == 0.3
+        assert model_config.hybrid_stack_spec is None
+
+    @pytest.mark.parametrize("variant", [*_BUILDER_CONFIG_VARIANTS, "native"])
+    def test_model_config_matches_provider(self, variant):
+        bridge = NemotronHBridge()
+
+        def hf_config():
+            return _native_hf_config() if variant == "native" else _builder_hf_config(variant)
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = hf_config()
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
+        model_config = bridge.hf_config_to_model_config(hf_config())
+
+        shared = {f.name for f in dataclasses.fields(provider)} & _builder_field_names(model_config)
+        assert len(shared) > 300
+        for name in sorted(shared - {"transformer"}):
+            assert getattr(model_config, name) == getattr(provider, name), name
+        assert provider.position_embedding_type == "none"
+        assert provider.keep_mtp_spec_in_bf16 is bool(
+            provider.mtp_num_layers and getattr(mock_pretrained.config, "keep_mtp_spec_in_bf16", True)
+        )
+
+        # Both paths combine the MTP block with the decoder pattern the same way.
+        provider.finalize()
+        model_config.finalize()
+        for name in sorted(shared - {"transformer"}):
+            provider_value, model_value = getattr(provider, name), getattr(model_config, name)
+            if callable(provider_value) and not isinstance(provider_value, type):
+                continue
+            assert model_value == provider_value, name
+
+    @pytest.mark.parametrize("variant", ["moe_mtp_latent", "mtp_not_repeated", "chunk256_fp16"])
+    def test_megatron_to_hf_config_from_model_config_matches_provider(self, variant):
+        bridge = NemotronHBridge()
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = _builder_hf_config(variant)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(mock_pretrained)
+        model_config = bridge.hf_config_to_model_config(_builder_hf_config(variant))
+        provider.finalize()
+        model_config.finalize()
+
+        hf_config = NemotronHBridge.megatron_to_hf_config(model_config)
+
+        assert hf_config == NemotronHBridge.megatron_to_hf_config(provider)
+        assert hf_config["hybrid_override_pattern"] == _BUILDER_BASE_CONFIG["hybrid_override_pattern"]
+        assert hf_config["chunk_size"] == model_config.mamba_chunk_size
+
+    def test_unified_pattern_follows_recipe_mtp_depth(self):
+        model_config = NemotronHBridge().hf_config_to_model_config(_builder_hf_config("moe_mtp_latent"))
+        # Recipes train two prediction depths with the checkpoint's single shared MTP block.
+        model_config.mtp_num_layers = 2
+
+        model_config.finalize()
+
+        assert model_config.hybrid_layer_pattern.endswith("/*E/*E")
+        assert model_config.num_layers == 52
+
+    def test_get_model_config_records_hf_source(self):
+        hf_config = _native_hf_config()
+        hf_config._name_or_path = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"  # pragma: allowlist secret
+
+        model_config = AutoBridge.from_hf_config(hf_config).get_model_config()
+
+        assert isinstance(model_config, BridgeHybridModelConfig)
+        assert model_config.extra_checkpoint_metadata == {"hf_model_id": hf_config._name_or_path}
+        assert model_config.as_dict()["transformer"]["activation_func"] == "squared_relu"

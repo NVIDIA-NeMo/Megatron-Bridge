@@ -25,7 +25,7 @@ Text-only (Dense/MoE) layer specs and providers live in:
 """
 
 import math
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -36,6 +36,7 @@ from torch import Tensor
 from transformers import AutoModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.common_utils import (
     hook_hf_module_setattr_for_tp_grad_sync,
     slice_batch_for_context_parallel,
@@ -43,7 +44,9 @@ from megatron.bridge.utils.common_utils import (
 
 
 if TYPE_CHECKING:
+    from megatron.core.models.gpt import GPTModel
     from megatron.core.packed_seq_params import PackedSeqParams
+    from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 def _keep_hf_precision_buffers_in_fp32(module: nn.Module) -> None:
@@ -138,16 +141,31 @@ class Gemma4VLModel(MegatronModule):
         2. If pixel_values: vision_tower → embed_vision → scatter at image_token_id positions
         3. If input_features: audio_tower → embed_audio → scatter at audio_token_id positions
         4. Forward through language model decoder
+
+    Args:
+        config: The provider, or the vision-language transformer config of a builder-backed
+            model config. Either one carries the Hugging Face sub-configs and token IDs.
+        pre_process: Whether to build the vision and audio encoders and the embeddings.
+        post_process: Whether to build the language-model output layer.
+        vp_stage: Virtual pipeline stage.
+        build_language_model: Builds the language model from ``pre_process``, ``post_process``
+            and ``vp_stage``. Defaults to the provider's ``provide_language_model()``.
+        pg_collection: Process groups a builder passes. Defaults to the provider's.
     """
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config: GPTModelProvider | TransformerConfig,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
+        *,
+        build_language_model: Optional[Callable[..., "GPTModel"]] = None,
+        pg_collection: Optional["ProcessGroupCollection"] = None,
     ) -> None:
         super().__init__(config=config)
+        if pg_collection is not None:
+            self.pg_collection = pg_collection
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -174,11 +192,13 @@ class Gemma4VLModel(MegatronModule):
                     self.embed_audio.to(dtype=target_dtype)
                 hook_hf_module_setattr_for_tp_grad_sync(self.audio_tower)
 
-        self.language_model = self.config.provide_language_model(
+        if build_language_model is None:
+            build_language_model = self.config.provide_language_model
+        self.language_model = build_language_model(
             pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
         )
 
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
     def _init_embed_vision(self, config):
@@ -257,6 +277,7 @@ class Gemma4VLModel(MegatronModule):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         pixel_values: Optional[torch.Tensor] = None,
         image_position_ids: Optional[torch.LongTensor] = None,
+        mm_token_type_ids: Optional[torch.LongTensor] = None,
         input_features: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
@@ -269,10 +290,11 @@ class Gemma4VLModel(MegatronModule):
         if self.pre_process:
             if input_ids is not None:
                 multimodal_mask = input_ids == self.config.image_token_id
-                if hasattr(self.config, "audio_token_id"):
+                audio_token_id = getattr(self.config, "audio_token_id", None)
+                if audio_token_id is not None:
                     multimodal_mask = torch.logical_or(
                         multimodal_mask,
-                        input_ids == self.config.audio_token_id,
+                        input_ids == audio_token_id,
                     )
                 if multimodal_mask.any():
                     lm_input_ids = input_ids.clone()
@@ -308,9 +330,16 @@ class Gemma4VLModel(MegatronModule):
 
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [S, B, H]
 
-        attention_mask = self._compute_attention_mask(input_ids) if input_ids is not None else attention_mask
+        attention_mask = (
+            self._compute_attention_mask(input_ids, mm_token_type_ids=mm_token_type_ids)
+            if input_ids is not None
+            else attention_mask
+        )
 
-        pg_coll = getattr(self.config, "_pg_collection", None)
+        # A builder passes the model its process groups; a provider carries them.
+        pg_coll = getattr(self, "pg_collection", None)
+        if pg_coll is None:
+            pg_coll = getattr(self.config, "_pg_collection", None)
         if pg_coll is not None:
             inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
                 inputs_embeds=inputs_embeds,
@@ -323,7 +352,7 @@ class Gemma4VLModel(MegatronModule):
             )
 
         if self.config.sequence_parallel and inputs_embeds is not None:
-            tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+            tp_group = pg_coll.tp if pg_coll is not None else None
             inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         outputs = self.language_model.forward(
@@ -363,10 +392,11 @@ class Gemma4VLModel(MegatronModule):
                 for param in getattr(self, attr).parameters():
                     param.requires_grad = False
 
-    def _compute_attention_mask(self, input_ids: torch.Tensor) -> Optional[torch.Tensor]:
+    def _compute_attention_mask(
+        self, input_ids: torch.Tensor, mm_token_type_ids: Optional[torch.Tensor] = None
+    ) -> Optional[torch.Tensor]:
         """Compute HF-style attention masks for full and sliding Gemma4 layers."""
-        if not self.pre_process:
-            return None
+        # Every pipeline stage receives token IDs and must preserve image attention.
         batch_size, seq_len = input_ids.shape
         causal_mask = torch.tril(
             torch.ones((batch_size, 1, seq_len, seq_len), dtype=torch.bool, device=input_ids.device)
@@ -383,7 +413,11 @@ class Gemma4VLModel(MegatronModule):
                 block_ids.unsqueeze(-1) > 0,
             )
 
-        bidir = _bidirectional_block_mask(input_ids == self.config.image_token_id)
+        if mm_token_type_ids is not None:
+            token_mask = (mm_token_type_ids == 1) | (mm_token_type_ids == 2)
+        else:
+            token_mask = input_ids == self.config.image_token_id
+        bidir = _bidirectional_block_mask(token_mask)
 
         # blocked[b, 0, i, j] = True where attention is prevented:
         # causal blocks j > i; image tokens within the same block override this

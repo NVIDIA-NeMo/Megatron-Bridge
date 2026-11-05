@@ -21,14 +21,24 @@ from pathlib import Path
 import torch
 import yaml
 from rich.console import Console
-from utils import parse_dtype, prepare_output_directory, resolve_hf_model_revision, validate_output_path
+from utils import (
+    _configure_distributed_env,
+    _configure_model_config,
+    _configure_model_provider,
+    _hf_tokenizer_kwargs,
+    _maybe_generate_pipeline_layout,
+    _uses_model_builder,
+    parse_dtype,
+    prepare_output_directory,
+    resolve_hf_model_revision,
+    validate_output_path,
+)
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import print_rank_0
-from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
 
 
 _IGNORE_PRECISION_PARAMS = (
@@ -53,16 +63,7 @@ def _ensure_distributed_initialized(timeout_minutes: int | None, *, use_cpu: boo
     """Initialize a distributed process group from torchrun or Slurm task state."""
     if torch.distributed.is_initialized():
         return
-    if os.environ.get("WORLD_SIZE") is None and os.environ.get("SLURM_NTASKS") is not None:
-        os.environ["RANK"] = os.environ["SLURM_PROCID"]
-        os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
-        os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
-        master_addr = resolve_slurm_master_addr()
-        master_port = resolve_slurm_master_port()
-        if master_addr is not None:
-            os.environ["MASTER_ADDR"] = master_addr
-        if master_port is not None:
-            os.environ["MASTER_PORT"] = str(master_port)
+    _configure_distributed_env()
     if os.environ.get("WORLD_SIZE") is None:
         raise RuntimeError("Distributed conversion must be launched through NeMo Run's local or Slurm executor.")
     if not use_cpu:
@@ -95,20 +96,6 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
         torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
 
 
-def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
-    """Generate a bridge-specific pipeline layout when the model requires one."""
-    if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
-        return False
-    hf_config = bridge.hf_pretrained.config
-    num_layers = hf_config.num_hidden_layers
-    mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
-    model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
-        num_layers, pp, mtp_layers
-    )
-    print_rank_0(f"Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp_layers} MTP)")
-    return True
-
-
 def _rebalance_pipeline_layout(saved_layout: list[list[str]], pp: int) -> list[list[str]]:
     """Redistribute a saved flexible pipeline layout across a new PP size."""
     layers = [layer for stage in saved_layout for layer in stage]
@@ -125,7 +112,11 @@ def _rebalance_pipeline_layout(saved_layout: list[list[str]], pp: int) -> list[l
 def _maybe_restore_pipeline_layout(
     bridge: AutoBridge, model_provider: GPTModelProvider, megatron_path: str, pp: int
 ) -> None:
-    """Restore a serialized pipeline layout or regenerate it for export."""
+    """Restore a serialized pipeline layout or regenerate it for export.
+
+    The provider adopts the checkpoint's MTP layer count because export builds the model from the
+    checkpoint config, so a restored or regenerated layout must place the MTP layers that model has.
+    """
     checkpoint_path = Path(megatron_path)
     iteration_paths = [path for path in checkpoint_path.glob("iter_*") if path.is_dir()]
 
@@ -144,12 +135,20 @@ def _maybe_restore_pipeline_layout(
         with config_path.open() as config_file:
             config = yaml.safe_load(config_file) or {}
         model_config = config.get("model", {})
+        # Builder-backed model configs serialize the Megatron-Core fields under ``transformer``.
+        model_config = {**(model_config.get("transformer") or {}), **model_config}
+        if "mtp_num_layers" in model_config:
+            model_provider.mtp_num_layers = model_config["mtp_num_layers"]
         saved_layout = model_config.get("pipeline_model_parallel_layout")
         saved_pp = model_config.get("pipeline_model_parallel_size")
         is_valid_layout = isinstance(saved_layout, list) and all(isinstance(stage, list) for stage in saved_layout)
         is_same_topology = saved_pp == pp or (saved_pp is None and len(saved_layout or []) % pp == 0)
         if is_valid_layout and is_same_topology and len(saved_layout) % pp == 0:
             model_provider.pipeline_model_parallel_layout = saved_layout
+            # Hybrid models take their stage boundaries from the '|' segments saved with this layout.
+            saved_pattern = model_config.get("hybrid_layer_pattern")
+            if isinstance(saved_pattern, str) and "|" in saved_pattern:
+                model_provider.hybrid_layer_pattern = saved_pattern
             print_rank_0(f"Read pipeline layout from checkpoint ({len(saved_layout)} PP/VPP stages)")
             return
         if is_valid_layout:
@@ -160,66 +159,6 @@ def _maybe_restore_pipeline_layout(
                 model_provider.pipeline_model_parallel_layout = _rebalance_pipeline_layout(saved_layout, pp)
             return
     _maybe_generate_pipeline_layout(bridge, model_provider, pp)
-
-
-def _configure_model_provider(
-    model_provider: GPTModelProvider,
-    *,
-    tp: int,
-    pp: int,
-    ep: int,
-    etp: int,
-    dtype: torch.dtype,
-    use_cpu: bool = False,
-) -> None:
-    """Apply distributed parallelism and dtype settings to a model provider."""
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = dtype
-    model_provider.params_dtype = dtype
-    if use_cpu:
-        model_provider.use_cpu_initialization = True
-
-
-def _uses_model_builder(bridge: AutoBridge) -> bool:
-    """Return whether the selected bridge supports native builder construction."""
-    return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
-
-
-def _configure_model_config(
-    model_config,
-    *,
-    tp: int,
-    pp: int,
-    ep: int,
-    etp: int,
-    dtype: torch.dtype,
-    use_cpu: bool = False,
-) -> None:
-    """Apply distributed parallelism and dtype settings to a builder config."""
-    transformer = model_config.transformer
-    transformer.tensor_model_parallel_size = tp
-    transformer.pipeline_model_parallel_size = pp
-    transformer.expert_model_parallel_size = ep
-    transformer.expert_tensor_parallel_size = etp
-    transformer.pipeline_dtype = dtype
-    transformer.params_dtype = dtype
-    if use_cpu:
-        transformer.use_cpu_initialization = True
-
-
-def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict[str, object]:
-    """Build tokenizer metadata for a saved Megatron checkpoint."""
-    tokenizer_kwargs: dict[str, object] = {}
-    if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
-        tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs() or {}
-    if trust_remote_code:
-        tokenizer_kwargs["trust_remote_code"] = True
-    if bridge.hf_model_revision is not None:
-        tokenizer_kwargs["revision"] = bridge.hf_model_revision
-    return tokenizer_kwargs
 
 
 def _roundtrip_weights_match(name: str, exported: torch.Tensor, original: torch.Tensor) -> tuple[bool, bool]:
@@ -317,6 +256,7 @@ def import_checkpoint(
     low_memory_save: bool,
     distributed_timeout_minutes: int | None,
     overwrite: bool,
+    text_only: bool = False,
 ) -> None:
     """Import a Hugging Face model into a distributed Megatron checkpoint.
 
@@ -333,6 +273,7 @@ def import_checkpoint(
         low_memory_save: Reduce peak GPU memory while saving the imported checkpoint.
         distributed_timeout_minutes: Process-group timeout in minutes.
         overwrite: Delete a non-empty destination before conversion.
+        text_only: Convert only the supported model's language component.
     """
     _ensure_distributed_initialized(distributed_timeout_minutes)
     _prepare_distributed_output(megatron_path, overwrite=overwrite, source_paths=[hf_model])
@@ -341,6 +282,8 @@ def import_checkpoint(
     print_rank_0(f"GPU import: {hf_model} -> {megatron_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
+    if text_only:
+        revision_kwargs["text_only"] = True
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model),
@@ -391,6 +334,7 @@ def export_checkpoint(
     show_progress: bool,
     distributed_save: bool,
     save_every_n_ranks: int,
+    text_only: bool = False,
     distributed_timeout_minutes: int | None,
     export_weight_dtype: str | None,
     overwrite: bool,
@@ -432,13 +376,19 @@ def export_checkpoint(
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
+    if text_only:
+        revision_kwargs["text_only"] = True
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=trusted,
         torch_dtype=dtype,
         **revision_kwargs,
     )
-    reference_model = resolve_hf_model_revision(hf_model, hf_revision)
+    reference_model = (
+        resolve_hf_model_revision(hf_model, hf_revision, config_only=True)
+        if text_only
+        else resolve_hf_model_revision(hf_model, hf_revision)
+    )
     checkpoint_config_bridge = AutoBridge.from_auto_config(
         megatron_path,
         reference_model,
@@ -453,6 +403,7 @@ def export_checkpoint(
         _maybe_restore_pipeline_layout(bridge, model_config, megatron_path, pp)
         resolved_pipeline_layout = model_config.pipeline_model_parallel_layout
         model_config.finalize()
+        resolved_hybrid_layer_pattern = getattr(model_config, "hybrid_layer_pattern", None)
         bridge._get_or_initialize_pg_collection(model_config.transformer)
     else:
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -460,6 +411,7 @@ def export_checkpoint(
         _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
         resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
         model_provider.finalize()
+        resolved_hybrid_layer_pattern = getattr(model_provider, "hybrid_layer_pattern", None)
         model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
 
     model_parallel_overrides: dict[str, object] = {
@@ -472,6 +424,10 @@ def export_checkpoint(
     }
     if isinstance(resolved_pipeline_layout, list):
         model_parallel_overrides["pipeline_model_parallel_layout"] = resolved_pipeline_layout
+        # load_megatron_model drops the '|' stage boundaries from the checkpoint's hybrid layer pattern,
+        # so pass the segments that match this layout; HybridModel allocates pipeline stages from them.
+        if isinstance(resolved_hybrid_layer_pattern, str) and "|" in resolved_hybrid_layer_pattern:
+            model_parallel_overrides["hybrid_layer_pattern"] = resolved_hybrid_layer_pattern
 
     megatron_model = bridge.load_megatron_model(
         megatron_path,

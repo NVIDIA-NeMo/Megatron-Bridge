@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib.util
+import shlex
 import sys
 import types
 from pathlib import Path
@@ -71,6 +72,71 @@ def _parse(module, *options):
     )
 
 
+@pytest.mark.parametrize("options", [[], ["--detach"], ["--submission-dry-run"]])
+def test_slurm_main_uses_shared_rate_limited_waiter(monkeypatch, options):
+    module = _load_setup_conversion_module()
+    calls = []
+
+    class Experiment:
+        def __init__(self, _name, *, skip_status_at_exit):
+            assert skip_status_at_exit is True
+            self.jobs = [types.SimpleNamespace(id="import-gpu", state=module.AppState.SUCCEEDED)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, *_args, **_kwargs):
+            pass
+
+        def run(self, **kwargs):
+            calls.append(("run", kwargs))
+
+        def dryrun(self):
+            calls.append(("dryrun", {}))
+
+    module.run.Experiment = Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    monkeypatch.setattr(module, "_build_task", lambda *_args: (types.SimpleNamespace(path="worker.py"), []))
+    monkeypatch.setattr(module, "run_from_container_repo_root", lambda task: task)
+    monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **kwargs: calls.append(("wait", kwargs)))
+    module.main(
+        [
+            "import",
+            "--executor",
+            "slurm",
+            "--device",
+            "gpu",
+            "--nodes",
+            "1",
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/checkpoint",
+            "--poll-interval",
+            "120",
+            *options,
+        ]
+    )
+    if "--submission-dry-run" in options:
+        assert calls == [("dryrun", {})]
+    else:
+        expected = [("run", {"detach": True, "tail_logs": False})]
+        if "--detach" not in options:
+            expected.append(("wait", {"poll_interval": 120}))
+        assert calls == expected
+
+
 def _parse_export(module, *options):
     return module.build_parser(include_execution=True).parse_args(
         [
@@ -90,6 +156,32 @@ def _parse_roundtrip(module, *options):
     return module.build_parser(include_execution=True).parse_args(
         ["roundtrip", "--hf-model-id", "hf/model", "--gpus-per-node", "2", *options]
     )
+
+
+@pytest.mark.parametrize("parse", [_parse, _parse_export, _parse_roundtrip])
+@pytest.mark.parametrize("option", ["--additional-slurm-params", "--additional_slurm_params"])
+def test_additional_slurm_parameters_are_not_forwarded_to_conversion(parse, option):
+    module = _load_setup_conversion_module()
+    args = parse(module, "--executor", "slurm", option, "segment=1;reservation=testing")
+
+    assert args.additional_slurm_params == {"segment": "1", "reservation": "testing"}
+    worker_args = module.conversion_worker_args(args)
+    assert option not in worker_args
+    assert "segment=1;reservation=testing" not in worker_args
+
+
+@pytest.mark.parametrize("value", ["", "segment", "=1", "segment=", "segment=1;"])
+def test_additional_slurm_parameters_reject_malformed_pairs(value):
+    module = _load_setup_conversion_module()
+    with pytest.raises(SystemExit):
+        _parse(module, "--additional-slurm-params", value)
+
+
+def test_local_conversion_rejects_additional_slurm_parameters():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--additional-slurm-params", "segment=1")
+    with pytest.raises(ValueError, match="only supported by the Slurm executor"):
+        module._validate_args(args)
 
 
 def test_setup_import_is_lightweight(monkeypatch):
@@ -164,14 +256,6 @@ def test_distributed_cpu_export_rejects_incompatible_topology(parallelism_args, 
     )
 
     with pytest.raises(ValueError, match=message):
-        module._validate_args(args)
-
-
-def test_distributed_cpu_export_rejects_non_export_command():
-    module = _load_setup_conversion_module()
-    args = _parse(module, "--cpu-processes-per-node", "2")
-
-    with pytest.raises(ValueError, match="supports export only"):
         module._validate_args(args)
 
 
@@ -321,6 +405,8 @@ def test_roundtrip_rejects_cpu_backend():
             "export",
             ("--device", "gpu", "--gpus-per-node", "2", "--tp", "2", "--hf-path", "/export path"),
         ),
+        ("import", ("--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel checkout")),
+        ("import", ("--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel;checkout")),
     ],
 )
 def test_local_gpu_rejects_worker_value_requiring_shell_quoting(command, options):
@@ -330,6 +416,40 @@ def test_local_gpu_rejects_worker_value_requiring_shell_quoting(command, options
 
     with pytest.raises(ValueError, match="cannot pass model IDs or paths containing whitespace"):
         module._validate_args(args)
+
+
+def test_local_gpu_accepts_shell_safe_bagel_repo():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel")
+
+    module._validate_args(args)
+
+
+def test_slurm_gpu_import_quotes_bagel_repo():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse(
+        module,
+        "--executor",
+        "slurm",
+        "--device",
+        "gpu",
+        "--gpus-per-node",
+        "1",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--bagel-repo",
+        "/tmp/Bagel checkout",
+    )
+    module._validate_args(args)
+
+    task, _ = module._build_task(args)
+
+    assert task.args[task.args.index("--bagel-repo") + 1] == "'/tmp/Bagel checkout'"
 
 
 def test_local_cpu_executor_uses_one_process_without_launcher():
@@ -430,7 +550,8 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
     assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]
 
 
-def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
+@pytest.mark.parametrize("additional", [[], ["--additional-slurm-params", "segment=1;export=ALL"]])
+def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch, additional):
     module = _load_setup_conversion_module()
 
     class _SlurmExecutor:
@@ -453,6 +574,7 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
         "image.sqsh",
         "--experiment-name",
         "mb4909-nano4b-conversion",
+        *additional,
     )
     module._validate_args(args)
 
@@ -464,8 +586,12 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
     assert "cpus_per_task" not in executor.kwargs
     assert "gpus_per_node" not in executor.kwargs
     assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
-    assert executor.kwargs["additional_parameters"] == {"export": "HF_TOKEN,PYTHONPATH"}
+    expected_parameters = {"export": "HF_TOKEN,PYTHONPATH"}
+    if additional:
+        expected_parameters["segment"] = "1"
+    assert executor.kwargs["additional_parameters"] == expected_parameters
     assert executor.kwargs["srun_args"] == []
+    assert executor.kwargs["poll_estimated_start_time"] is False
     assert executor.env_vars == {}
 
 
@@ -689,3 +815,85 @@ def test_parse_env_rejects_inline_secret_values(monkeypatch):
 
     with pytest.raises(ValueError, match="accepts NAME only"):
         module._parse_env(["HF_TOKEN=secret"])
+
+
+def _capture_submitted_task(module, monkeypatch, argv):
+    submitted = []
+
+    class _Experiment:
+        def __init__(self, *_args, **_kwargs):
+            self.jobs = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, task, **_kwargs):
+            submitted.append(task)
+
+        def run(self, **_kwargs):
+            pass
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**{"inline": "", "path": "", "args": [], **kwargs})
+    module.run.Experiment = _Experiment
+    monkeypatch.setitem(sys.modules, "nemo_run", module.run)
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    module.main(argv)
+    return submitted[0]
+
+
+def test_slurm_pyxis_task_runs_from_container_repo_root(monkeypatch):
+    """Slurm Pyxis conversion resolves relative paths from the container checkout."""
+    module = _load_setup_conversion_module()
+    megatron_path = "work/model-verification/card/imported-megatron"
+
+    task = _capture_submitted_task(
+        module,
+        monkeypatch,
+        [
+            "import",
+            "--executor",
+            "slurm",
+            "--device",
+            "gpu",
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            megatron_path,
+            "--submission-dry-run",
+        ],
+    )
+
+    assert task.entrypoint == "bash"
+    assert task.env["PYTHONPATH"].startswith("/opt/Megatron-Bridge/src:")
+    lines = task.inline.splitlines()
+    assert lines[:2] == ["set -e", "cd /opt/Megatron-Bridge"]
+    assert lines[2].startswith("exec python /opt/Megatron-Bridge/scripts/conversion/run_conversion.py import ")
+    assert f" --megatron-path {shlex.quote(megatron_path)}" in lines[2]
+
+
+def test_local_task_is_not_wrapped(monkeypatch):
+    """Local conversion still submits the plain Python worker script."""
+    module = _load_setup_conversion_module()
+
+    task = _capture_submitted_task(
+        module, monkeypatch, ["import", "--hf-model", "hf/model", "--megatron-path", "work/checkpoint"]
+    )
+
+    assert task.inline == ""
+    assert task.entrypoint == "python"
+    assert task.path == str(REPO_ROOT / "scripts/conversion/run_conversion.py")
+    assert task.args[:3] == ["import", "--device", "cpu"]

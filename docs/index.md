@@ -34,9 +34,13 @@ bridge-tech-details.md
 :hidden:
 
 models/README.md
+models/bagel/bagel.md
 models/bailing/index.md
+models/beam/beam.md
+models/bert/index.md
 models/deepseek/index.md
 models/ernie/ernie45.md
+models/ernie/ernie55.md
 models/exaone/exaone.md
 models/falcon/index.md
 models/gemma/index.md
@@ -45,10 +49,13 @@ models/gpt_oss/index.md
 models/hy_v3/hy-v3.md
 models/kimi/index.md
 models/llama/index.md
+models/minicpmo/minicpmo-4.5.md
 models/minimax/index.md
 models/mistral/index.md
 models/mimo/index.md
 models/moonlight/index.md
+models/muse_glimmer/muse-glimmer.md
+models/muse_spark_open/muse-spark-open.md
 models/nemotron/index.md
 models/olmoe/index.md
 models/qwen/index.md
@@ -74,6 +81,7 @@ training/resiliency.md
 training/mixed-precision.md
 training/cuda-graphs.md
 training/hierarchical-context-parallel.md
+training/dynamic-context-parallel.md
 training/communication-overlap.md
 training/attention-optimizations.md
 training/activation-recomputation.md
@@ -81,6 +89,7 @@ training/cpu-offloading.md
 training/moe-optimization.md
 training/peft.md
 training/packed-sequences.md
+training/mimo-intra-microbatch-reorder.md
 training/multi-token-prediction.md
 training/dspark-speculative-decoding.md
 training/callbacks.md

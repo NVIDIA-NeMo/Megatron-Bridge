@@ -102,6 +102,7 @@ class WanLayerWithAdaLN(TransformerLayer):
         hidden_dropout: float = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
         vp_stage: Optional[int] = None,
+        name: str | None = None,
     ):
         def _replace_no_cp_submodules(submodules):
             modified_submods = copy.deepcopy(submodules)
@@ -111,7 +112,11 @@ class WanLayerWithAdaLN(TransformerLayer):
         # Replace any submodules that will have CP disabled and build them manually later after TransformerLayer init.
         # modified_submods = _replace_no_cp_submodules(submodules)
         super().__init__(
-            config=config, submodules=submodules, layer_number=layer_number, hidden_dropout=hidden_dropout
+            config=config,
+            submodules=submodules,
+            layer_number=layer_number,
+            hidden_dropout=hidden_dropout,
+            name=name,
         )
 
         # TODO (pmannan): Override Cross Attention to disable CP.

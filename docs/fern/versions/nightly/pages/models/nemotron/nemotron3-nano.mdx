@@ -13,7 +13,7 @@ We use the following environment variables throughout this page
 - `MEGATRON_MODEL_PATH=/models/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16` (feel free to set your own path)
 ```
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -133,8 +133,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>This workflow remains unverified and requires a public run against the pinned Hugging Face revision with all applicable verification gates.
-</p>
+        <p>This workflow remains unverified and requires a public run against the pinned Hugging Face revision with all applicable verification gates.</p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-hf-to-megatron-gpu" tabindex="-1">
@@ -159,8 +158,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The pinned one-node 8-H100 import exits successfully at TP1/PP1/EP8/ETP1, persists iter_0000000, and reloads it for inference. A separate public GPU round-trip at the same topology exhaustively compares all 6,243 exported BF16 weights against the immutable source: 6,243 of 6,243 match with no skipped FP8 tensors or mismatches.
-</p>
+        <p>The pinned one-node 8-H100 import exits successfully at TP1/PP1/EP8/ETP1, persists iter_0000000, and reloads it for inference. A separate public GPU round-trip at the same topology exhaustively compares all 6,243 exported BF16 weights against the immutable source: 6,243 of 6,243 match with no skipped FP8 tensors or mismatches.</p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-megatron-to-hf-cpu" tabindex="-1">
@@ -185,8 +183,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The synchronous CPU export writes a complete indexed checkpoint. All 6,243 source keys and shapes match across 31,577,940,288 values. The 46 source FP32 tensors cast to BF16 are the 23 per-layer mixer A_log tensors and 23 per-layer mixer D tensors; each equals the export exactly after that declared cast, and every remaining tensor matches exactly at zero tolerance. Native loading succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.
-</p>
+        <p>The synchronous CPU export writes a complete indexed checkpoint. All 6,243 source keys and shapes match across 31,577,940,288 values. The 46 source FP32 tensors cast to BF16 are the 23 per-layer mixer A_log tensors and 23 per-layer mixer D tensors; each equals the export exactly after that declared cast, and every remaining tensor matches exactly at zero tolerance. Native loading succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.</p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-megatron-to-hf-gpu" tabindex="-1">
@@ -211,8 +208,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The synchronous TP1/PP1/EP8/ETP1 export writes a complete indexed checkpoint. All 6,243 source keys and shapes match across 31,577,940,288 values. The 69 source FP32 tensors cast to BF16 are the same 46 mixer A_log and D tensors plus 23 per-layer mixer gate e_score_correction_bias tensors. The legacy distributed GPU export model wrapper downcast those gate biases to BF16, while the CPU export preserved them in FP32; all 69 equal the export exactly after this declared cast, and every remaining tensor matches exactly at zero tolerance. Native loading succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.
-</p>
+        <p>The synchronous TP1/PP1/EP8/ETP1 export writes a complete indexed checkpoint. All 6,243 source keys and shapes match across 31,577,940,288 values. The 69 source FP32 tensors cast to BF16 are the same 46 mixer A_log and D tensors plus 23 per-layer mixer gate e_score_correction_bias tensors. The legacy distributed GPU export model wrapper downcast those gate biases to BF16, while the CPU export preserved them in FP32; all 69 equal the export exactly after this declared cast, and every remaining tensor matches exactly at zero tolerance. Native loading succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.</p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-pretrain-h100" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-pretrain-h100" tabindex="-1">
@@ -256,8 +252,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.
-</p>
+        <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.</p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-sft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-sft-h100" tabindex="-1">
@@ -301,8 +296,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.
-</p>
+        <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.</p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-sft-long-context-h100" tabindex="-1">
@@ -346,8 +340,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.
-</p>
+        <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.</p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-peft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-peft-h100" tabindex="-1">
@@ -391,8 +384,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.
-</p>
+        <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.</p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-pretrain-performance-gb300" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-pretrain-performance-gb300" tabindex="-1">
@@ -442,11 +434,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 8 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP8/ETP1, GBS/MBS 512/4, and sequence length 8192. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.18025 to 0.004964447; the final ten steps average 12455.140 ms, 937.770 TFLOP/s/GPU, and 42094.107 tokens/s/GPU. The resolved configuration persists.
-</p>
+        <p>On exactly 8 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP8/ETP1, GBS/MBS 512/4, and sequence length 8192. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.18025 to 0.004964447; the final ten steps average 12455.140 ms, 937.770 TFLOP/s/GPU, and 42094.107 tokens/s/GPU. The resolved configuration persists.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

@@ -18,30 +18,49 @@ Locks in the MTP mapping layout: per-MTP-layer HC head, separate ``e_proj``
 and ``h_proj`` mappings, and no deprecated concatenated ``eh_proj`` path.
 """
 
+import json
 import sys
+from dataclasses import dataclass, fields
+from functools import partial
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import torch
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+from transformers import DeepseekV4Config
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    _DSV4_FUSED_DSA_WRAPPERS,
     DeepSeekV4Bridge,
     _dsv4_compress_ratios,
+    _dsv4_hybrid_csa_compress_ratios,
+    _dsv4_hybrid_layer_pattern,
     _dsv4_num_hash_layers,
     deepseek_v4_supports_fused_dsa_kernels,
+    set_deepseek_v4_pipeline_model_parallel_layout,
 )
+from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelConfig, DeepSeekV4TransformerConfig
+from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from megatron.bridge.models.hybrid import BridgeHybridModelBuilder
+from megatron.bridge.models.hybrid.hybrid_provider import (
+    HybridModelProvider,
+    transformer_engine_hybrid_stack_spec,
+)
+from megatron.bridge.models.mla_provider import MLAModelProvider
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 @pytest.fixture
 def bridge_with_mtp():
     """A DSv4 bridge with hf_config stubbed for a single MTP layer."""
     bridge = DeepSeekV4Bridge()
-    # mapping_registry only reads num_nextn_predict_layers from hf_config.
-    bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=1)
+    # mapping_registry reads num_hidden_layers and num_nextn_predict_layers from hf_config.
+    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=1)
     return bridge
 
 
@@ -49,7 +68,7 @@ def bridge_with_mtp():
 def bridge_without_mtp():
     """A DSv4 bridge with hf_config that has zero MTP layers."""
     bridge = DeepSeekV4Bridge()
-    bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=0)
+    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=0)
     return bridge
 
 
@@ -93,67 +112,22 @@ def _deepseek_v4_hf_config():
         moe_intermediate_size=1024,
         n_shared_experts=1,
         tie_word_embeddings=False,
+        torch_dtype="bfloat16",
     )
-
-
-def _provider_with_fields(*field_names):
-    class Provider:
-        __dataclass_fields__ = dict.fromkeys(field_names)
-
-    return Provider()
 
 
 class TestDeepSeekV4OutputProjectionConfig:
-    """HF grouped-output geometry must reach either supported MCore field name."""
+    """HF grouped-output geometry must reach the current MCore field names."""
 
-    @pytest.mark.parametrize(
-        ("provider_fields", "expected_fields"),
-        [
-            (
-                {"output_projection_groups": 8, "output_projection_lora_rank": 1024},
-                {"output_projection_groups": 4, "output_projection_lora_rank": 256},
-            ),
-            (
-                {"o_groups": 8, "o_lora_rank": 1024},
-                {"o_groups": 4, "o_lora_rank": 256},
-            ),
-        ],
-    )
-    def test_provider_bridge_sets_ref_specific_fields(self, provider_fields, expected_fields):
-        bridge = DeepSeekV4Bridge()
-        provider = SimpleNamespace(**provider_fields)
+    def test_model_config_sets_output_projection_fields(self):
         hf_config = _deepseek_v4_hf_config()
         hf_config.o_groups = 4
         hf_config.o_lora_rank = 256
-        hf_pretrained = SimpleNamespace(config=hf_config)
 
-        with (
-            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
-            patch(
-                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_blackwell_fused_kernels",
-                return_value=False,
-            ),
-        ):
-            bridge.provider_bridge(hf_pretrained)
+        model_config = DeepSeekV4Bridge().hf_config_to_model_config(hf_config)
 
-        for field, expected in expected_fields.items():
-            assert getattr(provider, field) == expected
-
-    @pytest.mark.parametrize(
-        "provider_fields",
-        [
-            {"output_projection_groups": 4, "output_projection_lora_rank": 256},
-            {"o_groups": 4, "o_lora_rank": 256},
-        ],
-    )
-    def test_megatron_to_hf_config_reads_ref_specific_fields(self, provider_fields):
-        provider = SimpleNamespace(**provider_fields)
-
-        with patch.object(MegatronModelBridge, "megatron_to_hf_config", return_value={}):
-            hf_config = DeepSeekV4Bridge.megatron_to_hf_config(provider)
-
-        assert hf_config["o_groups"] == 4
-        assert hf_config["o_lora_rank"] == 256
+        assert model_config.output_projection_groups == 4
+        assert model_config.output_projection_lora_rank == 256
 
 
 class TestNativeDeepSeekV4ConfigTranslation:
@@ -205,14 +179,13 @@ class TestDeepSeekV4RouterExpertBias:
 
     @staticmethod
     def _mapping(bridge):
-        return _by_megatron(bridge.mapping_registry())["decoder.layers.*.mlp.router.expert_bias"]
+        return _by_megatron(bridge.mapping_registry())["decoder.layers.1.inner_layer.mlp.router.expert_bias"]
 
-    def test_mapping_allows_missing_hf_bias_after_wildcard_resolution(self, bridge_without_mtp):
+    def test_mapping_allows_missing_hf_bias(self, bridge_without_mtp):
         mapping = self._mapping(bridge_without_mtp)
 
         assert isinstance(mapping, AutoMapping)
         assert mapping.allow_hf_name_mismatch
-        assert mapping.resolve(("0",)).allow_hf_name_mismatch
 
     def test_import_synthesizes_zero_bias_when_hf_checkpoint_omits_it(self):
         bridge = DeepSeekV4Bridge()
@@ -439,10 +412,14 @@ class TestDeepSeekV4QuantizedExport:
 
 
 def test_sequential_expert_mappings_present(bridge_with_mtp):
-    """Sequential (non-grouped) expert mappings exist for moe_grouped_gemm=False (ModelOpt pruning)."""
+    """Sequential (non-grouped) expert mappings exist for moe_grouped_gemm=False (ModelOpt pruning).
+
+    On the hybrid layout the MoE for logical layer 0 lives at hybrid layer index 1, under
+    the HyperConnectionHybridLayer ``inner_layer`` wrapper.
+    """
     params = _by_megatron(bridge_with_mtp.mapping_registry())
-    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight" in params
-    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight" in params
+    assert "decoder.layers.1.inner_layer.mlp.experts.local_experts.*.linear_fc1.weight" in params
+    assert "decoder.layers.1.inner_layer.mlp.experts.local_experts.*.linear_fc2.weight" in params
 
 
 class TestDecoderHCHeadMappings:
@@ -517,32 +494,22 @@ class TestDeepSeekV4RotaryPercent:
     rotary_percent=0.125 yields an 8-dim cos/sin cache: the unfused path silently
     rotates 8/64 dims and the fused MLA rope kernel reads cos/sin out of bounds (SFT NaN)."""
 
-    def test_provider_bridge_forces_full_rotary_percent(self):
-        hf_pretrained = MagicMock()
-        hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = MagicMock()
-        # what the generic partial_rotary_factor -> rotary_percent mapping produces
-        provider.rotary_percent = 0.125
+    def test_model_config_forces_full_rotary_percent(self):
+        hf_config = _deepseek_v4_hf_config()
+        # The generic partial_rotary_factor -> rotary_percent mapping would produce 0.125.
+        hf_config.partial_rotary_factor = 0.125
 
-        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
-        with patch.object(MegatronModelBridge, "provider_bridge", return_value=provider):
-            out = bridge.provider_bridge(hf_pretrained)
+        model_config = DeepSeekV4Bridge().hf_config_to_model_config(hf_config)
 
-        assert out.rotary_percent == 1.0
-        assert out.csa_compress_rotary_base == 160000
+        assert model_config.rotary_percent == model_config.transformer.rotary_percent == 1.0
+        assert model_config.csa_compress_rotary_base == 160000
 
 
 class TestDeepSeekV4MoEDispatcher:
     """DeepSeek-V4 providers use the inference-validated HybridEP path."""
 
-    def test_provider_bridge_uses_hybridep(self):
-        hf_pretrained = MagicMock()
-        hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = MagicMock()
-
-        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
-        with patch.object(MegatronModelBridge, "provider_bridge", return_value=provider):
-            out = bridge.provider_bridge(hf_pretrained)
+    def test_model_config_uses_hybridep(self):
+        out = DeepSeekV4Bridge().hf_config_to_model_config(_deepseek_v4_hf_config())
 
         assert out.moe_token_dispatcher_type == "flex"
         assert out.moe_flex_dispatcher_backend == "hybridep"
@@ -551,47 +518,39 @@ class TestDeepSeekV4MoEDispatcher:
 
 
 class TestDeepSeekV4HardwareCapabilities:
-    def test_fused_dsa_requires_compatible_compact_wrapper(self):
-        def compatible_wrapper(*, deterministic):
-            pass
-
+    def test_fused_dsa_accepts_current_cudnn_frontend_api(self):
+        wrappers = {name: (lambda: None) for name in _DSV4_FUSED_DSA_WRAPPERS}
         modules = {
-            "cudnn": SimpleNamespace(DSA=SimpleNamespace(indexer_forward_top_k_wrapper=compatible_wrapper)),
-            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=object()),
+            "cudnn": SimpleNamespace(DSA=SimpleNamespace(**wrappers)),
+            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=lambda: None),
         }
         with patch.dict(sys.modules, modules):
             assert deepseek_v4_supports_fused_dsa_kernels() is True
 
-    def test_fused_dsa_rejects_incompatible_compact_wrapper(self):
-        def incompatible_wrapper():
-            pass
-
+    def test_fused_dsa_rejects_obsolete_combined_indexer_api(self):
         modules = {
-            "cudnn": SimpleNamespace(DSA=SimpleNamespace(indexer_forward_top_k_wrapper=incompatible_wrapper)),
-            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=object()),
+            "cudnn": SimpleNamespace(DSA=SimpleNamespace(indexer_forward_top_k_wrapper=lambda: None)),
+            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=lambda: None),
         }
         with patch.dict(sys.modules, modules):
             assert deepseek_v4_supports_fused_dsa_kernels() is False
 
 
 class TestDeepSeekV4HardwareDefaults:
-    """DSv4 Blackwell-only fused kernels must not default on for Hopper."""
+    """DSv4 defaults cuDNN CSA on Hopper+ while fused mHC remains Blackwell-only."""
 
     @pytest.mark.parametrize(
-        ("capability", "expected"),
+        ("capability", "expected_dsa_backend", "expected_fused_mhc"),
         [
-            ((9, 0), False),
-            ((10, 0), True),
+            ((8, 0), "none", False),
+            ((9, 0), "cudnn", False),
+            ((10, 0), "cudnn", True),
         ],
     )
-    def test_provider_bridge_gates_blackwell_only_fusions(self, capability, expected):
-        hf_pretrained = MagicMock()
-        hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
+    def test_model_config_gates_fusions_by_hardware(self, capability, expected_dsa_backend, expected_fused_mhc):
+        hf_config = _deepseek_v4_hf_config()
 
-        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
-            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
             patch.object(torch.cuda, "is_available", return_value=True),
             patch.object(torch.cuda, "get_device_capability", return_value=capability),
             patch(
@@ -599,59 +558,23 @@ class TestDeepSeekV4HardwareDefaults:
                 return_value=True,
             ),
         ):
-            out = bridge.provider_bridge(hf_pretrained)
+            out = DeepSeekV4Bridge().hf_config_to_model_config(hf_config)
 
-        assert out.dsa_kernel_backend == ("cudnn" if expected else "none")
-        assert out.apply_dsa_kernel_fusion is expected
-        assert out.enable_hyper_connections is True
-        assert out.num_residual_streams == hf_pretrained.config.hc_mult
-        assert out.use_fused_mhc is expected
+        assert out.dsa_kernel_backend == expected_dsa_backend
+        assert out.enable_mhc_connections is True
+        assert out.mhc_num_residual_streams == hf_config.hc_mult
+        assert out.use_fused_mhc is expected_fused_mhc
 
-    def test_provider_bridge_sets_main_mhc_fields_and_disables_dsa(self):
-        hf_pretrained = MagicMock()
-        hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields("enable_mhc_connections", "mhc_num_residual_streams")
-
-        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
-        with (
-            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
-            patch(
-                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_blackwell_fused_kernels",
-                return_value=True,
-            ),
-        ):
-            out = bridge.provider_bridge(hf_pretrained)
+    def test_model_config_disables_fusions_without_cuda(self):
+        with patch.object(torch.cuda, "is_available", return_value=False):
+            out = DeepSeekV4Bridge().hf_config_to_model_config(_deepseek_v4_hf_config())
 
         assert out.dsa_kernel_backend == "none"
         assert out.enable_mhc_connections is True
-        assert out.mhc_num_residual_streams == hf_pretrained.config.hc_mult
-        assert out.use_fused_mhc is True
-
-    def test_provider_bridge_disables_blackwell_only_fusions_without_cuda(self):
-        hf_pretrained = MagicMock()
-        hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
-
-        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
-        with (
-            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
-            patch.object(torch.cuda, "is_available", return_value=False),
-        ):
-            out = bridge.provider_bridge(hf_pretrained)
-
-        assert out.dsa_kernel_backend == "none"
-        assert out.apply_dsa_kernel_fusion is False
-        assert out.enable_hyper_connections is True
         assert out.use_fused_mhc is False
 
-    def test_provider_bridge_disables_dsa_fusion_when_optional_kernels_are_missing(self):
-        hf_pretrained = MagicMock()
-        hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
-
-        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+    def test_model_config_disables_dsa_fusion_when_optional_kernels_are_missing(self):
         with (
-            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
             patch.object(torch.cuda, "is_available", return_value=True),
             patch.object(torch.cuda, "get_device_capability", return_value=(10, 0)),
             patch(
@@ -659,11 +582,10 @@ class TestDeepSeekV4HardwareDefaults:
                 return_value=False,
             ),
         ):
-            out = bridge.provider_bridge(hf_pretrained)
+            out = DeepSeekV4Bridge().hf_config_to_model_config(_deepseek_v4_hf_config())
 
         assert out.dsa_kernel_backend == "none"
-        assert out.apply_dsa_kernel_fusion is False
-        assert out.enable_hyper_connections is True
+        assert out.enable_mhc_connections is True
         assert out.use_fused_mhc is True
 
 
@@ -721,3 +643,436 @@ class TestDeepSeekV4ExportWeightDtype:
         out = bridge.maybe_modify_converted_hf_weight(task, {"a.weight": torch.ones(1)}, {})
 
         assert called.get("hit") and "quantized" in out
+
+
+class TestDeepSeekV4HybridPattern:
+    """DSv4 helper functions that translate the flat GPT-form recipe into a hybrid pattern."""
+
+    def test_layer_pattern_maps_ratios_to_symbols(self):
+        # 0 -> W (window), 4 -> C (CSA), 128 -> H (HCA); each logical layer gains a trailing E.
+        assert _dsv4_hybrid_layer_pattern([0, 4, 128, 4], 4) == "WECEHECE"
+
+    def test_layer_pattern_respects_num_hidden_layers(self):
+        assert _dsv4_hybrid_layer_pattern([0, 4, 128, 4, 0], 3) == "WECEHE"
+
+    def test_layer_pattern_rejects_unknown_ratio(self):
+        with pytest.raises(ValueError, match="compression ratio"):
+            _dsv4_hybrid_layer_pattern([7], 1)
+
+    def test_csa_ratios_double_and_append_mtp(self):
+        # Main "WECEHECE" -> [0,0,4,0,128,0,4,0]; one "/WE" MTP depth -> [0,0].
+        assert _dsv4_hybrid_csa_compress_ratios("WECEHECE", "WE", 1) == [0, 0, 4, 0, 128, 0, 4, 0, 0, 0]
+
+    def test_csa_ratios_no_mtp(self):
+        assert _dsv4_hybrid_csa_compress_ratios("WECE", "", 0) == [0, 0, 4, 0]
+
+
+class TestDeepSeekV4HybridProvider:
+    """The provider must be both an MLA config carrier and a HybridModel builder."""
+
+    def test_provider_is_both_mla_and_hybrid(self):
+        assert issubclass(DeepSeekV4HybridModelProvider, MLAModelProvider)
+        assert issubclass(DeepSeekV4HybridModelProvider, HybridModelProvider)
+
+    def test_hybrid_provide_wins_in_mro(self):
+        # HybridModelProvider must precede the GPT-model provider so provide()/finalize()
+        # build a HybridModel and derive num_layers from hybrid_layer_pattern.
+        assert DeepSeekV4HybridModelProvider.provide is HybridModelProvider.provide
+        assert DeepSeekV4HybridModelProvider.finalize is HybridModelProvider.finalize
+
+
+class TestDeepSeekV4BridgeHybridConfig:
+    """The bridge must translate the DSv4 HF config into the hybrid layer pattern."""
+
+    def test_model_config_builds_hybrid_pattern(self):
+        out = DeepSeekV4Bridge().hf_config_to_model_config(_deepseek_v4_hf_config())
+
+        # compress_ratios [0,4,128,4] over 4 layers -> WECEHECE.
+        assert out.hybrid_layer_pattern == "WECEHECE"
+        assert out.num_layers == 8
+        assert out.mtp_hybrid_override_pattern == "WE"
+        assert out.hybrid_stack_spec is transformer_engine_hybrid_stack_spec
+        assert out.output_projection_groups == 8
+        assert out.output_projection_lora_rank == 1024
+        # MCore counts MoE positions, so this remains the logical HF layer count.
+        assert out.moe_num_hash_layers == 3
+        assert out.hash_moe_vocab_size == 129280
+        # Doubled per-hybrid-layer ratios (main) + one MTP depth [0, 0].
+        assert out.csa_compress_ratios == [0, 0, 4, 0, 128, 0, 4, 0, 0, 0]
+
+    @pytest.mark.parametrize("mtp_depth", [0, 1])
+    def test_checkpoint_config_reloads_native_stack(self, tmp_path, mtp_depth):
+        from megatron.bridge.training.config import ConfigContainer
+        from megatron.bridge.training.model_load_save import load_model_config
+
+        hf_config = _deepseek_v4_hf_config()
+        hf_config.num_nextn_predict_layers = mtp_depth
+        model_config = DeepSeekV4Bridge().hf_config_to_model_config(hf_config)
+        model_config.hidden_size = 128
+        model_config.num_attention_heads = 16
+        model_config.vocab_size = 129280
+
+        config = ConfigContainer(
+            model=model_config,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+        restored, mlm_args = load_model_config(str(tmp_path))
+
+        assert mlm_args is None
+        assert isinstance(restored, DeepSeekV4ModelConfig)
+        assert restored.hybrid_stack_spec is transformer_engine_hybrid_stack_spec
+        assert (
+            BridgeHybridModelBuilder(restored)._resolve_hybrid_stack_spec() is transformer_engine_hybrid_stack_spec()
+        )
+        assert restored.hybrid_layer_pattern == model_config.hybrid_layer_pattern
+        assert (restored.mtp_num_layers or 0) == mtp_depth
+
+    def test_megatron_to_hf_config_restores_renamed_mcore_fields(self):
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="WECEHECE",
+            mtp_num_layers=1,
+            moe_num_hash_layers=3,
+            activation_func_clamp_value=10.0,
+            output_projection_groups=8,
+            output_projection_lora_rank=1024,
+            csa_window_size=128,
+            mhc_num_residual_streams=4,
+            mhc_sinkhorn_iterations=20,
+            moe_shared_expert_intermediate_size=1024,
+            v_head_dim=512,
+            qk_pos_emb_head_dim=64,
+        )
+
+        with patch.object(MegatronModelBridge, "megatron_to_hf_config", return_value={}):
+            hf_config = DeepSeekV4Bridge.megatron_to_hf_config(provider)
+
+        assert hf_config["num_hash_layers"] == 3
+        assert hf_config["o_groups"] == 8
+        assert hf_config["o_lora_rank"] == 1024
+        assert hf_config["hc_mult"] == 4
+        assert hf_config["head_dim"] == 512
+        assert hf_config["partial_rotary_factor"] == 0.125
+
+    def test_megatron_to_hf_config_leaves_training_overrides_to_the_reference(self):
+        """Import pins seq_length, moe_aux_loss_coeff and rotary_percent, so they cannot describe the HF model."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="WEWECEHE",
+            v_head_dim=512,
+            qk_pos_emb_head_dim=64,
+            output_projection_groups=8,
+            output_projection_lora_rank=1024,
+        )
+        generic_config = {
+            "max_position_embeddings": 4096,
+            "router_aux_loss_coef": 0.0,
+            "aux_loss_alpha": 0.0,
+            "rope_theta": 10000.0,
+            "partial_rotary_factor": 1.0,
+            "head_dim": 64,
+            "qk_rope_head_dim": 64,
+        }
+
+        with patch.object(MegatronModelBridge, "megatron_to_hf_config", return_value=generic_config):
+            hf_config = DeepSeekV4Bridge.megatron_to_hf_config(provider)
+
+        for hf_name in ("max_position_embeddings", "router_aux_loss_coef", "aux_loss_alpha", "rope_theta"):
+            assert hf_name not in hf_config
+        assert (hf_config["head_dim"], hf_config["qk_rope_head_dim"], hf_config["partial_rotary_factor"]) == (
+            512,
+            64,
+            0.125,
+        )
+
+
+# DeepSeek-V4-Flash config.json (legacy key names) cut to four layers plus MTP, like the GPU truncation checks.
+_DEEPSEEK_V4_FLASH_FOUR_LAYER_CONFIG = {
+    "architectures": ["DeepseekV4ForCausalLM"],
+    "attention_bias": False,
+    "attention_dropout": 0.0,
+    "bos_token_id": 0,
+    "compress_ratios": [0, 0, 4, 128, 0],
+    "compress_rope_theta": 160000,
+    "eos_token_id": 1,
+    "expert_dtype": "fp4",
+    "hc_eps": 1e-06,
+    "hc_mult": 4,
+    "hc_sinkhorn_iters": 20,
+    "head_dim": 512,
+    "hidden_act": "silu",
+    "hidden_size": 4096,
+    "index_head_dim": 128,
+    "index_n_heads": 64,
+    "index_topk": 512,
+    "initializer_range": 0.02,
+    "max_position_embeddings": 1048576,
+    "model_type": "deepseek_v4",
+    "moe_intermediate_size": 2048,
+    "n_routed_experts": 256,
+    "n_shared_experts": 1,
+    "norm_topk_prob": True,
+    "num_attention_heads": 64,
+    "num_experts_per_tok": 6,
+    "num_hash_layers": 3,
+    "num_hidden_layers": 4,
+    "num_key_value_heads": 1,
+    "num_nextn_predict_layers": 1,
+    "o_groups": 8,
+    "o_lora_rank": 1024,
+    "q_lora_rank": 1024,
+    "qk_rope_head_dim": 64,
+    "rms_norm_eps": 1e-06,
+    "rope_scaling": {
+        "beta_fast": 32,
+        "beta_slow": 1,
+        "factor": 16,
+        "original_max_position_embeddings": 65536,
+        "type": "yarn",
+    },
+    "rope_theta": 10000,
+    "routed_scaling_factor": 1.5,
+    "scoring_func": "sqrtsoftplus",
+    "sliding_window": 128,
+    "swiglu_limit": 10.0,
+    "tie_word_embeddings": False,
+    "topk_method": "noaux_tc",
+    "torch_dtype": "bfloat16",
+    "vocab_size": 129280,
+}
+
+
+class TestDeepSeekV4CheckpointConfigExport:
+    """``convert.sh export`` rebuilds the HF config from the checkpoint through ``AutoBridge.from_auto_config``."""
+
+    @pytest.mark.parametrize("use_model_config", [False, True], ids=["provider", "model_config"])
+    def test_from_auto_config_reproduces_the_reference_config(self, tmp_path, use_model_config):
+        pytest.importorskip("transformers.models.deepseek_v4")
+        from transformers import AutoConfig
+
+        from megatron.bridge import AutoBridge
+        from megatron.bridge.training.config import ConfigContainer
+
+        hf_dir = tmp_path / "hf"
+        hf_dir.mkdir()
+        (hf_dir / "config.json").write_text(json.dumps(_DEEPSEEK_V4_FLASH_FOUR_LAYER_CONFIG))
+        reference = AutoConfig.from_pretrained(hf_dir)
+        bridge = AutoBridge.from_hf_config(reference)
+        if use_model_config and bridge._model_bridge.MODEL_CONFIG_CLASS is None:
+            pytest.skip("DeepSeek-V4 has no builder-backed model config yet.")
+        model_config = (
+            bridge.get_model_config() if use_model_config else bridge.to_megatron_provider(load_weights=False)
+        )
+        checkpoint_dir = tmp_path / "checkpoint"
+        checkpoint_dir.mkdir()
+        ConfigContainer(
+            model=model_config,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        ).to_yaml(str(checkpoint_dir / "run_config.yaml"))
+
+        rebuilt = AutoBridge.from_auto_config(str(checkpoint_dir), str(hf_dir)).hf_pretrained
+
+        # The export writes this JSON, so it must match the reference byte for byte.
+        assert rebuilt.to_json_string() == reference.to_json_string()
+        # Native configs derive qk_rope_head_dim from head_dim and partial_rotary_factor; a re-import must
+        # keep v_head_dim > qk_pos_emb_head_dim, which MCore asserts for the DSv4 hybrid attention.
+        rebuilt_bridge = AutoBridge.from_hf_config(rebuilt)
+        reimported = (
+            rebuilt_bridge.get_model_config()
+            if use_model_config
+            else rebuilt_bridge.to_megatron_provider(load_weights=False)
+        )
+        assert (reimported.v_head_dim, reimported.qk_pos_emb_head_dim) == (512, 64)
+
+
+class TestDeepSeekV4HybridMappingLayout:
+    """Each logical HF layer must split across attention (2*i) and MoE (2*i+1) hybrid layers."""
+
+    def test_mapping_splits_hf_layer_across_attention_and_moe(self, bridge_with_mtp):
+        registry = bridge_with_mtp.mapping_registry()
+
+        attn = registry.hf_to_megatron_lookup("layers.3.attn.wo_b.weight")
+        moe = registry.hf_to_megatron_lookup("layers.3.ffn.gate.weight")
+        attn_hc = registry.hf_to_megatron_lookup("layers.3.hc_attn_fn")
+        moe_hc = registry.hf_to_megatron_lookup("layers.3.hc_ffn_fn")
+
+        assert attn.megatron_param == "decoder.layers.6.inner_layer.self_attention.linear_proj.weight"
+        assert moe.megatron_param == "decoder.layers.7.inner_layer.mlp.router.weight"
+        assert attn_hc.megatron_param == "decoder.layers.6.hyper_connection.mapping_proj.weight"
+        assert moe_hc.megatron_param == "decoder.layers.7.hyper_connection.mapping_proj.weight"
+
+    def test_mapping_resolves_hybrid_final_norm(self, bridge_with_mtp):
+        registry = bridge_with_mtp.mapping_registry()
+        final_norm = registry.megatron_to_hf_lookup("decoder.final_norm.weight")
+        assert final_norm.hf_param == "norm.weight"
+
+    def test_mtp_inner_layers_nest_under_hybrid_stack(self, bridge_with_mtp):
+        registry = bridge_with_mtp.mapping_registry()
+
+        mtp_attn = registry.hf_to_megatron_lookup("mtp.0.attn.wo_b.weight")
+        mtp_moe = registry.hf_to_megatron_lookup("mtp.0.ffn.gate.weight")
+
+        assert mtp_attn.megatron_param == (
+            "mtp.layers.0.mtp_model_layer.layers.0.inner_layer.self_attention.linear_proj.weight"
+        )
+        assert mtp_moe.megatron_param == "mtp.layers.0.mtp_model_layer.layers.1.inner_layer.mlp.router.weight"
+
+
+def _native_deepseek_v4_config(**overrides) -> DeepseekV4Config:
+    """DeepSeek-V4-Flash's architecture with eight logical layers, in Transformers' native schema."""
+    values = dict(
+        architectures=["DeepseekV4ForCausalLM"],
+        hidden_size=4096,
+        moe_intermediate_size=2048,
+        num_hidden_layers=8,
+        num_attention_heads=64,
+        num_key_value_heads=1,
+        head_dim=512,
+        q_lora_rank=1024,
+        qk_rope_head_dim=64,
+        n_routed_experts=256,
+        n_shared_experts=1,
+        num_experts_per_tok=6,
+        scoring_func="sqrtsoftplus",
+        norm_topk_prob=True,
+        routed_scaling_factor=1.5,
+        vocab_size=129280,
+        max_position_embeddings=1048576,
+        rope_theta=10000,
+        compress_rope_theta=160000,
+        rope_scaling={
+            "type": "yarn",
+            "factor": 16,
+            "original_max_position_embeddings": 65536,
+            "beta_fast": 32,
+            "beta_slow": 1,
+        },
+        compress_ratios=[0, 0, 4, 128, 4, 128, 4, 128, 0],
+        num_hash_layers=3,
+        hc_mult=4,
+        hc_sinkhorn_iters=20,
+        swiglu_limit=10.0,
+        sliding_window=128,
+        o_groups=8,
+        o_lora_rank=1024,
+        index_n_heads=64,
+        index_head_dim=128,
+        index_topk=512,
+        num_nextn_predict_layers=1,
+        rms_norm_eps=1e-6,
+        tie_word_embeddings=False,
+        torch_dtype="bfloat16",
+    )
+    values.update(overrides)
+    return DeepseekV4Config(**values)
+
+
+def _same_value(left, right) -> bool:
+    # finalize() creates a new init-method partial and pipeline layout object on each config.
+    if isinstance(left, partial) and isinstance(right, partial):
+        return (left.func, left.args, left.keywords) == (right.func, right.args, right.keywords)
+    if isinstance(left, PipelineParallelLayerLayout) and isinstance(right, PipelineParallelLayerLayout):
+        return left.input_data == right.input_data
+    return left == right
+
+
+def _shared_fields_differing(model_config, provider) -> dict:
+    model_fields = {f.name for f in fields(model_config)} | {f.name for f in fields(model_config.transformer)}
+    shared = {f.name for f in fields(provider)} & model_fields
+    return {
+        name: (getattr(provider, name), getattr(model_config, name))
+        for name in sorted(shared)
+        if not _same_value(getattr(provider, name), getattr(model_config, name))
+    }
+
+
+class TestDeepSeekV4BridgeModelConfig:
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in DeepSeekV4Bridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert DeepSeekV4Bridge.MODEL_CONFIG_CLASS is DeepSeekV4ModelConfig
+        assert DeepSeekV4Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+        assert DeepSeekV4ModelConfig.transformer_config_class is DeepSeekV4TransformerConfig
+
+    def test_native_config_maps_rope_to_the_mla_transformer(self):
+        model_config = DeepSeekV4Bridge().hf_config_to_model_config(_native_deepseek_v4_config())
+
+        assert isinstance(model_config.transformer, DeepSeekV4TransformerConfig)
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.transformer.rotary_base == 10000
+        assert model_config.transformer.rotary_percent == 1.0
+        assert model_config.csa_compress_rotary_base == 160000
+        assert model_config.rotary_scaling_factor == 16
+        assert model_config.hybrid_layer_pattern == "WEWECEHECEHECEHE"
+        assert model_config.mtp_hybrid_override_pattern == "WE"
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [{}, {"num_nextn_predict_layers": 0}, {"tie_word_embeddings": True}],
+        ids=["mtp", "no-mtp", "tied"],
+    )
+    @pytest.mark.parametrize("pipeline_parallel_size", [1, 2])
+    def test_model_config_matches_provider(self, overrides, pipeline_parallel_size):
+        hf_config = _native_deepseek_v4_config(**overrides)
+        bridge = DeepSeekV4Bridge()
+        model_config = bridge.hf_config_to_model_config(hf_config)
+        with pytest.warns(FutureWarning, match="deprecated for builder-backed models"):
+            provider = bridge.provider_bridge(SimpleNamespace(config=hf_config))
+        assert _shared_fields_differing(model_config, provider) == {}
+
+        for config in (model_config, provider):
+            config.pipeline_model_parallel_size = pipeline_parallel_size
+            if pipeline_parallel_size > 1:
+                set_deepseek_v4_pipeline_model_parallel_layout(config)
+            config.finalize()
+
+        assert _shared_fields_differing(model_config, provider) == {}
+        assert DeepSeekV4Bridge.megatron_to_hf_config(model_config) == DeepSeekV4Bridge.megatron_to_hf_config(provider)
+
+    def test_provider_no_longer_carries_unread_norm_topk_prob(self):
+        hf_config = _native_deepseek_v4_config()
+        with pytest.warns(FutureWarning):
+            provider = DeepSeekV4Bridge().provider_bridge(SimpleNamespace(config=hf_config))
+
+        assert "norm_topk_prob" not in vars(provider)
+
+    def test_cp_partition_mode_is_declared_on_the_transformer_config(self):
+        @dataclass
+        class _Root:
+            model: DeepSeekV4ModelConfig
+
+        root = _Root(model=DeepSeekV4Bridge().hf_config_to_model_config(_native_deepseek_v4_config()))
+        assert root.model.cp_partition_mode == "zigzag"
+
+        process_config_with_overrides(root, cli_overrides=["model.cp_partition_mode=contiguous"])
+
+        assert root.model.transformer.cp_partition_mode == "contiguous"
+        with pytest.raises(AttributeError, match="declares a field"):
+            root.model.mtp_eval_in_bf16 = True
+
+    def test_round_trip_restores_the_pipeline_layout(self):
+        model_config = DeepSeekV4Bridge().hf_config_to_model_config(_native_deepseek_v4_config())
+        model_config.pipeline_model_parallel_size = 2
+        set_deepseek_v4_pipeline_model_parallel_layout(model_config)
+        model_config.finalize()
+
+        restored = ModelConfig.from_dict(model_config.as_dict())
+
+        assert isinstance(restored, DeepSeekV4ModelConfig)
+        assert isinstance(restored.transformer, DeepSeekV4TransformerConfig)
+        assert restored.hybrid_layer_pattern == model_config.hybrid_layer_pattern
+        assert restored.pipeline_model_parallel_layout == model_config.pipeline_model_parallel_layout.input_data
+        restored.finalize()
+        assert restored.hybrid_layer_pattern == model_config.hybrid_layer_pattern

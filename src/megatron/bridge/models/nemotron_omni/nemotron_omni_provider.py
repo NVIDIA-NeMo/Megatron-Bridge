@@ -12,34 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 import warnings
 from abc import ABC
 from dataclasses import dataclass
-from types import SimpleNamespace
-from typing import Callable, Literal, Optional
+from typing import Callable, ClassVar, Literal, Optional
 
 from megatron.core import parallel_state
-from megatron.core.activations import fast_gelu, squared_relu
-from megatron.core.models.gpt.gpt_layer_specs import get_mlp_module_spec
+from megatron.core.activations import squared_relu
+from megatron.core.models.hybrid.hybrid_model import HybridModel as MCoreHybridModel
+from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
-from megatron.core.transformer.spec_utils import get_submodules
+from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
-from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
+    NemotronOmniMimoRadioEncoder,
+    NemotronOmniModel,
+)
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
+from megatron.bridge.models.nemotron_omni.nemotron_omni_builder import (
+    _get_transformer_engine_projection_submodules,
+    _make_omni_vision_config,
+    _make_omni_vision_projection_config,
+    _make_radio_projection_config,
+    _make_radio_vision_config,
+    _make_sound_encoder,
+    _make_sound_projection_config,
+)
+from megatron.bridge.models.nemotron_omni.nemotron_omni_config import _validate_nemotron_omni_settings
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT = "expanded_sequence_v1"
 NEMOTRON_OMNI_LLAVA_CONTRACT = "llava_collapse_expand_v1"
 
-
-def _get_transformer_engine_projection_submodules():
-    """Build the standard dense TE MLP submodules used by media projectors."""
-    return copy.deepcopy(get_submodules(get_mlp_module_spec(use_te=True)))
+# MegatronMIMO component naming. The modality key doubles as the parallelism
+# component name and the conversion route name; the encoder key is the
+# ``modality_submodules.<modality>.encoders.<key>`` attribute.
+_IMAGES_MODALITY_KEY = "images"
+_RADIO_ENCODER_KEY = "radio"
 
 
 @dataclass
@@ -95,6 +109,11 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
     radio_interpolate_only_cpe: bool = True
     radio_cpe_aspect_ratio_select: bool = False
     radio_disable_cpe: bool = False
+    recompute_vision: bool = False
+    vision_recompute_granularity: Literal["full", "selective"] | None = None
+    vision_recompute_modules: list[str] | None = None
+    vision_recompute_method: Literal["uniform", "block"] | None = None
+    vision_recompute_num_layers: int | None = None
     vision_proj_ffn_hidden_size: int = 20480
     vision_class_token_len: Optional[int] = None
 
@@ -105,49 +124,11 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
 
     def _build_vision_config(self, language_cfg):
         """Build RADIO ViT-H vision encoder config from a language config copy."""
-        vision_cfg = copy.deepcopy(language_cfg)
-        if not self.use_vision_backbone_fp8_arch:
-            vision_cfg.fp8 = None
-            vision_cfg.fp8_param = False
-        vision_cfg.sequence_parallel = False
-        vision_cfg.context_parallel_size = 1
-        vision_cfg.tp_comm_overlap = False
-        vision_cfg.recompute_granularity = None
-        vision_cfg.recompute_method = None
-        vision_cfg.recompute_num_layers = None
-        vision_cfg.mtp_num_layers = None
-        vision_cfg.num_layers = 32
-        vision_cfg.num_attention_heads = 16
-        vision_cfg.add_bias_linear = True
-        vision_cfg.add_qkv_bias = True
-        vision_cfg.hidden_size = 1280
-        vision_cfg.ffn_hidden_size = 5120
-        vision_cfg.gated_linear_unit = False
-        vision_cfg.activation_func = fast_gelu
-        vision_cfg.kv_channels = 80
-        vision_cfg.num_query_groups = 16
-        vision_cfg.layernorm_zero_centered_gamma = False
-        vision_cfg.apply_query_key_layer_scaling = False
-        vision_cfg.attention_softmax_in_fp32 = True
-        vision_cfg.normalization = "LayerNorm"
-        vision_cfg.qk_layernorm = False
-        vision_cfg.layernorm_epsilon = 1e-6
-        if self.vision_class_token_len is not None:
-            vision_cfg.class_token_len = self.vision_class_token_len
-        return vision_cfg
+        return _make_radio_vision_config(self, language_cfg)
 
     def _build_vision_projection_config(self, language_cfg):
         """Build vision projection MLP config from a language config copy."""
-        vision_proj_cfg = copy.deepcopy(language_cfg)
-        vision_proj_cfg.sequence_parallel = False
-        vision_proj_cfg.context_parallel_size = 1
-        vision_proj_cfg.tp_comm_overlap = False
-        vision_proj_cfg.recompute_granularity = None
-        vision_proj_cfg.recompute_method = None
-        vision_proj_cfg.recompute_num_layers = None
-        vision_proj_cfg.ffn_hidden_size = self.vision_proj_ffn_hidden_size
-        vision_proj_cfg.bias_activation_fusion = False
-        return vision_proj_cfg
+        return _make_radio_projection_config(self, language_cfg)
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None):
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
@@ -181,6 +162,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     temporal_patch_dim: int = 1
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
+    vision_final_layernorm: bool = False
 
     # Shard images (or tubelets, when temporal compression is on) across the
     # context-parallel group instead of encoding every image on every CP rank.
@@ -195,20 +177,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     nemotron_omni_contract: Optional[str] = None
 
     def _validate_omni_config(self) -> None:
-        if self.dynamic_resolution is not True:
-            raise ValueError("Nemotron Omni only supports dynamic_resolution=True.")
-        if self.image_token_index is None or self.image_token_index <= 0:
-            raise ValueError(
-                "Nemotron Omni requires a positive image_token_index from the checkpoint configuration; "
-                f"got {self.image_token_index}. Construct the provider through AutoBridge or set it explicitly."
-            )
-        if self.has_sound and self.sound_context_token_id <= 0:
-            raise ValueError(
-                "Sound-enabled Nemotron Omni requires a positive sound_context_token_id from the checkpoint "
-                f"configuration; got {self.sound_context_token_id}."
-            )
-        if self.has_sound and self.sound_config is None:
-            raise ValueError("Sound-enabled Nemotron Omni requires sound_config from the checkpoint configuration.")
+        _validate_nemotron_omni_settings(self)
 
     def finalize(self) -> None:
         """Finalize a dynamic-resolution Nemotron Omni provider."""
@@ -245,9 +214,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         VL provider doesn't pin this; for Omni we always co-locate the
         vision encoder with the first PP stage.
         """
-        vision_cfg = super()._build_vision_config(language_cfg)
-        vision_cfg.pipeline_model_parallel_size = 1
-        return vision_cfg
+        return _make_omni_vision_config(self, language_cfg)
 
     def _build_vision_projection_config(self, language_cfg):
         """Build the vision projection MLP config.
@@ -256,44 +223,15 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         matching the HF checkpoint and vLLM implementation. Also pin the
         projector to PP=1 (see :meth:`_build_vision_config`).
         """
-        vision_proj_cfg = super()._build_vision_projection_config(language_cfg)
-        vision_proj_cfg.activation_func = squared_relu
-        vision_proj_cfg.pipeline_model_parallel_size = 1
-        return vision_proj_cfg
+        return _make_omni_vision_projection_config(self, language_cfg)
 
     def _build_sound_projection_config(self, language_cfg):
         """Build sound projection config (mirrors _build_vision_projection_config)."""
-        sound_proj_cfg = copy.deepcopy(language_cfg)
-        sound_proj_cfg.sequence_parallel = False
-        sound_proj_cfg.context_parallel_size = 1
-        sound_proj_cfg.tp_comm_overlap = False
-        sound_proj_cfg.recompute_granularity = None
-        sound_proj_cfg.recompute_method = None
-        sound_proj_cfg.recompute_num_layers = None
-        sound_proj_cfg.ffn_hidden_size = self.sound_projection_hidden_size
-        sound_proj_cfg.bias_activation_fusion = False
-        sound_proj_cfg.pipeline_model_parallel_size = 1
-        return sound_proj_cfg
+        return _make_sound_projection_config(self, language_cfg)
 
     def _build_sound_encoder(self):
         """Build BridgeSoundEncoder from sound_config dict."""
-        from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
-
-        sc = self.sound_config
-        config = SimpleNamespace(
-            hidden_size=sc["hidden_size"],
-            num_hidden_layers=sc["num_hidden_layers"],
-            num_attention_heads=sc["num_attention_heads"],
-            intermediate_size=sc["intermediate_size"],
-            num_mel_bins=sc["num_mel_bins"],
-            subsampling_factor=sc["subsampling_factor"],
-            conv_kernel_size=sc.get("conv_kernel_size", 9),
-            use_bias=sc.get("convolution_bias", False),
-            sound_model_type=self.sound_model_type,
-            sound_pad_to_clip_duration=False,
-            sound_batch_split=1,
-        )
-        return BridgeSoundEncoder(config)
+        return _make_sound_encoder(self)
 
     def _build_sound_modules(self, language_cfg, *, add_encoder: bool):
         """Build optional sound modules on the encoder pipeline stage."""
@@ -421,9 +359,140 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
 class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
     """Provider for the canonical expanded-sequence Nemotron Omni model."""
 
+    # The MIMO language spec wires the Nemotron-H MTP block, so MIMO
+    # conversion keeps MTP weights instead of dropping them.
+    mimo_supports_mtp: ClassVar[bool] = True
+
     # Match the RADIO position-embedding behavior used by the canonical
     # processor-expanded implementation without changing shared VL defaults.
     radio_interpolate_only_cpe: bool = False
+
+    @property
+    def special_token_ids(self) -> dict[str, int]:
+        """Return the MIMO modality placeholder token ids."""
+        return {_IMAGES_MODALITY_KEY: self.image_token_index}
+
+    # ------------------------------------------------------------------
+    # MegatronMIMO spec builders
+    # ------------------------------------------------------------------
+
+    def build_language_model_spec(self, pp_rank: Optional[int] = 0) -> ModuleSpec:
+        """Build the MIMO language module spec (Nemotron-H hybrid decoder with MTP).
+
+        Mirrors :meth:`HybridModelProvider.provide`; ``pre_process``,
+        ``post_process`` and ``pg_collection`` are injected by the MIMO provider.
+        """
+        del pp_rank  # The hybrid stack spec is stage-independent.
+        # Derive the unified hybrid+MTP pattern and layer counts before the spec
+        # captures them; finalize() is idempotent.
+        self.finalize()
+        if self.should_pad_vocab:
+            vocab_size = calculate_padded_vocab_size(
+                self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
+            )
+        else:
+            vocab_size = self.vocab_size
+        return ModuleSpec(
+            module=MCoreHybridModel,
+            params={
+                "config": self,
+                "hybrid_stack_spec": self._resolve_hybrid_stack_spec(),
+                "vocab_size": vocab_size,
+                "max_sequence_length": self.seq_length,
+                "hybrid_layer_pattern": self.hybrid_layer_pattern,
+                "fp16_lm_cross_entropy": self.fp16_lm_cross_entropy,
+                **logit_dtype_kwarg(MCoreHybridModel, self.logit_dtype),
+                "parallel_output": self.parallel_output,
+                "share_embeddings_and_output_weights": self.share_embeddings_and_output_weights,
+                "position_embedding_type": self.position_embedding_type,
+                "rotary_percent": self.rotary_percent,
+                "rotary_base": self.rotary_base,
+                # MimoModel merges media into the embeddings before the decoder,
+                # matching NemotronOmniModel's external-embedding contract.
+                "scatter_embedding_sequence_parallel": False,
+                "seq_len_interpolation_factor": self.seq_len_interpolation_factor,
+            },
+        )
+
+    def _build_mimo_media_config(self, builder: Callable):
+        """Derive an encoder/projector config copy that survives MIMO re-finalization.
+
+        The standard model derives these copies from the finalized language config
+        and never finalizes them again. The MIMO provider finalizes every config it
+        finds in a spec, so the hybrid/MTP pattern fields that would re-derive the
+        language layer count are cleared and expert parallelism is made dense.
+        """
+        self.finalize()
+        language_cfg = self._copy_config_without_runtime_process_groups(deep=True)
+        media_cfg = builder(language_cfg)
+        media_cfg.hybrid_layer_pattern = None
+        media_cfg.hybrid_override_pattern = None
+        media_cfg.mtp_hybrid_override_pattern = None
+        media_cfg.mtp_use_repeated_layer = False
+        media_cfg.expert_model_parallel_size = 1
+        media_cfg.expert_tensor_parallel_size = 1
+        return media_cfg
+
+    def build_vision_encoder_spec(self) -> ModuleSpec:
+        """Build the RADIO encoder spec for the MIMO ``images`` modality."""
+        vision_cfg = self._build_mimo_media_config(self._build_vision_config)
+        return ModuleSpec(
+            module=NemotronOmniMimoRadioEncoder,
+            params={
+                "transformer_config": vision_cfg,
+                "transformer_layer_spec": get_vit_layer_with_transformer_engine_spec(),
+                "img_h": 512,
+                "img_w": 512,
+                "max_img_h": 2048,
+                "max_img_w": 2048,
+                "class_token_len": self.vision_class_token_len or 10,
+                "patch_dim": 16,
+                "add_class_token": True,
+                "embedder_bias": False,
+                "dynamic_resolution": self.dynamic_resolution,
+                "force_eval_mode": self.radio_force_eval_mode,
+                "force_cpe_eval_mode": self.radio_force_cpe_eval_mode,
+                "interpolate_only_cpe": self.radio_interpolate_only_cpe,
+                "cpe_aspect_ratio_select": self.radio_cpe_aspect_ratio_select,
+                "has_cpe": not self.radio_disable_cpe,
+                "temporal_patch_dim": self.temporal_patch_dim,
+                "separate_video_embedder": self.separate_video_embedder,
+                "temporal_ckpt_compat": self.temporal_ckpt_compat,
+            },
+        )
+
+    def build_vision_input_projection_spec(self) -> ModuleSpec:
+        """Build the pixel-shuffled RADIO feature to language hidden projector spec."""
+        vision_proj_cfg = self._build_mimo_media_config(self._build_vision_projection_config)
+        vision_proj_cfg.mtp_num_layers = None
+        vision_hidden_size = self._build_mimo_media_config(self._build_vision_config).hidden_size
+        return ModuleSpec(
+            module=MultimodalProjector,
+            params={
+                "config": vision_proj_cfg,
+                "submodules": _get_transformer_engine_projection_submodules(),
+                "projector_type": "mlp",
+                "input_size": vision_hidden_size * 4,
+            },
+        )
+
+    def build_mimo_modality_submodules_spec(self) -> dict[str, ModuleSpec]:
+        """Build the MIMO modality specs: RADIO encoder plus vision projector."""
+        if self.has_sound:
+            raise NotImplementedError(
+                "MegatronMIMO conversion of Nemotron Omni does not support sound-enabled checkpoints yet."
+            )
+        encoder_spec = self.build_vision_encoder_spec()
+
+        return {
+            _IMAGES_MODALITY_KEY: ModuleSpec(
+                module=VisionModalitySubmodules,
+                submodules={
+                    "encoders": {_RADIO_ENCODER_KEY: encoder_spec},
+                    "input_projections": [self.build_vision_input_projection_spec()],
+                },
+            )
+        }
 
     def validate_model_contract(self) -> None:
         """Reject ambiguous or legacy serialized provider configurations."""

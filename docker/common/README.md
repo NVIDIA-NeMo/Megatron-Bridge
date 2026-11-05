@@ -35,6 +35,21 @@ See `/opt/NeMo-FW/pyproject.toml` for additonal uv configurations.
 
 ## Development
 
+### Images preserving the base runtime
+
+Images built with `PRESERVE_BASE_RUNTIME=True` inherit
+`MBRIDGE_PRESERVE_BASE_RUNTIME=True` and retain their validated base TE,
+cuDNN frontend, and CUTLASS packages. Their selected package versions and
+locations are recorded in `/opt/base-runtime-packages.json`.
+
+The generic sync commands below are **not** preservation-aware. On these images,
+add `--no-install-package nvidia-cudnn-frontend --no-install-package transformer-engine
+--no-install-package transformer-engine-torch` to `uv sync`, and run
+`python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json`
+afterwards. A mismatch fails the check but does not undo a package installation.
+Rebuild from the validated base if the protected runtime has been replaced.
+The manifest is a metadata check, not a binary-compatibility or GPU-correctness test.
+
 ### Mounting and syncing local repository into the container
 
 Local working directories can be mounted via docker run:
@@ -106,7 +121,7 @@ Starting with the 26.04 (r0.4.0) release, the following Python packages are **no
 |---------|---------------------|
 | [`av`](https://pypi.org/project/av/) (PyAV) | Vendored FFmpeg binaries carried an unfixed CVE. |
 | [`decord`](https://pypi.org/project/decord/) | Unmaintained; vendored FFmpeg binaries carried an unfixed CVE. |
-| [`opencv-python-headless`](https://pypi.org/project/opencv-python-headless/) | Bundled native libs carried an unfixed CVE. The Dockerfile also explicitly runs `pip uninstall -y opencv-python-headless` after the base-container install to scrub any pre-existing copy. |
+| [`opencv-python-headless`](https://pypi.org/project/opencv-python-headless/) | Bundled FFmpeg libraries carry CVEs. The final Dockerfile explicitly uninstalls this package from both `/opt/venv` and system Python; system `pip` alone leaves the virtualenv copy installed. |
 
 These packages are suppressed via `sys_platform == 'never'` overrides in `/opt/Megatron-Bridge/pyproject.toml` (for `av`) and `/opt/NeMo-FW/pyproject.toml` (for all three). The override propagates to transitive consumers such as `qwen-vl-utils` and `decord[av-decode]`, so `uv sync` and `uv pip install <pkg>` will silently skip them.
 

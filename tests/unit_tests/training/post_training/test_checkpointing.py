@@ -400,7 +400,11 @@ class TestPostTrainingCheckpointUtilities:
         torch.save(TrainState(step=100).state_dict(), checkpoint_path / "latest_train_state.pt")
 
         # The torch_dist strategy synchronizes CUDA even though this fixture only stores objects.
-        with patch("torch.cuda.synchronize"), patch("torch.cuda.current_device", return_value=torch.device("cpu")):
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.cuda.synchronize"),
+            patch("torch.cuda.current_device", return_value=torch.device("cpu")),
+        ):
             dist_checkpointing.save({"iteration": 100}, str(iteration_path), ("torch_dist", 1))
             modelopt_state_path.mkdir()
             dist_checkpointing.save(

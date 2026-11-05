@@ -6,9 +6,15 @@ from megatron.bridge.data.builders.direct_hf_sft import (
     DirectHFSFTDatasetConfig,
     direct_hf_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.dpo import (
+    DPODatasetBuilder,
+    DPODatasetConfig,
+    dpo_train_valid_test_datasets_provider,
+)
 from megatron.bridge.data.builders.energon import (
     EnergonDatasetBuilder,
     EnergonDatasetConfig,
+    EnergonTaskEncoderConfig,
     HFEnergonTaskEncoderConfig,
     NemotronOmniEnergonTaskEncoderConfig,
     QwenVLEnergonTaskEncoderConfig,
@@ -40,6 +46,8 @@ FinetuningDatasetConfig = _gpt_sft.FinetuningDatasetConfig
 
 
 __all__ = [
+    "DPODatasetBuilder",
+    "DPODatasetConfig",
     "GPTSFTDatasetBuilder",
     "GPTSFTDatasetConfig",
     "ChatSFTPreprocessingConfig",
@@ -48,6 +56,7 @@ __all__ = [
     "DirectHFSFTDatasetConfig",
     "EnergonDatasetBuilder",
     "EnergonDatasetConfig",
+    "EnergonTaskEncoderConfig",
     "HFEnergonTaskEncoderConfig",
     "QwenVLEnergonTaskEncoderConfig",
     "NemotronOmniEnergonTaskEncoderConfig",
@@ -55,6 +64,7 @@ __all__ = [
     "MockVLMSFTDatasetConfig",
     "PromptCompletionSFTPreprocessingConfig",
     "SFTPreprocessingConfig",
+    "dpo_train_valid_test_datasets_provider",
     "gpt_sft_train_valid_test_datasets_provider",
     "direct_hf_sft_train_valid_test_datasets_provider",
     "energon_train_valid_test_datasets_provider",

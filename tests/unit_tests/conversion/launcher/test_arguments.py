@@ -44,6 +44,18 @@ def test_cpu_local_import_defaults():
     assert args.srun_args == []
     assert (args.tp, args.pp, args.ep, args.etp) == (1, 1, 1, 1)
     assert args.low_memory_save is False
+    assert args.text_only is False
+
+
+@pytest.mark.parametrize("command", ["import", "export"])
+def test_text_only_forwarded_to_conversion_worker(command):
+    module = _load_arguments_module()
+    argv = [command, "--hf-model", "hf/model", "--megatron-path", "/checkpoint", "--text-only"]
+    if command == "export":
+        argv += ["--hf-path", "/export"]
+    args = module.build_parser(include_execution=True).parse_args(argv)
+    worker_args = module.conversion_worker_args(args)
+    assert "--text-only" in worker_args
 
 
 def test_srun_args_are_repeatable():
@@ -249,6 +261,19 @@ def test_import_worker_args_forward_low_memory_save():
     worker_args = module.conversion_worker_args(args)
 
     assert "--low-memory-save" in worker_args
+
+
+def test_import_worker_args_forward_bagel_repo():
+    module = _load_arguments_module()
+    parser = module.build_parser(include_execution=True)
+    argv = ["import", "--device", "gpu", "--hf-model", "hf/model", "--megatron-path", "/checkpoint"]
+
+    default_worker_args = module.conversion_worker_args(parser.parse_args(argv))
+    worker_args = module.conversion_worker_args(parser.parse_args(argv + ["--bagel-repo", "work/dependencies/Bagel"]))
+
+    assert "--bagel-repo" not in default_worker_args
+    assert worker_args[worker_args.index("--bagel-repo") + 1] == "work/dependencies/Bagel"
+    assert module.build_parser(include_execution=False).parse_args(worker_args).bagel_repo == "work/dependencies/Bagel"
 
 
 def test_roundtrip_worker_parser_accepts_serialized_args():

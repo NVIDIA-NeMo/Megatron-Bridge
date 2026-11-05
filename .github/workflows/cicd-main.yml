@@ -76,8 +76,9 @@ jobs:
 
   pre-flight:
     needs: [ephemeral-runner-routing]
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@d0878a142525ff79366ca96fbc0b306cd8d64670 # v1.9.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@037094bcc9138c72bc125418e6e3653f9e1c4160 # v1.11.0
     with:
+      workflow_ref: 037094bcc9138c72bc125418e6e3653f9e1c4160 # pragma: allowlist secret
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ needs.ephemeral-runner-routing.outputs.runner_label_base }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
@@ -303,6 +304,7 @@ jobs:
           .github/scripts/test_cache_keys.sh
           .github/scripts/test_docker_dependency_layers.sh
           .github/scripts/test_queue_bypass.sh
+          .github/scripts/test_workflow_result.sh
 
       - name: Check lint
         run: |
@@ -531,17 +533,26 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
+          # DEEPEP_NVCC_THREADS and MAMBA_NVCC_THREADS opt into parallel nvcc targets for DeepEP's
+          # extensions and Mamba (Dockerfile defaults keep each package's own). CI-Events'
+          # megatron-bridge build profile passes the same values to keep hitting this cache.
           file: ./docker/Dockerfile.ci
           push: true
           context: .
           platforms: ${{ steps.platform.outputs.platforms }}
+          # NVTE_BUILD_THREADS_PER_JOB compiles each TransformerEngine source's GPU targets
+          # concurrently (the Dockerfile default keeps TE's serial nvcc --threads 1). CI-Events'
+          # megatron-bridge build profile passes the same value to keep hitting this cache.
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            DEEPEP_NVCC_THREADS=3
+            MAMBA_NVCC_THREADS=9
             BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
             # Test images run the diffusion unit job; install its hash-locked codecs while building as root.
             INSTALL_DIFFUSION_DEPS=true
+            NVTE_BUILD_THREADS_PER_JOB=4
           cache-from: type=registry,ref=${{ steps.cache_from.outputs.donor }},mode=max
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
@@ -719,7 +730,9 @@ jobs:
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+              entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+                '{script: $script, timeout: $timeout, runner: $runner}')
+              entries="${entries}${entry},"
             done
             matrix="{\"include\":[${entries%,}]}"
             echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
@@ -730,7 +743,9 @@ jobs:
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+            entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+              '{script: $script, timeout: $timeout, runner: $runner}')
+            entries="${entries}${entry},"
           done
           echo "matrix_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -968,7 +983,9 @@ jobs:
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+              entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+                '{script: $script, timeout: $timeout, runner: $runner}')
+              entries="${entries}${entry},"
             done
             echo "matrix_gb200_${tier,,}={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
           done
@@ -978,7 +995,9 @@ jobs:
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+            entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+              '{script: $script, timeout: $timeout, runner: $runner}')
+            entries="${entries}${entry},"
           done
           echo "matrix_gb200_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -1200,6 +1219,15 @@ jobs:
     needs:
       - pre-flight
       - configure
+      - ephemeral-runner-routing
+      - lint-check
+      - cicd-wait-in-queue
+      - cicd-compute-build-matrix
+      - cicd-container-build
+      - generate-test-matrix
+      - generate-gb200-test-matrix
+      - cicd-functional-tests-flaky
+      - cicd-functional-tests-gb200-flaky
       - cicd-import-check
       - cicd-unit-tests-core
       - cicd-unit-tests-diffusion
@@ -1211,7 +1239,8 @@ jobs:
       - cicd-functional-tests-gb200-l2
     if: always() && !cancelled()
     runs-on: ubuntu-latest
-    permissions: write-all
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -1222,56 +1251,14 @@ jobs:
         id: result
         shell: bash -e -u -o pipefail {0}
         env:
-          GH_TOKEN:  ${{ github.token }}
-          GH_REPO:   ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
           DISABLE_GB200_TESTS: ${{ vars.DISABLE_GB200_TESTS }}
         run: |
-          # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
-          # any failure (e.g. "failed to determine base repo" when git context is
-          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
-          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
-          # repository, and `set -e -o pipefail` makes any failure here abort the job.
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length')
-
-          UNEXPECTED_SKIPS=0
-          check_tier_skips() {
-            local tier="$1" expect="$2"
-            [ "$expect" != "true" ] && return
-            local n
-            n=$(gh run view $GITHUB_RUN_ID --json jobs \
-              | jq --arg p "${tier}_" '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
-            if [ "${n:-0}" -gt 0 ]; then
-              echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
-              gh run view $GITHUB_RUN_ID --json jobs \
-                | jq -r --arg p "${tier}_" '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
-              UNEXPECTED_SKIPS=$((UNEXPECTED_SKIPS + n))
-            fi
-          }
-
-          check_tier_skips "L0" "$EXPECT_L0"
-          check_tier_skips "L1" "$EXPECT_L1"
-          check_tier_skips "L2" "$EXPECT_L2"
-          if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
-            check_tier_skips "gb200_L0" "$EXPECT_L0"
-            check_tier_skips "gb200_L1" "$EXPECT_L1"
-            check_tier_skips "gb200_L2" "$EXPECT_L2"
-          fi
-
-          if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
-            echo "❌ Found $FAILED_JOBS failed job(s):"
-            gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name'
-          fi
-
-          if [ "${FAILED_JOBS:-0}" -gt 0 ] || [ "${UNEXPECTED_SKIPS:-0}" -gt 0 ]; then
-            exit 1
-          fi
-
-          echo "✅ All previous jobs completed successfully"
-          exit 0
+          .github/scripts/check_workflow_result.sh
 
   Coverage_Fake:
     runs-on: ubuntu-latest
@@ -1366,3 +1353,44 @@ jobs:
           path: |
             .coverage
           include-hidden-files: true
+
+  notify-nightly-failure:
+    name: Notify scheduled CI failure
+    runs-on: ubuntu-latest
+    environment: public
+    needs:
+      - ephemeral-runner-routing
+      - pre-flight
+      - configure
+      - lint-check
+      - cicd-wait-in-queue
+      - cicd-compute-build-matrix
+      - cicd-container-build
+      - cicd-import-check
+      - cicd-unit-tests-core
+      - cicd-unit-tests-diffusion
+      - generate-test-matrix
+      - cicd-functional-tests-l0
+      - cicd-functional-tests-l1
+      - cicd-functional-tests-l2
+      - cicd-functional-tests-flaky
+      - generate-gb200-test-matrix
+      - cicd-functional-tests-gb200-l0
+      - cicd-functional-tests-gb200-l1
+      - cicd-functional-tests-gb200-l2
+      - cicd-functional-tests-gb200-flaky
+      - Nemo_CICD_Test
+      - Coverage
+    permissions: {}
+    # Keep setup failures visible even when downstream jobs are skipped.
+    if: >-
+      ${{ always() && !cancelled() && failure() &&
+          github.repository == 'NVIDIA-NeMo/Megatron-Bridge' &&
+          github.event_name == 'schedule' &&
+          github.ref_name == github.event.repository.default_branch }}
+    steps:
+      - name: Notify CI alerts channel
+        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/notify-ci-failure@631c404d00a9e60afc591cd071d35d2e18f82fc6
+        with:
+          needs-json: ${{ toJSON(needs) }}
+          webhook: ${{ secrets.SLACK_WEBHOOK }}

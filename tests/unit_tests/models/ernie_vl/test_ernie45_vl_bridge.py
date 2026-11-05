@@ -515,6 +515,34 @@ class TestErnieMultimodalRotaryEmbedding:
         assert output.shape == (4, 1, 1, 4)
         get_cp_embedding.assert_not_called()
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize("num_positions", [4096, 10922, 10923, 32768])
+    def test_angles_exact_when_tf32_allowed(self, num_positions):
+        """Test that RoPE angles stay fp32-exact when TF32 is allowed for fp32 matmuls."""
+        rotary_embedding = ErnieMultimodalRotaryEmbedding.__new__(ErnieMultimodalRotaryEmbedding)
+        torch.nn.Module.__init__(rotary_embedding)
+        rotary_embedding.inv_freq = 1.0 / (
+            500000 ** (torch.arange(0, 128, 2, dtype=torch.float32, device="cuda") / 128)
+        )
+        rotary_embedding.seq_len_interpolation_factor = None
+        rotary_embedding.freq_allocation = 20
+        rotary_embedding.cp_group = None
+        positions = torch.arange(90000 - num_positions, 90000, device="cuda", dtype=torch.float32)
+        position_ids = positions[None, None, :].expand(3, 1, -1)
+        allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+        try:
+            outputs = {}
+            for tf32 in (True, False):
+                torch.backends.cuda.matmul.allow_tf32 = tf32
+                outputs[tf32] = rotary_embedding(position_ids, None)
+        finally:
+            torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        # With identical T/H/W rows the ERNIE band layout keeps frequency order, each band doubled.
+        angles = positions.double()[:, None] * rotary_embedding.inv_freq.double()[None, :]
+        expected = angles.repeat_interleave(2, dim=-1)
+        torch.testing.assert_close(outputs[True][:, 0, 0].double(), expected, rtol=0, atol=1e-2)
+        assert torch.equal(outputs[True], outputs[False])
+
 
 class TestErnie45VLModelProvider:
     """Test Ernie45VLModelProvider class."""
@@ -534,7 +562,10 @@ class TestErnie45VLModelProvider:
 class TestErnieMultiTypeMoE:
     """Test ERNIE VL dual-pool MoE construction."""
 
-    def test_accepts_transformer_layer_kwargs(self):
+    @pytest.mark.parametrize(
+        "routing_kwargs", [{}, {"hash_moe_layer_threshold": None}, {"hash_moe_layer_threshold": 0}]
+    )
+    def test_accepts_transformer_layer_kwargs(self, routing_kwargs: dict[str, int | None]) -> None:
         config = SimpleNamespace(moe_intermediate_size=(64, 32), moe_shared_expert_intermediate_size=128)
         submodules = MultiTypeMoeSubmodules(
             text_moe_layer=object(),
@@ -552,6 +583,7 @@ class TestErnieMultiTypeMoE:
                 pg_collection=pg_collection,
                 is_mtp_layer=True,
                 name="decoder.layers.1.mlp",
+                **routing_kwargs,
             )
 
         assert layer.layer_number == 2
@@ -576,3 +608,9 @@ class TestErnieMultiTypeMoE:
         assert shared_call.kwargs["gate"] is False
         assert shared_call.kwargs["name"] == "decoder.layers.1.mlp.shared_experts"
         assert "is_mtp_layer" not in shared_call.kwargs
+
+    @pytest.mark.parametrize("threshold,config_hash_layers", [(1, 0), (None, 1), (0, 1)])
+    def test_rejects_unsupported_hash_routing(self, threshold: int | None, config_hash_layers: int) -> None:
+        config = SimpleNamespace(moe_num_hash_layers=config_hash_layers)
+        with pytest.raises(ValueError, match="does not support hash routing"):
+            ErnieMultiTypeMoE(config=config, hash_moe_layer_threshold=threshold)

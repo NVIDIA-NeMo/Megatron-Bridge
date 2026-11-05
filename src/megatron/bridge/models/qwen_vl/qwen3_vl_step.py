@@ -14,18 +14,20 @@
 import logging
 import math
 from functools import partial
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import torch
+from megatron.core import tensor_parallel
 from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
+from megatron.bridge.training.post_training.distillation import create_kd_loss_function
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import (
     accumulate_flops_metadata,
@@ -77,6 +79,10 @@ def get_batch_from_iterator(
     # Instead of raw tensors, expect a single 'visual_inputs' object in batch
     required_device_keys.add("visual_inputs")
 
+    if batch.get("padding_mask") is not None:
+        # The MoE layers of every PP stage keep padding tokens out of routing with it.
+        required_device_keys.add("padding_mask")
+
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
@@ -116,6 +122,7 @@ def get_batch(
     torch.Tensor,
     torch.Tensor,
     Any,
+    torch.Tensor | None,
 ]:
     """Generate a batch.
 
@@ -126,7 +133,8 @@ def get_batch(
         is_first_pp_stage: Whether the current stage is the first stage
         is_last_pp_stage: Whether the current stage is the last stage
     Returns:
-        TODO: add description
+        Tokens, labels, loss mask, attention mask, position ids, the multi-modal inputs, and the
+        batch-first padding mask (True marks padding), which is None unless the dataset emits one.
     """
     # All PP stages load from iterator to get input_ids and visual grid info
     # This allows each stage to compute MRoPE position_ids locally without broadcasting
@@ -153,6 +161,7 @@ def get_batch(
         batch.get("attention_mask"),
         batch.get("position_ids"),
         multi_modal_inputs,
+        batch.get("padding_mask"),
     )
 
 
@@ -166,13 +175,23 @@ def _pad_and_pack_qwen3_vl_step(
     use_fp8_padding: bool = False,
     force_to_pad_to_seq_len: bool = False,
     seq_length: int = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, PackedSeqParams]:
+    padding_mask: torch.Tensor | None = None,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    PackedSeqParams,
+    torch.Tensor | None,
+]:
     """Prepare Qwen3-VL step-owned sequence tensors and packed metadata.
 
     Qwen3-VL keeps tokens in ``[B, S]`` form for model-specific CP/SP handling,
     while still building ``PackedSeqParams`` for attention boundaries.
     This is an internal compatibility path for Qwen3-VL; new models should
-    prefer collate-time packing via ``prepare_sequence_batch``.
+    prefer collate-time packing via ``prepare_sequence_batch``. Positions added
+    by the padding here are marked as padding in ``padding_mask``.
     """
 
     batch_size, cur_len = tokens.shape
@@ -192,6 +211,7 @@ def _pad_and_pack_qwen3_vl_step(
     loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len=target_len, max_cap=target_len, pad_value=0)
     attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len=target_len, max_cap=target_len)
     position_ids = pad_or_truncate_pos_to_len(position_ids, target_len=target_len, max_cap=target_len)
+    padding_mask = pad_or_truncate_2d_to_len(padding_mask, target_len=target_len, max_cap=target_len, pad_value=True)
 
     seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=device) * target_len
     seqlens_in_batch_padded = torch.ones(batch_size, dtype=torch.int32, device=device) * target_len
@@ -211,22 +231,24 @@ def _pad_and_pack_qwen3_vl_step(
         cu_seqlens_kv_padded=cu_seqlens_padded,
     )
 
-    return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params
+    return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params, padding_mask
 
 
-def forward_step(
+def _forward_step_common(
     state: GlobalState,
     data_iterator: Iterable,
     model: GPTModel,
-    return_schedule_plan: bool = False,
+    return_schedule_plan: bool,
+    loss_function_factory: Callable[..., partial],
 ) -> tuple[torch.Tensor, partial]:
-    """Forward training step.
+    """Shared Qwen3-VL forward step, parameterized by how the loss is built.
 
     Args:
         state: Global state for the run
         data_iterator: Input data iterator
         model: The GPT Model
         return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
+        loss_function_factory: Builds the loss from (loss_mask, model, check_for_nan, check_for_spiky)
 
     Returns:
         tuple containing the output tensor and the loss function
@@ -250,6 +272,7 @@ def forward_step(
             attention_mask,
             position_ids,
             multi_modal_inputs,
+            padding_mask,
         ) = get_batch(data_iterator, state.cfg, use_mtp, is_first_pp_stage=is_first, is_last_pp_stage=is_last)
     timers("batch-generator").stop()
 
@@ -257,16 +280,20 @@ def forward_step(
     # needs the original input IDs before doing model-specific CP/SP handling.
     enable_in_batch_packing = getattr(state.cfg.dataset, "enable_in_batch_packing", False)
 
-    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = _pad_and_pack_qwen3_vl_step(
-        tokens,
-        labels,
-        loss_mask,
-        attention_mask,
-        position_ids,
-        this_pg_collection,
-        use_fp8_padding=True,
-        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
-        seq_length=config.seq_length,
+    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params, padding_mask = (
+        _pad_and_pack_qwen3_vl_step(
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            this_pg_collection,
+            use_fp8_padding=True,
+            force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
+            # A builder-backed model's config is its transformer config, which has no seq_length.
+            seq_length=state.cfg.model.seq_length,
+            padding_mask=padding_mask,
+        )
     )
 
     # Accumulate FLOPS metadata across micro-batches. When in-batch packing is
@@ -305,6 +332,10 @@ def forward_step(
         "attention_mask": attention_mask,
         "position_ids": position_ids,
     }
+    if padding_mask is not None and not enable_in_batch_packing:
+        # MoE layers drop padding tokens from routing and router statistics. Padded batches
+        # only: in-batch packing re-lays the tokens out as THD, which a [B, S] mask does not match.
+        forward_args["padding_mask"] = padding_mask
 
     original_tokens = tokens.clone()
     forward_args = get_batch_on_this_cp_rank(
@@ -312,6 +343,17 @@ def forward_step(
         is_hybrid_cp=False,
         cp_group=this_pg_collection.cp,
     )
+    sequence_parallel = getattr(config, "sequence_parallel", False)
+    if forward_args.get("padding_mask") is not None and sequence_parallel and not unwrap_model(model).pre_process:
+        # Qwen3VLModel scatters the mask along with its embeddings on the first PP stage only.
+        # Later stages receive sequence-parallel activations, so they need the local mask too.
+        forward_args["padding_mask"] = (
+            tensor_parallel.scatter_to_sequence_parallel_region(
+                forward_args["padding_mask"].transpose(0, 1).contiguous(), group=this_pg_collection.tp
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
     forward_args["packed_seq_params"] = None
     forward_args["input_ids"] = original_tokens
     # calculate position_ids in model forward
@@ -352,7 +394,7 @@ def forward_step(
             schedule_plan = model.build_schedule_plan(
                 tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
             )
-            loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+            loss_function = loss_function_factory(loss_mask, model, check_for_nan_in_loss, check_for_spiky_loss)
             return schedule_plan, loss_function
         else:
             model_output = model(**forward_args)
@@ -361,6 +403,58 @@ def forward_step(
             else:
                 output_tensor = model_output
 
-    loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+    loss_function = loss_function_factory(loss_mask, model, check_for_nan_in_loss, check_for_spiky_loss)
 
     return output_tensor, loss_function
+
+
+def _masked_next_token_loss_factory(
+    loss_mask: torch.Tensor, model: GPTModel, check_for_nan_in_loss: bool, check_for_spiky_loss: bool
+) -> partial:
+    """Adapter giving the plain loss the same signature as the KD-aware one."""
+    del model  # unused; keeps the two loss factories interchangeable
+    return _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+
+
+def forward_step(
+    state: GlobalState,
+    data_iterator: Iterable,
+    model: GPTModel,
+    return_schedule_plan: bool = False,
+) -> tuple[torch.Tensor, partial]:
+    """Forward training step.
+
+    Args:
+        state: Global state for the run
+        data_iterator: Input data iterator
+        model: The GPT Model
+        return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
+
+    Returns:
+        tuple containing the output tensor and the loss function
+    """
+    return _forward_step_common(state, data_iterator, model, return_schedule_plan, _masked_next_token_loss_factory)
+
+
+def forward_step_modelopt(
+    state: GlobalState,
+    data_iterator: Iterable,
+    model: GPTModel,
+    return_schedule_plan: bool = False,
+) -> tuple[torch.Tensor, partial]:
+    """Forward training step with the ModelOpt knowledge-distillation loss.
+
+    Pass this to ``distill()`` for Qwen3-VL. The GPT step cannot drive this model under context
+    parallelism: it hands the model a CP-sharded batch, and Qwen3VLModel splits the sequence
+    itself, leaving hidden states at ``seq / cp**2``.
+
+    Args:
+        state: Global state for the run
+        data_iterator: Input data iterator
+        model: The GPT Model
+        return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
+
+    Returns:
+        tuple containing the output tensor and the loss function
+    """
+    return _forward_step_common(state, data_iterator, model, return_schedule_plan, create_kd_loss_function)

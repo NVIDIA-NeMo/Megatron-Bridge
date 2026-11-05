@@ -1,0 +1,114 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+# Copyright 2026 Reflection AI. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Beam model configuration: a ``HybridModel`` config plus the Beam architecture fields."""
+
+from dataclasses import dataclass
+from typing import ClassVar, Optional
+
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+
+from megatron.bridge.models.beam.modeling_beam import validate_beam_config
+from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
+
+
+@dataclass
+class BeamTransformerConfig(TransformerConfig):
+    """Bridge ``TransformerConfig`` plus the Beam fields Megatron-Core does not declare.
+
+    The modules in :mod:`~megatron.bridge.models.beam.modeling_beam` read them.
+    """
+
+    attention_output_gate_bias: bool = False
+    """Gate the attention output with ``sigmoid(gate + bias[head])``; requires ``attention_output_gate``.
+    The bias lives in ``SelfAttention.output_gate_bias`` and is sharded across TP with the heads."""
+
+    post_self_attn_layernorm: bool = False
+    """Normalize the self-attention output before the residual add ("sandwich" norm)."""
+
+    post_mlp_layernorm: bool = False
+    """Normalize the MLP output before the residual add ("sandwich" norm)."""
+
+    depth_scaled_residual: bool = False
+    """Replace each residual add with ``out*(1/sqrt(idx)) + residual*sqrt((idx-1)/idx)``,
+    ``idx = layer_number + 1`` with the hybrid stack's 1-based ``layer_number``."""
+
+    ssmax: bool = False
+    """Scale queries on NoPE layers by ``(1 + (position + 1) / 2048) ** 0.1``; requires ``no_rope_freq``."""
+
+    moe_router_fp32_params: bool = False
+    """Keep router weights and biases in fp32, including through ``Float16Module``;
+    requires ``moe_router_dtype='fp32'``."""
+
+    final_logit_softcapping: Optional[float] = None
+    """``logits = cap * tanh(logits / cap)`` on the output layer; ``None`` or ``0`` disables it."""
+
+    def finalize(self) -> None:
+        """Run the deferred Megatron-Core post-init, then validate the Beam fields."""
+        super().finalize()
+        validate_beam_config(self)
+
+
+def beam_pipeline_layer_pattern(pattern: str, num_stages: int) -> str:
+    """Split a Beam hybrid pattern into ``num_stages`` ``|``-separated segments.
+
+    Beam layer ``i`` is the hybrid pair ``pattern[2i:2i+2]`` (attention, then MLP/MoE); pairs
+    stay on one stage and earlier stages take the remainder. Existing separators are dropped,
+    so a pattern saved under another pipeline size is re-split.
+    """
+    flat = pattern.replace(Symbols.PIPE, "")
+    if len(flat) % 2:
+        raise ValueError(f"Beam hybrid patterns pair every attention layer with an MLP layer, got {pattern!r}.")
+    if num_stages <= 1:
+        return flat
+    blocks = [flat[i : i + 2] for i in range(0, len(flat), 2)]
+    if len(blocks) < num_stages:
+        raise ValueError(f"{len(blocks)} Beam layers cannot fill {num_stages} pipeline stages.")
+    base, extra = divmod(len(blocks), num_stages)
+    segments, offset = [], 0
+    for stage in range(num_stages):
+        count = base + int(stage < extra)
+        segments.append("".join(blocks[offset : offset + count]))
+        offset += count
+    return Symbols.PIPE.join(segments)
+
+
+@dataclass(kw_only=True)
+class BeamModelConfig(BridgeHybridModelConfig):
+    """``HybridModel`` config whose builder uses the Beam stack spec and soft-caps the output layer.
+
+    ``hybrid_layer_pattern`` holds two hybrid layers per Beam layer: ``*`` attention followed
+    by ``-`` (dense MLP) or ``E`` (MoE), so ``transformer.num_layers`` and the per-layer lists
+    (``no_rope_freq``, ``window_attn_skip_freq``) count hybrid layers. ``_builder_`` names
+    :class:`~.beam_builder.BeamModelBuilder`.
+    """
+
+    builder: ClassVar[str] = "megatron.bridge.models.beam.BeamModelBuilder"
+    transformer_config_class: ClassVar[type[TransformerConfig]] = BeamTransformerConfig
+
+    def finalize(self) -> None:
+        """Split the pattern at Beam-layer boundaries for pipeline parallelism, then validate."""
+        transformer = self.transformer
+        num_stages = (transformer.pipeline_model_parallel_size or 1) * (
+            transformer.virtual_pipeline_model_parallel_size or 1
+        )
+        if (
+            self.hybrid_layer_pattern
+            and transformer.num_layers_in_first_pipeline_stage is None
+            and transformer.num_layers_in_last_pipeline_stage is None
+        ):
+            self.hybrid_layer_pattern = beam_pipeline_layer_pattern(self.hybrid_layer_pattern, num_stages)
+        super().finalize()

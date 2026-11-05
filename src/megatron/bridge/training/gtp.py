@@ -14,6 +14,7 @@
 
 """Generalized Tensor Parallelism helpers for the standard Bridge runtime."""
 
+from collections.abc import Mapping
 from typing import Any
 
 import torch
@@ -29,6 +30,59 @@ def get_transformer_config(model_config: Any) -> Any:
     return model_config
 
 
+def _get_checkpoint_weight_topology(model_config: Any) -> tuple[int, int, int, int]:
+    """Read dense/expert TP and GTP sizes from runtime or serialized configs."""
+    if isinstance(model_config, Mapping):
+        nested_config = model_config.get("transformer")
+        transformer_config = nested_config if isinstance(nested_config, Mapping) else model_config
+    else:
+        transformer_config = get_transformer_config(model_config)
+
+    def get_value(name: str, default: Any) -> Any:
+        if isinstance(transformer_config, Mapping):
+            return transformer_config.get(name, default)
+        return getattr(transformer_config, name, default)
+
+    def positive_int(name: str, default: int) -> int:
+        value = get_value(name, default)
+        return value if isinstance(value, int) and value > 0 else default
+
+    tp = positive_int("tensor_model_parallel_size", 1)
+    etp = positive_int("expert_tensor_parallel_size", tp)
+    # Public shard counts take precedence: deserialized providers may still have
+    # the default values for the derived GTP fields until finalize() runs.
+    dense_shards = get_value("tensor_parallel_num_weight_shards", None)
+    expert_shards = get_value("expert_tensor_parallel_num_weight_shards", None)
+    gtp = dense_shards // tp if isinstance(dense_shards, int) else positive_int("gtp_weight_remat_size", 1)
+    egtp = expert_shards // etp if isinstance(expert_shards, int) else positive_int("expert_gtp_weight_remat_size", 1)
+    return tp, gtp, etp, egtp
+
+
+def _validate_checkpoint_weight_topology(
+    *, saved: tuple[int, int, int, int], requested: tuple[int, int, int, int]
+) -> None:
+    """Reject native resharding when either side uses the GTP SwiGLU layout."""
+    dense_changed = (saved[1] > 1 or requested[1] > 1) and saved[:2] != requested[:2]
+    expert_changed = (saved[3] > 1 or requested[3] > 1) and saved[2:] != requested[2:]
+    if not dense_changed and not expert_changed:
+        return
+    raise ValueError(
+        "Resharding a GTP checkpoint is not supported: Megatron-Core's SwiGLU checkpoint "
+        "layout can reorder gate/up rows when the weight-sharding topology changes. "
+        "Preserve the saved dense/expert TP and weight shard counts (using mp_overrides "
+        "with load_megatron_model), export HF weights, then import those weights into "
+        "the desired topology."
+    )
+
+
+def _get_dataloader_process_group(pg_collection: ProcessGroupCollection) -> torch.distributed.ProcessGroup:
+    """Return DP x dense GTP, excluding CP ranks that repeat the same samples."""
+    remat_group = getattr(pg_collection, "gtp_remat", None)
+    if remat_group is not None and remat_group.size() > 1:
+        return parallel_state.get_data_parallel_group(with_gtp_remat=True)
+    return pg_collection.dp
+
+
 def is_gtp_remat_active(model_config: Any) -> bool:
     """Return whether dense or expert GTP weight rematerialization is enabled."""
     transformer_config = get_transformer_config(model_config)
@@ -37,8 +91,26 @@ def is_gtp_remat_active(model_config: Any) -> bool:
     return any(isinstance(size, int) and size > 1 for size in (dense_size, expert_size))
 
 
-def configure_gtp_remat(model_config: Any) -> None:
-    """Configure process-global GTP state before constructing model modules."""
+def configure_gtp_remat(
+    model_config: Any,
+    *,
+    reduce_scatter_with_fp32_accumulation: bool = False,
+    nccl_ub: bool = False,
+    pg_collection: ProcessGroupCollection | None = None,
+) -> None:
+    """Configure process-global GTP state before constructing model modules.
+
+    Args:
+        model_config: Model provider or builder config containing the GTP sizes.
+        reduce_scatter_with_fp32_accumulation: Accumulate GTP reduce-scatter
+            results locally in FP32.
+        nccl_ub: Register an NCCL symmetric-memory pool for the dense GTP group.
+        pg_collection: Initialized process groups, required when nccl_ub is enabled.
+
+    Raises:
+        RuntimeError: GTP is active but the required Transformer Engine support is missing.
+        ValueError: GTP is active and nccl_ub is enabled without process groups.
+    """
     if not is_gtp_remat_active(model_config):
         return
 
@@ -56,7 +128,14 @@ def configure_gtp_remat(model_config: Any) -> None:
         fp8_recipe=transformer_config.fp8_recipe,
         fp8=transformer_config.fp8 is not None,
         calculate_per_token_loss=transformer_config.calculate_per_token_loss,
+        reduce_scatter_with_fp32_accumulation=reduce_scatter_with_fp32_accumulation,
     )
+    if nccl_ub:
+        if pg_collection is None:
+            raise ValueError("gtp_remat_nccl_ub requires an initialized process-group collection.")
+        from megatron.core.process_groups_config import resolve_gtp_remat_group
+
+        gtp_api.register_gtp_symm_pool(resolve_gtp_remat_group(pg_collection, is_expert=False))
 
 
 def classify_gtp_remat_chains(model: list[torch.nn.Module], model_config: Any) -> None:

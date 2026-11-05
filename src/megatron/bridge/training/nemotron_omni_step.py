@@ -91,9 +91,10 @@ def get_batch_from_iterator(
             required_device_keys.add("padding_mask")
 
     if is_first_pp_stage or is_last_pp_stage:
+        # The last stage needs token and position IDs for HybridModel's MTP
+        # block; the first stage needs them to build decoder embeddings.
         input_key = "tokens" if batch.get("tokens") is not None else "input_ids"
         required_device_keys.add(input_key)
-    if is_first_pp_stage:
         required_device_keys.add("position_ids")
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))

@@ -13,13 +13,15 @@
 # limitations under the License.
 
 
-import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import torch
-from megatron.core.distributed import finalize_model_grads
+from megatron.core import parallel_state
+from megatron.core.distributed import DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.transformer.module import Float16Module
+from megatron.core.transformer.moe.router import TopKRouter
 
 import megatron.bridge.training.setup as training_setup
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
@@ -27,11 +29,13 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
+from megatron.bridge.models.model_provider import build_distributed_models
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.peft.utils import finalize_model_grads_with_expert_adapter_sync
 from megatron.bridge.training.callbacks import CallbackManager
 from megatron.bridge.training.checkpointing import load_checkpoint
+from megatron.bridge.training.config import DistributedInitConfig, OptimizerConfig
+from megatron.bridge.training.model_load_save import _get_or_initialize_pg_collection
 from megatron.bridge.training.setup import (
     _bind_dataset_provider_context,
     _build_distributed_model,
@@ -564,38 +568,103 @@ class TestBuildDistributedModel:
         mock_provider.provide_distributed_model.assert_called_once()
         assert result == mock_dist_model
 
-    def test_finalizes_heterogeneous_provider_before_entering_distributed_model_build(self):
-        """Finalize deferred heterogeneous fields before entering provider model construction."""
-        block = {
-            "attention": {"no_op": False, "replace_with_linear": False, "num_query_groups": 4},
-            "mlp": {"no_op": False, "replace_with_linear": False, "ffn_hidden_size": 256},
-        }
-        provider = LlamaNemotronHeterogeneousProvider(
-            num_layers=1,
-            hidden_size=64,
-            num_attention_heads=4,
-            num_query_groups=4,
-            heterogeneous_layers_config_encoded_json=json.dumps({"block_configs": [block]}),
+    def test_builder_path_keeps_float32_router_bias_loaded_before_wrap(self, monkeypatch, tmp_path):
+        """Router biases loaded in a pre-wrap hook, as PEFT loads base weights, stay exact through the cast."""
+        if not torch.cuda.is_available():
+            # MCore allocates router buffers on torch.cuda.current_device().
+            monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+        model_config = _make_gpt_model_config(
+            vocab_size=128,
+            transformer_kwargs=dict(
+                hidden_size=64,
+                num_attention_heads=4,
+                transformer_impl="local",
+                use_cpu_initialization=True,
+                bf16=True,
+                params_dtype=torch.bfloat16,
+                num_moe_experts=4,
+                moe_router_topk=2,
+                moe_ffn_hidden_size=32,
+                moe_router_score_function="sigmoid",
+                moe_router_enable_expert_bias=True,
+                moe_router_load_balancing_type="none",
+                moe_token_dispatcher_type="allgather",
+            ),
         )
-        expected_model = [MagicMock()]
+        expected = []
 
-        def provide_distributed_model(**_kwargs):
-            assert len(provider.per_block_parameters) == 1
-            return expected_model
+        def load_base_weights(models):
+            # bf16 rounds 1.0001 to 1.0.
+            for module in models[0].modules():
+                if isinstance(module, TopKRouter):
+                    module.expert_bias.copy_(1.0 + 1e-4 * torch.arange(1, module.expert_bias.numel() + 1))
+                    expected.append((module, module.expert_bias.clone()))
+            return models
 
-        provider.provide_distributed_model = Mock(side_effect=provide_distributed_model)
+        model_config.pre_wrap_hooks.append(load_base_weights)
+        model_config.finalize()
         cfg = SimpleNamespace(
-            model=provider,
-            ddp=MagicMock(),
-            optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
-            dist=SimpleNamespace(use_megatron_fsdp=False, use_torch_fsdp2=False),
+            model=model_config,
+            ddp=DistributedDataParallelConfig(),
+            optimizer=OptimizerConfig(),
+            dist=DistributedInitConfig(),
             rng=SimpleNamespace(data_parallel_random_init=False),
         )
 
-        result = _build_distributed_model(cfg, pg_collection=MagicMock())
+        def build_without_ddp(*args, **kwargs):
+            # DDP wrapping needs CUDA; the FP32 restore happens before it.
+            return build_distributed_models(*args, **kwargs, wrap_with_ddp=False)
 
-        provider.provide_distributed_model.assert_called_once()
-        assert result == expected_model
+        torch.distributed.init_process_group(
+            "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
+        )
+        try:
+            pg_collection = _get_or_initialize_pg_collection(model_config)
+            with patch.object(training_setup, "build_distributed_models", side_effect=build_without_ddp):
+                models = _build_distributed_model(cfg, pg_collection)
+        finally:
+            if parallel_state.is_initialized():
+                parallel_state.destroy_model_parallel()
+            torch.distributed.destroy_process_group()
+
+        assert isinstance(models[0], Float16Module)
+        assert len(expected) == model_config.num_layers
+        for router, expert_bias in expected:
+            torch.testing.assert_close(router.expert_bias, expert_bias, rtol=0, atol=0)
+
+    @pytest.mark.parametrize("use_provider", [True, False])
+    def test_mtp_freeze_hook_registered_once_before_build(self, use_provider):
+        from megatron.bridge.training.setup import _freeze_base_model_for_mtp
+
+        cfg, model_cfg = self._make_cfg_with_model_config()
+        if use_provider:
+            model_cfg = GPTModelProvider(num_layers=1, hidden_size=16, num_attention_heads=1, vocab_size=64)
+            cfg.model = model_cfg
+        model_cfg.freeze_base_model_for_mtp = True
+        model_cfg.mtp_num_layers = 1
+        user_hook = Mock(side_effect=lambda model: model)
+        if use_provider:
+            model_cfg.register_pre_wrap_hook(user_hook)
+        else:
+            model_cfg.pre_wrap_hooks.append(user_hook)
+
+        def build(**kwargs):
+            hooks = model_cfg._pre_wrap_hooks if use_provider else model_cfg.pre_wrap_hooks
+            assert hooks.count(_freeze_base_model_for_mtp) == 1
+            assert user_hook in hooks
+            return []
+
+        with patch("megatron.bridge.training.setup.classify_gtp_remat_chains"):
+            if use_provider:
+                with patch.object(model_cfg, "provide_distributed_model", side_effect=build):
+                    for _ in range(2):
+                        _build_distributed_model(cfg, pg_collection=MagicMock())
+            else:
+                builder = Mock()
+                builder.build_distributed_models.side_effect = build
+                with patch.object(type(model_cfg), "get_builder_cls", return_value=Mock(return_value=builder)):
+                    for _ in range(2):
+                        _build_distributed_model(cfg, pg_collection=MagicMock())
 
 
 def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():

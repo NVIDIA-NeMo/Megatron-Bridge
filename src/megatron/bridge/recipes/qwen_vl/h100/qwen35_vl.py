@@ -39,6 +39,24 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, set_cuda_graph_modules
 
 
+def _enable_gdn_conv_fusion(model) -> None:
+    """Enable the GatedDeltaNet pre-gated-delta-rule fusion on a Qwen3.5-VL model.
+
+    Fuses the pre-gated-delta-rule path (causal conv1d + QK L2-norm) into Triton
+    kernels. Qwen3.5-VL runs 3 of every 4 layers as GDN -- 30 of 40 at 35B-A3B,
+    45 of 60 at 397B-A17B -- so the fused path covers most of the step. Measured
+    +5.8% on 8x GB300 with real DataComp Energon (BF16, MBS4/GBS512, EP8, steps
+    101-150, n=50): 20332.0 -> 19214.8 ms/step, 297.0 -> 314.2 TFLOP/s/GPU.
+
+    Requires a Megatron-Core carrying ``gdn_pre_gated_delta_rule_fusion``.
+    Assigning an unknown field on the model config does NOT raise -- it would
+    silently create an unused attribute, leaving the recipe looking enabled
+    while running unfused -- so the guard is deliberate.
+    """
+    if hasattr(type(model), "gdn_pre_gated_delta_rule_fusion") or hasattr(model, "gdn_pre_gated_delta_rule_fusion"):
+        model.gdn_pre_gated_delta_rule_fusion = True
+
+
 def _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg: ConfigContainer) -> None:
     """Apply the measured 16-H100 execution policy for Qwen3.5/Qwen3.6-VL 35B-A3B."""
     cfg.model.tensor_model_parallel_size = 1
@@ -114,7 +132,8 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-9B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -162,7 +181,8 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-27B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -216,7 +236,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 2
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -228,6 +249,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.model.freeze_vision_projection = False
     cfg.model.seq_length = 4096
     cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
 
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
@@ -334,7 +356,8 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-122B-A10B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -347,6 +370,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.model.freeze_vision_projection = False
     cfg.model.seq_length = 4096
     cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
 
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
@@ -385,7 +409,8 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-397B-A17B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 16
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -398,6 +423,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.model.freeze_vision_projection = False
     cfg.model.seq_length = 4096
     cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
 
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
@@ -450,7 +476,8 @@ def qwen35_vl_800m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-0.8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -550,7 +577,8 @@ def qwen35_vl_2b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-2B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -650,7 +678,8 @@ def qwen35_vl_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-4B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -750,7 +779,8 @@ def qwen35_vl_9b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-9B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -848,7 +878,8 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-27B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -952,7 +983,8 @@ def _qwen35_vl_35b_a3b_sft_base_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -1161,7 +1193,8 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -1283,7 +1316,8 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-122B-A10B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -1395,7 +1429,8 @@ def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-397B-A17B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -1515,7 +1550,8 @@ def qwen35_vl_800m_peft_1gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-0.8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -1616,7 +1652,8 @@ def qwen35_vl_2b_peft_1gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-2B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -1717,7 +1754,8 @@ def qwen35_vl_4b_peft_1gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-4B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -1818,7 +1856,8 @@ def qwen35_vl_9b_peft_1gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-9B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -1919,7 +1958,8 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-27B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -2025,7 +2065,8 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -2167,7 +2208,8 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-122B-A10B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings
@@ -2282,7 +2324,8 @@ def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-397B-A17B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
+    _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
     # Parallelism settings

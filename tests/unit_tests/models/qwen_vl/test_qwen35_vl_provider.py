@@ -377,3 +377,66 @@ class TestQwen35VLMoEModelProvider:
             kwargs["mtp_block_spec"].layer_specs[0].submodules.mtp_model_layer.submodules.self_attention.module
             is Qwen3VLSelfAttention
         )
+
+
+@pytest.mark.parametrize("provider_cls", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])
+@pytest.mark.parametrize("granularity", ["inherit", None, "full", "selective"])
+def test_vision_recompute_provider_spec(provider_cls, granularity):
+    provider = provider_cls(
+        num_layers=4,
+        hidden_size=512,
+        num_attention_heads=4,
+        vision_recompute_granularity=granularity,
+        vision_recompute_method="uniform" if granularity == "full" else None,
+        vision_recompute_num_layers=1 if granularity == "full" else None,
+        vision_recompute_modules=["mlp"] if granularity == "selective" else None,
+        recompute_granularity="selective",
+        recompute_modules=["gdn_norm_out", "moe"],
+    )
+
+    spec = provider.build_vision_encoder_spec()
+    config = spec.params["transformer_config"]
+
+    assert config.recompute_granularity == ("selective" if granularity == "inherit" else granularity)
+    assert config.recompute_method == ("uniform" if granularity == "full" else None)
+    assert config.recompute_num_layers == (1 if granularity == "full" else None)
+    assert config.recompute_modules == {"inherit": ["core_attn"], "selective": ["mlp"]}.get(granularity, [])
+    assert provider.recompute_granularity == "selective"
+    assert provider.recompute_modules == ["gdn_norm_out", "moe"]
+
+
+@pytest.mark.parametrize("provider_cls", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])
+@pytest.mark.parametrize(
+    "granularity,method,num_layers,modules",
+    [
+        ("inherit", None, None, None),
+        (None, None, None, None),
+        ("full", "block", 2, None),
+        ("selective", None, None, ["core_attn", "mlp"]),
+    ],
+)
+def test_vision_recompute_config_round_trip(provider_cls, granularity, method, num_layers, modules):
+    from megatron.training.config.instantiate_utils import instantiate
+
+    from megatron.bridge.training.config import ConfigContainer
+
+    provider = provider_cls(num_layers=4, hidden_size=512, num_attention_heads=4)
+    assert provider.vision_recompute_granularity == "inherit"
+    provider.vision_recompute_granularity = granularity
+    provider.vision_recompute_method = method
+    provider.vision_recompute_num_layers = num_layers
+    provider.vision_recompute_modules = modules
+
+    restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+
+    assert isinstance(restored, provider_cls)
+    assert restored.vision_recompute_granularity == granularity
+    assert restored.vision_recompute_method == method
+    assert restored.vision_recompute_num_layers == num_layers
+    assert restored.vision_recompute_modules == modules
+    config = restored.build_vision_encoder_spec().params["transformer_config"]
+    assert (config.recompute_granularity, config.recompute_method, config.recompute_num_layers) == (
+        None if granularity == "inherit" else granularity,
+        method,
+        num_layers,
+    )

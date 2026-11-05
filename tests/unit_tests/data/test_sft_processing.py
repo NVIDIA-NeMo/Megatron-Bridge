@@ -230,6 +230,32 @@ def test_prompt_completion_honors_explicit_chat_named_text_column():
     assert normalize_sft_example(adapted, preprocessing) == row
 
 
+def test_prompt_completion_rejects_structured_chat_named_column_with_canonical_pair():
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        prompt_column="messages",
+        completion_column="answer",
+    )
+    row = {
+        "messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
+        "prompt": "canonical prompt",
+        "completion": "canonical completion",
+    }
+
+    with pytest.raises(ValueError, match="exactly one schema"):
+        normalize_sft_example(row, preprocessing)
+
+
+def test_prompt_completion_rejects_structured_conversation_in_chat_named_column():
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        prompt_column="messages",
+        completion_column="answer",
+    )
+    row = {"messages": [{"role": "user", "content": "q"}], "answer": "a"}
+
+    with pytest.raises(ValueError, match="structured conversations require"):
+        normalize_sft_example(row, preprocessing)
+
+
 def test_prompt_completion_tokenizes_separately_and_masks_prompt():
     tokenizer = _Tokenizer()
     preprocessing = PromptCompletionSFTPreprocessingConfig(
@@ -360,6 +386,7 @@ def test_squad_row_has_matching_gpt_sft_and_direct_hf_collation():
     gpt_dataset.is_test = False
     gpt_dataset.output_original_text = False
     gpt_dataset.pad_to_max_length = False
+    gpt_dataset.return_padding_mask = False
     gpt_dataset.pad_seq_length_to_mult = 1
     gpt_dataset.ceil_to_power_2 = False
     gpt_dataset.get_attention_mask_from_fusion = True

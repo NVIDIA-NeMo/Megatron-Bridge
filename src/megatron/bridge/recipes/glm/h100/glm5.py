@@ -11,12 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""H100 recipes for GLM-5.2."""
+"""H100 recipes for GLM-5.2.
+
+These recipes use the HybridEP MoE dispatcher and the TileLang DSA kernels. Both compile their kernels in every
+process during the first training step, and the pipeline stages reach that point one after another, so the first
+step takes far longer than later steps. TileLang loads the compiled kernels from ``TMPDIR``, which must be on a
+filesystem that allows executing files. Its DSA backward kernels accumulate with floating-point atomics, so runs
+with deterministic mode enabled are not bit-for-bit reproducible.
+"""
 
 from __future__ import annotations
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import split_glm_pattern
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config, default_tulu3_config
@@ -30,43 +38,47 @@ _GLM52_MODEL_ID = "zai-org/GLM-5.2"
 _GLM52_MODEL_REVISION = "4d67f66cc64d3219133b767c253b2ad1425c6c88"  # pragma: allowlist secret
 _TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist secret
 
-_GLM52_VPP2_LAYOUT = (
-    "Et|t||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|ttttmL"
-)
-_GLM52_PP13_LAYOUT = "Etttttt|tttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|tttt|tttt|tttt|ttttmL"
-_GLM52_PP19_200K_LAYOUT = (
-    "Etttttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|ttttmL"
-)
+# The cuDNN DSA backend runs FlashMLA kernels, which docker/Dockerfile.ci builds without H100 (sm_90) kernels
+# (FLASH_MLA_DISABLE_SM90=1), so it fails on H100 with "no kernel image is available". TileLang compiles the DSA
+# kernels for the local GPU instead.
+_H100_DSA_KERNEL_BACKEND = "tilelang"
+# HybridEP and TileLang compile their kernels in every process at the first step, one pipeline stage after
+# another, so the first stage can wait in a pipeline send or receive far longer than the 10-minute default timeout.
+# The wait grows with the stage count and the per-stage compile time, and further when a step has fewer microbatches
+# than stages (2 for PEFT, 13 for the 200K SFT recipe). In an SFT run with one Inductor compile thread per rank and
+# cold kernel caches, compilation took about 5 to 6 minutes per stage on average and the SFT recipe waited at least
+# 85 minutes; at that rate the PEFT and 200K SFT recipes would wait about 2.4 and 2.5 hours. The timeout below
+# leaves room for compilation about 60% slower than that. It applies to the whole run;
+# dist.distributed_timeout_seconds_after_init can lower it after the first step.
+_H100_DISTRIBUTED_TIMEOUT_MINUTES = 240
 
 
 def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded pretraining on 416 H100 GPUs."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_layout = _GLM52_VPP2_LAYOUT
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.microbatch_group_size_per_vp_stage = 16
+    cfg.model.microbatch_group_size_per_vp_stage = None
 
-    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.dsa_kernel_backend = _H100_DSA_KERNEL_BACKEND
     cfg.model.mtp_num_layers = 1
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.persist_layer_norm = True
@@ -106,7 +118,16 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [6, 4] + [8] * 6 + [4] * 5
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -114,30 +135,28 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded full SFT on 416 H100 GPUs."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
 
     cfg.model.seq_length = 2048
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_layout = _GLM52_VPP2_LAYOUT
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 16
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.microbatch_group_size_per_vp_stage = 16
+    cfg.model.microbatch_group_size_per_vp_stage = None
 
-    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.dsa_kernel_backend = _H100_DSA_KERNEL_BACKEND
     cfg.model.mtp_num_layers = 1
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.persist_layer_norm = True
@@ -187,7 +206,16 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.checkpoint.save_optim = False
     cfg.checkpoint.save_rng = False
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [6, 4] + [8] * 6 + [4] * 5
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -195,9 +223,7 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     """GLM-5.2 200K packed SFT with context parallelism on 608 H100 GPUs."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
 
@@ -205,20 +231,20 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 19
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP19_200K_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 32
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.microbatch_group_size_per_vp_stage = None
 
-    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.dsa_kernel_backend = _H100_DSA_KERNEL_BACKEND
     cfg.model.mtp_num_layers = 1
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.persist_layer_norm = True
@@ -263,7 +289,16 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.scheduler.lr_decay_iters = 20
     cfg.checkpoint.save = None
     cfg.checkpoint.load = None
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [6] + [4] * 18
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -271,9 +306,7 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     """GLM-5.2 bounded LoRA SFT on 208 H100 GPUs."""
     cfg = _peft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
 
@@ -281,20 +314,20 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP13_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 16
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.microbatch_group_size_per_vp_stage = None
 
-    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.dsa_kernel_backend = _H100_DSA_KERNEL_BACKEND
     cfg.model.mtp_num_layers = 1
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.persist_layer_norm = True
@@ -356,11 +389,25 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.scheduler.lr_decay_iters = 100
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [6, 4] + [8] * 6 + [4] * 5
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.dist.distributed_timeout_minutes = _H100_DISTRIBUTED_TIMEOUT_MINUTES
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology on H100: each node is one 8-GPU NVLink domain.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
+# The flat name is also a benchmark recipe, which bare launcher lookup selects; this alias reaches the library workload.
+glm52_h100_sft_config = glm52_sft_416gpu_h100_bf16_config
+
+
 __all__ = [
+    "glm52_h100_sft_config",
     "glm52_peft_208gpu_h100_bf16_config",
     "glm52_pretrain_416gpu_h100_bf16_config",
     "glm52_sft_416gpu_h100_bf16_config",

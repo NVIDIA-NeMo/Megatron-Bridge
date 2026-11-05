@@ -54,6 +54,16 @@ def test_megatron_mimo_runtime_config_update_resolves_eval_batch_size_defaults()
     cfg.validation.eval_global_batch_size = None
     cfg.validation.eval_micro_batch_size = None
     cfg.profiling = None
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.optimizer = "adam"
+    cfg.optimizer.use_distributed_optimizer = False
+    cfg.optimizer.use_layer_wise_distributed_optimizer = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
 
     megatron_mimo_runtime_config_update(cfg)
 
@@ -316,6 +326,7 @@ class TestPretrainMegatronMIMOSetup:
         from megatron.bridge.training.config import OptimizerConfig
 
         cfg.optimizer = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
+        cfg.optimizer.use_layer_wise_param_layout = False
         cfg.optimizer.finalize()
 
         global_state = Mock()
@@ -335,7 +346,9 @@ class TestPretrainMegatronMIMOSetup:
         start_time_tensor.item.return_value = global_state.start_time
 
         with (
-            patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)),
+            patch(
+                "megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)
+            ) as mock_build_model,
             patch(
                 "megatron.core.models.mimo.optimizer.get_mimo_optimizer",
                 return_value=mock_optimizer,
@@ -351,6 +364,7 @@ class TestPretrainMegatronMIMOSetup:
 
         mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
         optimizer_config = mock_get_mimo_optimizer.call_args.args[1]
+        assert mock_build_model.call_args.kwargs["use_layer_wise_param_layout"] is False
         assert type(optimizer_config).__module__ == "megatron.core.optimizer.optimizer_config"
         assert optimizer_config.use_distributed_optimizer is True
         assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
@@ -504,6 +518,49 @@ def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_valida
         )
 
     mock_evaluate.assert_called_once()
+
+
+def test_interval_evaluation_honors_delayed_start():
+    """Periodic MegatronMIMO evaluation should wait for the configured start iteration."""
+    from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
+
+    state = _make_global_state(save_dir=None, train_iters=6)
+    state.cfg.validation.eval_interval = 2
+    state.cfg.validation.start_eval_at_iter = 6
+
+    infra = _make_megatron_mimo_infra()
+
+    with (
+        patch("torch.distributed.get_rank", return_value=0),
+        patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1),
+        patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func", return_value=Mock()),
+        patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple", return_value=[]),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule",
+            return_value=Mock(spec=[]),
+        ),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo",
+            return_value=({}, 0, 0.0, 0),
+        ),
+        patch("megatron.bridge.training.train_megatron_mimo.evaluate_and_print_results") as mock_evaluate,
+        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+    ):
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={},
+            train_data_iterator=iter([object()]),
+            valid_data_iterator=iter([object()]),
+            global_state=state,
+            megatron_mimo_infra=infra,
+            multimodule_communicator=Mock(),
+            checkpoint_manager=MagicMock(),
+        )
+
+    mock_evaluate.assert_called_once()
+    assert mock_evaluate.call_args.kwargs["prefix"] == "iteration 6"
 
 
 def test_iteration_time_is_logged_once_by_shared_training_logger():

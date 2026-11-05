@@ -15,6 +15,17 @@
 
 import argparse
 import os
+import sys
+from pathlib import Path
+
+
+COMMON_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "common"
+if str(COMMON_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPT_DIR))
+
+from container_runtime import add_container_runtime_args  # noqa: E402
+from slurm_parameters import add_slurm_parameter_args  # noqa: E402
+from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval  # noqa: E402
 
 
 DTYPE_CHOICES = ("bfloat16", "float16", "float32")
@@ -23,6 +34,14 @@ DTYPE_CHOICES = ("bfloat16", "float16", "float32")
 def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device: str = "cpu") -> None:
     """Add NeMo Run execution arguments to a conversion subcommand."""
     execution = parser.add_argument_group("Execution")
+    add_container_runtime_args(execution)
+    add_slurm_parameter_args(execution)
+    execution.add_argument(
+        "--poll-interval",
+        type=slurm_poll_interval,
+        default=MIN_POLL_INTERVAL,
+        help="Seconds between Slurm status checks when waiting (minimum/default: 60).",
+    )
     execution.add_argument(
         "--executor",
         choices=("local", "slurm"),
@@ -48,8 +67,8 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
         type=int,
         default=1,
         help=(
-            "CPU conversion processes per node (default: 1). Values above 1 enable distributed CPU export "
-            "and require model parallelism compatible with nodes*cpu-processes-per-node."
+            "CPU conversion processes per node (default: 1). Values above 1 enable distributed CPU import "
+            "and export and require model parallelism compatible with nodes*cpu-processes-per-node."
         ),
     )
     execution.add_argument(
@@ -173,6 +192,11 @@ def _add_common_conversion_arguments(parser: argparse.ArgumentParser, *, include
     conversion = parser.add_argument_group("Conversion")
     conversion.add_argument("--hf-model", required=True, help="Hugging Face model ID or local path.")
     conversion.add_argument(
+        "--text-only",
+        action="store_true",
+        help="Convert only the language component of a supported multimodal checkpoint.",
+    )
+    conversion.add_argument(
         "--hf-revision",
         help="Immutable Hugging Face Hub revision to resolve before conversion (for example, a commit SHA).",
     )
@@ -270,6 +294,10 @@ Examples:
         "--low-memory-save",
         action="store_true",
         help="Reduce peak GPU memory while saving large imported checkpoints at the cost of additional runtime.",
+    )
+    import_parser.add_argument(
+        "--bagel-repo",
+        help="Official ByteDance-Seed/Bagel source checkout to import BAGEL checkpoints.",
     )
 
     export_parser = subparsers.add_parser(
@@ -374,12 +402,16 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
         worker_args.append("--trust-remote-code")
     if args.overwrite:
         worker_args.append("--overwrite")
+    if args.text_only:
+        worker_args.append("--text-only")
     if args.distributed_timeout_minutes is not None:
         worker_args.extend(["--distributed-timeout-minutes", str(args.distributed_timeout_minutes)])
 
     if args.command == "import":
         if args.low_memory_save:
             worker_args.append("--low-memory-save")
+        if args.bagel_repo is not None:
+            worker_args.extend(["--bagel-repo", args.bagel_repo])
     elif args.command == "export":
         worker_args.extend(["--hf-path", args.hf_path])
         if args.no_progress:

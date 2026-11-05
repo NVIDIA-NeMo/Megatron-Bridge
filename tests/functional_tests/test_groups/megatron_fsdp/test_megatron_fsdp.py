@@ -14,15 +14,18 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 import pytest
 import torch
 import torch.nn.functional as F
+from megatron.core.tensor_parallel.random import initialize_rng_tracker
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -38,7 +41,6 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     runtime_config_update,
 )
-from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.state import GlobalState
@@ -422,19 +424,72 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MFSDP v2 is unavailable in this MCore revision")
+    def test_fsdp_v2_cp2_pretrain(self) -> None:
+        """Pretrain a small GPT model for ten iterations with MFSDP V2 and CP=2."""
+        initialize_distributed()
+        assert torch.distributed.get_world_size() == 2, "This test requires two GPUs."
+        torch.distributed.barrier()
+
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            model={
+                "context_parallel_size": 2,
+                "params_dtype": torch.bfloat16,
+                "hidden_size": 128,
+                "ffn_hidden_size": 512,
+                "num_attention_heads": 8,
+            },
+            ddp={"megatron_fsdp_version": 2},
+            optimizer={"use_precision_aware_optimizer": True},
+        )
+
+        pretrain(cfg, forward_step)
+
+        torch.distributed.barrier()
+
+    @pytest.mark.run_only_on("GPU")
     def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
-        """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
+        """Train a dense two-layer HybridModel with MFSDP V2 in eager mode."""
         initialize_distributed()
         torch.distributed.barrier()
 
         cfg = create_fsdp_config_container(
             seq_length=128,
             train_iters=10,
-            optimizer={"clip_grad": 0.0},
+            optimizer={"use_precision_aware_optimizer": True},
         )
         cfg.model = create_dense_hybrid_smoke_model_config()
         cfg.ddp.megatron_fsdp_version = 2
+
+        pretrain(cfg, forward_step)
+
+        torch.distributed.barrier()
+
+    @pytest.mark.run_only_on("GPU")
+    def test_fsdp_v2_dense_hybrid_cuda_graph_pretrain_smoke(self):
+        """Train a dense HybridModel with MFSDP V2 full-iteration and optimizer graphs."""
+        initialize_distributed()
+        torch.distributed.barrier()
+
+        # Replace the tracker left by eager tests with MCore's graph-safe RNG tracker.
+        initialize_rng_tracker(use_cudagraphable_rng=True, force_reset=True)
+
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            optimizer={"use_precision_aware_optimizer": True, "optimizer_cuda_graph": True},
+        )
+        cfg.model = create_dense_hybrid_smoke_model_config()
+        cfg.ddp.megatron_fsdp_version = 2
+        # Full-iteration graphs over a dense model: Megatron-LM #7075 made these work
+        # under MFSDP v2. MoE stays out, its dispatch shapes are not capturable.
+        cfg.model.cuda_graph_impl = "full_iteration"
+        # The loss NaN check reads a GPU value on the host and cannot be captured.
+        cfg.rerun_state_machine.check_for_nan_in_loss = False
+        # Capturable TE FusedAdam requires the main-gradient and main-weight dtypes
+        # to match (https://github.com/NVIDIA/TransformerEngine/issues/3358).
+        cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
 
         pretrain(cfg, forward_step)
 
@@ -455,6 +510,101 @@ class TestMegatronFSDP:
         cfg.ddp.megatron_fsdp_version = 2
 
         pretrain(cfg, forward_step)
+
+        torch.distributed.barrier()
+
+    @pytest.mark.run_only_on("GPU")
+    def test_fsdp_v2_moe_ep2_save_resume(self, tmp_path: Path) -> None:
+        """Match resumed MoE losses to uninterrupted training, including optimizer updates."""
+        initialize_distributed()
+        if torch.distributed.get_world_size() != 2:
+            pytest.skip("This test requires two GPUs for EP=2.")
+        shared_base_dir = broadcast_path(tmp_path)
+        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
+        total_iters = 4
+        checkpoint_iters = 2
+
+        def train(
+            *, train_iters: int, save_dir: str | None = None, load_dir: str | None = None
+        ) -> dict[int, torch.Tensor]:
+            cfg = create_fsdp_config_container(
+                seq_length=32,
+                train_iters=train_iters,
+                checkpoint_dir=save_dir,
+                load_dir=load_dir,
+                save_interval=checkpoint_iters,
+                train={"global_batch_size": 4, "micro_batch_size": 2},
+                optimizer={"clip_grad": 0.0, "use_precision_aware_optimizer": True},
+                scheduler={
+                    "lr_decay_iters": total_iters,
+                    "lr_warmup_iters": 0,
+                    "override_opt_param_scheduler": False,
+                    "use_checkpoint_opt_param_scheduler": True,
+                },
+                ddp={"megatron_fsdp_version": 2},
+                dataset={"num_workers": 0},
+                logger={"log_params_norm": False},
+                tokenizer={"vocab_size": 128},
+                checkpoint={"exit_on_missing_checkpoint": True},
+            )
+            cfg.model = MoEHybridSmokeModelProvider(
+                seq_length=32,
+                attention_backend=AttnBackend.unfused,
+                moe_grouped_gemm=True,
+                moe_token_dispatcher_type="alltoall",
+                use_cpu_initialization=False,
+            )
+            losses: dict[int, torch.Tensor] = {}
+
+            def record_loss(context: CallbackContext) -> None:
+                assert not context.skipped_iter
+                assert context.loss_dict is not None
+                # The callback runs before the training step counter is incremented.
+                step = context.state.train_state.step + 1
+                losses[step] = context.loss_dict["lm loss"].detach().clone()
+
+            callbacks = CallbackManager()
+            callbacks.register("on_train_step_end", record_loss)
+            pretrain(cfg, forward_step, callbacks=callbacks)
+            return losses
+
+        try:
+            before_save = train(train_iters=checkpoint_iters, save_dir=checkpoint_dir)
+            verify_checkpoint_files(checkpoint_dir, checkpoint_iters, ckpt_format="fsdp_dtensor")
+            resumed = train(train_iters=total_iters, load_dir=checkpoint_dir)
+            uninterrupted = train(train_iters=total_iters)
+
+            assert list(before_save) == [1, 2]
+            assert list(resumed) == [3, 4]
+            assert list(uninterrupted) == [1, 2, 3, 4]
+            for step, loss in (before_save | resumed).items():
+                torch.testing.assert_close(loss, uninterrupted[step], rtol=0, atol=0, msg=f"Step {step}")
+        finally:
+            clear_directories(shared_base_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize("outer_dp_sharding_strategy", ["no_shard", "optim"], ids=["hsdp", "hfsdp"])
+    def test_fsdp_v2_hybrid_dp_pretrain_smoke(self, outer_dp_sharding_strategy):
+        """Train the dense HybridModel over an outer data-parallel axis.
+
+        no_shard outer over the optim_grads_params inner axis is HSDP, optim outer is HFSDP.
+        """
+        initialize_distributed()
+        torch.distributed.barrier()
+
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            ddp={
+                "num_distributed_optimizer_instances": 2,
+                "outer_dp_sharding_strategy": outer_dp_sharding_strategy,
+            },
+        )
+        cfg.model = create_dense_hybrid_smoke_model_config()
+        cfg.ddp.megatron_fsdp_version = 2
+
+        pretrain(cfg, forward_step)
+
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")

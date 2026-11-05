@@ -35,7 +35,7 @@ This module provides three model providers:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, List, Optional, cast
+from typing import Any, Callable, ClassVar, List, Literal, Optional, cast
 
 import transformers
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -44,6 +44,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
 )
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import TransformerConfig
 from packaging.version import Version as PkgVersion
 
 
@@ -202,6 +203,11 @@ class Qwen35VLModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # "inherit" preserves legacy decoder-policy inheritance; None disables vision recompute.
+    vision_recompute_granularity: Literal["inherit", "full", "selective"] | None = "inherit"
+    vision_recompute_method: Literal["uniform", "block"] | None = None
+    vision_recompute_num_layers: int | None = None
+    vision_recompute_modules: list[str] | None = None
     hetereogenous_dist_checkpoint: bool = True
 
     mtp_num_layers: Optional[int] = None
@@ -455,6 +461,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # "inherit" preserves legacy decoder-policy inheritance; None disables vision recompute.
+    vision_recompute_granularity: Literal["inherit", "full", "selective"] | None = "inherit"
+    vision_recompute_method: Literal["uniform", "block"] | None = None
+    vision_recompute_num_layers: int | None = None
+    vision_recompute_modules: list[str] | None = None
 
     # Vision encoder CUDA graph settings
     vision_cuda_graph_impl: str = "none"
@@ -536,13 +547,13 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
 
 def _qwen35_build_language_block_spec(
-    provider: GPTModelProvider,
+    config: TransformerConfig,
     vp_stage: Optional[int],
     pp_rank: Optional[int] = None,
 ) -> TransformerBlockSubmodules | ModuleSpec:
-    """Build the language transformer-block spec."""
+    """Build the language transformer-block spec from a provider or a builder's transformer config."""
     block_spec = get_transformer_block_with_experimental_attention_variant_spec(
-        provider,
+        config,
         vp_stage=vp_stage,
         pp_rank=pp_rank,
     )

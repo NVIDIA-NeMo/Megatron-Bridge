@@ -254,6 +254,8 @@ def test_process_mtp_loss_with_native_packing_metadata():
         mtp_loss_scaling_factor=1.0,
         calculate_per_token_loss=True,
         use_mup=False,
+        # process_mtp_loss reads the CP layout; mirror TransformerConfig's default.
+        attention_cp_layout="zigzag",
     )
     output = process_mtp_loss(
         hidden_states=hidden_states,
@@ -261,7 +263,6 @@ def test_process_mtp_loss_with_native_packing_metadata():
         loss_mask=loss_mask,
         output_layer=fake_output_layer,
         output_weight=None,
-        runtime_gather_output=None,
         is_training=False,
         compute_language_model_loss=fake_language_loss,
         config=config,

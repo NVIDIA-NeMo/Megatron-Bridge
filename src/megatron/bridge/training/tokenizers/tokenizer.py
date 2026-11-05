@@ -103,6 +103,9 @@ def _resolve_hf_tokenizer_revision(config: TokenizerConfig) -> TokenizerConfig:
     from huggingface_hub import snapshot_download
     from huggingface_hub.constants import HF_HUB_OFFLINE
 
+    # Respect an explicit local_files_only override, otherwise the process wide
+    # offline flag. For a full commit hash, huggingface_hub 2.0-2.1 otherwise
+    # lists the repo tree even under HF_HUB_OFFLINE and raises OfflineModeIsEnabled.
     local_files_only = bool(hf_tokenizer_kwargs.get("local_files_only", HF_HUB_OFFLINE))
 
     try:
@@ -179,5 +182,11 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
 
     if config.chat_template_path is not None:
         config = dataclasses.replace(config, chat_template=_resolve_chat_template(config), chat_template_path=None)
+
+    prompt_format = getattr(config, "tokenizer_prompt_format", None)
+    if prompt_format is not None and getattr(config, "sft_tokenizer_prompt_format", None) != prompt_format:
+        # Overrides applied after construction may change Bridge's canonical prompt format.
+        config = copy(config)
+        config.sft_tokenizer_prompt_format = prompt_format
 
     return build_mcore_tokenizer(_resolve_hf_tokenizer_revision(config), **kwargs)

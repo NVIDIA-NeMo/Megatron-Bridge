@@ -80,6 +80,15 @@ def test_parser_forwards_training_selection_and_overrides():
     ]
 
 
+def test_poll_interval_is_not_forwarded_to_training():
+    module = _load_setup_experiment_module()
+    args, training_args = module.parse_args(["--poll-interval", "120", "--recipe", "example_config"])
+    assert args.poll_interval == 120
+    assert training_args == ["--recipe", "example_config"]
+    with pytest.raises(SystemExit):
+        module.parse_args(["--poll-interval", "2"])
+
+
 def test_parser_forwards_and_auto_detects_benchmark_recipe():
     module = _load_setup_experiment_module()
 
@@ -254,10 +263,10 @@ def test_parser_consumes_peak_mem_clk(option):
 @pytest.mark.parametrize(
     ("requested_peak_mem_clk", "hardware", "expected"),
     [
-        (None, "vr200", 4752),
+        (None, "vrnvl72", 4752),
         (None, "h100", None),
-        (2600, "vr200", 2600),
-        (-1, "vr200", None),
+        (2600, "vrnvl72", 2600),
+        (-1, "vrnvl72", None),
     ],
 )
 def test_peak_mem_clk_resolution(requested_peak_mem_clk, hardware, expected):
@@ -290,7 +299,15 @@ def test_peak_mem_clk_is_applied_once_per_slurm_node():
     assert "sudo nvidia-smi -lmc 4752,4752" in executor.setup_lines
 
 
-def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config",
+        # The deprecated hardware name resolves to the same benchmark recipe.
+        "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config",
+    ],
+)
+def test_main_applies_vrnvl72_peak_mem_clk_default(monkeypatch, recipe_name):
     module = _load_setup_experiment_module()
     configured_clocks = []
     sentinel_executor = object()
@@ -300,8 +317,8 @@ def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
             pass
 
     class _Experiment:
-        def __init__(self, _name):
-            pass
+        def __init__(self, _name, *, skip_status_at_exit):
+            assert skip_status_at_exit is True
 
         def __enter__(self):
             return self
@@ -339,7 +356,7 @@ def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
             "image.sqsh",
             "--submission-dry-run",
             "--recipe",
-            "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config",
+            recipe_name,
         ]
     )
 
@@ -503,6 +520,7 @@ def test_benchmark_slurm_executor_uses_the_generic_cluster_policy(tmp_path, monk
     executor = module._build_executor(args, [], [], task_environment=task_environment)
 
     assert executor.kwargs["ntasks_per_node"] == 8
+    assert executor.kwargs["poll_estimated_start_time"] is False
     assert executor.kwargs["gpus_per_node"] == 8
     assert executor.srun_args == ["--label"]
     assert "launcher" not in executor.kwargs
@@ -592,9 +610,9 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
     ("extra_options", "expected_run", "expected_dryrun"),
     [
         ([], [{"detach": True, "tail_logs": False}], 0),
-        (["--wait"], [{"detach": False, "tail_logs": True}], 0),
+        (["--wait"], [{"detach": True, "tail_logs": False}], 0),
         (["--dry_run"], [{"detach": True, "tail_logs": False}], 0),
-        (["--wait", "--dry_run"], [{"detach": False, "tail_logs": True}], 0),
+        (["--wait", "--dry_run"], [{"detach": True, "tail_logs": False}], 0),
         (["--submission-dry-run"], [], 1),
         (["--dry-run"], [], 1),
     ],
@@ -608,6 +626,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     module = _load_setup_experiment_module()
     run_kwargs = []
     dryrun_calls = []
+    wait_calls = []
     scripts = []
 
     class _Script:
@@ -622,8 +641,8 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
             return [self.entrypoint, self.path, *self.args]
 
     class _Experiment:
-        def __init__(self, _name):
-            pass
+        def __init__(self, _name, *, skip_status_at_exit):
+            assert skip_status_at_exit is True
 
         def __enter__(self):
             return self
@@ -645,6 +664,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     module.run.Script = _Script
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: sentinel_executor)
+    monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **kwargs: wait_calls.append(kwargs))
 
     training_args = ["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"]
     module.main(
@@ -663,6 +683,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     )
 
     assert run_kwargs == expected_run
+    assert wait_calls == ([{"poll_interval": 60}] if "--wait" in extra_options else [])
     assert len(dryrun_calls) == expected_dryrun
     assert len(scripts) == 1
     assert scripts[0].path == "/opt/Megatron-Bridge/scripts/training/run_recipe.py"
@@ -684,8 +705,8 @@ def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
             scripts.append(types.SimpleNamespace(**kwargs))
 
     class _Experiment:
-        def __init__(self, _name):
-            pass
+        def __init__(self, _name, *, skip_status_at_exit):
+            assert skip_status_at_exit is True
 
         def __enter__(self):
             return self

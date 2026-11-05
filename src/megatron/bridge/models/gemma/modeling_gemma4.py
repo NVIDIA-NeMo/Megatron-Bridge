@@ -39,6 +39,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.extensions.transformer_engine import te_checkpoint
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.backends import LocalSpecProvider
@@ -46,10 +47,11 @@ from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEm
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
+from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
-from megatron.core.transformer.moe.moe_layer import MoELayer, te_checkpoint
+from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.spec_utils import ModuleSpec, get_submodules
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -510,6 +512,70 @@ class Gemma4DenseSelfAttention(SelfAttention):
         )
 
 
+class Gemma4DotProductAttention(DotProductAttention):
+    """Gemma 4 dense core attention with Hugging Face's per-layer image masks.
+
+    With ``use_bidirectional_attention="vision"``, Hugging Face lets the tokens of an image
+    attend to each other only in sliding layers, inside the sliding window; global layers stay
+    causal. The VL model passes one mask that opens every image block, so global layers restore
+    causality here. Sliding layers apply the left window to that mask themselves, because
+    Megatron Core's softmax would OR its causal sliding-window mask into it and close the block.
+    """
+
+    def __init__(
+        self,
+        config: TransformerConfig,
+        layer_number: int,
+        attn_mask_type: AttnMaskType,
+        attention_type: str,
+        attention_dropout: float | None = None,
+        **kwargs,
+    ):
+        text_config = getattr(config, "text_config", None)
+        uses_vision_bidirectional = getattr(text_config, "use_bidirectional_attention", None) == "vision"
+        is_sliding = _is_gemma4_sliding_layer(config, layer_number)
+        self._image_bidirectional_attention = uses_vision_bidirectional and is_sliding
+        self._causal_image_attention = uses_vision_bidirectional and not is_sliding
+        # window_size is (sliding_window - 1, 0); HF keeps keys with kv_idx > q_idx - sliding_window.
+        self._image_attention_window = config.window_size[0] + 1 if self._image_bidirectional_attention else None
+        if self._image_bidirectional_attention:
+            config = copy.copy(config)
+            config.window_size = None
+            # A causal mask type would let the fused softmax kernel ignore the explicit mask.
+            attn_mask_type = AttnMaskType.arbitrary
+        super().__init__(
+            config=config,
+            layer_number=layer_number,
+            attn_mask_type=attn_mask_type,
+            attention_type=attention_type,
+            attention_dropout=attention_dropout,
+            **kwargs,
+        )
+
+    def forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attention_mask: Tensor | None,
+        attn_mask_type: AttnMaskType | None = None,
+        **kwargs,
+    ) -> Tensor:
+        """Apply the layer's image mask: windowed image blocks in sliding layers, causal in global layers."""
+        if self._image_bidirectional_attention or self._causal_image_attention:
+            query_positions = torch.arange(query.size(0), device=query.device) + key.size(0) - query.size(0)
+            key_positions = torch.arange(key.size(0), device=key.device)
+            future = (key_positions[None, :] > query_positions[:, None])[None, None]
+            if attention_mask is None:
+                attention_mask = future
+            if self._causal_image_attention:
+                attention_mask = attention_mask | future
+            else:
+                outside_window = key_positions[None, :] <= query_positions[:, None] - self._image_attention_window
+                attention_mask = attention_mask | outside_window[None, None]
+        return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Gemma4DenseTransformerLayer: 4-norm + dual-RoPE + PLE + optional local MoE
 # ---------------------------------------------------------------------------
@@ -555,10 +621,13 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
         )
 
         _ple_dim = getattr(config, "per_layer_embed_dim", 0)
-        self.register_buffer("layer_scalar", torch.ones(1), persistent=True)
+        # Create these in params_dtype like the Megatron modules (and the MoE layer), so a model
+        # built without the Float16Module wrapper, as Bridge's conversion tools build it, runs.
+        params_dtype = getattr(config, "params_dtype", torch.float32)
+        self.register_buffer("layer_scalar", torch.ones(1, dtype=params_dtype), persistent=True)
         if _ple_dim > 0:
-            self.per_layer_input_gate = nn.Linear(config.hidden_size, _ple_dim, bias=False)
-            self.per_layer_projection = nn.Linear(_ple_dim, config.hidden_size, bias=False)
+            self.per_layer_input_gate = nn.Linear(config.hidden_size, _ple_dim, bias=False, dtype=params_dtype)
+            self.per_layer_projection = nn.Linear(_ple_dim, config.hidden_size, bias=False, dtype=params_dtype)
             self.post_per_layer_input_norm = submodules.post_per_layer_input_norm(
                 config=self.config,
                 hidden_size=self.config.hidden_size,
@@ -736,6 +805,49 @@ def wire_gemma4_kv_sharing(model: nn.Module) -> None:
                 attn._kv_source_ref = weakref.ref(source)
 
 
+def install_gemma4_dense_load_state_aliases(model: torch.nn.Module) -> None:
+    """Translate Gemma4 Dense checkpoint attention aliases before load_state_dict.
+
+    Gemma4 Dense saves sliding/global attention tensors under separate names in
+    dist-checkpoints because the two layer types have different sharded shapes.
+    After dist-checkpoint load materializes a regular state_dict, PyTorch module
+    loading expects the real module attribute name, ``self_attention``.
+    """
+
+    if getattr(model, "_gemma4_dense_load_state_aliases_installed", False):
+        return
+
+    def _load_state_dict_pre_hook(
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        del local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+
+        for key in list(state_dict.keys()):
+            if prefix and not key.startswith(prefix):
+                continue
+
+            canonical_key = None
+            if ".self_attention_sliding." in key:
+                canonical_key = key.replace(".self_attention_sliding.", ".self_attention.")
+            elif ".self_attention_global." in key:
+                canonical_key = key.replace(".self_attention_global.", ".self_attention.")
+
+            if canonical_key is None:
+                continue
+
+            state_dict.setdefault(canonical_key, state_dict[key])
+            state_dict.pop(key)
+
+    model._register_load_state_dict_pre_hook(_load_state_dict_pre_hook)
+    model._gemma4_dense_load_state_aliases_installed = True
+
+
 # ---------------------------------------------------------------------------
 # Dense layer spec factory
 # ---------------------------------------------------------------------------
@@ -752,7 +864,7 @@ def get_gemma4_layer_spec(config: Optional[TransformerConfig] = None) -> ModuleS
             params={"attn_mask_type": AttnMaskType.causal},
             submodules=SelfAttentionSubmodules(
                 linear_qkv=backend.column_parallel_linear(),
-                core_attention=backend.core_attention(),
+                core_attention=Gemma4DotProductAttention,
                 linear_proj=backend.row_parallel_linear(),
                 q_layernorm=RMSNorm,
                 k_layernorm=RMSNorm,
@@ -995,7 +1107,7 @@ def _gemma4_checkpointed_forward(
     input_ids: "Optional[Tensor]" = None,
     per_layer_inputs: "Optional[Tensor]" = None,
 ):
-    """MCore recompute helper variant that carries Gemma4 PLE through checkpoint args."""
+    """MCore recompute helper variant that carries Gemma4 PLE and shared K/V through checkpoint args."""
     from contextlib import nullcontext
 
     from megatron.core import tensor_parallel
@@ -1011,16 +1123,38 @@ def _gemma4_checkpointed_forward(
         extract_layer_indices = set()
     intermediate_hidden_states = []
 
+    # Gemma4 RoPE is a (local, global) pair. As in MCore's checkpointed_forward, wrap a
+    # single RoPE the same way so custom_forward always takes two RoPE arguments.
+    is_dual_rope = isinstance(rotary_pos_emb, (tuple, list))
+    assert not is_dual_rope or len(rotary_pos_emb) == 2, "Dual RoPE input length is not equal to 2"
+    rotary_pos_emb = rotary_pos_emb if is_dual_rope else (None, rotary_pos_emb)
+
+    # KV-shared layers read the K/V that their source layer stored during its forward. A checkpointed
+    # forward runs without autograd, so pass the stored K/V between chunks as checkpoint inputs and
+    # outputs; otherwise the shared layers' gradients never reach the source layers.
+    kv_sources = [
+        layer.self_attention
+        for layer in self.layers
+        if getattr(getattr(layer, "self_attention", None), "store_full_length_kv", False)
+    ]
+    shared_kv = [None] * (2 * len(kv_sources))
+
     def custom(start: int, end: int):
         def custom_forward(
             hidden_states,
             attention_mask,
             context,
             context_mask,
-            rotary_pos_emb,
+            rotary_pos_emb_local,
+            rotary_pos_emb_global,
             padding_mask=None,
             per_layer_inputs=None,
+            *shared_kv,
         ):
+            rotary_pos_emb = (rotary_pos_emb_local, rotary_pos_emb_global) if is_dual_rope else rotary_pos_emb_global
+            for source, key, value in zip(kv_sources, shared_kv[0::2], shared_kv[1::2]):
+                source._stored_kv = None if key is None else (key, value)
+
             for index in range(start, end):
                 layer = self.layers[index]
 
@@ -1063,17 +1197,32 @@ def _gemma4_checkpointed_forward(
 
                 if isinstance(hidden_states, tuple):
                     hidden_states = hidden_states[0]
-            return hidden_states, context
+
+            shared_kv = []
+            for source in kv_sources:
+                shared_kv.extend(source._stored_kv or (None, None))
+                source._stored_kv = None
+            return (hidden_states, context, *shared_kv)
 
         return custom_forward
 
     def chunk_runner(start: int, end: int, use_checkpoint: bool):
-        nonlocal hidden_states, context
+        nonlocal hidden_states, context, shared_kv
         cf = custom(start, end)
-        args = (hidden_states, attention_mask, context, context_mask, rotary_pos_emb, padding_mask, per_layer_inputs)
+        # Unpack the RoPE tuple as torch cannot save tuples for backward pass.
+        args = (
+            hidden_states,
+            attention_mask,
+            context,
+            context_mask,
+            *rotary_pos_emb,
+            padding_mask,
+            per_layer_inputs,
+            *shared_kv,
+        )
         if use_checkpoint:
             if self.config.fp8 or self.config.fp4:
-                hidden_states, context = te_checkpoint(
+                hidden_states, context, *shared_kv = te_checkpoint(
                     cf,
                     self.config.distribute_saved_activations,
                     tensor_parallel.random.get_cuda_rng_tracker,
@@ -1081,11 +1230,11 @@ def _gemma4_checkpointed_forward(
                     *args,
                 )
             else:
-                hidden_states, context = tensor_parallel.checkpoint(
+                hidden_states, context, *shared_kv = tensor_parallel.checkpoint(
                     cf, self.config.distribute_saved_activations, *args
                 )
         else:
-            hidden_states, context = cf(*args)
+            hidden_states, context, *shared_kv = cf(*args)
 
         if self.config.recompute_method == "uniform":
             if (end - 1 + layer_offset) in extract_layer_indices:
@@ -1314,12 +1463,17 @@ class Gemma4TransformerLayer(TransformerLayer):
         # TODO: remove this guard when MCore dev includes commit e86c262ccd0c and both pins expose
         # TransformerLayer._maybe_unflatten_for_moe.
         if packed_seq_params is not None and hasattr(TransformerLayer, "_maybe_unflatten_for_moe"):
-            moe_input, padding_mask, moe_unflatten_mbs = TransformerLayer._maybe_unflatten_for_moe(
-                self,
-                residual,
-                padding_mask,
-                packed_seq_params,
-            )
+            unflatten_for_moe = TransformerLayer._maybe_unflatten_for_moe
+            # Hash-routing support added input_ids and a fourth return value in MCore.
+            # Gemma's separate-input MoE path does not use token IDs.
+            if "input_ids" in inspect.signature(unflatten_for_moe).parameters:
+                moe_input, padding_mask, _, moe_unflatten_mbs = unflatten_for_moe(
+                    self, residual, padding_mask, input_ids=None, packed_seq_params=packed_seq_params
+                )
+            else:
+                moe_input, padding_mask, moe_unflatten_mbs = unflatten_for_moe(
+                    self, residual, padding_mask, packed_seq_params
+                )
 
         expert_input = _gemma4_rms_norm(
             moe_input,
@@ -1736,10 +1890,29 @@ class Gemma4TEDotProductAttention(TEDotProductAttention):
         **kwargs,
     ):
         config = copy.deepcopy(config)
-        if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
-            config.window_size = (config.window_size - 1, 0)
+        is_local = _is_local_attn_layer(layer_number, config.interleaved_attn_pattern)
+        text_config = getattr(config, "text_config", None)
+        uses_vision_bidirectional = getattr(text_config, "use_bidirectional_attention", None) == "vision"
+        self._image_bidirectional_attention = uses_vision_bidirectional and (
+            is_local or getattr(config, "global_image_bidirectional_attention", False)
+        )
+        # Image bidirectionality also applies to DiffusionGemma's global layers,
+        # but only local layers have a finite left window. Keeping a window on a
+        # global layer silently drops distant prompt context once S > window.
+        self._image_attention_window = config.window_size if is_local and self._image_bidirectional_attention else None
+        if is_local:
+            if self._image_bidirectional_attention:
+                # Compose the left window into the explicit mask. TE cannot express
+                # a finite left window with an unrestricted right window, and a zero
+                # right window would remove future tokens in the same image block.
+                config.window_size = None
+                attn_mask_type = AttnMaskType.arbitrary
+            else:
+                config.window_size = (config.window_size - 1, 0)
         else:
             config.window_size = None
+            if self._image_bidirectional_attention:
+                attn_mask_type = AttnMaskType.arbitrary
 
         super().__init__(
             config=config,
@@ -1749,6 +1922,29 @@ class Gemma4TEDotProductAttention(TEDotProductAttention):
             attention_dropout=attention_dropout,
             **kwargs,
         )
+
+    def forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attention_mask: Tensor | None,
+        attn_mask_type: AttnMaskType,
+        **kwargs,
+    ) -> Tensor:
+        """Honor the image mask in sliding layers while keeping global layers causal."""
+        if self._image_bidirectional_attention:
+            # TE ignores explicit masks in causal mode. Global Gemma 4 attention
+            # remains causal, including image tokens, as in the HF implementation.
+            query_positions = torch.arange(query.size(0), device=query.device) + key.size(0) - query.size(0)
+            key_positions = torch.arange(key.size(0), device=key.device)
+            if attention_mask is None:
+                attention_mask = key_positions[None, :] > query_positions[:, None]
+            if self._image_attention_window is not None:
+                outside_window = key_positions[None, :] <= query_positions[:, None] - self._image_attention_window
+                attention_mask = attention_mask | outside_window[None, None, :, :]
+            attn_mask_type = AttnMaskType.arbitrary
+        return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)
 
 
 class Gemma4RotaryEmbedding(RotaryEmbedding):

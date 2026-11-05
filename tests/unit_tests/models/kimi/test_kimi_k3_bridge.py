@@ -12,27 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import fields
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
 
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge
+from megatron.bridge.models.common.base import ModelConfig
+from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple, MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
     RowParallelMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.kimi import kimi_k3_spec
 from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
-from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3MoELayer, KimiK3TransformerLayer
+from megatron.bridge.models.kimi.kimi_k3_config import KimiK3ModelConfig, KimiK3TransformerConfig
+from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3Attention, KimiK3MoELayer, KimiK3TransformerLayer
 from megatron.bridge.models.kimi.kimi_k3_pipeline import (
     bank_num_rows,
     pack_stage_boundary,
     unpack_stage_boundary,
 )
 from megatron.bridge.models.kimi.kimi_k3_provider import KimiK3ModelProvider
+from megatron.bridge.models.kimi.kimi_k3_spec import build_kimi_k3_spec
 
 
 @pytest.fixture
@@ -95,38 +104,116 @@ def kimi_k3_pretrained(kimi_k3_text_config: SimpleNamespace) -> Mock:
     return pretrained
 
 
+def _provider(pretrained: Mock) -> KimiK3ModelProvider:
+    with pytest.warns(FutureWarning, match="deprecated for builder-backed models"):
+        return KimiK3Bridge().provider_bridge(pretrained)
+
+
+def _assert_four_layer_proxy(config: KimiK3ModelConfig | KimiK3ModelProvider) -> None:
+    """K3's heterogeneous attention and latent-MoE layout, read through either config."""
+    assert config.num_layers == 4
+    assert config.position_embedding_type == "none"
+    assert config.transformer_layer_spec is build_kimi_k3_spec
+    assert config.kimi_kda_layers == (1, 2, 3)
+    assert config.moe_layer_freq == [0, 1, 1, 1]
+    assert config.multi_latent_attention is True
+    assert config.q_lora_rank == 1536
+    assert config.kv_lora_rank == 512
+    assert config.num_moe_experts == 896
+    assert config.moe_ffn_hidden_size == 3072
+    assert config.moe_latent_size == 3584
+    assert config.moe_shared_expert_intermediate_size == 6144
+    assert config.moe_router_topk == 16
+    assert config.moe_router_num_groups == 1
+    assert config.moe_router_group_topk == 1
+    assert config.moe_router_enable_expert_bias is True
+    assert config.moe_router_dtype == "fp32"
+    assert config.activation_func is torch.nn.functional.silu
+    assert config.hidden_dropout == 0.0
+    assert config.attention_dropout == 0.0
+    assert config.make_vocab_size_divisible_by == 128
+    assert config.use_te_activation_func is True
+    assert config.variable_seq_lengths is True
+    assert config.deallocate_pipeline_outputs is False
+    assert config.bf16 is True
+    assert config.params_dtype == torch.bfloat16
+
+
+def test_conversion_uses_builder_config() -> None:
+    assert KimiK3Bridge.MODEL_CONFIG_CLASS is KimiK3ModelConfig
+    assert KimiK3Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+    assert KimiK3ModelConfig.transformer_config_class is KimiK3TransformerConfig
+
+
+def test_model_config_configures_four_layer_proxy(kimi_k3_pretrained: Mock) -> None:
+    """The builder config preserves K3's heterogeneous attention and latent-MoE layout."""
+    bridge = KimiK3Bridge()
+    # The builder path must not route through the legacy provider.
+    with (
+        patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+        patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+    ):
+        model_config = bridge.hf_config_to_model_config(kimi_k3_pretrained.config)
+
+    assert isinstance(model_config, KimiK3ModelConfig)
+    assert isinstance(model_config.transformer, KimiK3TransformerConfig)
+    assert model_config.transformer.kimi_kda_layers == (1, 2, 3)
+    _assert_four_layer_proxy(model_config)
+
+
 def test_provider_bridge_configures_four_layer_proxy(kimi_k3_pretrained: Mock) -> None:
-    """The provider preserves K3's heterogeneous attention and latent-MoE layout."""
-    provider = KimiK3Bridge().provider_bridge(kimi_k3_pretrained)
+    """The deprecated provider keeps K3's heterogeneous attention and latent-MoE layout."""
+    provider = _provider(kimi_k3_pretrained)
 
     assert isinstance(provider, KimiK3ModelProvider)
-    assert provider.num_layers == 4
-    assert provider.position_embedding_type == "none"
-    assert provider.kimi_kda_layers == (1, 2, 3)
-    assert provider.moe_layer_freq == [0, 1, 1, 1]
-    assert provider.q_lora_rank == 1536
-    assert provider.kv_lora_rank == 512
-    assert provider.num_moe_experts == 896
-    assert provider.moe_ffn_hidden_size == 3072
-    assert provider.moe_latent_size == 3584
-    assert provider.moe_shared_expert_intermediate_size == 6144
-    assert provider.moe_router_topk == 16
-    assert provider.moe_router_num_groups == 1
-    assert provider.moe_router_group_topk == 1
-    assert provider.activation_func is torch.nn.functional.silu
-    assert provider.hidden_dropout == 0.0
-    assert provider.attention_dropout == 0.0
-    assert provider.make_vocab_size_divisible_by == 128
-    assert provider.use_te_activation_func is True
-    assert provider.variable_seq_lengths is True
-    assert provider.bf16 is True
-    assert provider.params_dtype == torch.bfloat16
+    _assert_four_layer_proxy(provider)
+
+
+def test_model_config_matches_provider(kimi_k3_pretrained: Mock) -> None:
+    model_config = KimiK3Bridge().hf_config_to_model_config(kimi_k3_pretrained.config)
+    provider = _provider(kimi_k3_pretrained)
+
+    model_fields = {f.name for f in fields(model_config)} | {f.name for f in fields(model_config.transformer)}
+    shared = {f.name for f in fields(provider)} & model_fields
+    assert {"transformer_layer_spec", "kimi_kda_layers", "variable_seq_lengths"} <= shared
+    for name in sorted(shared):
+        assert getattr(model_config, name) == getattr(provider, name), name
+
+
+def test_model_config_round_trip(kimi_k3_pretrained: Mock) -> None:
+    model_config = KimiK3Bridge().hf_config_to_model_config(kimi_k3_pretrained.config)
+
+    restored = ModelConfig.from_dict(model_config.as_dict())
+
+    assert isinstance(restored, KimiK3ModelConfig)
+    assert isinstance(restored.transformer, KimiK3TransformerConfig)
+    assert restored.transformer_layer_spec is build_kimi_k3_spec
+    assert list(restored.kimi_kda_layers) == [1, 2, 3]
+    assert restored.kimi_attn_res_block_size == 12
+    assert restored.position_embedding_type == "none"
+
+
+def test_spec_reads_the_builder_transformer_config(kimi_k3_pretrained: Mock, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The GPT builder passes its model config; the K3 block is built from the nested transformer config."""
+    seen = {}
+
+    def _capture(config, **kwargs):
+        seen["config"] = config
+        return SimpleNamespace(layer_specs=[])
+
+    monkeypatch.setattr(kimi_k3_spec, "get_gpt_decoder_block_spec", _capture)
+    monkeypatch.setattr(kimi_k3_spec, "get_transformer_layer_offset", lambda config, vp_stage: 0)
+    model_config = KimiK3Bridge().hf_config_to_model_config(kimi_k3_pretrained.config)
+
+    build_kimi_k3_spec(model_config, vp_stage=None)
+
+    assert seen["config"] is model_config.transformer
 
 
 def test_mapping_registry_covers_kda_latent_moe_and_attn_res(kimi_k3_pretrained: Mock) -> None:
     """Custom K3 weights resolve in both conversion directions."""
     bridge = KimiK3Bridge()
-    bridge.provider_bridge(kimi_k3_pretrained)
+    bridge.hf_config = kimi_k3_pretrained.config
     registry = bridge.mapping_registry()
 
     cases = {
@@ -235,6 +322,51 @@ def test_export_preserves_unconverted_multimodal_weights(monkeypatch: pytest.Mon
     torch.testing.assert_close(result[2].weight, projector, rtol=0, atol=0)
 
 
+def test_export_with_megatron_names_marks_passthrough_weights_sourceless(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flag reaches the language-model export; HF-only multimodal tensors carry zero sources."""
+    language = torch.tensor([1.0])
+    vision = torch.tensor([2.0])
+    tensors = {"vision_tower.encoder.weight": vision, "unrelated.weight": torch.tensor([4.0])}
+
+    class _Source:
+        @staticmethod
+        def get_all_keys() -> list[str]:
+            return list(tensors)
+
+    class _State:
+        source = _Source()
+
+        def __getitem__(self, name: str) -> torch.Tensor:
+            return tensors[name]
+
+    seen_kwargs: dict = {}
+
+    def fake_stream(*_args, **kwargs):
+        seen_kwargs.update(kwargs)
+        yield HFSourcedWeightTuple("language_model.weight", language, ("decoder.weight",))
+
+    monkeypatch.setattr(MegatronModelBridge, "stream_weights_megatron_to_hf", fake_stream)
+    monkeypatch.setattr(KimiK3Bridge, "_should_emit_hf_passthrough", lambda *_args, **_kwargs: True)
+
+    result = list(
+        KimiK3Bridge().stream_weights_megatron_to_hf(
+            [],
+            SimpleNamespace(state=_State()),
+            with_megatron_names=True,
+            current_pp_stage_only=True,
+        )
+    )
+
+    assert seen_kwargs["with_megatron_names"] is True
+    assert seen_kwargs["current_pp_stage_only"] is True
+    assert [type(item) for item in result] == [HFSourcedWeightTuple, HFSourcedWeightTuple]
+    assert result[0].megatron_param_names == ("decoder.weight",)
+    assert result[1].param_name == "vision_tower.encoder.weight"
+    assert result[1].megatron_param_names == ()
+    assert result[1].megatron_param_name is None
+    torch.testing.assert_close(result[1].weight, vision, rtol=0, atol=0)
+
+
 def test_stage_boundary_pack_unpack_and_bank_schedule() -> None:
     """AttnRes state survives pipeline packing without mixing rows."""
     prefix_sum = torch.randn(5, 2, 16, dtype=torch.bfloat16)
@@ -311,3 +443,22 @@ def test_transformer_layer_does_not_forward_input_ids_to_upstream_moe(
     )
 
     assert mlp.call_args.kwargs == {"padding_mask": padding_mask}
+
+
+@pytest.mark.parametrize("layer_number, is_kda", [(1, True), (2, False)])
+def test_attention_builds_through_mcore_transformer_layer(
+    monkeypatch: pytest.MonkeyPatch, layer_number: int, is_kda: bool
+) -> None:
+    """MCore TransformerLayer can build KimiK3Attention with the kwargs it passes to self-attention."""
+    monkeypatch.setattr(KimiK3Attention, "_init_kda", lambda self, config: None)
+    monkeypatch.setattr(KimiK3Attention, "_init_mla", lambda self, config: None)
+    config = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2, hidden_dropout=0.0)
+    config.kimi_kda_layers = [1]
+    group = SimpleNamespace(size=lambda: 1, rank=lambda: 0)
+    pg_collection = ProcessGroupCollection(tp=group, cp=group)
+    submodules = TransformerLayerSubmodules(self_attention=ModuleSpec(module=KimiK3Attention))
+
+    layer = TransformerLayer(config, submodules, layer_number=layer_number, pg_collection=pg_collection)
+
+    assert isinstance(layer.self_attention, KimiK3Attention)
+    assert layer.self_attention.is_kda is is_kda

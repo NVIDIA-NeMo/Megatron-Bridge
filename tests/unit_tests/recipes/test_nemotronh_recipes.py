@@ -16,18 +16,39 @@
 # Test purpose:
 # - Parametrize over all exported NemotronH recipe functions in `megatron.bridge.recipes.nemotronh`.
 # - Build each config without I/O and assert its batch, sequence, parallelism, tokenizer, and task contracts.
-# - Verify stale CLI override fields fail without creating phantom config attributes.
+# - Verify flat CLI overrides reach the nested transformer config, and stale fields fail without creating
+#   phantom config attributes.
 #
 
 import importlib
 import re
+from types import SimpleNamespace
 from typing import Callable
+from unittest.mock import Mock
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
-from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
+from megatron.bridge.training import checkpointing
+from megatron.bridge.training.utils.omegaconf_utils import (
+    OverridesError,
+    apply_overrides,
+    create_omegaconf_dict_config,
+    parse_hydra_overrides,
+    process_config_with_overrides,
+)
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+from tests.unit_tests.recipes.recipe_test_utils import (
+    NemotronHBuilderOnlyBridge,
+    NemotronHUltraBuilderOnlyBridge,
+    discover_recipe_factories,
+    patch_recipe_module_global,
+    recipe_factory_id,
+)
 
 
 _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
@@ -35,8 +56,11 @@ _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c
 _NEMOTRONH_RECIPE_FUNCS = [
     getattr(_nemotronh_module, name)
     for name in getattr(_nemotronh_module, "__all__", [])
-    if callable(getattr(_nemotronh_module, name, None)) and not name.startswith("nemotronh_")
+    if callable(getattr(_nemotronh_module, name, None))
 ]
+_NEMOTRONH_PERF_RECIPE_FUNCS = discover_recipe_factories(
+    importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
+)
 
 
 def test_nemotron_3_5_lightning_library_recipe_names_are_hardware_agnostic():
@@ -49,49 +73,33 @@ def test_nemotron_3_5_lightning_library_recipe_names_are_hardware_agnostic():
     assert library_names.isdisjoint(perf_names)
 
 
-class _FakeModelProvider:
-    """Lightweight mutable provider for recipe construction without HF Hub access."""
-
-    def __init__(self) -> None:
-        self.vocab_size = 256
-        self.high_priority_a2a_comm_stream = False
-        self.moe_hybridep_num_sms_preprocessing = 108
-
-    def finalize(self) -> None:
-        return None
-
-
-class _FakeAutoBridge:
-    """Return a local model provider without loading a Hugging Face config."""
-
-    @classmethod
-    def from_hf_pretrained(cls, *args, **kwargs):
-        return cls()
-
-    def to_megatron_provider(self, *args, **kwargs):
-        return _FakeModelProvider()
-
-
 @pytest.fixture(autouse=True)
-def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep AutoBridge-backed recipe construction deterministic and offline."""
+def _patch_hf_backed_recipe_model_configs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build strict Nemotron-H model configs offline instead of reading Hugging Face configs."""
     for module_name in (
         "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano",
+        "megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano_4b",
         "megatron.bridge.recipes.nemotronh.h100.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
-        "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
         module = importlib.import_module(module_name)
-        patch_recipe_module_global(monkeypatch, module, "AutoBridge", _FakeAutoBridge)
+        patch_recipe_module_global(monkeypatch, module, "AutoBridge", NemotronHBuilderOnlyBridge)
+    ultra_module = importlib.import_module("megatron.bridge.recipes.nemotronh.nemotron_3_ultra")
+    patch_recipe_module_global(monkeypatch, ultra_module, "AutoBridge", NemotronHUltraBuilderOnlyBridge)
+
+
+def _model_fields(model) -> dict:
+    """Return the outer and nested transformer fields of a builder-backed model config."""
+    return {**vars(model.transformer), **{key: value for key, value in vars(model).items() if key != "transformer"}}
 
 
 def _assert_basic_config(cfg):
     from megatron.bridge.training.config import ConfigContainer
 
     assert isinstance(cfg, ConfigContainer)
-    assert cfg.model is not None
+    assert isinstance(cfg.model, BridgeHybridModelConfig)
     assert cfg.train is not None
     assert cfg.validation is not None
     assert cfg.optimizer is not None
@@ -147,6 +155,15 @@ def test_each_nemotronh_recipe_builds_config(recipe_func: Callable):
         assert cfg.peft is None
 
 
+@pytest.mark.parametrize("recipe_func", _NEMOTRONH_PERF_RECIPE_FUNCS, ids=recipe_factory_id)
+def test_each_nemotronh_perf_recipe_uses_strict_builder_config(recipe_func: Callable):
+    """Perf recipes only set fields that the builder-backed model config declares."""
+    cfg = recipe_func()
+
+    assert isinstance(cfg.model, BridgeHybridModelConfig)
+    assert cfg.model.as_dict()["_builder_"] == BridgeHybridModelConfig.builder
+
+
 def test_nemotronh_recipe_rejects_unknown_cli_override():
     """A stale recipe override must fail instead of creating a phantom field."""
     cfg = _nemotronh_module.nemotron_3_nano_pretrain_config()
@@ -157,6 +174,100 @@ def test_nemotronh_recipe_rejects_unknown_cli_override():
     assert not hasattr(cfg.model, "not_a_real_field")
 
 
+# The overrides run_recipe.py emits for -tp/-pp/-cp/-vp/-ep/-etp.
+_RUNNER_PARALLELISM_OVERRIDES = {
+    "tensor_model_parallel_size": 2,
+    "pipeline_model_parallel_size": 2,
+    "context_parallel_size": 2,
+    "virtual_pipeline_model_parallel_size": 2,
+    "expert_model_parallel_size": 4,
+    "expert_tensor_parallel_size": 2,
+}
+
+
+def _apply_overrides_like_example_scripts(cfg, cli_overrides: list[str]):
+    """Apply CLI overrides as the Nemotron 3 example scripts that the Slurm launchers call do."""
+    omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
+    omega_conf = parse_hydra_overrides(omega_conf, cli_overrides)
+    apply_overrides(cfg, OmegaConf.to_container(omega_conf, resolve=True), excluded_fields)
+    return cfg
+
+
+@pytest.mark.parametrize(
+    "apply_cli_overrides",
+    [
+        pytest.param(lambda cfg, overrides: process_config_with_overrides(cfg, cli_overrides=overrides), id="runner"),
+        pytest.param(_apply_overrides_like_example_scripts, id="example-scripts"),
+    ],
+)
+def test_nemotronh_builder_accepts_existing_flat_cli_overrides(apply_cli_overrides):
+    """Flat transformer overrides reach the nested owner; the model's own fields stay outer."""
+    cfg = _nemotronh_module.nemotron_3_nano_pretrain_config()
+    overrides = [f"model.{name}={value}" for name, value in _RUNNER_PARALLELISM_OVERRIDES.items()]
+
+    apply_cli_overrides(
+        cfg,
+        [*overrides, "model.sequence_parallel=true", "model.mamba_chunk_size=256", "model.seq_length=1024"],
+    )
+
+    for name, value in _RUNNER_PARALLELISM_OVERRIDES.items():
+        assert getattr(cfg.model.transformer, name) == value, name
+    assert cfg.model.transformer.sequence_parallel is True
+    assert (cfg.model.mamba_chunk_size, cfg.model.seq_length) == (256, 1024)
+    assert set(vars(cfg.model)).isdisjoint(_RUNNER_PARALLELISM_OVERRIDES)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        (["model.transformer.tensor_model_parallel_size=4", "model.tensor_model_parallel_size=2"], 2),
+        (["model.tensor_model_parallel_size=2", "model.transformer.tensor_model_parallel_size=4"], 4),
+    ],
+)
+def test_nemotronh_flat_and_nested_cli_overrides_apply_in_order(overrides, expected):
+    """Both spellings name one field, so the last override wins."""
+    cfg = _nemotronh_module.nemotron_3_nano_pretrain_config()
+
+    process_config_with_overrides(cfg, cli_overrides=overrides)
+
+    assert cfg.model.transformer.tensor_model_parallel_size == expected
+
+
+def test_nemotronh_builder_accepts_hf_source_override():
+    """The text-only Super VL card points the recipe at a local HF export with model.hf_model_id."""
+    cfg = _nemotronh_module.nemotron_3_super_sft_config()
+
+    process_config_with_overrides(
+        cfg, cli_overrides=["model.hf_model_id=work/hf", "tokenizer.tokenizer_model=work/hf"]
+    )
+
+    assert cfg.model.extra_checkpoint_metadata["hf_model_id"] == "work/hf"
+    assert checkpointing._resolve_hf_source(cfg) == "work/hf"
+
+
+def test_super_builder_sidecar_resolves_model_source_before_tokenizer(monkeypatch, tmp_path):
+    """HF sidecar exports template from the recorded Super source, not the recipe's Nano tokenizer repository."""
+    cfg = _nemotronh_module.nemotron_3_super_pretrain_config()
+    peft_cfg = _nemotronh_module.nemotron_3_super_peft_config()
+    super_id = cfg.model.extra_checkpoint_metadata["hf_model_id"]
+    assert "Super" in super_id
+    assert "Nano" in cfg.tokenizer.tokenizer_model
+    assert checkpointing._resolve_hf_source(cfg) == super_id
+
+    monkeypatch.setattr(checkpointing, "_AUTO_BRIDGE_CACHE", {})
+    monkeypatch.setattr("torch.distributed.is_initialized", lambda: False)
+    bridge = Mock()
+    factory = Mock(return_value=bridge)
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", factory)
+
+    checkpointing._save_hf_weights(SimpleNamespace(cfg=cfg), [], str(tmp_path))
+    factory.assert_called_once_with(super_id, trust_remote_code=False)
+    bridge.hf_pretrained.save_artifacts.assert_called_once_with(str(tmp_path), original_source_path=super_id)
+
+    checkpointing._save_hf_adapter_weights(SimpleNamespace(cfg=peft_cfg), [], str(tmp_path))
+    assert bridge.save_hf_adapter.call_args.kwargs["base_model_name_or_path"] == super_id
+
+
 def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
     """The GB200 pretraining model vocabulary must follow its runtime tokenizer."""
     cfg = _nemotronh_module.nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
@@ -165,43 +276,49 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
 
 
 @pytest.mark.parametrize(
-    ("module_name", "factory_name", "has_comm_overlap"),
+    ("module_name", "factory_name", "has_comm_overlap", "expected_preprocessing_sms"),
     [
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
             "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config",
             True,
+            108,
             id="nano-gb200",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
             "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config",
             True,
+            108,
             id="nano-gb300",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
-            "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
+            "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+            "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config",
             True,
-            id="nano-vr200",
+            108,
+            id="nano-vrnvl72",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
             "nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config",
             False,
+            32,
             id="super-gb200",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
             "nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config",
             False,
+            32,
             id="super-gb300",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
-            "nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config",
+            "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+            "nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config",
             False,
-            id="super-vr200",
+            32,
+            id="super-vrnvl72",
         ),
     ],
 )
@@ -209,6 +326,7 @@ def test_nemotron_3_mxfp8_perf_recipes_enable_cutedsl_fusion(
     module_name: str,
     factory_name: str,
     has_comm_overlap: bool,
+    expected_preprocessing_sms: int,
 ) -> None:
     """Selected MXFP8 recipes match the measured CutDSL and MoE overlap settings."""
     module = importlib.import_module(module_name)
@@ -219,7 +337,7 @@ def test_nemotron_3_mxfp8_perf_recipes_enable_cutedsl_fusion(
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.moe_mlp_glu_interleave_size == 32
     assert cfg.model.high_priority_a2a_comm_stream is False
-    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == expected_preprocessing_sms
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     if has_comm_overlap:
         assert cfg.comm_overlap is not None
@@ -244,7 +362,6 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
         "context_parallel_size",
         "expert_tensor_parallel_size",
         "expert_model_parallel_size",
-        "moe_flex_dispatcher_backend",
         "moe_hybridep_num_sms",
         "moe_token_dispatcher_type",
         "moe_shared_expert_overlap",
@@ -253,17 +370,22 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
     ):
         assert getattr(training_cfg.model, field_name) == getattr(benchmark_cfg.model, field_name)
 
-    training_scopes = [
-        scope.name if hasattr(scope, "name") else scope for scope in training_cfg.model.cuda_graph_scope
-    ]
-    benchmark_scopes = [
-        scope.name if hasattr(scope, "name") else scope for scope in benchmark_cfg.model.cuda_graph_scope
-    ]
-    assert training_scopes == benchmark_scopes
+    assert cuda_graph_module_names(training_cfg.model) == cuda_graph_module_names(benchmark_cfg.model)
 
     assert training_cfg.train.global_batch_size == benchmark_cfg.train.global_batch_size == 512
     assert training_cfg.train.micro_batch_size == benchmark_cfg.train.micro_batch_size == 1
-    assert training_cfg.env_vars == benchmark_cfg.env_vars
+
+    # The GB200 benchmark dispatches through NCCL EP; the training recipe keeps HybridEP. Apart from the
+    # dispatcher topology settings, both declare the same process environment.
+    assert training_cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert benchmark_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert benchmark_cfg.model.moe_use_grouped_tensor is True
+    assert training_cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert benchmark_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    dispatcher_env_names = HYBRID_EP_ENV_NAMES | {"NCCL_EP_HT_EM_PULL_PUSH"}
+    assert {name: value for name, value in training_cfg.env_vars.items() if name not in dispatcher_env_names} == {
+        name: value for name, value in benchmark_cfg.env_vars.items() if name not in dispatcher_env_names
+    }
 
     assert training_cfg.model.moe_router_force_load_balancing is False
     assert benchmark_cfg.model.moe_router_force_load_balancing is True
@@ -407,7 +529,6 @@ def test_nemotron_3_super_64gpu_b200_nvfp4_keeps_cuda_graphs_with_light_recomput
 def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_policy():
     """The H100 convergence recipe keeps safety checks while using the measured fast path."""
     from megatron.bridge.recipes.nemotronh import nemotron_3_5_lightning_pretrain_config
-    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
     cfg = nemotron_3_5_lightning_pretrain_config()
 
@@ -445,8 +566,8 @@ def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_poli
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.model.extra_checkpoint_metadata["hf_model_id"] == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.extra_checkpoint_metadata["hf_model_revision"] == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
@@ -489,8 +610,8 @@ def test_nemotron_3_5_lightning_8k_convergence_recipe_uses_perf_execution_policy
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.model.extra_checkpoint_metadata["hf_model_id"] == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.extra_checkpoint_metadata["hf_model_revision"] == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
@@ -578,8 +699,8 @@ def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.model.extra_checkpoint_metadata["hf_model_id"] == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.extra_checkpoint_metadata["hf_model_revision"] == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
 
     assert cfg.dataset.seq_length == 4096
@@ -630,8 +751,10 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
         "recompute_method",
         "recompute_num_layers",
     }
-    h100_model = {key: value for key, value in vars(h100.model).items() if key not in model_execution_fields}
-    gb200_model = {key: value for key, value in vars(gb200.model).items() if key not in model_execution_fields}
+    h100_model = {key: value for key, value in _model_fields(h100.model).items() if key not in model_execution_fields}
+    gb200_model = {
+        key: value for key, value in _model_fields(gb200.model).items() if key not in model_execution_fields
+    }
     assert gb200_model == h100_model
 
     gb200.model = h100.model
@@ -641,76 +764,6 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
     gb200.env_vars = h100.env_vars
 
     assert gb200 == h100
-
-
-def test_nemotron_nano_9b_v2_lora_defaults():
-    """Test that Nemotron Nano 9B v2 LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_peft_config
-
-    cfg = nemotron_nano_9b_v2_peft_config(peft_scheme="lora")
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, Nemotron Nano 9B v2 should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-
-
-def test_nemotron_nano_9b_v2_full_sft_defaults():
-    """Test that Nemotron Nano 9B v2 full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_sft_config
-
-    cfg = nemotron_nano_9b_v2_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, Nemotron Nano 9B v2 should use TP=2, PP=1
-    assert cfg.model.tensor_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
-    assert cfg.peft is None
-
-
-def test_nemotron_nano_12b_v2_lora_defaults():
-    """Test that Nemotron Nano 12B v2 LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_peft_config
-
-    cfg = nemotron_nano_12b_v2_peft_config(peft_scheme="lora")
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, Nemotron Nano 12B v2 should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-
-
-def test_nemotron_nano_12b_v2_full_sft_defaults():
-    """Test that Nemotron Nano 12B v2 full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_sft_config
-
-    cfg = nemotron_nano_12b_v2_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, Nemotron Nano 12B v2 should use TP=4, PP=1
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
-    assert cfg.peft is None
 
 
 # --- Nemotron 3 Super tests ---

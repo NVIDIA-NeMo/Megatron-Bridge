@@ -24,7 +24,7 @@ from unittest.mock import Mock
 import pytest
 
 from megatron.bridge.models.gemma.gemma4_bridge import Gemma4Bridge
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
+from megatron.bridge.models.gemma.gemma4_config import Gemma4DenseModelConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -41,10 +41,10 @@ def _minimal_pretrain_common():
 
 
 class _FakeAutoBridge:
-    def __init__(self, provider):
-        self.provider = provider
+    def __init__(self, model_config):
+        self.model_config = model_config
         self.hf_paths = []
-        self.load_weights = []
+        self.model_config_calls = 0
         self.conversion_modes = []
 
     def from_hf_pretrained(self, hf_path):
@@ -52,9 +52,9 @@ class _FakeAutoBridge:
         self.conversion_modes.append(os.environ.get("GEMMA4_CONVERSION_MODE"))
         return self
 
-    def to_megatron_provider(self, load_weights=True):
-        self.load_weights.append(load_weights)
-        return self.provider
+    def get_model_config(self):
+        self.model_config_calls += 1
+        return self.model_config
 
 
 def _load_gemma4_recipe_module(monkeypatch):
@@ -121,8 +121,8 @@ def hf_config_e4b():
 
 
 @pytest.fixture
-def bridge_provider(hf_config_e4b):
-    return Gemma4Bridge()._build_dense_provider(hf_config_e4b)
+def bridge_model_config(hf_config_e4b):
+    return Gemma4Bridge().hf_config_to_model_config(hf_config_e4b)
 
 
 @pytest.fixture
@@ -132,8 +132,8 @@ def recipe_module(monkeypatch):
 
 @pytest.fixture
 def fake_autobridge(recipe_module, hf_config_e4b, monkeypatch):
-    provider = Gemma4Bridge()._build_dense_provider(hf_config_e4b)
-    fake = _FakeAutoBridge(provider)
+    model_config = Gemma4Bridge().hf_config_to_model_config(hf_config_e4b)
+    fake = _FakeAutoBridge(model_config)
     patch_recipe_module_global(monkeypatch, recipe_module, "AutoBridge", fake)
     return fake
 
@@ -144,7 +144,7 @@ def recipe_config(recipe_module, fake_autobridge):
 
 
 @pytest.fixture
-def recipe_provider(recipe_config):
+def recipe_model_config(recipe_config):
     return recipe_config.model
 
 
@@ -154,14 +154,14 @@ def recipe_provider(recipe_config):
 
 
 class TestGemma4RecipeAutoBridge:
-    def test_recipe_uses_autobridge_for_text_provider(self, recipe_module, fake_autobridge, monkeypatch):
+    def test_recipe_uses_autobridge_for_text_model_config(self, recipe_module, fake_autobridge, monkeypatch):
         monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "vl")
 
         cfg = recipe_module.gemma4_e4b_pretrain_config()
 
-        assert isinstance(cfg.model, Gemma4DenseProvider)
+        assert isinstance(cfg.model, Gemma4DenseModelConfig)
         assert fake_autobridge.hf_paths == [recipe_module._GEMMA4_E4B_HF_PATH]
-        assert fake_autobridge.load_weights == [False]
+        assert fake_autobridge.model_config_calls == 1
         assert fake_autobridge.conversion_modes == ["text"]
         assert os.environ["GEMMA4_CONVERSION_MODE"] == "vl"
 
@@ -184,12 +184,12 @@ class TestGemma4RecipeAutoBridge:
         assert os.environ["GEMMA4_CONVERSION_MODE"] == "vl"
 
 
-class TestGemma4RecipeProviderType:
-    def test_recipe_returns_dense_provider(self, recipe_provider):
-        assert isinstance(recipe_provider, Gemma4DenseProvider)
+class TestGemma4RecipeModelConfigType:
+    def test_recipe_returns_dense_model_config(self, recipe_model_config):
+        assert isinstance(recipe_model_config, Gemma4DenseModelConfig)
 
-    def test_bridge_returns_dense_provider(self, bridge_provider):
-        assert isinstance(bridge_provider, Gemma4DenseProvider)
+    def test_bridge_returns_dense_model_config(self, bridge_model_config):
+        assert isinstance(bridge_model_config, Gemma4DenseModelConfig)
 
 
 class TestGemma4RecipeOverrides:
@@ -207,8 +207,8 @@ class TestGemma4RecipeOverrides:
         assert recipe_config.model.gradient_accumulation_fusion is False
 
 
-class TestGemma4RecipeProviderDrift:
-    """Critical fields must match between recipe and bridge-derived provider."""
+class TestGemma4RecipeModelConfigDrift:
+    """Critical fields must match between recipe and bridge-derived model config."""
 
     # seq_length is intentionally excluded: the recipe uses a shorter default
     # training sequence length, while the bridge mirrors the HF max position.
@@ -240,11 +240,11 @@ class TestGemma4RecipeProviderDrift:
     ]
 
     @pytest.mark.parametrize("field", CRITICAL_FIELDS)
-    def test_field_matches_bridge(self, recipe_provider, bridge_provider, field):
-        recipe_val = getattr(recipe_provider, field)
-        bridge_val = getattr(bridge_provider, field)
+    def test_field_matches_bridge(self, recipe_model_config, bridge_model_config, field):
+        recipe_val = getattr(recipe_model_config, field)
+        bridge_val = getattr(bridge_model_config, field)
         assert recipe_val == bridge_val, (
-            f"Recipe and bridge-derived provider differ on '{field}': "
+            f"Recipe and bridge-derived model config differ on '{field}': "
             f"recipe={recipe_val!r}, bridge={bridge_val!r}. "
-            f"Update gemma4_e4b_pretrain_config() to match Gemma4Bridge._build_dense_provider()."
+            f"Update gemma4_e4b_pretrain_config() to match Gemma4Bridge.hf_config_to_model_config()."
         )

@@ -15,9 +15,12 @@
 """Unit tests for Gemma 4 VL recipe configuration builders."""
 
 import importlib
+import os
 
 import pytest
+from megatron.core.transformer import utils as transformer_utils
 
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -38,8 +41,53 @@ class _FakeAutoBridge:
     def from_hf_pretrained(hf_path: str):
         return _FakeAutoBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Gemma 4 VL recipes must use get_model_config()")
+
+
+class _BuilderOnlyAutoBridge:
+    """AutoBridge returning a strict Gemma 4 MoE vision-language builder config."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str):
+        return _BuilderOnlyAutoBridge()
+
+    def get_model_config(self):
+        from transformers import Gemma4Config
+
+        from megatron.bridge import AutoBridge
+
+        hf_config = Gemma4Config(
+            architectures=["Gemma4ForConditionalGeneration"],
+            text_config={"enable_moe_block": True, "num_experts": 8, "top_k_experts": 2, "moe_intermediate_size": 64},
+            vision_config={},
+        )
+        return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Gemma 4 VL recipes must use get_model_config()")
+
+
+@pytest.mark.skipif(
+    not hasattr(transformer_utils, "set_attention_backend"),
+    reason="Requires MCore's standalone attention-backend helper",
+)
+@pytest.mark.parametrize("recipe_name", ["gemma4_vl_26b_sft_config", "gemma4_vl_26b_peft_config"])
+def test_gemma4_vl_recipes_allow_unfused_global_attention(monkeypatch: pytest.MonkeyPatch, recipe_name: str):
+    """512-wide global heads need the unfused fallback when FlashAttention cannot run."""
+    patch_recipe_module_global(monkeypatch, _gemma4_vl_module, "AutoBridge", _FakeAutoBridge)
+    for name in ("NVTE_FLASH_ATTN", "NVTE_FUSED_ATTN", "NVTE_UNFUSED_ATTN"):
+        monkeypatch.delenv(name, raising=False)
+    cfg = getattr(_gemma4_vl_module, recipe_name)()
+    model_config = Gemma4ModelProvider(attention_backend=cfg.model.attention_backend)
+
+    transformer_utils.set_attention_backend(model_config)
+
+    assert model_config.global_head_dim == 512
+    assert os.environ["NVTE_UNFUSED_ATTN"] == "1"
 
 
 def test_gemma4_vl_sft_uses_long_distributed_timeout(monkeypatch: pytest.MonkeyPatch):
@@ -100,3 +148,19 @@ def test_gemma4_vl_peft_uses_memory_stable_4gpu_contract(monkeypatch: pytest.Mon
     assert cfg.peft.sequence_parallel_input_regather is False
     assert cfg.peft.share_expert_adapters is True
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+
+
+@pytest.mark.parametrize("recipe_name", ["gemma4_vl_26b_sft_config", "gemma4_vl_26b_peft_config"])
+def test_gemma4_vl_recipes_build_strict_model_config(monkeypatch: pytest.MonkeyPatch, recipe_name: str):
+    """Every recipe builds the builder-backed config and assigns only fields it declares."""
+    from megatron.bridge.models.gemma_vl.gemma4_vl_config import Gemma4VLModelConfig
+
+    patch_recipe_module_global(monkeypatch, _gemma4_vl_module, "AutoBridge", _BuilderOnlyAutoBridge)
+
+    cfg = getattr(_gemma4_vl_module, recipe_name)()
+
+    assert isinstance(cfg.model, Gemma4VLModelConfig)
+    assert cfg.model.vision_config is not None
+    assert cfg.model.scatter_embedding_sequence_parallel is False
+    assert cfg.model.seq_length == 4096
+    assert cfg.model.cp_comm_type == "a2a"

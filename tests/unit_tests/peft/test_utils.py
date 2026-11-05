@@ -1593,6 +1593,52 @@ class TestExpertParallelReplicatedGradSync:
     @patch("megatron.bridge.peft.utils.PackedPerExpertLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    def test_shared_outer_adapter_init_uses_full_per_matrix_fans(self, mock_col_linear, mock_row_linear, mock_packed):
+        """The init handed to the TP-sharded shared side and to the per-expert pack must not depend on the shard shape."""
+        in_features, dim, out_features = 1024, 16, 512
+        mock_config = MockModelParallelConfig()
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2)
+        shared = Mock()
+        shared.weight = nn.Parameter(torch.ones(2, 2))
+        per_expert = Mock()
+        per_expert.weight = nn.Parameter(torch.ones(2, 2, 2))
+        mock_col_linear.return_value = shared
+        mock_packed.return_value = per_expert
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_global_rank", return_value=7),
+            patch("torch.distributed.broadcast"),
+            patch.object(torch.Tensor, "is_cuda", new_callable=PropertyMock, return_value=True),
+        ):
+            SharedOuterGroupedExpertAdapter(
+                in_features=in_features,
+                out_features=out_features,
+                dim=dim,
+                num_local_experts=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
+                input_is_parallel=False,
+                model_parallel_config=mock_config,
+            )
+
+        column_init = mock_col_linear.call_args.kwargs["init_method"]
+        row_init = mock_packed.call_args.kwargs["init_method"]
+        # The tensor-derived xavier reads its fan off whatever shard Megatron hands it; the resolved init does not.
+        assert column_init is not nn.init.xavier_normal_
+        expected_std = math.sqrt(2.0 / (in_features + dim))
+        for shape in ((dim, in_features), (dim // 4, in_features)):  # unsharded and a TP=4 shard of linear_in
+            torch.manual_seed(0)
+            weight = torch.empty(*shape)
+            column_init(weight)
+            assert weight.std().item() == pytest.approx(expected_std, rel=0.05), shape
+        weight = torch.ones(out_features, dim)
+        row_init(weight)
+        assert torch.count_nonzero(weight) == 0
+
+    @patch("megatron.bridge.peft.utils.PackedPerExpertLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     def test_shared_outer_adapter_marks_only_the_shared_side(self, mock_col_linear, mock_row_linear, mock_packed):
         """The shared factor is broadcast over EP and tagged; the per-expert pack is left to expert-DP."""
         mock_config = MockModelParallelConfig()
@@ -1636,6 +1682,74 @@ class TestExpertParallelReplicatedGradSync:
 
 class TestGroupedExpertLinearAdapter:
     """Tests for grouped-expert per-expert LoRA adapters."""
+
+    @pytest.mark.parametrize("num_local_experts", [1, 4, 8])
+    def test_grouped_expert_linear_adapter_xavier_init_is_per_expert_scale(self, num_local_experts):
+        """Each expert's linear_in must start like one (dim, in_features) xavier matrix, whatever the local expert count."""
+        in_features, dim, out_features = 1024, 16, 512
+        torch.manual_seed(0)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=in_features,
+            out_features=out_features,
+            dim=dim,
+            num_local_experts=num_local_experts,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=True,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        expected_std = math.sqrt(2.0 / (in_features + dim))
+        # The fan torch reads off the stacked (experts, dim, in_features) tensor would give this, far smaller.
+        stacked_std = math.sqrt(2.0 / (dim * in_features + num_local_experts * in_features))
+        assert stacked_std < 0.3 * expected_std
+        for expert in range(num_local_experts):
+            std = adapter.linear_in.weight[expert].float().std().item()
+            assert std == pytest.approx(expected_std, rel=0.05), (expert, std, expected_std, stacked_std)
+        assert torch.count_nonzero(adapter.linear_out.weight) == 0
+
+    def test_grouped_expert_linear_adapter_init_is_independent_of_expert_tensor_parallel_shard(self):
+        """An expert-TP shard of linear_in must draw from the same distribution as the unsharded weight."""
+        in_features, dim, out_features = 1024, 16, 512
+        stds = {}
+        for etp in (1, 2, 4):
+            cfg = MockModelParallelConfig()
+            cfg.expert_tensor_parallel_size = etp
+            torch.manual_seed(0)
+            adapter = GroupedExpertLinearAdapter(
+                in_features=in_features,
+                out_features=out_features,
+                dim=dim,
+                num_local_experts=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+                activation="identity",
+                input_is_parallel=True,
+                model_parallel_config=cfg,
+            )
+            assert adapter.linear_in.weight.shape == (2, dim, in_features // etp)
+            stds[etp] = adapter.linear_in.weight.float().std().item()
+        expected_std = math.sqrt(2.0 / (in_features + dim))
+        for etp, std in stds.items():
+            assert std == pytest.approx(expected_std, rel=0.05), (etp, std, expected_std)
+
+    def test_grouped_expert_linear_adapter_kaiming_init_is_per_expert_scale(self):
+        """kaiming on the stacked tensor would use fan_in = dim * in_features; the per-expert bound is 1/sqrt(in_features)."""
+        in_features, dim, out_features = 1024, 16, 512
+        torch.manual_seed(0)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=in_features,
+            out_features=out_features,
+            dim=dim,
+            num_local_experts=4,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            column_init_method="kaiming",
+            input_is_parallel=True,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        bound = 1.0 / math.sqrt(in_features)
+        weight = adapter.linear_in.weight.float()
+        assert weight.abs().max().item() <= bound
+        assert weight.std().item() == pytest.approx(bound / math.sqrt(3.0), rel=0.05)
 
     @pytest.mark.parametrize("split_kwarg", ["m_splits", "tokens_per_expert"])
     def test_grouped_expert_linear_adapter_accepts_tensor_split_kwargs(self, split_kwarg):
@@ -1978,11 +2092,11 @@ class TestGroupedExpertLinearAdapter:
             expected_chunks.append(nn.functional.linear(hidden, adapter.linear_out.weight[expert_idx]))
         torch.testing.assert_close(output, torch.cat(expected_chunks), rtol=2e-2, atol=2e-2)
 
-    @pytest.mark.parametrize("te_version", ["2.14", "2.16", "2.17", "2.18"])
+    @pytest.mark.parametrize("te_version", ["2.14", "2.16", "2.17", "2.18", "2.19"])
     @pytest.mark.parametrize("grad_enabled", [True, False])
     @pytest.mark.parametrize("active_expert_indices", [(0, 1), (1, 2)])
     def test_grouped_expert_linear_adapter_fp8_te_contract(self, te_version, grad_enabled, active_expert_indices):
-        """FP8 dispatch should pack the supported TE 2.14 through 2.18 call layouts."""
+        """FP8 dispatch should pack the supported TE 2.14 through 2.19 call layouts."""
         calls = []
         expected = torch.randn(3, 2)
 
@@ -2065,6 +2179,29 @@ class TestGroupedExpertLinearAdapter:
 
             @staticmethod
             def forward(ctx, inp, m_splits, non_tensor_args, *weights_and_biases):
+                (
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                ) = non_tensor_args
                 assert ctx is None
                 calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
                 return expected, []
@@ -2079,6 +2216,72 @@ class TestGroupedExpertLinearAdapter:
 
             @staticmethod
             def forward(ctx, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
+                (
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                ) = non_tensor_args
+                assert ctx is None
+                assert out is None
+                assert dgrad_out is None
+                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
+                return expected, []
+
+        class TE219GroupedLinear:
+            @staticmethod
+            def apply(inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
+                return TE219GroupedLinear.forward(
+                    None, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases
+                )
+
+            @staticmethod
+            def forward(ctx, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
+                (
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    delayed_scaling_input_quantizer,
+                    unsafe_requantization_input_quantizer,
+                    debug,
+                    single_grouped_weight,
+                    single_grouped_bias,
+                    use_grouped_tensor,
+                ) = non_tensor_args
                 assert ctx is None
                 assert out is None
                 assert dgrad_out is None
@@ -2090,6 +2293,7 @@ class TestGroupedExpertLinearAdapter:
             "2.16": TE216GroupedLinear,
             "2.17": TE217GroupedLinear,
             "2.18": TE218GroupedLinear,
+            "2.19": TE219GroupedLinear,
         }
         autograd_function = autograd_functions[te_version]
         helper = Mock()
@@ -2105,6 +2309,9 @@ class TestGroupedExpertLinearAdapter:
         helper.sequence_parallel = False
         helper.activation_dtype = torch.float32
         helper.save_original_input = False
+        helper._delayed_scaling_input_quantizer = object()
+        helper._unsafe_requantization_input_quantizer = object()
+        helper.use_grouped_tensor = True
         if te_version == "2.16":
             helper._fp8_workspaces = {}
 
@@ -2161,7 +2368,12 @@ class TestGroupedExpertLinearAdapter:
             assert non_tensor_args[17] is False
             assert non_tensor_args[18] is None
             assert non_tensor_args[19] is False
-            assert non_tensor_args[20] is False
+            if te_version == "2.19":
+                assert non_tensor_args[20] is helper._delayed_scaling_input_quantizer
+                assert non_tensor_args[21] is helper._unsafe_requantization_input_quantizer
+                assert non_tensor_args[22:] == (False, False, False, False)
+            else:
+                assert non_tensor_args[20] is False
         assert common_non_tensor_args[0] is False
         assert common_non_tensor_args[2] is True
         assert common_non_tensor_args[12] is True
@@ -2299,6 +2511,89 @@ class TestGroupedExpertLinearAdapter:
         assert mock_te.call_count == 2
         assert mock_te.call_args_list[0].kwargs["m_splits"] == [16, 16]
         assert mock_te.call_args_list[1].kwargs["m_splits"] == [16, 16]
+
+    def test_grouped_expert_scales_bottleneck_before_grouped_output_projection(self):
+        """Grouped LoRA scaling must land on the rank-sized bottleneck, not the output."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            alpha=3,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        with torch.no_grad():
+            for expert_idx in range(3):
+                adapter.linear_in.weight[expert_idx].copy_(torch.eye(2))
+                adapter.linear_out.weight[expert_idx].copy_(torch.eye(2))
+
+        projection_inputs = {}
+        original_projection = GroupedExpertLinearAdapter._forward_grouped_projection
+
+        def spy_projection(self, tensor, **kwargs):
+            projection_inputs[kwargs["projection"]] = tensor.detach().clone()
+            return original_projection(self, tensor, **kwargs)
+
+        def fake_grouped_mm(inputs, weights, *, offs):
+            chunks = []
+            start = 0
+            for weight_idx, end in enumerate(offs.tolist()):
+                chunks.append(inputs[start:end] @ weights[weight_idx])
+                start = end
+            return torch.cat(chunks, dim=0)
+
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        with (
+            patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=True),
+            patch.object(GroupedExpertLinearAdapter, "_forward_grouped_projection", spy_projection),
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=fake_grouped_mm,
+                create=True,
+            ),
+        ):
+            output = adapter(x, [1, 0, 2])
+
+        scale = adapter.alpha / adapter.dim
+        assert scale == 1.5
+        # The output projection consumes the already-scaled bottleneck, so no
+        # full-width temporary is needed to apply the scale afterwards.
+        torch.testing.assert_close(projection_inputs["linear_out"], projection_inputs["linear_in"] * scale)
+        torch.testing.assert_close(output, x * scale)
+
+    def test_grouped_expert_per_expert_fallback_still_applies_lora_scaling(self):
+        """The per-expert fallback owns its scaling now that the caller no longer scales."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            alpha=3,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2))
+            adapter.linear_in.weight[1].copy_(torch.eye(2))
+            adapter.linear_out.weight[0].copy_(torch.eye(2))
+            adapter.linear_out.weight[1].copy_(torch.eye(2))
+
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], requires_grad=True)
+        with patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=False):
+            output = adapter(x, [1, 2])
+
+        scale = adapter.alpha / adapter.dim
+        assert scale == 1.5
+        torch.testing.assert_close(output, x * scale)
+        output.sum().backward()
+        torch.testing.assert_close(x.grad, torch.full_like(x, scale))
+        assert torch.isfinite(adapter.linear_in.weight.grad).all()
+        assert torch.isfinite(adapter.linear_out.weight.grad).all()
 
     def test_grouped_expert_linear_adapter_fp8_without_te_uses_fallback(self):
         """An unsupported FP8 layout should not silently run the public BF16 grouped backend."""
@@ -2485,6 +2780,7 @@ class TestGroupedExpertLinearAdapter:
             in_features=16,
             out_features=16,
             dim=8,
+            alpha=12,
             num_local_experts=2,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
             activation="identity",
@@ -2504,6 +2800,7 @@ class TestGroupedExpertLinearAdapter:
         expected_chunks = []
         for expert_idx, expert_input in enumerate(reference_x.split([2, 3])):
             hidden = nn.functional.linear(expert_input, reference_linear_in[expert_idx])
+            hidden = hidden * (adapter.alpha / adapter.dim)
             expected_chunks.append(nn.functional.linear(hidden, reference_linear_out[expert_idx]))
         expected = torch.cat(expected_chunks)
         expected.float().sum().backward()
@@ -2530,6 +2827,7 @@ class TestGroupedExpertLinearAdapter:
             in_features=16,
             out_features=16,
             dim=16,
+            alpha=24,
             num_local_experts=2,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
             activation="identity",
@@ -2548,6 +2846,7 @@ class TestGroupedExpertLinearAdapter:
         expected_chunks = []
         for expert_idx, expert_input in enumerate(reference_x.split([2, 3])):
             hidden = nn.functional.linear(expert_input, reference_linear_in[expert_idx])
+            hidden = hidden * (adapter.alpha / adapter.dim)
             expected_chunks.append(nn.functional.linear(hidden, reference_linear_out[expert_idx]))
         expected = torch.cat(expected_chunks)
         expected.float().sum().backward()
@@ -3068,3 +3367,52 @@ def test_load_peft_adapter_checkpoint_errors_for_missing_virtual_model_key(monke
             fully_parallel_load=False,
             load_strategy="strategy",
         )
+
+
+class TestSharedOuterGroupedExpertAdapter:
+    """Tests for the shared-outer grouped expert LoRA adapter."""
+
+    @staticmethod
+    def _stub_adapter(is_fc1: bool, alpha: float, dim: int, recorded: dict) -> SimpleNamespace:
+        """Build the minimal attribute set ``forward`` reads, without TP/EP setup.
+
+        ``SharedOuterGroupedExpertAdapter.__init__`` builds Megatron TP linears and a
+        ``torch._grouped_mm`` packed linear, neither of which is available in a CPU
+        unit test. ``forward`` only touches the attributes set here.
+        """
+
+        def linear_in(x, *args):
+            return x, None
+
+        def linear_out(x, *args):
+            recorded["linear_out_input"] = x.detach().clone()
+            return x, None
+
+        return SimpleNamespace(
+            dropout_position="pre",
+            dropout=nn.Identity(),
+            activation=nn.Identity(),
+            alpha=alpha,
+            dim=dim,
+            _is_fc1=is_fc1,
+            linear_in=linear_in,
+            linear_out=linear_out,
+        )
+
+    @pytest.mark.parametrize("is_fc1", [True, False])
+    def test_scales_bottleneck_before_output_projection(self, is_fc1):
+        """Scaling must land on the rank-sized bottleneck for both fc1 and fc2 wiring."""
+        recorded = {}
+        adapter = self._stub_adapter(is_fc1=is_fc1, alpha=3, dim=2, recorded=recorded)
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+
+        output = SharedOuterGroupedExpertAdapter.forward(adapter, x, m_splits=[1, 1])
+
+        # The output projection receives the scaled bottleneck, so applying the
+        # scale never allocates a second full-width tensor.
+        scale = adapter.alpha / adapter.dim
+        assert scale == 1.5
+        torch.testing.assert_close(recorded["linear_out_input"], x * scale)
+        torch.testing.assert_close(output, x * scale)
+        output.sum().backward()
+        torch.testing.assert_close(x.grad, torch.full_like(x, scale))

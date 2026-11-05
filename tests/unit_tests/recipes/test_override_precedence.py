@@ -166,19 +166,19 @@ class TestRecipeDefault:
 
 class TestRecomputePrecedence:
     def test_A_workload_default_survives_when_nothing_else_set(self):
-        """Canonical GB200 NVFP4 flat workload has recompute_modules=['mlp'].
+        """Canonical GB200 NVFP4 workload recomputes MLA up projection and MLP.
 
         With no Hydra and no argparse override, that value must reach the final
         recipe.
         """
         recipe = _fresh_recipe()
         recipe = _apply(recipe, run_post=False)
-        assert recipe.model.recompute_modules == ["mlp"]
+        assert recipe.model.recompute_modules == ["mla_up_proj", "mlp"]
         assert recipe.model.recompute_granularity == "selective"
 
     def test_B_hydra_overrides_workload(self):
         """Hydra `model.recompute_modules=[mlp,mla_up_proj]` must replace the
-        workload's ['mlp']."""
+        workload's ['mla_up_proj', 'mlp']."""
         recipe = _fresh_recipe()
         recipe = _apply(
             recipe,
@@ -236,7 +236,7 @@ class TestRecomputePrecedence:
 
 class TestGbsPrecedence:
     @staticmethod
-    def _nemotronh_64gpu_base_recipe():
+    def _mock_64gpu_base_recipe():
         return SimpleNamespace(
             optimizer=SimpleNamespace(optimizer="adam"),
             model=SimpleNamespace(
@@ -249,8 +249,8 @@ class TestGbsPrecedence:
             comm_overlap=None,
         )
 
-    def test_nemotronh_b300_64gpu_recipe_weak_scales_to_8_gpus(self, monkeypatch):
-        """Nemotron-H preserves samples per GPU when its canonical recipe is reused."""
+    def test_mock_recipe_weak_scales_from_64_to_8_gpus(self, monkeypatch):
+        """Reusing a canonical recipe preserves samples per GPU."""
         from utils import overrides as override_utils
 
         base_config = SimpleNamespace(
@@ -268,12 +268,12 @@ class TestGbsPrecedence:
         monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
 
         recipe = override_utils.set_post_overrides(
-            self._nemotronh_64gpu_base_recipe(),
+            self._mock_64gpu_base_recipe(),
             model_family_name="nemotronh",
-            model_recipe_name="nemotronh_56b",
+            model_recipe_name="nemotron_3_super",
             gpu="b300",
             num_gpus=8,
-            compute_dtype="fp8_cs",
+            compute_dtype="fp8_mx",
             task="pretrain",
         )
 
@@ -293,16 +293,16 @@ class TestGbsPrecedence:
             global_batch_size=192,
         )
         monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
-        recipe = self._nemotronh_64gpu_base_recipe()
+        recipe = self._mock_64gpu_base_recipe()
         recipe.model.tensor_model_parallel_size = 1
 
         recipe = override_utils.set_post_overrides(
             recipe,
             model_family_name="nemotronh",
-            model_recipe_name="nemotronh_56b",
+            model_recipe_name="nemotron_3_super",
             gpu="b300",
             num_gpus=8,
-            compute_dtype="fp8_cs",
+            compute_dtype="fp8_mx",
             task="pretrain",
         )
 
@@ -435,19 +435,23 @@ class TestCudaGraphOverrides:
         assert recipe.rng.te_rng_tracker is True
         assert recipe.rerun_state_machine.check_for_nan_in_loss is False
 
-    def test_local_scoped_graph_is_rejected(self):
-        """Local graphs cannot capture individual layer modules in Bridge."""
+    def test_local_scoped_graph_is_normalized(self):
+        """Local per-layer graphs populate current MCore module values."""
         from utils.overrides import _set_cuda_graph_overrides
 
-        with pytest.raises(
-            ValueError,
-            match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
-        ):
-            _set_cuda_graph_overrides(
-                _minimal_cuda_graph_recipe(),
-                cuda_graph_impl="local",
-                cuda_graph_scope="mlp",
-            )
+        from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
+
+        recipe = _set_cuda_graph_overrides(
+            _minimal_cuda_graph_recipe(),
+            cuda_graph_impl="local",
+            cuda_graph_scope="mlp",
+        )
+
+        assert recipe.model.cuda_graph_impl == "local"
+        assert cuda_graph_module_names(recipe.model) == ["mlp"]
+        assert not is_full_iteration_cuda_graph(recipe.model)
+        assert recipe.model.use_te_rng_tracker is True
+        assert recipe.rng.te_rng_tracker is True
 
     def test_transformer_engine_scoped_graph_is_normalized(self):
         """TE scoped graphs populate current MCore module values."""
