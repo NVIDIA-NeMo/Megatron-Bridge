@@ -358,7 +358,7 @@ class FalconH1Stack(MegatronModule):
                 with inner_fp8_context:
                     if isinstance(layer, TransformerLayer):
                         hidden_states, _ = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             inference_context=inference_context,
                             rotary_pos_emb=rotary_pos_emb,
@@ -366,7 +366,7 @@ class FalconH1Stack(MegatronModule):
                         )
                     elif isinstance(layer, FalconH1Layer):
                         hidden_states = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             inference_context=inference_context,
                             rotary_pos_emb=rotary_pos_emb,
@@ -374,7 +374,7 @@ class FalconH1Stack(MegatronModule):
                         )
                     else:  # MambaLayer
                         hidden_states = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             inference_context=inference_context,
                         )

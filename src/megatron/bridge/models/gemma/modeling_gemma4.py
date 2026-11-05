@@ -1169,7 +1169,6 @@ def _gemma4_checkpointed_forward(
                     inner_quantization_context = nullcontext()
 
                 layer_kwargs = dict(
-                    hidden_states=hidden_states,
                     attention_mask=attention_mask,
                     context=context,
                     context_mask=context_mask,
@@ -1188,11 +1187,11 @@ def _gemma4_checkpointed_forward(
                     layer_kwargs["input_ids"] = input_ids
                 with inner_quantization_context:
                     if isinstance(layer, TransformerLayer):
-                        hidden_states, context = layer(**layer_kwargs)
+                        hidden_states, context = layer(hidden_states, **layer_kwargs)
                     else:
                         for k in ("context", "context_mask", "attention_bias", "padding_mask", "per_layer_input"):
                             layer_kwargs.pop(k, None)
-                        hidden_states = layer(**layer_kwargs)
+                        hidden_states = layer(hidden_states, **layer_kwargs)
                         context = None
 
                 if isinstance(hidden_states, tuple):
