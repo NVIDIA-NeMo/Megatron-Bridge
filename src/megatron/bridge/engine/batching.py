@@ -68,6 +68,14 @@ class MicrobatchMapping:
     filler: bool = False
 
 
+def local_sample_count(microbatches: list[PreparedMicrobatch]) -> int | None:
+    """Datums held by these microbatches per the default mapping (fillers count zero); ``None`` for any
+    other mapping, meaning the count is unknown."""
+    if not all(isinstance(mb.mapping, MicrobatchMapping) for mb in microbatches):
+        return None
+    return sum(len(mb.mapping.segments) for mb in microbatches if not mb.mapping.filler)
+
+
 @dataclass
 class ScoredEntry:
     """Per-token values for one Datum at the given original positions (CPU tensors)."""
@@ -470,8 +478,11 @@ def default_postprocess(
     gather_output: bool,
     cp_group: torch.distributed.ProcessGroup | None,
     dp_group: torch.distributed.ProcessGroup | None,
+    field: str = "logprobs",
 ) -> ForwardOutput:
-    """Per-microbatch ``[T_local]`` logprobs -> ``ForwardOutput`` (global in input order, or local shards).
+    """Per-microbatch ``[T_local]`` scores -> ``ForwardOutput`` (global in input order, or local shards).
+
+    ``field`` names the ``ForwardOutput`` list the scores fill: ``"logprobs"`` or ``"values"``.
 
     Inverse of ``default_preprocess``, driven by the mapping it left behind. With ``gather_output``:
     1. undo the CP split (all-gather values and indices across the CP group);
@@ -489,11 +500,13 @@ def default_postprocess(
             )
         else:
             entries.extend(unpack_sequences(microbatch, values, local_only=True))
+    if field not in ("logprobs", "values"):
+        raise ValueError(f"Unknown ForwardOutput field {field!r}.")
     if gather_output:
         entries = sorted(all_gather_dp(entries, dp_group), key=lambda entry: entry.index)
-        return ForwardOutput(logprobs=[entry.values for entry in entries])
+        return ForwardOutput(**{"logprobs": None, field: [entry.values for entry in entries]})
     return ForwardOutput(
-        logprobs=[entry.values for entry in entries],
         sample_indices=[entry.index for entry in entries],
         token_positions=[entry.positions for entry in entries],
+        **{"logprobs": None, field: [entry.values for entry in entries]},
     )

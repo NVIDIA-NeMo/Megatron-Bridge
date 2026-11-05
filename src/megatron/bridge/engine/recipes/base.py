@@ -136,9 +136,8 @@ def check_supported(recipe: TrainingRecipe) -> None:
         problems.append(f"batch_layout must be one of {SUPPORTED_BATCH_LAYOUTS}")
     if getattr(recipe, "mtp_target_scope", "primary") not in SUPPORTED_MTP_TARGET_SCOPES:
         problems.append(f"mtp_target_scope must be one of {SUPPORTED_MTP_TARGET_SCOPES}")
-    if getattr(recipe.model, "mtp_detach_heads", False):
-        # TODO(detached-mtp): needs a pooled MTP-target count as its own divisor; see AccumulationWindow.
-        problems.append("model.mtp_detach_heads=True is not supported yet")
+    # model.mtp_detach_heads is accepted: the head trains on MCore's per-token MTP loss divided by the
+    # primary count; see TODO(detached-mtp) in TrainingEngine.optim_step for the exact pooled mean.
     if problems:
         raise ValueError("Recipe is not supported by TrainingEngine:\n  - " + "\n  - ".join(problems))
 

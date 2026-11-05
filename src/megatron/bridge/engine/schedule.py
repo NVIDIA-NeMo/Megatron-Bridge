@@ -55,39 +55,54 @@ def call_model(
     pg_collection: ProcessGroupCollection,
     *,
     mtp_target_scope: str,
+    output_head: str = "lm",
 ) -> torch.Tensor:
-    """Run one microbatch through the model; returns per-token NLL ``[B, T_local]`` (labels path)."""
+    """Run one microbatch through the model: per-token NLL ``[B, T_local]`` on the labels path
+    (``output_head="lm"``), or FP32 per-token values ``[B, T_local]`` from the value head."""
     config = get_model_config(model)
     padding_mask = _prepare_packed_padding_mask(
         microbatch.padding_mask, config=config, model=model, pg_collection=pg_collection
     )
-    return model(
+    common = dict(
         input_ids=microbatch.input_ids,
         position_ids=microbatch.position_ids,
         attention_mask=None,
-        labels=microbatch.target_ids,
-        loss_mask=model_loss_mask(microbatch, mtp_target_scope),
         packed_seq_params=microbatch.packed_seq_params,
         padding_mask=padding_mask,
     )
+    if output_head == "lm":
+        return model(labels=microbatch.target_ids, loss_mask=model_loss_mask(microbatch, mtp_target_scope), **common)
+    if output_head == "value":
+        # No labels: the replaced output layer returns the per-token values as "logits" [B, T, 1].
+        return model(labels=None, **common)[..., 0]
+    raise ValueError(f"Unknown output_head {output_head!r}.")
 
 
-def to_model_output(nll: torch.Tensor) -> ModelOutput:
-    """Adapt the raw model return (per-token NLL) into the ``ModelOutput`` contract (no logits on this path)."""
-    return ModelOutput(logprobs=-nll)
+def to_model_output(raw: torch.Tensor, output_head: str = "lm") -> ModelOutput:
+    """Adapt the raw model return into the ``ModelOutput`` contract: NLL -> logprobs, or values."""
+    if output_head == "lm":
+        return ModelOutput(logprobs=-raw)
+    if output_head == "value":
+        return ModelOutput(logprobs=None, values=raw)
+    raise ValueError(f"Unknown output_head {output_head!r}.")
 
 
-def _make_scoring_step(pg_collection: ProcessGroupCollection, mtp_target_scope: str) -> Callable:
+def scored_tensor(output: ModelOutput) -> torch.Tensor:
+    """The per-token score a scoring call returns: logprobs on an LM engine, values on a value-head engine."""
+    return output.values if output.logprobs is None else output.logprobs
+
+
+def _make_scoring_step(pg_collection: ProcessGroupCollection, mtp_target_scope: str, output_head: str) -> Callable:
     def forward_step_func(
         data_iterator: Iterator[PreparedMicrobatch], model: MegatronModule
     ) -> tuple[torch.Tensor, Callable]:
         microbatch = next(data_iterator)
-        nll = call_model(model, microbatch, pg_collection, mtp_target_scope=mtp_target_scope)
+        raw = call_model(model, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, output_head=output_head)
 
         def collect(output_tensor: torch.Tensor, non_loss_data: bool = False) -> torch.Tensor:
-            return to_model_output(output_tensor).logprobs[0].detach().float()
+            return scored_tensor(to_model_output(output_tensor, output_head))[0].detach().float()
 
-        return nll, collect
+        return raw, collect
 
     return forward_step_func
 
@@ -98,6 +113,7 @@ def run_forward_only(
     *,
     pg_collection: ProcessGroupCollection,
     mtp_target_scope: str = "primary",
+    output_head: str = "lm",
 ) -> list[torch.Tensor]:
     """Score microbatches with the schedule in forward-only mode; one ``[T_local]`` logprob tensor each.
 
@@ -112,7 +128,7 @@ def run_forward_only(
     try:
         with torch.no_grad():
             store: list[Any] = get_forward_backward_func()(
-                forward_step_func=_make_scoring_step(pg_collection, mtp_target_scope),
+                forward_step_func=_make_scoring_step(pg_collection, mtp_target_scope, output_head),
                 data_iterator=iter(microbatches),
                 model=model,
                 num_microbatches=len(microbatches),
@@ -131,21 +147,24 @@ def run_forward_only(
 def run_forward_backward(
     model: list[MegatronModule],
     microbatches: list[PreparedMicrobatch],
-    loss_method: Callable[[PreparedMicrobatch, ModelOutput], torch.Tensor],
+    loss_method: Callable[[PreparedMicrobatch, ModelOutput], Any],
     *,
     pg_collection: ProcessGroupCollection,
     mtp_target_scope: str = "primary",
-) -> tuple[torch.Tensor, torch.Tensor]:
+    output_head: str = "lm",
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
     """Forward/backward over the microbatches, accumulating raw FP32 gradient sums in the DDP buffers.
 
     Gradient finalization is suppressed for the call: ``finalize_model_grads_func``, ``grad_sync_func``
     and ``no_sync_func`` are nulled on the model config and the DDP wrappers run under ``no_sync()``,
     so no DP reduce-scatter and no ``1/num_tokens`` scaling happen here (the engine does both once at
-    ``optim_step``). The loss method returns an additive scalar per microbatch; with
-    ``calculate_per_token_loss=True`` the schedule leaves it unscaled.
+    ``optim_step``). The loss method returns an additive scalar per microbatch, optionally paired with
+    a dictionary of additive scalar metrics; with ``calculate_per_token_loss=True`` the schedule leaves
+    the scalar unscaled.
 
     Returns:
-        ``(loss_sum, num_loss_tokens)`` for this rank's microbatches, un-reduced, detached.
+        ``(loss_sum, num_loss_tokens, metrics)`` for this rank's microbatches, un-reduced, detached;
+        ``metrics`` sums each key over the microbatches.
     """
     if not microbatches:
         raise ValueError("forward_backward needs at least one microbatch on every DP replica.")
@@ -157,22 +176,23 @@ def run_forward_backward(
     device = microbatches[0].input_ids.device
     loss_sum = torch.zeros((), dtype=torch.float32, device=device)
     num_loss_tokens = torch.zeros((), dtype=torch.int64, device=device)
+    metrics: dict[str, torch.Tensor] = {}
 
     def forward_step_func(data_iterator: Iterator[PreparedMicrobatch], chunk: MegatronModule) -> tuple:
         microbatch = next(data_iterator)
-        nll = call_model(chunk, microbatch, pg_collection, mtp_target_scope=mtp_target_scope)
+        raw = call_model(chunk, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, output_head=output_head)
 
         def loss_func(output_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, dict]:
-            loss = loss_method(microbatch, to_model_output(output_tensor))
-            if not isinstance(loss, torch.Tensor) or loss.ndim != 0:
-                raise ValueError("A loss method must return a scalar tensor (the additive loss sum).")
+            loss, extra = split_loss_return(loss_method(microbatch, to_model_output(output_tensor, output_head)))
             tokens = microbatch.active_mask.sum()
             loss_sum.add_(loss.detach().float())
             num_loss_tokens.add_(tokens)
+            for key, value in extra.items():
+                metrics[key] = metrics.get(key, 0.0) + value.detach().float()
             # Three-tuple: with calculate_per_token_loss=True the schedule keeps the sum unscaled.
             return loss, tokens.to(torch.int32), {}
 
-        return nll, loss_func
+        return raw, loss_func
 
     for chunk in model:
         chunk.train()
@@ -193,4 +213,17 @@ def run_forward_backward(
             )
     finally:
         config.finalize_model_grads_func, config.grad_sync_func, config.no_sync_func = saved
-    return loss_sum, num_loss_tokens
+    return loss_sum, num_loss_tokens, metrics
+
+
+def split_loss_return(result: Any) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Validate a loss method's return: a scalar tensor, or ``(scalar, {name: scalar tensor})``."""
+    loss, extra = (result, {}) if not isinstance(result, tuple) else result
+    if not isinstance(loss, torch.Tensor) or loss.ndim != 0:
+        raise ValueError("A loss method must return a scalar tensor (the additive loss sum), optionally with a dict.")
+    if not isinstance(extra, dict) or any(
+        not isinstance(key, str) or not isinstance(value, torch.Tensor) or value.ndim != 0
+        for key, value in extra.items()
+    ):
+        raise ValueError("Loss metrics must be a dict of str -> scalar tensor (additive sums or counts).")
+    return loss, extra

@@ -17,16 +17,26 @@ Boundaries: the caller hands the engine loose input (default: a global ``list[Da
 produces strict ``PreparedMicrobatch`` tensors for Megatron; the model adapter returns ``ModelOutput``
 per microbatch; postprocessing delivers ``ForwardOutput`` (scoring) or ``ForwardBackwardOutput``
 (training) to the caller.
+
+Each attribute below is marked ``strict`` or ``loose``. Strict attributes are validated by the engine
+(``check_datums`` for ``Datum``, ``check_microbatches`` for ``PreparedMicrobatch``) and consumed by the
+engine core or by Megatron, so their shape, dtype and meaning are fixed. Loose attributes belong to
+the caller, the loss, or the pipeline that produced them: the engine transports them unchanged and
+never interprets them.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.engine.batching import MicrobatchMapping
 
 
 # Token-aligned RL fields every pipeline understands; packed, padded and CP-sliced like the targets.
@@ -42,16 +52,23 @@ class Datum:
     selection of the positions that enter the primary objective.
 
     Attributes:
-        input_ids: ``[L]`` int64 model inputs.
-        target_ids: ``[L]`` int64 targets aligned with ``input_ids``.
-        loss_mask: ``[L]`` float32 binary objective selection.
-        advantages: ``[L]`` float32 per-target advantage (optional).
-        old_logprobs: ``[L]`` float32 target logprobs under the old policy (optional).
-        reference_logprobs: ``[L]`` float32 target logprobs under a reference model (optional).
-        rollout_logprobs: ``[L]`` float32 target logprobs recorded by the generation backend (optional).
-        loss_inputs: Custom token-aligned ``[L]`` tensors; every Datum in a call must carry the same keys.
-            They follow the standard transform with padding value 0 and keep the caller's dtype.
-        sample_inputs: Custom per-sample values passed through untouched (never sliced).
+        input_ids: strict. ``[L]`` int64 model inputs.
+        target_ids: strict. ``[L]`` int64 targets aligned with ``input_ids``.
+        loss_mask: strict. ``[L]`` float32 binary selection of the primary-objective positions; also the
+            token count used for normalization.
+        advantages: strict when present. ``[L]`` float32 per-target advantage, read by ``ppo_clip`` and
+            ``importance_sampling``. Optional; set for every Datum of a call or for none.
+        old_logprobs: strict when present. ``[L]`` float32 target logprobs under the policy that
+            produced the samples (the ratio denominator). Optional, all-or-none.
+        reference_logprobs: strict when present. ``[L]`` float32 target logprobs under a reference model
+            (KL penalty). Optional, all-or-none.
+        rollout_logprobs: strict when present. ``[L]`` float32 target logprobs recorded by the generation
+            backend (truncated importance sampling). Optional, all-or-none.
+        loss_inputs: loose values, strict transport. Custom token-aligned ``[L]`` tensors for the loss
+            (for example ``returns`` and ``old_values`` for ``value_loss``); every Datum in a call carries
+            the same keys. The engine only packs, pads with 0 and CP-slices them, keeping the dtype.
+        sample_inputs: loose. Custom per-sample values passed through untouched (never sliced); the
+            default pipeline collects them per microbatch in ``PreparedMicrobatch.sample_inputs``.
     """
 
     input_ids: torch.Tensor
@@ -74,12 +91,36 @@ class Datum:
 
 @dataclass
 class PreparedMicrobatch:
-    """Strict execution input for one microbatch, CP-partitioned, on the executing rank's device.
+    """Execution input for one microbatch, CP-partitioned, on the executing rank's device.
 
-    Token tensors are ``[1, T_local]`` for the packed (THD) layout and ``[B, S_local]`` for the padded
-    layout. ``padding_mask`` is True at artificial padding. ``packed_seq_params`` is present exactly for
-    the packed layout. ``mapping`` is opaque bookkeeping a preprocessor leaves for its matching
-    postprocessor; the engine never interprets it.
+    Every token-aligned tensor has the same shape: ``[1, T_local]`` for the packed (THD) layout and
+    ``[B, S_local]`` for the padded layout. ``check_microbatches`` enforces the strict attributes for
+    default and custom pipelines alike.
+
+    Attributes:
+        input_ids: strict. int64 CUDA model inputs, valid vocabulary ids.
+        target_ids: strict. int64 targets aligned with ``input_ids`` (fed as ``labels``).
+        position_ids: strict. int64 positions; the default pipeline uses ``0..L-1`` per sequence.
+        loss_mask: strict. float32 binary primary-objective selection; with ``padding_mask`` it forms
+            ``active_mask``, which every predefined loss and the token count use.
+        padding_mask: strict. bool, True at artificial padding; passed to the model and excluded
+            from every objective.
+        packed_seq_params: strict. Megatron ``PackedSeqParams`` (``qkv_format="thd"``, int32 CUDA
+            ``cu_seqlens``) exactly for the packed layout, ``None`` for the padded layout.
+        advantages: strict when present. float32, aligned with the targets; see ``Datum``.
+        old_logprobs: strict when present. float32; see ``Datum``.
+        reference_logprobs: strict when present. float32; see ``Datum``.
+        rollout_logprobs: strict when present. float32; see ``Datum``.
+        loss_inputs: loose values, strict transport. The Datums' custom tensors after the same packing,
+            padding (value 0) and CP split as the targets; shape is checked, dtype is the caller's.
+        sample_inputs: loose. One dict per Datum in this microbatch, in the microbatch's segment order,
+            copied from ``Datum.sample_inputs``; the default pipeline fills it, custom ones may not.
+        mapping: loose. Bookkeeping a preprocessor leaves for its matching postprocessor; the engine
+            core never reads it. The default pipeline stores a ``MicrobatchMapping`` (``batching.py``:
+            per-Datum segments, the un-sharded token count, this rank's CP indices, filler flag), which
+            the default ``postprocess_forward_only`` and ``postprocess_forward_backward`` read, the
+            latter for the sample count. A custom pipeline may store anything or leave ``None``; the
+            default count then reports ``None`` rather than guess.
     """
 
     input_ids: torch.Tensor
@@ -96,7 +137,7 @@ class PreparedMicrobatch:
 
     loss_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
     sample_inputs: list[dict[str, Any]] = field(default_factory=list)
-    mapping: Any = None
+    mapping: MicrobatchMapping | Any = None
 
     def token_tensors(self) -> dict[str, torch.Tensor]:
         """Every token-aligned tensor by name (standard, common optional, and custom fields)."""
@@ -124,43 +165,99 @@ class PreparedMicrobatch:
 class ModelOutput:
     """Native per-microbatch model output on the output stage, aligned with the prepared token axis.
 
-    ``logprobs`` is always present (``-nll`` of ``target_ids`` from the configured kernel, TP-reduced).
-    ``logits`` is the TP-sharded vocabulary slice and exists only when the selected loss declares
-    ``requires_logits``; the vocabulary interval then describes this rank's slice. That path is not
-    implemented yet; the engine rejects such losses and ``logits`` is always ``None``.
+    Built by the engine's model adapter and handed to the loss method together with the
+    ``PreparedMicrobatch``; every tensor has the microbatch's token shape and carries autograd.
+
+    Attributes:
+        logprobs: strict. Target logprobs (``-nll`` of ``target_ids`` from the configured kernel,
+            TP-reduced) on a language-model engine; ``None`` on a value-head engine.
+        logits: strict, reserved. This rank's TP-sharded vocabulary slice, only when the selected loss
+            declares ``requires_logits``. That path is not implemented yet: the engine rejects such
+            losses and the field is always ``None``.
+        vocab_start_index: strict, reserved. First vocabulary id of this rank's ``logits`` slice.
+        vocab_end_index: strict, reserved. One past the last vocabulary id of this rank's slice.
+        values: strict. FP32 per-token values on a value-head engine (``output_head="value"``);
+            ``None`` on a language-model engine.
     """
 
-    logprobs: torch.Tensor
+    logprobs: torch.Tensor | None
     logits: torch.Tensor | None = None
     vocab_start_index: int | None = None
     vocab_end_index: int | None = None
+    values: torch.Tensor | None = None
 
 
 @dataclass
 class ForwardOutput:
-    """Scoring result. Gathered: one entry per input Datum, in input order, all positions.
+    """Scoring result of ``forward_only``, produced by the default postprocessing.
 
-    Local (``gather_output=False``): entries for this rank's Datums and CP positions only, with
-    ``sample_indices`` (position in the caller's list) and ``token_positions`` populated.
+    Gathered (``gather_output=True``): one entry per input Datum, in the caller's order, every target
+    position, identical on all ranks. Local (``gather_output=False``): entries for this rank's Datums
+    and CP positions only, with ``sample_indices`` and ``token_positions`` telling where they belong.
+    All tensors are detached FP32; padding is dropped. A custom postprocessor may return its own type.
+
+    Attributes:
+        logprobs: strict. Per-Datum target logprobs on a language-model engine, ``None`` on a
+            value-head engine.
+        entropy: strict, reserved. Per-Datum token entropies when ``return_entropy=True``; needs the
+            full-logits path, which is not implemented yet, so always ``None``.
+        sample_indices: strict. Local mode only: each entry's position in the caller's Datum list.
+        token_positions: strict. Local mode only: each entry's target positions within its Datum, in
+            ascending order (CP shards hold non-contiguous positions).
+        values: strict. Per-Datum values on a value-head engine, ``None`` on a language-model engine.
     """
 
-    logprobs: list[torch.Tensor]
+    logprobs: list[torch.Tensor] | None
     entropy: list[torch.Tensor] | None = None
     sample_indices: list[int] | None = None
     token_positions: list[torch.Tensor] | None = None
+    values: list[torch.Tensor] | None = None
 
 
 @dataclass
 class ForwardBackwardOutput:
-    """Detached per-call training summary, reduced over DP x CP."""
+    """Per-call training summary: what ``postprocess_forward_backward`` returns and ``forward_backward``
+    hands to the caller, reduced over DP x CP and identical on every rank.
+
+    Per call, not per update. The engine adds each summary to its accumulation window, so a custom
+    ``postprocess_forward_backward`` decides what the window sees: ``num_loss_tokens`` and
+    ``num_samples`` are the normalization inputs, ``None`` meaning the pipeline cannot tell (the engine
+    then raises when the active policy needs it).
+
+    Attributes:
+        loss_sum: strict. Sum of the loss method's returns over every microbatch of the call on all
+            DP x CP ranks; it means whatever the selected loss computes (a token sum for the predefined
+            losses) and is never divided by the engine.
+        num_loss_tokens: strict. Active primary-objective positions (``loss_mask & ~padding_mask``) of
+            the call, each counted once; the ``TOKEN_MEAN`` denominator input.
+        metrics: loose keys, strict transport. Additive diagnostics a loss chose to return as its second
+            value (sums and counts over the same active positions), summed over microbatches and reduced
+            like ``loss_sum``; empty for losses that return only the scalar. Divide by
+            ``num_loss_tokens`` for per-token means.
+        num_samples: strict. Datums in the call across DP replicas, the ``SAMPLE_MEAN`` denominator
+            input; the default derives it from ``MicrobatchMapping``, ``None`` when unknown.
+    """
 
     loss_sum: float
     num_loss_tokens: int
+    metrics: dict[str, float] = field(default_factory=dict)
+    num_samples: int | None = None
 
 
 @dataclass
 class AdamParams:
-    """Per-step optimizer hyperparameters supplied by the caller to ``optim_step`` (Tinker-style)."""
+    """Per-step optimizer hyperparameters supplied by the caller to ``optim_step`` (Tinker-style).
+
+    Written into every parameter group before the step; the recipe's per-group ``lr_mult`` and
+    ``wd_mult`` multipliers (for example no weight decay on biases and norms) still apply on top.
+
+    Attributes:
+        learning_rate: strict. Base learning rate for this step; the schedule is the caller's.
+        beta1: strict. Adam first-moment decay.
+        beta2: strict. Adam second-moment decay.
+        eps: strict. Adam epsilon.
+        weight_decay: strict. Base decoupled weight decay.
+    """
 
     learning_rate: float
     beta1: float = 0.9
@@ -179,7 +276,14 @@ class NormalizationPolicy(str, Enum):
 
 @dataclass
 class LoraConfig:
-    """LoRA adapter settings for a trainable engine (phase C3)."""
+    """LoRA adapter settings for a trainable engine. Not supported yet: ``from_recipe(lora=...)`` raises.
+
+    Attributes:
+        rank: strict. Adapter rank.
+        alpha: strict. Adapter scaling.
+        target_modules: strict. Megatron linear-module names the adapters attach to.
+        dropout: strict. Adapter dropout.
+    """
 
     rank: int
     alpha: float
@@ -191,7 +295,13 @@ class LoraConfig:
 
 @dataclass
 class CheckpointHandle:
-    """Handle returned by ``save_state``; ``wait()`` blocks until the complete checkpoint is durable."""
+    """Handle returned by ``save_state``; ``wait()`` blocks until the complete checkpoint is durable.
+
+    Attributes:
+        path: strict. The ``<root>/iter_<step>`` directory this save writes.
+        _waiter: engine-private. The finalizer of an asynchronous save, ``None`` once waited for or
+            for a synchronous save.
+    """
 
     path: str
     _waiter: Any = field(default=None, repr=False)

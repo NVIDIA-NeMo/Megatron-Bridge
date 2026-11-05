@@ -39,6 +39,7 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
     hf_revision: str | None = None,
     seq_length: int = 131072,
     pad_to_max_length: bool = True,
+    mtp_detach_heads: bool = False,
 ) -> TrainingRecipe:
     """Qwen3.5-35B-A3B text model, BF16, TP1/CP8/EP16 with one MTP layer, for 16 GB200/GB300 GPUs.
 
@@ -48,6 +49,8 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
         hf_revision: Matching HF revision, or ``None`` for a local directory.
         seq_length: Packed token budget per microbatch; a positive multiple of 16 for CP8.
         pad_to_max_length: Pad every pack to ``seq_length`` (one kernel shape) instead of to its content.
+        mtp_detach_heads: Train the MTP head without letting its loss reach the main model's gradients
+            (RL use); ``False`` is the coupled SFT baseline. MTP depth itself comes from the HF config.
 
     Returns:
         The engine recipe. Pretrained weights are supplied to the engine through ``checkpoint_path``.
@@ -72,8 +75,8 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
     model.context_parallel_size = 8
     model.expert_model_parallel_size = 16
     model.expert_tensor_parallel_size = 1
-    model.mtp_num_layers = 1
-    model.mtp_loss_scaling_factor = 0.1
+    # MTP depth (mtp_num_hidden_layers) and its 0.1 loss weight come from the HF config via the bridge.
+    model.mtp_detach_heads = mtp_detach_heads
     model.bias_activation_fusion = True
     model.cross_entropy_fusion_impl = "te"
     model.calculate_per_token_loss = True

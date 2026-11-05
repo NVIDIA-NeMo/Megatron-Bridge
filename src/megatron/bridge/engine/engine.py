@@ -40,10 +40,10 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.engine import losses
 from megatron.bridge.engine.accumulation import AccumulationWindow
 from megatron.bridge.engine.batching import (
-    MicrobatchMapping,
     check_microbatches,
     default_postprocess,
     default_preprocess,
+    local_sample_count,
     sequence_pad_multiple,
 )
 from megatron.bridge.engine.checkpoint import (
@@ -68,6 +68,7 @@ from megatron.bridge.engine.export import ExportState, export_hf_weights, make_e
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
+from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.config import RerunStateMachineConfig
 from megatron.bridge.training.initialize import init_rerun_state, torch_dist_init
@@ -101,9 +102,8 @@ _RESERVED_METHODS = frozenset(
         "process_groups",
         "pad_multiple",
         "preprocess",
-        "postprocess",
-        "summarize",
-        "count_samples",
+        "postprocess_forward_only",
+        "postprocess_forward_backward",
         "check_microbatches",
         "resolve_loss_method",
         "target_logprobs",
@@ -259,7 +259,11 @@ class TrainingEngine:
             recipe: Model and execution configuration.
             checkpoint_path: Megatron or HF checkpoint whose weights initialize the model, or ``None``
                 for the provider's initialization.
-            output_head: ``"lm"`` only for now; ``"value"`` arrives with the critic (phase D).
+            output_head: ``"lm"`` scores and trains target logprobs through the language-model head.
+                ``"value"`` builds a critic: the LM head is replaced by a per-token scalar head (Bridge's
+                value-model hook) after ``checkpoint_path`` is loaded, MTP and embedding tying are turned
+                off on the recipe copy, ``forward_only`` returns values and ``forward_backward`` defaults
+                to ``value_loss``. One recipe serves the actor and the critic.
             trainable: Build the optimizer and gradient buffers. ``False`` yields a frozen scoring engine.
             lora: LoRA settings (phase C3).
             hooks: Extra pre-wrap hooks run after the Bridge-registered ones.
@@ -270,20 +274,27 @@ class TrainingEngine:
         Returns:
             A constructed engine attached to the shared runtime.
         """
-        if output_head != "lm":
-            raise NotImplementedError(f"output_head={output_head!r} is not supported yet (value head: phase D).")
+        if output_head not in ("lm", "value"):
+            raise ValueError(f"output_head must be 'lm' or 'value', got {output_head!r}.")
         if lora is not None:
             raise NotImplementedError("LoRA engines are phase C3.")
         recipe = copy.deepcopy(recipe)
+        if output_head == "value":
+            apply_value_head_model_settings(recipe.model)
         finalize_recipe(recipe)
+        hooks = list(hooks or [])
+        if output_head == "value":
+            # Loads the checkpoint into the bare model, then swaps the head; _build skips its own load.
+            hooks.append(make_value_head_hook(recipe, checkpoint_path))
         runtime = _acquire_runtime(recipe)
         engine = cls.__new__(cls)
         engine._build(
             recipe,
             runtime,
             checkpoint_path=checkpoint_path,
+            output_head=output_head,
             trainable=trainable,
-            hooks=hooks or [],
+            hooks=hooks,
             spawn_async_save_worker=spawn_async_save_worker,
         )
         return engine
@@ -294,18 +305,21 @@ class TrainingEngine:
         runtime: _SharedRuntime,
         *,
         checkpoint_path: str | None,
+        output_head: str,
         trainable: bool,
         hooks: list[PreWrapHook],
         spawn_async_save_worker: bool,
     ) -> None:
         self._recipe = recipe
         self._runtime = runtime
+        self._output_head = output_head
         self._trainable = trainable
         self._closed = False
         self._step = 0
         self._window = AccumulationWindow()
         self._pending_save: CheckpointHandle | None = None
         self._export_state: ExportState | None = None
+        self._warned_unscaled_aux = False
         # Before the model: the worker's CUDA context and IPC mappings need a GPU that is not yet full.
         self._async_checkpoint_state = start_async_checkpoint_worker(recipe) if spawn_async_save_worker else None
         pg_collection = runtime.pg_collection
@@ -331,7 +345,8 @@ class TrainingEngine:
         else:
             self._model = _build_frozen_model(recipe, pg_collection)
 
-        if checkpoint_path is not None:
+        if checkpoint_path is not None and output_head != "value":
+            # value model loads the checkpoint during the make_value_head_hook
             load_pretrained_weights(recipe, self._model, self._optimizer, checkpoint_path)
 
         # Bridge installs the schedule hooks on the model config (finalize_model_grads_func, grad_scale_func,
@@ -363,17 +378,18 @@ class TrainingEngine:
         broadcast_output: bool = True,
         return_entropy: bool = False,
     ) -> ForwardOutput:
-        """Score a batch and return per-token target logprobs mapped back to each sample.
+        """Score a batch and return per-token target logprobs (or values, on a value-head engine) per sample.
 
         ``data`` is whatever this engine's ``preprocess`` accepts; the default accepts the same global
-        ``list[Datum]`` on every rank. ``gather_output=True`` returns every Datum's complete logprobs on
+        ``list[Datum]`` on every rank. ``gather_output=True`` returns every Datum's complete scores on
         every rank in input order; ``False`` returns only what this rank computed (its DP replica's
         samples, its CP positions) with ``sample_indices`` and ``token_positions``. Gradients and any
         open accumulation window are untouched.
         """
         self._require_open()
         if return_entropy:
-            raise NotImplementedError("return_entropy is implemented in phase C1 (logits path).")
+            # TODO(logits): entropy needs the model called without labels and a chunked TP-aware reduction.
+            raise NotImplementedError("return_entropy needs the full-logits path, which is not implemented yet.")
         if disable_adapters:
             raise NotImplementedError("disable_adapters is implemented in phase C3 (LoRA).")
         if self._runtime.topology.pp > 1:
@@ -382,30 +398,35 @@ class TrainingEngine:
             )
         microbatches = self.preprocess(data, training=False)
         self.check_microbatches(microbatches)
-        logprobs = run_forward_only(
+        scores = run_forward_only(
             self._model,
             microbatches,
             pg_collection=self._runtime.pg_collection,
             mtp_target_scope=self._recipe.mtp_target_scope,
+            output_head=self._output_head,
         )
-        return self.postprocess(microbatches, logprobs, gather_output=gather_output)
+        return self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
 
     def forward_backward(
         self,
         data: Any,
         *,
-        loss_fn: str = "cross_entropy",
+        loss_fn: str | None = None,
         loss_kwargs: dict[str, Any] | None = None,
         broadcast_output: bool = True,
     ) -> ForwardBackwardOutput:
         """Run forward/backward with the named loss and accumulate FP32 gradients.
 
         Gradients are summed, unnormalized, into the DDP buffers across calls; ``optim_step`` normalizes
-        and applies them. Returns this call's detached loss sum and active-token count, reduced over
-        DP x CP. ``loss_kwargs`` are bound to the loss method as keyword arguments.
+        and applies them. Returns this call's detached loss sum, active-token count and any additive
+        metrics the loss returned, all reduced over DP x CP. ``loss_fn`` defaults to ``cross_entropy``
+        on a language-model engine and ``value_loss`` on a value-head engine; ``loss_kwargs`` are bound
+        to the loss method as keyword arguments (for example ``ppo_clip``'s clip bounds).
         """
         self._require_open()
         self._require_trainable("forward_backward")
+        if loss_fn is None:
+            loss_fn = "value_loss" if self._output_head == "value" else "cross_entropy"
         loss_method = self.resolve_loss_method(loss_fn)
         if loss_kwargs:
             loss_method = functools.partial(loss_method, **loss_kwargs)
@@ -417,26 +438,34 @@ class TrainingEngine:
             raise NotImplementedError("forward_backward with ddp.overlap_grad_reduce=True is not supported yet.")
         microbatches = self.preprocess(data, training=True)
         self.check_microbatches(microbatches)
-        num_samples = self.count_samples(microbatches)
-        if num_samples is None and self.normalization == NormalizationPolicy.SAMPLE_MEAN:
-            raise ValueError(
-                "NormalizationPolicy.SAMPLE_MEAN needs the Datum count, but count_samples returned None; "
-                "override count_samples together with preprocess when the mapping is not MicrobatchMapping."
-            )
-        loss_sum, num_loss_tokens = run_forward_backward(
+        loss_sum, num_loss_tokens, metrics = run_forward_backward(
             self._model,
             microbatches,
             loss_method,
             pg_collection=self._runtime.pg_collection,
             mtp_target_scope=self._recipe.mtp_target_scope,
+            output_head=self._output_head,
         )
-        summary = self.summarize(loss_sum, num_loss_tokens)
+        fwd_bwd_output = self.postprocess_forward_backward(microbatches, loss_sum, num_loss_tokens, metrics)
+        self._add_to_window(fwd_bwd_output)
+        return fwd_bwd_output
+
+    def _add_to_window(self, fwd_bwd_output: ForwardBackwardOutput) -> None:
+        """Apply one call's output to the accumulation window, or abort the window when a count the
+        normalization needs is unknown (the gradients of the whole window are discarded)."""
+        if fwd_bwd_output.num_samples is None and self.normalization == NormalizationPolicy.SAMPLE_MEAN:
+            zero_gradients(self._model, self._optimizer)
+            self._window.reset()
+            raise ValueError(
+                "NormalizationPolicy.SAMPLE_MEAN needs num_samples, but postprocess_forward_backward returned "
+                "None; override it together with preprocess when the mapping is not MicrobatchMapping. The "
+                "accumulation window was discarded."
+            )
         self._window.add(
-            num_loss_tokens=summary.num_loss_tokens,
-            num_samples=0 if num_samples is None else num_samples,
-            loss_sum=summary.loss_sum,
+            num_loss_tokens=fwd_bwd_output.num_loss_tokens,
+            num_samples=fwd_bwd_output.num_samples or 0,
+            loss_sum=fwd_bwd_output.loss_sum,
         )
-        return summary
 
     # ---- data pipeline extension points (override in a subclass) -------------------------------
 
@@ -462,10 +491,10 @@ class TrainingEngine:
             pad_to_max_length=self._recipe.pad_to_max_length,
         )
 
-    def postprocess(
+    def postprocess_forward_only(
         self, microbatches: list[PreparedMicrobatch], logprobs: list[torch.Tensor], *, gather_output: bool
     ) -> ForwardOutput:
-        """Turn per-microbatch ``[T_local]`` logprobs into the scoring result (boundary B3 -> B5).
+        """Turn per-microbatch ``[T_local]`` scores into the ``forward_only`` result (boundary B3 -> B5).
 
         Default: drop padding, reassemble across CP, collect across DP when ``gather_output`` is set, and
         restore the caller's sample order. Override together with ``preprocess`` when the mapping or the
@@ -478,17 +507,49 @@ class TrainingEngine:
             gather_output=gather_output,
             cp_group=pg_collection.cp,
             dp_group=pg_collection.dp,
+            field="values" if self._output_head == "value" else "logprobs",
         )
 
-    def summarize(self, loss_sum: torch.Tensor, num_loss_tokens: torch.Tensor) -> ForwardBackwardOutput:
-        """Reduce this call's loss sum and active-token count over DP x CP (boundary B3 -> B6).
+    def postprocess_forward_backward(
+        self,
+        microbatches: list[PreparedMicrobatch],
+        loss_sum: torch.Tensor,
+        num_loss_tokens: torch.Tensor,
+        metrics: dict[str, torch.Tensor],
+    ) -> ForwardBackwardOutput:
+        """Turn this rank's raw call results into the ``forward_backward`` summary (boundary B3 -> B6).
 
-        One float64 collective: the count stays exact (float32 would round above 2**24 tokens).
+        The summary is what the caller receives and what the engine adds to its accumulation window, so
+        this method owns the normalization inputs: ``loss_sum``, ``num_loss_tokens`` and ``metrics`` are
+        reduced over DP x CP, and ``num_samples`` (Datums across DP, for ``SAMPLE_MEAN``) is derived from
+        the default ``MicrobatchMapping`` and left ``None`` for any other mapping. Override together with
+        ``preprocess`` when the mapping differs; every field must be identical on every rank.
+
+        One float64 collective: counts stay exact (float32 would round above 2**24 tokens). Metric keys
+        are sorted so every rank stacks them in the same order.
         """
         pg_collection = self._runtime.pg_collection
-        totals = torch.stack([loss_sum.detach().double(), num_loss_tokens.double()])
+        keys = sorted(metrics or {})
+        values = [loss_sum.detach().double(), num_loss_tokens.double()]
+        values += [metrics[key].detach().double() for key in keys]
+        totals = torch.stack(values)
         torch.distributed.all_reduce(totals, group=pg_collection.dp_cp)
-        return ForwardBackwardOutput(loss_sum=float(totals[0].item()), num_loss_tokens=int(totals[1].item()))
+        reduced = totals.tolist()
+        return ForwardBackwardOutput(
+            loss_sum=float(reduced[0]),
+            num_loss_tokens=int(reduced[1]),
+            metrics={key: float(value) for key, value in zip(keys, reduced[2:])},
+            num_samples=self._global_sample_count(microbatches),
+        )
+
+    def _global_sample_count(self, microbatches: list[PreparedMicrobatch]) -> int | None:
+        """Datums in this call across DP replicas from the default mapping, ``None`` for any other mapping."""
+        local = local_sample_count(microbatches)
+        if local is None:
+            return None
+        count = torch.tensor([local], device="cuda")
+        torch.distributed.all_reduce(count, group=self._runtime.pg_collection.dp)
+        return int(count.item())
 
     def check_microbatches(self, microbatches: list[PreparedMicrobatch]) -> None:
         """The strict gate before Megatron: shapes, dtypes, devices, vocabulary range, layout metadata,
@@ -523,12 +584,26 @@ class TrainingEngine:
                     self._window.reset()
                     return {"update_successful": 0.0, "skipped_empty_window": 1.0}
                 scale = 1.0 / denominator
-        if scale is None and self._has_coupled_auxiliary_losses():
-            # Coupled MTP / router aux gradients share the primary 1/D; bypassing it changes their semantics.
-            raise NotImplementedError(
-                "normalize_gradients=False (or NormalizationPolicy.NONE) with MTP or router auxiliary losses "
-                "enabled is not supported yet."
+        if scale is None and self._has_coupled_auxiliary_losses() and not self._warned_unscaled_aux:
+            # The user's normalization is respected for every gradient. MCore's own MTP and router losses
+            # are attached as per-token sums that the loss method never sees; scaling them is the
+            # recipe's job through model.mtp_grad_scale_func / model.moe_grad_scale_func.
+            self._warned_unscaled_aux = True
+            logger.warning(
+                "Gradients are not normalized by the engine, but the model adds MTP or router auxiliary "
+                "losses as per-token sums. Scale them yourself with recipe.model.mtp_grad_scale_func / "
+                "moe_grad_scale_func, or they outweigh a normalized primary loss by the token count."
             )
+        # TODO(detached-mtp): the MTP head is divided by the primary token count N like every other parameter.
+        # Today, per depth k: MCore multiplies the head's loss by this rank's own ratio (targets before the
+        # shift / targets after the shift) before the backward, then we divide by N. The head therefore sees
+        # a rank-weighted average, not a true mean over its own targets. The goal is: head loss sum / M_k,
+        # where M_k counts depth-k targets pooled over DP x CP and the whole window. Two steps:
+        #   1. cancel MCore's per-rank ratio before the backward (an upstream option, or mtp_grad_scale_func
+        #      returning the inverse ratio per microbatch; exact only with one MTP depth, the scale is shared);
+        #   2. count M_k (active positions at least k places into their sequence, all-reduced, summed over
+        #      the window) and divide the parameters tagged grad_norm_group == "mtp" by M_k instead of N.
+        # Coupled heads keep today's formula on purpose: it is the SFT baseline's.
         update_successful, grad_norm, num_zeros = finalize_and_step(
             self._model,
             self._optimizer,
@@ -562,20 +637,6 @@ class TrainingEngine:
     def step(self) -> int:
         """Number of successful optimizer updates since construction."""
         return self._step
-
-    def count_samples(self, microbatches: list[PreparedMicrobatch]) -> int | None:
-        """Datums in this call across DP replicas (``N`` for ``SAMPLE_MEAN``), or ``None`` when unknown.
-
-        Default: read the default ``MicrobatchMapping`` (fillers count zero) and reduce over DP; any other
-        mapping makes the count unknown. Override together with ``preprocess`` when the mapping differs;
-        the result must be the global count, identical on every rank.
-        """
-        if not all(isinstance(mb.mapping, MicrobatchMapping) for mb in microbatches):
-            return None
-        local = sum(len(mb.mapping.segments) for mb in microbatches if not mb.mapping.filler)
-        count = torch.tensor([local], device="cuda")
-        torch.distributed.all_reduce(count, group=self._runtime.pg_collection.dp)
-        return int(count.item())
 
     def _has_coupled_auxiliary_losses(self) -> bool:
         model = self._recipe.model
@@ -613,21 +674,41 @@ class TrainingEngine:
         """Negative log-likelihood summed over active positions (``loss_mask & ~padding_mask``)."""
         return losses.cross_entropy(batch, output)
 
-    def importance_sampling(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
-        """Importance-sampling policy-gradient loss (phase C1)."""
-        raise NotImplementedError("importance_sampling is implemented in phase C1.")
+    def importance_sampling(
+        self, batch: PreparedMicrobatch, output: ModelOutput, *, tis_coef: float | None = None
+    ) -> losses.LossReturn:
+        """Importance-weighted policy gradient with optional truncated importance sampling; see ``losses``."""
+        return losses.importance_sampling(batch, output, tis_coef=tis_coef)
 
-    def ppo_clip(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
-        """Clipped PPO objective with optional TIS correction (phase C1)."""
-        raise NotImplementedError("ppo_clip is implemented in phase C1.")
+    def ppo_clip(
+        self,
+        batch: PreparedMicrobatch,
+        output: ModelOutput,
+        *,
+        clip_low: float,
+        clip_high: float,
+        kl_beta: float = 0.0,
+        tis_coef: float | None = None,
+    ) -> losses.LossReturn:
+        """Clipped PPO objective with optional KL penalty to the reference and TIS correction; see ``losses``."""
+        return losses.ppo_clip(
+            batch, output, clip_low=clip_low, clip_high=clip_high, kl_beta=kl_beta, tis_coef=tis_coef
+        )
+
+    def value_loss(
+        self, batch: PreparedMicrobatch, output: ModelOutput, *, clip: float | None = None
+    ) -> losses.LossReturn:
+        """Critic regression on ``loss_inputs["returns"]``, optionally clipped around ``old_values``."""
+        return losses.value_loss(batch, output, clip=clip)
 
     def target_logprobs(self, batch: PreparedMicrobatch, output: ModelOutput) -> list[torch.Tensor]:
-        """Per-sample slices of the already computed target logprobs (phase B2)."""
-        raise NotImplementedError("target_logprobs is implemented in phase B2.")
+        """This rank's target logprobs per Datum of the microbatch, autograd intact (for custom losses)."""
+        return losses.target_logprobs(batch, output)
 
     def target_entropy(self, batch: PreparedMicrobatch, output: ModelOutput) -> list[torch.Tensor]:
-        """Per-sample token entropies from the sharded logits (phase C1, requires_logits path)."""
-        raise NotImplementedError("target_entropy is implemented in phase C1.")
+        """Per-sample token entropies from the sharded logits (needs the full-logits path)."""
+        # TODO(logits): chunked TP-aware entropy over ModelOutput.logits.
+        raise NotImplementedError("target_entropy needs the full-logits path, which is not implemented yet.")
 
     # ---- state --------------------------------------------------------------------------------
 
@@ -701,6 +782,9 @@ class TrainingEngine:
         TP/EP/PP gathers run inside. Adapter weights, when present, are merged into the export.
         """
         self._require_open()
+        if self._output_head == "value":
+            # TODO(value-export): the HF causal-LM layout has no slot for value_head; define a critic layout.
+            raise NotImplementedError("export of a value-head engine is not supported yet.")
         if self._export_state is None:
             self._export_state = make_export_state(self._recipe)
         return export_hf_weights(self._export_state, self._model, path=path, streaming=streaming)

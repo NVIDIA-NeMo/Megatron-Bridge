@@ -141,14 +141,18 @@ def _checkpoint_state(recipe: TrainingRecipe, checkpoint_config: CheckpointConfi
 
 
 def load_pretrained_weights(
-    recipe: TrainingRecipe, model: list[MegatronModule], optimizer: Any | None, checkpoint_path: str
+    recipe: TrainingRecipe,
+    model: list[MegatronModule],
+    optimizer: Any | None,
+    checkpoint_path: str,
 ) -> None:
     """Load model weights from a Megatron (torch_dist) or HF checkpoint; optimizer and RNG state are not loaded.
 
     The optimizer is passed to the loader even though its state is not loaded (``load_optim=False``):
     Bridge refreshes the optimizer's FP32 master parameters from the loaded weights only when it is
     given the optimizer. Without it the masters keep their initialization values and the first
-    ``optim_step`` would overwrite the model from them.
+    ``optim_step`` would overwrite the model from them. Loading into a bare model before the optimizer
+    exists (``optimizer=None``) is fine too: the masters are then built from the loaded weights.
     """
     checkpoint_config = _engine_checkpoint_config(checkpoint_path)
     checkpoint_config.finalize()
