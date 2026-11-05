@@ -32,8 +32,8 @@ dependencies = [
     "nemo-evaluator",
     "nemo-run",
     "nvidia-lm-eval",
-    "langchain>=1.3.7",
-    "langchain-core>=1.4.7", # GHSA-pjwx-r37v-7724; compatible with LangGraph 1.2.12+
+    "langchain>=1.3.7,<2",
+    "langchain-core>=1.4.7,<2", # GHSA-pjwx-r37v-7724; compatible with LangGraph 1.2.12+
 ]
 
 [dependency-groups]
@@ -129,8 +129,8 @@ override-dependencies = [
     "httpx2>=2.12.0,<3",                                # GHSA-8xx6-hgc6-gc2m and GHSA-7mj9-2mp8-4m2p
     "httpcore2>=2.12.0,<3",                             # GHSA-7mj9-2mp8-4m2p
     "opencv-python; sys_platform == 'never'",            # Use the dependency from the base pytorch container
-    "langchain>=1.3.7",
-    "langchain-core>=1.4.7",                             # GHSA-pjwx-r37v-7724
+    "langchain>=1.3.7,<2",
+    "langchain-core>=1.4.7,<2",                             # GHSA-pjwx-r37v-7724
     "decord; sys_platform == 'never'",                   # Optional dependency. Resolves CVE
     "av; sys_platform == 'never'",                       # Optional dependency. Resolves CVE
     "opencv-python-headless; sys_platform == 'never'",   # Optional dependency. Resolves CVE
