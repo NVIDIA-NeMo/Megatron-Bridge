@@ -18,7 +18,6 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     deepseek_v4_supports_blackwell_fused_kernels,
-    set_deepseek_v4_fused_mhc,
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.recipes.common import _pretrain_common
@@ -72,7 +71,8 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.attention_backend = "auto"
     cfg.model.dsa_kernel_backend = "cudnn"
     cfg.model.apply_rope_fusion = True
-    set_deepseek_v4_fused_mhc(cfg.model, enabled=use_fused_mhc)
+    cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.01
     cfg.model.dsa_indexer_use_sparse_loss = True
 

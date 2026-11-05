@@ -139,24 +139,6 @@ def deepseek_v4_supports_fused_dsa_kernels() -> bool:
     )
 
 
-def set_deepseek_v4_fused_mhc(
-    model_cfg: DeepSeekV4HybridModelProvider | DeepSeekV4ModelConfig, *, enabled: bool
-) -> None:
-    """Select Megatron Core's fused mHC kernels or the unfused path that matches DeepSeek-V4.
-
-    DeepSeek-V4 normalizes the mHC mapping input as ``x * rsqrt(mean(x**2) + rms_norm_eps)``.
-    Megatron Core computes that only on its unfused path (``mhc_norm_eps_inside_sqrt=True``).
-    The fused kernels add epsilon outside the square root and reject that flag, so enabling
-    them trades reference numerics for speed.
-
-    Args:
-        model_cfg: DeepSeek-V4 provider or model config to configure in place.
-        enabled: Whether to use the fused mHC kernels.
-    """
-    model_cfg.use_fused_mhc = enabled
-    model_cfg.mhc_norm_eps_inside_sqrt = not enabled
-
-
 def set_deepseek_v4_pipeline_model_parallel_layout(
     model_cfg: DeepSeekV4HybridModelProvider | DeepSeekV4ModelConfig,
     *,
@@ -565,7 +547,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             mhc_num_residual_streams=hf_config.hc_mult,  # 4
             # DeepSeek-V4 adds rms_norm_eps inside the square root of the mHC mapping norm.
             # Only the unfused mHC path supports that, so the bridge maps it on every GPU;
-            # recipes opt into the fused kernels through set_deepseek_v4_fused_mhc().
+            # recipes that enable fused mHC also set mhc_norm_eps_inside_sqrt=False.
             mhc_norm_eps_inside_sqrt=True,
             use_fused_mhc=False,
             mhc_sinkhorn_iterations=hf_config.hc_sinkhorn_iters,  # 20

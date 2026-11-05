@@ -42,7 +42,6 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     _dsv4_hybrid_layer_pattern,
     _dsv4_num_hash_layers,
     deepseek_v4_supports_fused_dsa_kernels,
-    set_deepseek_v4_fused_mhc,
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelConfig, DeepSeekV4TransformerConfig
@@ -615,18 +614,6 @@ class TestDeepSeekV4MhcNormalization:
         assert transformer.layernorm_epsilon == hf_config.rms_norm_eps
         # The reference casts the mHC mappings to the activation dtype before mixing the streams.
         assert transformer.mhc_keep_mappings_in_fp32 is False
-
-    @pytest.mark.parametrize("enabled", [True, False])
-    def test_set_fused_mhc_pairs_kernels_with_norm_placement(self, enabled):
-        with patch.object(torch.cuda, "is_available", return_value=False):
-            model_config = DeepSeekV4Bridge().hf_config_to_model_config(_native_deepseek_v4_config())
-
-        set_deepseek_v4_fused_mhc(model_config, enabled=enabled)
-        # Megatron Core's validation rejects fused mHC together with mhc_norm_eps_inside_sqrt.
-        model_config.finalize()
-
-        assert model_config.use_fused_mhc is enabled
-        assert model_config.mhc_norm_eps_inside_sqrt is not enabled
 
 
 class TestDeepSeekV4ExportWeightDtype:

@@ -18,7 +18,6 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     deepseek_v4_supports_blackwell_fused_kernels,
-    set_deepseek_v4_fused_mhc,
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.recipes.common import _pretrain_common
@@ -59,7 +58,8 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.attention_backend = None
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
-    set_deepseek_v4_fused_mhc(cfg.model, enabled=deepseek_v4_supports_blackwell_fused_kernels())
+    cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.mhc_norm_eps_inside_sqrt = not cfg.model.use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -137,7 +137,8 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
-    set_deepseek_v4_fused_mhc(cfg.model, enabled=deepseek_v4_supports_blackwell_fused_kernels())
+    cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.mhc_norm_eps_inside_sqrt = not cfg.model.use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
