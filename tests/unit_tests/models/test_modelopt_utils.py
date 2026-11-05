@@ -1330,6 +1330,18 @@ def test_unquantized_grouped_transpose_mapping_keeps_offline_export_path():
     assert plan.conversion_tasks[0].export_hook is None
 
 
+@pytest.mark.unit
+def test_quantized_weight_must_map_to_hf_weight_tensor():
+    # E.g. DeepSeek-V4's hyper-connection mixer, an nn.Linear in Megatron but a bare parameter in HF.
+    module = _fp8_linear()
+    mapping = ColumnParallelMapping("decoder.layers.0.attn_hc.mapping_proj.weight", "layers.0.hc_attn_fn")
+
+    with pytest.raises(RuntimeError, match=r"map to HF '\.weight' tensors, not \['layers\.0\.hc_attn_fn'\]"):
+        modelopt_utils.build_modelopt_export_plan(
+            [_task(mapping, module, global_name=mapping.megatron_param)], model=[module]
+        )
+
+
 def _mxfp4_weight_only_linear(out_features, in_features):
     from modelopt.torch.quantization.config import QuantizerAttributeConfig
     from modelopt.torch.quantization.nn import TensorQuantizer

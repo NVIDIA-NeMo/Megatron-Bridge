@@ -40,6 +40,7 @@ models/beam/beam.md
 models/bert/index.md
 models/deepseek/index.md
 models/ernie/ernie45.md
+models/ernie/ernie55.md
 models/exaone/exaone.md
 models/falcon/index.md
 models/gemma/index.md

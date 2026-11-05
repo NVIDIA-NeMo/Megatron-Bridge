@@ -400,6 +400,24 @@ def _build_deepseek_v4_recipe(name: str, monkeypatch: pytest.MonkeyPatch):
     return getattr(mod, name)()
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "deepseek_v4_flash_sft_openmath_thinking_packed_config",
+        "deepseek_v4_flash_peft_openmath_thinking_packed_config",
+    ],
+)
+def test_deepseek_v4_packed_recipes_use_native_contiguous_layouts(recipe_name, monkeypatch):
+    cfg = _build_deepseek_v4_recipe(recipe_name, monkeypatch)
+
+    assert cfg.model.attention_cp_layout == "contiguous"
+    assert cfg.model.linear_cp_layout == "contiguous"
+    # The builder config declares the dev-pin cp_partition_mode field; the recipe leaves it at its default.
+    assert getattr(cfg.model, "cp_partition_mode", "zigzag") == "zigzag"
+    assert cfg.dataset.enable_offline_packing is True
+
+
 def test_deepseek_v4_portable_peft_recipe_disables_recompute(monkeypatch: pytest.MonkeyPatch):
     cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_peft_openmath_thinking_packed_config", monkeypatch)
 

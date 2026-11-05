@@ -1002,7 +1002,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "07c5cc30d0510d437bfbbe7b12d9d98387295d89",
           "command_topologies": [
             {
               "context_parallel": "2",
@@ -1015,7 +1015,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config --step-func dsv4_step --pretrained_checkpoint work/model-verification/dsv4-flash/import-gpu/iter_0000000 --save_dir work/model-verification/dsv4-flash/sft-long-context-ref --save_interval 100 --max_steps 100 model.pipeline_model_parallel_size=4 'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL' model.context_parallel_size=2 model.cp_partition_mode=contiguous model.expert_model_parallel_size=8 model.moe_grouped_gemm=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 dataset.seq_length=1024 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config --step-func dsv4_step --pretrained_checkpoint work/model-verification/dsv4-flash/import-gpu/iter_0000000 --save_dir work/model-verification/dsv4-flash/sft-long-context-ref --save_interval 100 --max_steps 100 model.pipeline_model_parallel_size=4 model.context_parallel_size=2 model.attention_cp_layout=contiguous model.linear_cp_layout=contiguous model.expert_model_parallel_size=8 model.moe_grouped_gemm=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 dataset.seq_length=1024 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -1023,19 +1023,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "deepseek-v4-flash-sft-long-context-gb200",
-          "expected_result": "CP=2 with contiguous partitioning and offline-packed OpenMathInstruct-2 at seq_length=1024 demonstrates sequence packing and context parallelism working together over 100 training steps with finite loss and no skipped or NaN iterations.\n",
+          "expected_result": "Pending verification on the native main API with Megatron-Core PR #7469. CP=2 requires packed THD metadata and both attention_cp_layout and linear_cp_layout set to contiguous. The packed token count must be divisible by CP size. The command no longer passes the dev-API explicit pipeline layout, which counted logical blocks rather than physical attention/MoE layers; the recipe's native PP4 segments apply. Require 100 finite steps with no skipped or NaN iterations. Historical dev-API metrics do not verify this migrated command and remain available in the card's git history.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-07",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 0.2837,
-            "initial_loss": 0.94383,
-            "last_10_steps_model_tflops_per_gpu_avg": 13.62,
-            "last_10_steps_step_time_ms_avg": 13806.5,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 148.336
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.GB200",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft_long_context"
         },
@@ -1190,7 +1190,7 @@
       "min_transformers_version": "5.12.0",
       "slug": "deepseek-v4-flash",
       "source_card": "examples/model_verification_cards/deepseek-v4-flash/card.yaml",
-      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use their tuned canonical 128-GPU MXFP8 recipes. Timing and throughput metrics from functional training items are sanity checks rather than optimized performance results.\nThe Megatron-backed DeepSeek V4 workflows in this card require the Megatron-Core dev branch; the default MCore submodule revision in Megatron Bridge r0.6.0 is insufficient. Follow the public setup instructions in examples/models/deepseek_v4/README.md.\nDeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision. The verified 64-GPU GB200 MXFP8 library pretraining run uses PP4/VPP4/EP16 with imported model weights, natural routing, grouped GEMM, TE fused cross entropy, and selective recompute without activation offload. It completed 100 finite steps with full-state checkpoints at steps 50 and 100. A direct step-50 continuation restored optimizer, scheduler, data-order, and RNG state, completed steps 51-100, and passed both loss-sentinel comparisons. A capacity-1.5 performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert assignments and 64.23% of routing probability mass; that result is benchmark-only and is excluded from the natural-routing library recipe and verification metrics. CPU conversion remains unverified because the available nodes lacked sufficient RAM. Standard Megatron KV-cache inference is unsupported for DSV4 hybrid attention; inference uses the HF-native path after export.\nThe GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes, selective whole-MoE recompute, and attention activation offload while preserving the base SFT objective. Its final objective-preserving configuration completed 100 finite steps and a fresh-process checkpoint reload. GPU export of both the imported model and the step-100 SFT checkpoint produced exact BF16 inventories and passed independent strict GPU-only HF reloads. The public post-SFT workflow also produced identical bounded greedy completions from two independent reloads. A separate 100-step CP2 run verifies offline packing with contiguous context parallelism.\nThe GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections and to separate routed/shared expert FC1/FC2 projections. Its execution path uses scoped Transformer Engine CUDA graphs and tuned HybridEP dispatch. It completed 100 finite steps, saved an adapter-only checkpoint, and reloaded that checkpoint in a fresh process for finite step 101.\n",
+      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use their tuned canonical 128-GPU MXFP8 recipes. Timing and throughput metrics from functional training items are sanity checks rather than optimized performance results.\nHistorical verified Megatron-backed workflows below use their item-pinned Bridge revisions and the Megatron-Core dev branch. The migrated native-main long-context command is unverified and requires native DSv4 packed-CP support from Megatron-Core PR #7469. Follow examples/models/deepseek_v4/README.md for model setup.\nDeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision. The verified 64-GPU GB200 MXFP8 library pretraining run uses PP4/VPP4/EP16 with imported model weights, natural routing, grouped GEMM, TE fused cross entropy, and selective recompute without activation offload. It completed 100 finite steps with full-state checkpoints at steps 50 and 100. A direct step-50 continuation restored optimizer, scheduler, data-order, and RNG state, completed steps 51-100, and passed both loss-sentinel comparisons. A capacity-1.5 performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert assignments and 64.23% of routing probability mass; that result is benchmark-only and is excluded from the natural-routing library recipe and verification metrics. CPU conversion remains unverified because the available nodes lacked sufficient RAM. Standard Megatron KV-cache inference is unsupported for DSV4 hybrid attention; inference uses the HF-native path after export.\nThe GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes, selective whole-MoE recompute, and attention activation offload while preserving the base SFT objective. Its final objective-preserving configuration completed 100 finite steps and a fresh-process checkpoint reload. GPU export of both the imported model and the step-100 SFT checkpoint produced exact BF16 inventories and passed independent strict GPU-only HF reloads. The public post-SFT workflow also produced identical bounded greedy completions from two independent reloads. A historical 100-step CP2 run used the older dev API; it does not verify the migrated native-main long-context command below.\nThe GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections and to separate routed/shared expert FC1/FC2 projections. Its execution path uses scoped Transformer Engine CUDA graphs and tuned HybridEP dispatch. It completed 100 finite steps, saved an adapter-only checkpoint, and reloaded that checkpoint in a fresh process for finite step 101.\n",
       "title": "deepseek_v4_flash"
     },
     {
@@ -10218,7 +10218,7 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "bridge_commit": "e7a6dbfec036e2877a2bf785df94475b1b6c5eb7",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -10228,22 +10228,30 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_config --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 50 --warmup_iters 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=50 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_config --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 50 --warmup_iters 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=50 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 checkpoint.load=null checkpoint.save=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml"
           ],
           "dimensions": {},
           "enabled_features": {
+            "cuda_graph": {
+              "implementation": "transformer_engine",
+              "scopes": [
+                "attn",
+                "moe_router",
+                "moe_preprocess"
+              ]
+            },
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "qwen3-6-35b-a3b-pretrain-h100",
-          "expected_result": "The 16-H100 command completed all 50 full-model DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the immutable imported checkpoint for natural routing. Loss remained finite from 3.604611 to 3.458849 with zero skipped or NaN iterations. The 519,827/5,173 train/validation split was prepared with the official DataComp downloader at commit 4a8df1992566, DataComp-1B metadata revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest 6e273a96a756. This verifies bounded full-model training, not canonical DataComp/CLIP convergence or checkpoint resume.\n",
+          "expected_result": "The 16-H100 command completed all 50 full-model DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the immutable imported checkpoint for natural routing. Loss remained finite from 3.600145 to 3.062526 with zero skipped or NaN iterations, and the run saved no checkpoint. The 519,827/5,173 train/validation split was prepared with the official DataComp downloader at commit 4a8df1992566, DataComp-1B metadata revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest 6e273a96a756. This verifies bounded full-model training, not canonical DataComp/CLIP convergence or checkpoint resume.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-05",
+          "last_verified": "2026-11-03",
           "metrics": {
-            "final_loss": 3.458849,
-            "initial_loss": 3.604611,
-            "last_10_steps_model_tflops_per_gpu_avg": 135.61,
-            "last_10_steps_step_time_ms_avg": 22271.22,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 5885.264
+            "final_loss": 3.062526,
+            "initial_loss": 3.600145,
+            "last_10_steps_model_tflops_per_gpu_avg": 132.83,
+            "last_10_steps_step_time_ms_avg": 22738.33,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 5764.364
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.H100",
@@ -10535,7 +10543,7 @@
       "min_transformers_version": "5.8.1",
       "slug": "qwen3.6-35b-a3b",
       "source_card": "examples/model_verification_cards/qwen3.6-35b-a3b/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Full-model H100 DataComp pretraining reaches 135.610 model TFLOP/s/GPU, approximately 136, with natural routing. On GB200, language-only RedPajama2 pretraining through the early, unoptimized Qwen3.5 text 35B-A3B library recipe, warm-started from this model's language weights, reaches 240.070 model TFLOP/s/GPU against a roughly 400 TFLOP/s/GPU BF16 readiness target. Checkpoint resume is explicitly unverified pending a full-model rerun. This card otherwise verifies conversion, inference, SFT, long-context SFT, and PEFT.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Full-model H100 DataComp pretraining reaches 132.830 model TFLOP/s/GPU, approximately 133, with natural routing. On GB200, language-only RedPajama2 pretraining through the early, unoptimized Qwen3.5 text 35B-A3B library recipe, warm-started from this model's language weights, reaches 240.070 model TFLOP/s/GPU against a roughly 400 TFLOP/s/GPU BF16 readiness target. Checkpoint resume is explicitly unverified pending a full-model rerun. This card otherwise verifies conversion, inference, SFT, long-context SFT, and PEFT.\n",
       "title": "qwen3_6_35b_a3b"
     },
     {
