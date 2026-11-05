@@ -17,6 +17,7 @@
 import importlib.util
 import pathlib
 import sys
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -86,7 +87,14 @@ class TestBuildBatch:
             parity.build_batch(_hf_config(), seq_length=7, image_grid_thw=(1, 4, 4), seed=0)
 
 
-def _save_results(output_dir: pathlib.Path, *, mimo_language: dict | None = None, mimo_images: dict | None = None):
+def _save_results(
+    output_dir: pathlib.Path,
+    *,
+    mimo_language: dict | None = None,
+    mimo_images: dict | None = None,
+    edit: Callable[[dict, dict, dict], None] | None = None,
+):
+    """Save matching standard and MegatronMIMO results; ``edit(standard, language, images)`` alters them first."""
     generator = torch.Generator().manual_seed(0)
     per_token = torch.rand(1, 8, generator=generator)
     language_grads = {"decoder.weight": torch.randn(4, 4, generator=generator), "mtp.layers.0.eh_proj.weight": None}
@@ -113,6 +121,8 @@ def _save_results(output_dir: pathlib.Path, *, mimo_language: dict | None = None
     images = {"weights": dict(image_weights), "grads": {k: v.clone() for k, v in image_grads.items()}}
     language.update(mimo_language or {})
     images.update(mimo_images or {})
+    if edit is not None:
+        edit(standard, language, images)
     torch.save(standard, output_dir / "standard.pt")
     torch.save(language, output_dir / "mimo_language.pt")
     torch.save(images, output_dir / "mimo_images.pt")
@@ -160,3 +170,64 @@ class TestCompareResults:
 
         assert "language gradient mtp.layers.0.eh_proj.weight exists in only one path" in failures
         assert any(failure.startswith("language gradient decoder.weight differs") for failure in failures)
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    @pytest.mark.parametrize("side", ["standard", "mimo"])
+    @pytest.mark.parametrize(
+        ("quantity", "failure"),
+        [
+            ("mtp_losses", "mtp_1 loss is not finite"),
+            ("lm_loss", "lm loss is not finite"),
+            ("per_token", "lm loss is not finite"),
+            ("grads", "images gradient patch_embed.proj.weight is not finite"),
+        ],
+    )
+    def test_nonfinite_result_fails(self, parity, tmp_path, quantity, failure, side, value):
+        def inject(standard, language, images):
+            if quantity == "grads":
+                grads = standard["masked"]["grads"]["images"] if side == "standard" else images["grads"]
+                grads["patch_embed.proj.weight"][0] = value
+                return
+            target = standard["masked"] if side == "standard" else language
+            if quantity == "mtp_losses":
+                target["mtp_losses"] = [value]
+            elif quantity == "lm_loss":
+                target["lm_loss"] = value
+            else:
+                target["per_token"][0, 0] = value
+
+        _save_results(tmp_path, edit=inject)
+
+        failures = parity.compare_results(tmp_path, min_cosine=0.999, loss_rtol=1e-3)
+
+        assert len(failures) == 1 and failures[0].startswith(failure)
+
+    def test_identical_infinite_gradients_fail(self, parity, tmp_path):
+        def inject(standard, language, images):
+            standard["masked"]["grads"]["images"]["patch_embed.proj.weight"][0] = float("inf")
+            images["grads"]["patch_embed.proj.weight"][0] = float("inf")
+
+        _save_results(tmp_path, edit=inject)
+
+        failures = parity.compare_results(tmp_path, min_cosine=0.999, loss_rtol=1e-3)
+
+        assert failures == ["images gradient patch_embed.proj.weight is not finite"]
+
+    def test_identical_zero_gradients_pass(self, parity, tmp_path):
+        def zero(standard, language, images):
+            standard["masked"]["grads"]["images"]["patch_embed.proj.weight"].zero_()
+            images["grads"]["patch_embed.proj.weight"].zero_()
+
+        _save_results(tmp_path, edit=zero)
+
+        assert parity.compare_results(tmp_path, min_cosine=0.999, loss_rtol=1e-3) == []
+
+    @pytest.mark.parametrize(("mtp_loss", "exit_code"), [(7.25, 0), (float("nan"), 1)])
+    def test_compare_exit_status(self, parity, tmp_path, monkeypatch, mtp_loss, exit_code):
+        _save_results(tmp_path, mimo_language={"mtp_losses": [mtp_loss]})
+        monkeypatch.setattr(sys, "argv", ["verify_mtp_parity.py", "compare", "--output-dir", str(tmp_path)])
+
+        with pytest.raises(SystemExit) as exited:
+            parity.main()
+
+        assert exited.value.code == exit_code

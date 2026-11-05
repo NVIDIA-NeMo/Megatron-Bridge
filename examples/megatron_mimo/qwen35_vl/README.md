@@ -101,7 +101,8 @@ uv run python -m torch.distributed.run --nproc_per_node=2 \
 uv run python examples/megatron_mimo/qwen35_vl/verify_mtp_parity.py compare --output-dir ${OUT}
 ```
 
-`compare` prints `PASS` or lists each mismatch and exits with status 1.
+`compare` prints `PASS` or lists each mismatch and exits with status 1. A NaN or
+infinite loss or gradient also fails, even when both paths agree.
 
 
 ## More Coverage Coming

@@ -336,8 +336,15 @@ def _relative_difference(a: float, b: float) -> float:
     return abs(a - b) / max(abs(a), abs(b), 1e-12)
 
 
+def _is_finite(value: float | torch.Tensor) -> bool:
+    return bool(torch.isfinite(torch.as_tensor(value)).all())
+
+
 def compare_results(output_dir: Path, *, min_cosine: float, loss_rtol: float) -> list[str]:
     """Compare the standard and MegatronMIMO outputs saved in ``output_dir``.
+
+    Every compared loss and gradient must also be finite: NaN or infinity fails the
+    check even when both paths produce the same value.
 
     Args:
         output_dir: Directory written by the standard and mimo steps.
@@ -365,11 +372,16 @@ def compare_results(output_dir: Path, *, min_cosine: float, loss_rtol: float) ->
         f"lm loss: standard {masked['lm_loss']:.6f}, MegatronMIMO {mimo[LANGUAGE]['lm_loss']:.6f}; "
         f"per-token cosine {per_token_cosine:.8f}"
     )
-    if per_token_cosine < min_cosine or lm_difference > loss_rtol:
+    lm_values = (masked["lm_loss"], mimo[LANGUAGE]["lm_loss"], masked["per_token"], mimo[LANGUAGE]["per_token"])
+    if not all(_is_finite(value) for value in lm_values):
+        failures.append("lm loss is not finite")
+    elif per_token_cosine < min_cosine or lm_difference > loss_rtol:
         failures.append(f"lm loss differs: per-token cosine {per_token_cosine:.6f}, relative {lm_difference:.2e}")
     for depth, (expected, actual) in enumerate(zip(masked["mtp_losses"], mimo[LANGUAGE]["mtp_losses"]), start=1):
         logger.info(f"mtp_{depth} loss: standard {expected:.6f}, MegatronMIMO {actual:.6f}")
-        if _relative_difference(expected, actual) > loss_rtol:
+        if not (_is_finite(expected) and _is_finite(actual)):
+            failures.append(f"mtp_{depth} loss is not finite: {expected} vs {actual}")
+        elif _relative_difference(expected, actual) > loss_rtol:
             failures.append(f"mtp_{depth} loss differs: {expected:.6f} vs {actual:.6f}")
     if len(masked["mtp_losses"]) != len(mimo[LANGUAGE]["mtp_losses"]):
         failures.append(f"MTP depth differs: {len(masked['mtp_losses'])} vs {len(mimo[LANGUAGE]['mtp_losses'])}")
@@ -383,6 +395,10 @@ def compare_results(output_dir: Path, *, min_cosine: float, loss_rtol: float) ->
                 continue
             if a is None or b is None:
                 failures.append(f"{part} gradient {name} exists in only one path")
+                continue
+            # torch.equal treats matching infinities as equal, so check finiteness first.
+            if not (_is_finite(a) and _is_finite(b)):
+                failures.append(f"{part} gradient {name} is not finite")
                 continue
             if torch.equal(a, b):
                 identical += 1
