@@ -170,6 +170,15 @@ def test_gb300_deepseek_hsdp_uses_hybridep() -> None:
     assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
 
 
+def test_gb300_deepseek_hsdp_shards_expert_optimizer_state_over_dp_outer() -> None:
+    # Megatron-FSDP shards expert optimizer state with outer_dp_sharding_strategy and ignores
+    # expert_outer_dp_sharding_strategy, so keep the two equal to reflect the effective behavior.
+    cfg = _build("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config")
+
+    assert cfg.ddp.num_distributed_optimizer_instances > 1
+    assert cfg.ddp.expert_outer_dp_sharding_strategy == cfg.ddp.outer_dp_sharding_strategy == "optim"
+
+
 @pytest.mark.parametrize(("module_name", "factory_name"), _VRNVL72_NON_NCCLEP_RECIPES, ids=lambda value: value)
 def test_vrnvl72_recipes_left_off_nccl_ep_do_not_inherit_it(module_name: str, factory_name: str) -> None:
     cfg = _build(module_name, factory_name)
