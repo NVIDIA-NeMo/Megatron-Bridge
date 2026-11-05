@@ -517,9 +517,9 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_path: Directory path where the Megatron checkpoint is stored
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
-            trust_remote_code: Whether to trust remote code when loading config.
-                Defaults to False for security. Set to True only for models that
-                require custom modeling code from the repository.
+            trust_remote_code: Whether to trust remote code when loading the reference config and
+                the checkpoint's run config. Defaults to False for security. Set to True only for
+                models that require custom modeling code from the repository.
 
         Returns:
             AutoBridge: Bridge instance configured for the architecture
@@ -533,6 +533,7 @@ class AutoBridge(Generic[MegatronModelT]):
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
         from megatron.bridge.training.model_load_save import load_model_config
         from megatron.bridge.training.utils.checkpoint_utils import get_hf_source_from_model_config
+        from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
 
         checkpoint_path = Path(megatron_path)
         if not checkpoint_path.exists():
@@ -552,12 +553,14 @@ class AutoBridge(Generic[MegatronModelT]):
             )
 
         # 1. Load config from both sides
-        megatron_cfg, _ = load_model_config(str(run_config.parent))
         if trust_remote_code:
             logger.warning(
                 "Loading a model with trust_remote_code=True allows arbitrary code execution "
                 "from the model repository. Only use this with models you trust."
             )
+            # The run config can restore config classes from the repository code, such as a VLM's vision config.
+            register_allowed_target_prefix("transformers_modules.")
+        megatron_cfg, _ = load_model_config(str(run_config.parent))
         text_reference = None
         if getattr(megatron_cfg, "hf_model_text_only", False) is True:
             # A replacement reference repository need not contain the source revision.

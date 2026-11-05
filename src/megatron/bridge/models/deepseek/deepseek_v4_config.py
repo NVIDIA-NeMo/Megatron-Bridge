@@ -26,11 +26,11 @@ class DeepSeekV4TransformerConfig(MLATransformerConfig):
     """MLA transformer config with the DeepSeek-V4 settings that every supported Megatron Core pin needs."""
 
     cp_partition_mode: Literal["zigzag", "contiguous"] = "zigzag"
-    """Token assignment across context-parallel ranks.
+    """Token assignment across context-parallel ranks on Megatron Core's dev pin.
 
-    DeepSeek-V4's compressed sparse attention exchanges boundary states between adjacent ranks, so
-    packed training with CP > 1 uses ``contiguous`` through ``dsv4_step``. Megatron Core's dev pin
-    declares this field; its main pin does not.
+    Megatron Core's dev pin declares this field; its main pin does not. On the main pin,
+    ``dsv4_step`` selects contiguous packed context parallelism through ``attention_cp_layout`` and
+    ``linear_cp_layout`` instead and does not read this field.
     """
 
 
