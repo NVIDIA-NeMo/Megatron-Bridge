@@ -69,6 +69,7 @@ def test_export_streams_with_cached_tasks_and_writes_directories():
 def test_engine_export_builds_state_once(monkeypatch):
     engine = TrainingEngine.__new__(TrainingEngine)
     engine._closed = False
+    engine._resident = True
     engine._output_head = "lm"
     engine._runtime = SimpleNamespace(topology=Topology(1, 1, 1, None, 1, 1, None, False))
     engine._recipe = SimpleNamespace(hf_path="x", ddp=SimpleNamespace(overlap_param_gather=False))

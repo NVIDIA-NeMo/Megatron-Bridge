@@ -61,6 +61,7 @@ def _engine_with_window(open_window: bool) -> TrainingEngine:
     engine = TrainingEngine.__new__(TrainingEngine)
     engine._trainable = True
     engine._closed = False
+    engine._resident = True
     engine._runtime = SimpleNamespace(
         topology=Topology(1, 1, 1, None, 1, 1, None, False), detach=lambda engine: None, pg_collection=None
     )

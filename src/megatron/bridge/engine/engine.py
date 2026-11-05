@@ -35,6 +35,7 @@ from megatron.core.num_microbatches_calculator import init_num_microbatches_calc
 from megatron.core.optimizer import get_megatron_optimizer, get_standard_config_overrides
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
+from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker, set_moe_metrics_tracker
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.engine import losses
@@ -65,6 +66,7 @@ from megatron.bridge.engine.datum import (
     check_datums,
 )
 from megatron.bridge.engine.export import ExportState, export_hf_weights, make_export_state
+from megatron.bridge.engine.offload import HostState, check_movable, offload_to_cpu, reload_to_cuda
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
@@ -320,6 +322,14 @@ class TrainingEngine:
         self._pending_save: CheckpointHandle | None = None
         self._export_state: ExportState | None = None
         self._warned_unscaled_aux = False
+        self._host_state = HostState()
+        self._resident = True  # False while cpu() has the state in host memory
+        self._offloaded_bytes = 0
+        # MCore's MoE metrics tracker is a process-wide singleton whose per-layer buffers are sized by the
+        # first model that records into it; engines of different depth (a critic without MTP next to a
+        # policy with it) would overflow each other's buffers. Each engine owns one and installs it before
+        # its compute calls.
+        self._moe_metrics_tracker = MoEMetricsTracker()
         # Before the model: the worker's CUDA context and IPC mappings need a GPU that is not yet full.
         self._async_checkpoint_state = start_async_checkpoint_worker(recipe) if spawn_async_save_worker else None
         pg_collection = runtime.pg_collection
@@ -387,6 +397,8 @@ class TrainingEngine:
         open accumulation window are untouched.
         """
         self._require_open()
+        self._require_resident("forward_only")
+        self._activate()
         if return_entropy:
             # TODO(logits): entropy needs the model called without labels and a chunked TP-aware reduction.
             raise NotImplementedError("return_entropy needs the full-logits path, which is not implemented yet.")
@@ -424,7 +436,9 @@ class TrainingEngine:
         to the loss method as keyword arguments (for example ``ppo_clip``'s clip bounds).
         """
         self._require_open()
+        self._require_resident("forward_backward")
         self._require_trainable("forward_backward")
+        self._activate()
         if loss_fn is None:
             loss_fn = "value_loss" if self._output_head == "value" else "cross_entropy"
         loss_method = self.resolve_loss_method(loss_fn)
@@ -572,7 +586,9 @@ class TrainingEngine:
         the normalization domain is empty or the optimizer finds non-finite gradients.
         """
         self._require_open()
+        self._require_resident("optim_step")
         self._require_trainable("optim_step")
+        self._activate()
         if not self._window.is_open:
             raise RuntimeError("optim_step called without a preceding forward_backward.")
         scale: float | None = None
@@ -629,6 +645,7 @@ class TrainingEngine:
     def zero_grad(self) -> None:
         """Abort the open accumulation window: zero the gradient buffers and reset the counts."""
         self._require_open()
+        self._require_resident("zero_grad")
         self._require_trainable("zero_grad")
         zero_gradients(self._model, self._optimizer)
         self._window.reset()
@@ -721,6 +738,7 @@ class TrainingEngine:
         copy is returned to that rank by ``load_state``.
         """
         self._require_open()
+        self._require_resident("save_state")
         # TODO(save-mid-window): allow saving with an open window. The snapshot would be consistent (weights
         # and optimizer state of the last completed update); only document that the pending gradients are
         # not part of it, so a resumed engine redoes the interrupted update's forward_backward calls.
@@ -748,6 +766,7 @@ class TrainingEngine:
         update count; returns this rank's ``user_state`` or ``None``. Only between updates.
         """
         self._require_open()
+        self._require_resident("load_state")
         self._require_closed_window("load_state")
         self._wait_pending_save()
         step, user_state = load_engine_state(self._recipe, self._model, self._optimizer, path=path)
@@ -782,6 +801,7 @@ class TrainingEngine:
         TP/EP/PP gathers run inside. Adapter weights, when present, are merged into the export.
         """
         self._require_open()
+        self._require_resident("export")
         if self._output_head == "value":
             # TODO(value-export): the HF causal-LM layout has no slot for value_head; define a critic layout.
             raise NotImplementedError("export of a value-head engine is not supported yet.")
@@ -792,14 +812,44 @@ class TrainingEngine:
     # ---- placement ----------------------------------------------------------------------------
 
     def cuda(self) -> TrainingEngine:
-        """Move engine state back to the GPU (phase C2)."""
+        """Move the state back to the GPU, including the gradients of an open accumulation window.
+
+        No-op when the engine is already resident. The shared runtime (process groups) is never moved,
+        so other engines can run in between.
+        """
         self._require_open()
-        raise NotImplementedError("cuda is implemented in phase C2.")
+        if not self._resident:
+            reload_to_cuda(self._model, self._host_state)
+            self._resident = True
+            self._offloaded_bytes = 0
+        return self
 
     def cpu(self) -> TrainingEngine:
-        """Offload engine state to host memory (phase C2)."""
+        """Offload parameters, optimizer state and any open window's gradients to pinned host memory.
+
+        No-op when already offloaded. Waits for a pending asynchronous save first. While offloaded, the
+        compute, state and export calls raise; ``cuda()`` restores everything, with the window's counts
+        and gradients intact. Unsupported buffer or optimizer modes raise before anything moves.
+        """
         self._require_open()
-        raise NotImplementedError("cpu is implemented in phase C2.")
+        if self._resident:
+            check_movable(self._recipe, self._optimizer)
+            self._wait_pending_save()
+            self._offloaded_bytes = offload_to_cpu(
+                self._model, self._optimizer, self._host_state, keep_gradients=self._window.is_open
+            )
+            self._resident = False
+        return self
+
+    @property
+    def device(self) -> str:
+        """``"cuda"`` while resident, ``"cpu"`` after ``cpu()``."""
+        return "cuda" if self._resident else "cpu"
+
+    @property
+    def offloaded_bytes(self) -> int:
+        """GPU bytes released by the last ``cpu()``; 0 while resident. Compare with ``torch.cuda.memory_allocated``."""
+        return self._offloaded_bytes
 
     # ---- introspection ------------------------------------------------------------------------
 
@@ -886,6 +936,7 @@ class TrainingEngine:
         self._finalize_model_grads_func = None
         self._export_state = None
         self._model = []
+        self._host_state = HostState()
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -899,6 +950,14 @@ class TrainingEngine:
     def _require_trainable(self, api: str) -> None:
         if not self._trainable:
             raise RuntimeError(f"{api}() requires a trainable engine; this engine was built with trainable=False.")
+
+    def _require_resident(self, api: str) -> None:
+        if not self._resident:
+            raise RuntimeError(f"{api}() needs the engine on the GPU; call cuda() first (it was moved with cpu()).")
+
+    def _activate(self) -> None:
+        """Point MCore's process-wide MoE metrics tracker at this engine's own instance."""
+        set_moe_metrics_tracker(self._moe_metrics_tracker)
 
 
 def _release_ddp_autograd_refs(chunk: MegatronModule) -> None:

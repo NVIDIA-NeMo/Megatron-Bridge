@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker, get_moe_metrics_tracker
 
 from megatron.bridge.engine import AdamParams, Datum, ForwardBackwardOutput, TrainingEngine, topology_from_recipe
 from megatron.bridge.engine.accumulation import AccumulationWindow
@@ -38,6 +39,9 @@ def _unbuilt_engine(trainable: bool = True, closed: bool = False) -> TrainingEng
     engine._trainable = trainable
     engine._closed = closed
     engine._output_head = "lm"
+    engine._resident = True
+    engine._offloaded_bytes = 0
+    engine._moe_metrics_tracker = MoEMetricsTracker()
     engine._runtime = SimpleNamespace(topology=Topology(1, 1, 1, None, 1, 1, None, False))
     return engine
 
@@ -290,6 +294,8 @@ def test_forward_only_runs_preprocess_check_then_postprocess(monkeypatch):
     )
     assert engine.forward_only(_datums(), gather_output=False) == "out"
     assert calls == [("preprocess", False), ("check", ["mb"]), ("post", False)]
+    # Each compute call installs the engine's own MoE metrics tracker (per-layer buffers differ per model).
+    assert get_moe_metrics_tracker() is engine._moe_metrics_tracker
 
 
 def test_value_head_engine_defaults_to_value_loss_and_rejects_export(monkeypatch):
@@ -336,6 +342,52 @@ def test_closed_engine_rejects_calls():
     engine = _unbuilt_engine(closed=True)
     with pytest.raises(RuntimeError, match="closed"):
         engine.forward_only(_datums())
+    with pytest.raises(RuntimeError, match="closed"):
+        engine.cpu()
+
+
+def test_offloaded_engine_rejects_compute_and_state_calls(monkeypatch):
+    engine = _unbuilt_engine()
+    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(), optimizer=SimpleNamespace())
+    engine._optimizer = None
+    engine._model = []
+    engine._window = AccumulationWindow()
+    engine._pending_save = None
+    engine._host_state = None
+    moves = []
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.offload_to_cpu", lambda *a, **k: moves.append(("cpu", k)) or 1234
+    )
+    monkeypatch.setattr("megatron.bridge.engine.engine.reload_to_cuda", lambda *a, **k: moves.append(("cuda", k)) or 0)
+    assert engine.device == "cuda" and engine.offloaded_bytes == 0
+    assert engine.cpu() is engine and engine.device == "cpu"
+    assert engine.offloaded_bytes == 1234
+    engine.cpu()  # idempotent: no second move
+    assert moves == [("cpu", {"keep_gradients": False})]
+    for call in (
+        lambda: engine.forward_only(_datums()),
+        lambda: engine.forward_backward(_datums()),
+        lambda: engine.optim_step(None),
+        lambda: engine.zero_grad(),
+        lambda: engine.save_state("x"),
+        lambda: engine.load_state("x"),
+        lambda: engine.export(),
+    ):
+        with pytest.raises(RuntimeError, match="cuda\\(\\) first"):
+            call()
+    assert engine.cuda() is engine and engine.device == "cuda" and engine.offloaded_bytes == 0
+    engine.cuda()
+    assert moves == [("cpu", {"keep_gradients": False}), ("cuda", {})]
+
+
+def test_cpu_rejects_unsupported_modes_before_moving(monkeypatch):
+    engine = _unbuilt_engine()
+    engine._recipe = SimpleNamespace(ddp=SimpleNamespace(overlap_param_gather=True), optimizer=SimpleNamespace())
+    engine._optimizer = None
+    monkeypatch.setattr("megatron.bridge.engine.engine.offload_to_cpu", lambda *a, **k: pytest.fail("moved"))
+    with pytest.raises(NotImplementedError, match="overlap_param_gather"):
+        engine.cpu()
+    assert engine.device == "cuda"
 
 
 def test_shared_runtime_tracks_attached_engines():
