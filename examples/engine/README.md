@@ -101,17 +101,19 @@ mode), score with the DAPO rule, normalize rewards within each group, bring the 
 
 ```bash
 ... grpo_vllm.py --parquet /data/dapo-math/data/dapo-math-17k.parquet \
-    --rounds 60 --prompts-per-round 32 --group-size 8 --max-tokens 32768 \
+    --rounds 60 --prompts-per-round 32 --group-size 8 --max-tokens 126976 \
     --lr 1e-6 --clip-low 0.2 --clip-high 0.28 --tis-coef 2.0 --vllm-cuda-graphs \
-    --wandb-project <project> --wandb-entity <entity> --wandb-name grpo_dapo32k \
-    --eval-every 10 --save-dir /ckpt/grpo_dapo32k --wall-seconds 13500
+    --wandb-project <project> --wandb-entity <entity> --wandb-name grpo_dapo128k \
+    --eval-every 10 --save-dir /ckpt/grpo_dapo128k --wall-seconds 13500
 ```
 
 Knobs:
 
 - `--max-tokens` is the response cap; `--max-prompt-tokens` (1024) plus the cap must stay below the
-  recipe's sequence length (131072), so 126976 is the largest cap for this recipe. The vllm model
-  length is set from the two.
+  recipe's sequence length (131072), so 126976 is the largest cap for this recipe and the one used
+  above (full 128K sequences). The vllm model length is set from the two. Expect about 35 minutes of
+  generation per round of 64 samples at this cap on 16 GB300 GPUs; 32768 cuts that to about 12
+  minutes for 256 samples but truncates this model's longest reasoning traces.
 - `--vllm-cuda-graphs` lets vllm compile and capture CUDA graphs (about 4x faster decoding; off by
   default). `--gpu-memory-utilization` (0.5) is vllm's share of each GPU while the engines are
   offloaded.
