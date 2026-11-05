@@ -186,14 +186,19 @@ class WanModel(VisionModule):
         """Forward pass.
 
         Args:
-            x: VAE encoded data (in_channel, f, h, w).
-            grid_sizes: Grid sizes (f, h, w).
+            x: Patchified, packed VAE latents of shape
+                ``[seq_len, batch_size, C * pF * pH * pW]``, where C is the latent channel count.
+                Ignored on non-first pipeline stages, which use the decoder input tensor.
+            grid_sizes: Tensor of per-sample patch-grid sizes (f, h, w), one row per packed sample.
             t: Timesteps.
-            context: Context (text_len, hidden_size).
-            packed_seq_params: Packed sequence parameters.
+            context: Packed text-encoder embeddings of shape ``[text_len, batch_size, text_dim]``.
+            packed_seq_params: Dict with ``self_attention`` and ``cross_attention`` PackedSeqParams entries.
 
         Returns:
-            Tensor: output tensor (still patchified) of shape [seq_len, batch_size, hidden_size]
+            Tensor: On the last pipeline stage, the patchified prediction of shape
+                ``[seq_len, batch_size, out_channels * pF * pH * pW]``. Other stages return
+                decoder hidden states with last dimension ``hidden_size``, sharded along
+                the sequence dimension when sequence parallelism is enabled.
         """
         #################################
         ########## Wan forward ##########
