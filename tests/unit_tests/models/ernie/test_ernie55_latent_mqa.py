@@ -1070,13 +1070,19 @@ class TestIndexerLoss:
         core = _build_core(_config(), pg_collection, seed=101)
         batch = _core_batch(seed=102, doc_lens=[7, 9])
         trained = _run_core(core, batch).detach()
+        assert "values" in dsa.DSAIndexerLossLoggingHelper.tracker
         dsa.DSAIndexerLossLoggingHelper.tracker.clear()
+        # Autograd and no-grad can select different fp32 reduction paths. The loss
+        # must not change the attention result beyond the reference-path tolerance.
         with torch.no_grad():
-            torch.testing.assert_close(_run_core(core, batch), trained, rtol=0, atol=0)
+            _assert_close(_run_core(core, batch), trained, TOL, "output without grad")
+        assert "values" not in dsa.DSAIndexerLossLoggingHelper.tracker
         core.eval()
         evaluated = _run_core(core, batch)
-        torch.testing.assert_close(evaluated, trained, rtol=0, atol=0)
+        _assert_close(evaluated, trained, TOL, "output in eval")
         assert "values" not in dsa.DSAIndexerLossLoggingHelper.tracker
+        evaluated.sum().backward()
+        assert all(param.grad is None for param in core.indexer.parameters())
 
     @pytest.mark.parametrize("per_token", [False, True], ids=["per-row", "per-token"])
     def test_reduction_follows_the_loss_mode(self, pg_collection, monkeypatch, caplog, per_token):

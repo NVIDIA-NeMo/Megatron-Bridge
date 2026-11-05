@@ -85,6 +85,14 @@ def test_fused_ops_imports_without_triton():
         import importlib.util
         import sys
 
+        # Torch may probe or import Triton during its own initialization. Test the ERNIE
+        # module's lazy dependency separately from Torch's optional-dependency handling.
+        import torch
+
+        for name in tuple(sys.modules):
+            if name == "triton" or name.startswith("triton."):
+                del sys.modules[name]
+
 
         class BlockTriton(importlib.abc.MetaPathFinder):
             def find_spec(self, name, path=None, target=None):
