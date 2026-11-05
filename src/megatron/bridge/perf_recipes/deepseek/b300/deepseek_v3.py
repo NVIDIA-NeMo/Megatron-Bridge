@@ -197,6 +197,7 @@ def deepseek_v3_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
     cfg.optimizer.store_param_remainders = False
     cfg.mixed_precision.fp4_param_gather = True
     cfg.model.moe_expert_rank_capacity_factor = 1.3
+    cfg.model.moe_shared_expert_overlap = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
