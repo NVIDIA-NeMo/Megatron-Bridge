@@ -179,14 +179,14 @@ def test_llama3_8b_gb200_nvfp4_runs_dpa_in_fp8_current_scaling(monkeypatch: pyte
     ((llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config, llama3_8b_pretrain_8gpu_gb300_fp8mx_config),),
     ids=lambda value: value.__name__,
 )
-def test_llama3_vrnvl72_fp8mx_runs_dpa_in_fp8(
+def test_llama3_vrnvl72_fp8mx_perf_settings(
     monkeypatch: pytest.MonkeyPatch,
     vrnvl72_factory: Callable[[], ConfigContainer],
     gb300_factory: Callable[[], ConfigContainer],
 ) -> None:
-    """The VRNVL72 MXFP8 recipes run dot-product attention in FP8; the GB300 recipes they build on don't.
+    """The VRNVL72 MXFP8 recipe adds FP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
 
-    Apart from that flag, the mixed-precision settings and the parallel layout match GB300.
+    Apart from those settings, the mixed-precision settings and the parallel layout match GB300.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
@@ -197,6 +197,11 @@ def test_llama3_vrnvl72_fp8mx_runs_dpa_in_fp8(
     assert gb300_cfg.mixed_precision.fp8_dot_product_attention is False
     vrnvl72_cfg.mixed_precision.fp8_dot_product_attention = False
     assert vrnvl72_cfg.mixed_precision == gb300_cfg.mixed_precision
+
+    assert vrnvl72_cfg.model.fused_single_qkv_rope is True
+    assert vrnvl72_cfg.model.use_te_activation_func is True
+    assert vrnvl72_cfg.model.bias_activation_fusion is False
+    assert vrnvl72_cfg.dataset.create_attention_mask is False
 
     for name in (
         "tensor_model_parallel_size",
