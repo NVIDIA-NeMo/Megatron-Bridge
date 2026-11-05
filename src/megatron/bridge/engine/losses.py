@@ -46,9 +46,10 @@ def _bounded_exp(x: torch.Tensor) -> torch.Tensor:
     """``exp(x)`` up to ``LOG_RATIO_BOUND``, then its tangent line: finite, monotone, non-zero gradient."""
     # Explicit branches: a single clamp-based formula adds and subtracts exp(20) in the backward pass,
     # and FP32 cancellation then zeroes the ordinary exp(x) gradient near a ratio of 1.
-    exponential = x.clamp(max=LOG_RATIO_BOUND).exp()
+    below = x <= LOG_RATIO_BOUND
+    exponential = x.masked_fill(~below, LOG_RATIO_BOUND).exp()  # masked_fill keeps d/dx at x == bound
     linear = math.exp(LOG_RATIO_BOUND) * (1.0 + (x - LOG_RATIO_BOUND))
-    return torch.where(x <= LOG_RATIO_BOUND, exponential, linear)
+    return torch.where(below, exponential, linear)
 
 
 def cross_entropy(batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
