@@ -2463,14 +2463,14 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_megatron_fsdp=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
             model_config=gpt_model_cfg,
             train_config=train_cfg,
             scheduler_config=sched_cfg,
-            dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.ddp.average_in_collective = True
@@ -2484,7 +2484,6 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
         # Create optimizer config with reuse_grad_buf_for_mxfp8_param_ag=True
         optimizer_cfg = create_test_optimizer_config(reuse_grad_buf_for_mxfp8_param_ag=True)
         # Create ddp config with reuse_grad_buf_for_mxfp8_param_ag=True
@@ -2498,7 +2497,6 @@ class TestConfigContainerValidation:
             model_config=gpt_model_cfg,
             train_config=train_cfg,
             scheduler_config=sched_cfg,
-            dist_config=dist_cfg,
             optimizer_config=optimizer_cfg,
             ddp_config=ddp_cfg,
         )
@@ -2611,7 +2609,7 @@ class TestConfigContainerValidation:
             model_config=gpt_model_cfg,
             train_config=create_test_training_config(train_iters=500, global_batch_size=16),
             scheduler_config=create_test_scheduler_config(),
-            dist_config=create_test_distributed_init_config(use_megatron_fsdp=use_megatron_fsdp),
+            ddp_config=create_test_ddp_config(use_megatron_fsdp=use_megatron_fsdp),
         )
         try:
             container.ddp.fp8_param_gather = fp8_param_gather
@@ -2629,7 +2627,7 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True, use_torch_fsdp2=True)
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2637,9 +2635,10 @@ class TestConfigContainerValidation:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             dist_config=dist_cfg,
+            ddp_config=create_test_ddp_config(use_megatron_fsdp=True),
         )
         try:
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match="use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -2649,7 +2648,7 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True, use_tp_pp_dp_mapping=True)
+        dist_cfg = create_test_distributed_init_config(use_tp_pp_dp_mapping=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2657,6 +2656,7 @@ class TestConfigContainerValidation:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             dist_config=dist_cfg,
+            ddp_config=create_test_ddp_config(use_megatron_fsdp=True),
         )
         try:
             with pytest.raises(AssertionError):
@@ -3815,7 +3815,7 @@ class TestCheckpointConfig:
             async_save=True, save="/tmp/test_checkpoint", ckpt_format="fsdp_dtensor"
         )
         # Enable Megatron FSDP so the format validation passes and we reach the async_save check
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_megatron_fsdp=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3823,7 +3823,7 @@ class TestCheckpointConfig:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             checkpoint_config=ckpt_cfg,
-            dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.validate()
@@ -3836,7 +3836,7 @@ class TestCheckpointConfig:
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
         ckpt_cfg = create_test_checkpoint_config(save="/tmp/test_checkpoint", ckpt_format="fsdp_dtensor")
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_megatron_fsdp=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3844,13 +3844,12 @@ class TestCheckpointConfig:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             checkpoint_config=ckpt_cfg,
-            dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             # Should not raise error - fsdp_dtensor with Megatron FSDP is allowed
             container.validate()
             assert container.checkpoint.ckpt_format == "fsdp_dtensor"
-            assert container.dist.use_megatron_fsdp is True
             assert container.ddp.use_megatron_fsdp is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -3861,7 +3860,7 @@ class TestCheckpointConfig:
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
         ckpt_cfg = create_test_checkpoint_config(save="/tmp/test_checkpoint", ckpt_format="fsdp_dtensor")
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=False)
+        ddp_cfg = create_test_ddp_config(use_megatron_fsdp=False)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3869,7 +3868,7 @@ class TestCheckpointConfig:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             checkpoint_config=ckpt_cfg,
-            dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             # Should raise error - fsdp_dtensor without Megatron FSDP is not allowed
@@ -4466,8 +4465,9 @@ class TestRuntimeConfigUpdate:
 
             # Verify configs are finalized
             if isinstance(full_cfg.dataset, GPTDatasetConfig):
-                # Computed fields should now be set
-                assert getattr(full_cfg.dataset, "split", None) is not None
+                # Megatron Core leaves ``split`` as given and derives the split matrix;
+                # mock data always uses an even split.
+                assert full_cfg.dataset.split_matrix is not None
 
             # Verify model config is finalized (computed fields set)
             assert full_cfg.model.num_query_groups is not None
@@ -5514,15 +5514,14 @@ class TestTokenizerConfig:
             )
 
 
-@pytest.mark.parametrize("backend", ["torch", "megatron_dist", "megatron_ddp"])
+@pytest.mark.parametrize("backend", ["torch", "megatron"])
 def test_shortcut_moe_rejects_fsdp(backend):
     cfg, original, module = create_test_config_container(
         1, create_test_gpt_config(moe_shortcut_connection=True, num_moe_experts=4)
     )
     try:
         cfg.dist.use_torch_fsdp2 = backend == "torch"
-        cfg.dist.use_megatron_fsdp = backend == "megatron_dist"
-        cfg.ddp.use_megatron_fsdp = backend == "megatron_ddp"
+        cfg.ddp.use_megatron_fsdp = backend == "megatron"
         with pytest.raises(ValueError, match="moe_shortcut_connection"):
             cfg.validate()
     finally:
@@ -5608,6 +5607,25 @@ def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
                 cfg._validate_and_apply_megatron_fsdp_v1_configs()
         else:
             cfg._validate_and_apply_megatron_fsdp_v1_configs()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+@pytest.mark.parametrize("dense", ["no_shard", "optim", "optim_grads", "optim_grads_params"])
+@pytest.mark.parametrize("expert", [None, "no_shard", "optim_grads_params"])
+def test_fsdp_v2_preserves_sharding_strategies(dense, expert):
+    # MFSDP V2 maps every strategy to DTensor placements, so ZeRO-2 dense with ZeRO-3
+    # experts (as in the DeepSeek-V3 HSDP recipe) must reach Megatron-Core unchanged.
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config())
+    try:
+        cfg.checkpoint.save = cfg.checkpoint.load = None
+        cfg.ddp.megatron_fsdp_version = 2
+        cfg.ddp.data_parallel_sharding_strategy = dense
+        cfg.ddp.expert_data_parallel_sharding_strategy = expert
+        cfg._validate_and_apply_megatron_fsdp_configs()
+        assert cfg.ddp.data_parallel_sharding_strategy == dense
+        assert cfg.ddp.expert_data_parallel_sharding_strategy == expert
+        assert not cfg.ddp.use_distributed_optimizer and not cfg.optimizer.use_distributed_optimizer
     finally:
         restore_get_world_size_safe(original, module)
 

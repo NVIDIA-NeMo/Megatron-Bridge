@@ -307,7 +307,9 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "recompute-num-layers":              ("model.recompute_num_layers",        None),
 
     # ── Mock data ───────────────────────────────────────────────────────
-    "mock-data":                         ("dataset.mock",                       "flag"),
+    # Megatron Core derives dataset.mock: Bridge uses mock data whenever no data path
+    # or blend is configured, so there is no Bridge field to set.
+    "mock-data":                         (None,                                 "skip"),
 
     # ── RNG ──────────────────────────────────────────────────────────────
     "seed":                              ("rng.seed",                           None),

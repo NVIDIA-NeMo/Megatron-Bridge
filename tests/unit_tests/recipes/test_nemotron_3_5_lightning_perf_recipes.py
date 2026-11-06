@@ -674,8 +674,9 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
 ) -> None:
     """VRNVL72 Nemotron 3.5 recipes match their GB300 baselines apart from the launch environment.
 
-    Both platforms dispatch through NCCL EP with device-side expert counts. The VRNVL72 BF16 recipe
-    also offloads expert activations. Everything else must be identical.
+    Both platforms dispatch through NCCL EP with device-side expert counts. The VRNVL72 recipes give
+    the dispatcher 32 SMs and fuse the router, and the VRNVL72 BF16 recipe also offloads expert
+    activations. Everything else must be identical.
     """
     vrnvl72_cfg = vrnvl72_factory()
     gb300_cfg = gb300_factory()
@@ -683,6 +684,13 @@ def test_vrnvl72_perf_recipes_match_gb300_configs(
     assert gb300_cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert vrnvl72_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert vrnvl72_cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+
+    assert vrnvl72_cfg.model.moe_hybridep_num_sms == 32
+    assert gb300_cfg.model.moe_hybridep_num_sms == 16
+    vrnvl72_cfg.model.moe_hybridep_num_sms = gb300_cfg.model.moe_hybridep_num_sms
+    assert vrnvl72_cfg.model.moe_router_fusion is True
+    assert gb300_cfg.model.moe_router_fusion is False
+    vrnvl72_cfg.model.moe_router_fusion = gb300_cfg.model.moe_router_fusion
 
     if vrnvl72_factory is nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config:
         assert vrnvl72_cfg.model.fine_grained_activation_offloading is True
@@ -711,7 +719,6 @@ def test_gb_fsdp_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContain
     assert cfg.model.init_model_with_meta_device is True
 
     assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
-    assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.num_distributed_optimizer_instances == 1
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"

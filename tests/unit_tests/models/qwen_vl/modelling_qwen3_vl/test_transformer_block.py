@@ -40,9 +40,9 @@ def test_forward_propagates_padding_mask_to_transformer_layer():
         def __init__(self):
             self.called_with = None
 
-        def __call__(self, **kwargs):
-            self.called_with = kwargs
-            return kwargs["hidden_states"], kwargs["context"]
+        def __call__(self, hidden_states, /, **kwargs):
+            self.called_with = {"hidden_states": hidden_states, **kwargs}
+            return hidden_states, kwargs["context"]
 
     layer = _Layer()
     block = SimpleNamespace(

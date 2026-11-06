@@ -430,7 +430,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         return separate_video_embedder is True
 
     @torch.no_grad()
-    def stream_weights_megatron_to_hf(
+    def _stream_weight_events_megatron_to_hf(
         self,
         megatron_model: NemotronOmniModel | list[NemotronOmniModel],
         hf_pretrained: PreTrainedCausalLM,
@@ -441,10 +441,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         weight_dtype: torch.dtype | None = None,
         with_megatron_names: bool = False,
         current_pp_stage_only: bool = False,
-    ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
-        """Export model weights, recovering the unused image-SFT video weight from HF."""
+    ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple | None]:
+        """Preserve task boundaries and recover source-only media weights."""
         video_exported = False
-        for weight in super().stream_weights_megatron_to_hf(
+        for weight in super()._stream_weight_events_megatron_to_hf(
             megatron_model,
             hf_pretrained,
             cpu=cpu,
@@ -455,7 +455,8 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             with_megatron_names=with_megatron_names,
             current_pp_stage_only=current_pp_stage_only,
         ):
-            video_exported |= weight.param_name == self._HF_VIDEO_EMBEDDER_KEY
+            if weight is not None:
+                video_exported |= weight.param_name == self._HF_VIDEO_EMBEDDER_KEY
             yield weight
         if not self._should_emit_hf_passthrough(megatron_model, current_pp_stage_only=current_pp_stage_only):
             return
@@ -527,6 +528,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             if not cpu and tensor.device.type == "cpu" and torch.cuda.is_available():
                 tensor = tensor.to(device=torch.cuda.current_device())
             yield from HFWeightTuple(name, tensor).iter_finalized(cpu=cpu, megatron_param_names=passthrough_sources)
+            yield None
 
 
 @MegatronModelBridge.register_bridge(

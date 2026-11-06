@@ -15,9 +15,9 @@ summary: >
   and training on H100 and GB200. Recipe names, work paths, and this
   verification-card path use the public Lightning name. The conversion and
   inference evidence used the 26.08 release-candidate software stack; every
-  verified training leaf was measured in the public 26.08 base container at
-  the card's default bridge_commit, with the H100 long-context SFT leaf on
-  four eight-GPU nodes.
+  verified training leaf was measured in the public 26.08 base container, all
+  but the GB200 long-context SFT leaf at the card's default bridge_commit,
+  with the H100 long-context SFT leaf on four eight-GPU nodes.
 verification_index:
   model_level:
     verified:
@@ -476,6 +476,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: ae0a1b026f52517c55cf19416510f7f895a24c0c  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 2
@@ -504,21 +505,24 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-10-12
+      last_verified: 2026-11-03
       metrics:
-        initial_loss: 0.4268849
-        final_loss: 0.2653473
-        last_10_steps_step_time_ms_avg: 41101.830
-        last_10_steps_model_tflops_per_gpu_avg: 420.700
-        last_10_steps_tokens_per_second_per_gpu_avg: 12755.831
+        initial_loss: 0.4268937
+        final_loss: 0.2648855
+        last_10_steps_step_time_ms_avg: 31725.330
+        last_10_steps_model_tflops_per_gpu_avg: 440.660
+        last_10_steps_tokens_per_second_per_gpu_avg: 16525.849
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4268849 -> 0.2653473 and MTP-1 loss 0.7321853 ->
-        0.4469699. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. Steps 91-100 average 41,101.830 ms / 420.700
+        steps with LM loss 0.4268937 -> 0.2648855 and MTP-1 loss 0.5128821 ->
+        0.3132023. All 100 steps have finite LM/MTP losses and no skipped or
+        NaN iterations. Steps 91-100 average 31,725.330 ms / 440.660
         TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata,
         saved run configuration and training state, 12 files, and a latest
-        marker of 100.
+        marker of 100. This leaf's MTP losses cover completion tokens only (SFT
+        loss mask); the H100 long-context leaf's default bridge_commit predates
+        that masking and computes MTP loss over every token, so the two leaves
+        have different MTP objectives and are not convergence-comparable.
 
   peft:
     H100:
