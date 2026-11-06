@@ -14,6 +14,7 @@
 
 """Config-level overrides for deterministic training."""
 
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import is_gated_delta_net_variant
 from megatron.training.determinism import DETERMINISM_ENV_VAR_DEFAULTS
 
 from megatron.bridge.training.config import ConfigContainer
@@ -39,6 +40,8 @@ def apply_determinism_overrides(cfg: ConfigContainer) -> None:
     cfg.model.cross_entropy_loss_fusion = False
     # Only the MoE aux-loss fusion is non-deterministic; fused TopK routing stays on.
     cfg.model.moe_router_aux_loss_fusion = False
+    if is_gated_delta_net_variant(getattr(cfg.model, "experimental_attention_variant", None)):
+        cfg.model.gdn_kernel_backend = "torch"
     # Exported at launch so the values are in place before TE, cuBLAS and NCCL first read them.
     cfg.env_vars.update(DETERMINISM_ENV_VAR_DEFAULTS)
     # Pin the Mamba/causal-conv1d kernels explicitly instead of letting them follow torch's flag.

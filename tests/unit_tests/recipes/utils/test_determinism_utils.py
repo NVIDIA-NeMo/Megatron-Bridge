@@ -39,3 +39,29 @@ def test_overrides_follow_megatron_core():
         "MAMBA_DETERMINISTIC": "1",
         "CAUSAL_CONV1D_DETERMINISTIC": "1",
     }
+
+
+def test_gated_delta_net_model_selects_torch_backend():
+    """Gated DeltaNet models switch to the torch GDN kernel backend."""
+    cfg = SimpleNamespace(
+        model=SimpleNamespace(experimental_attention_variant="gdn", gdn_kernel_backend="fla"),
+        env_vars={},
+        comm_overlap=None,
+    )
+
+    apply_determinism_overrides(cfg)
+
+    assert cfg.model.gdn_kernel_backend == "torch"
+
+
+def test_non_gated_delta_net_model_keeps_gdn_backend():
+    """Models without Gated DeltaNet keep their GDN kernel backend."""
+    cfg = SimpleNamespace(
+        model=SimpleNamespace(experimental_attention_variant="dsa", gdn_kernel_backend="fla"),
+        env_vars={},
+        comm_overlap=None,
+    )
+
+    apply_determinism_overrides(cfg)
+
+    assert cfg.model.gdn_kernel_backend == "fla"
