@@ -1315,15 +1315,13 @@ jobs:
 
       - name: Generate fake coverage report
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        env:
-          PR_HEAD_SHA: ${{ needs.configure.outputs.pr_head_sha }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: process.env.PR_HEAD_SHA,
+              sha: context.sha,
               state: 'success',
               description: 'No code changes - coverage check skipped',
               context: 'codecov/patch'

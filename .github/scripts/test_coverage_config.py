@@ -103,8 +103,8 @@ const cases = [
   process.env.PR_INFO = JSON.stringify({number:6810,base:{sha:'base'},head:{sha:'head'},changed_files:1});
   await assert.rejects(classify({rest:{repos:{compareCommitsWithBasehead:async()=>{throw Error('API failed')}}}},context,
     {setOutput:()=>assert.fail('API failure must not emit exemption')}), /API failed/);
-  const evaluate = (expression, dependencyOnly, result, cancelled=false) => {
-    const needs = {configure:{outputs:{docs_only:'false',perf_scripts_only:'false',dependency_only:String(dependencyOnly)}},
+  const evaluate = (expression, dependencyOnly, result, cancelled=false, docsOnly=false) => {
+    const needs = {configure:{outputs:{docs_only:String(docsOnly),perf_scripts_only:'false',dependency_only:String(dependencyOnly)}},
       'pre-flight':{outputs:{is_ci_workload:'false',is_deployment_workflow:'false'}},Nemo_CICD_Test:{result}};
     expression = expression.replaceAll('needs.pre-flight', 'needs["pre-flight"]');
     return new Function('needs','github','always','cancelled',`return (${expression});`)(needs,
@@ -119,14 +119,17 @@ const cases = [
   assert.equal(evaluate(data.fakeCondition,false,'success'),false);
   assert.equal(evaluate(data.uploadCondition,false,'success'),true);
   assert.equal(evaluate(data.fakeCondition,true,'success',true),false);
-  process.env.PR_HEAD_SHA = 'actual-pr-head';
-  let posted;
-  await new AsyncFunction('github','context',data.statusScript)(
-    {rest:{repos:{createCommitStatus:async value=>posted=value}}}, context);
-  assert.equal(posted.sha,'actual-pr-head');
-  assert.equal(posted.context,'codecov/patch');
-  assert.equal(posted.state,'success');
-  console.log('PASS: revision binding for both flags, 14 classifier scenarios, coverage routing, PR-head status');
+  process.env.PR_HEAD_SHA = 'new-untested-head';
+  for (const docsOnly of [false, true]) {
+    assert.equal(evaluate(data.fakeCondition,!docsOnly,'success',false,docsOnly),true);
+    let posted;
+    await new AsyncFunction('github','context',data.statusScript)(
+      {rest:{repos:{createCommitStatus:async value=>posted=value}}}, context);
+    assert.equal(posted.sha,context.sha,'exemption must not move to a newer, untested PR head');
+    assert.equal(posted.context,'codecov/patch');
+    assert.equal(posted.state,'success');
+  }
+  console.log('PASS: revision binding for both flags, 14 classifier scenarios, coverage routing, workflow-head exemptions');
 })().catch(error=>{console.error(error);process.exitCode=1});
 """
 subprocess.run(["node", "-e", harness], input=json.dumps(payload), text=True, check=True)
