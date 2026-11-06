@@ -665,19 +665,19 @@ class TestSafeTensorsStateSourceCache:
         for _ in range(3):
             assert source.load_tensors(["w.scale"])["w.scale"].item() == 2.0
         opens_after_scales = calls["n"]
-        if cache_small == "1":
-            assert opens_after_scales == 1  # first read opens the shard, the two cache hits do not
-        elif reuse_handles == "1":
+        if reuse_handles == "1":
             assert opens_after_scales == 1  # one handle, reused for all three reads
+        elif cache_small == "1":
+            assert opens_after_scales == 2  # the first two reads open the shard, the third is a cache hit
         else:
             assert opens_after_scales == 3  # baseline behaviour: one safe_open per load_tensors
 
         # w.weight (64 elements) is also below the default small-tensor threshold, so with the
-        # cache on its second read is a hit; with the cache off every read goes to the shard.
-        for _ in range(2):
+        # cache on its third read is a hit; with the cache off every read goes to the shard.
+        for _ in range(3):
             assert source.load_tensors(["w.weight"]).keys() == {"w.weight"}
         extra_opens = calls["n"] - opens_after_scales
-        expected = {("1", "1"): 0, ("1", "0"): 1, ("0", "1"): 0, ("0", "0"): 2}
+        expected = {("1", "1"): 0, ("1", "0"): 2, ("0", "1"): 0, ("0", "0"): 3}
         assert extra_opens == expected[(cache_small, reuse_handles)]
 
     def test_cache_threshold_and_instance_isolation(self, tmp_path, monkeypatch):
@@ -688,13 +688,36 @@ class TestSafeTensorsStateSourceCache:
 
         source = SafeTensorsStateSource(tmp_path)
         source.load_tensors(["small", "big"])
+        source.load_tensors(["small", "big"])
         assert set(source._small_tensor_cache) == {"small"}  # inclusive threshold: 4 <= 4 cached, 16 is not
         source.load_tensors(["small"])
-        assert calls["n"] == 1  # served from the cache
+        assert calls["n"] == 2  # served from the cache
         source.load_tensors(["big"])
-        assert calls["n"] == 2  # re-read from the shard
+        assert calls["n"] == 3  # re-read from the shard
 
         other = SafeTensorsStateSource(tmp_path)
         assert other._small_tensor_cache == {}
         other.load_tensors(["small"])
-        assert calls["n"] == 3  # a new instance starts cold
+        assert calls["n"] == 4  # a new instance starts cold
+
+    def test_keys_read_once_are_not_cached(self, tmp_path):
+        experts = {f"layers.0.mlp.experts.{i}.down_proj.weight": torch.ones(8, 16) for i in range(8)}
+        self._write_checkpoint(tmp_path, experts)
+        source = SafeTensorsStateSource(tmp_path)
+
+        for key in experts:
+            assert torch.equal(source.load_tensors([key])[key], experts[key])
+        assert source._small_tensor_cache == {}
+
+    def test_reread_key_is_cached(self, tmp_path, monkeypatch):
+        self._write_checkpoint(tmp_path, {"w.scale": torch.tensor([3.0]), "w.weight": torch.ones(4, 4)})
+        monkeypatch.setenv("MBRIDGE_STATE_REUSE_HANDLES", "0")
+        calls = self._count_safe_open(monkeypatch)
+        source = SafeTensorsStateSource(tmp_path)
+
+        source.load_tensors(["w.scale", "w.weight"])
+        assert source._small_tensor_cache == {}
+        source.load_tensors(["w.scale"])
+        assert set(source._small_tensor_cache) == {"w.scale"}
+        assert source.load_tensors(["w.scale"])["w.scale"].item() == 3.0
+        assert calls["n"] == 2  # third read is served from the cache

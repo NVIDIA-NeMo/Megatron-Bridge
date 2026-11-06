@@ -512,6 +512,7 @@ class SafeTensorsStateSource(StateSource):
         # otherwise re-opens the shard file per key on every refit (~150k opens for
         # DeepSeek-V4-Pro). Both can be disabled through environment variables.
         self._small_tensor_cache: Dict[str, torch.Tensor] = {}
+        self._read_once_keys: set[str] = set()
         self._open_handles: Dict[str, Any] = {}
         self._open_handle_keys: dict[str, set[str]] = {}
         self._cache_small = os.environ.get("MBRIDGE_STATE_CACHE_SMALL_TENSORS", "1") == "1"
@@ -713,9 +714,13 @@ class SafeTensorsStateSource(StateSource):
         return keys
 
     def _maybe_cache(self, key: str, tensor: torch.Tensor) -> None:
-        # Keep a private copy: callers may modify the tensors they get back in place.
-        if self._cache_small and tensor.numel() <= self._small_numel:
+        # Cache only keys read again; keep a private copy since callers may modify tensors in place.
+        if not self._cache_small or tensor.numel() > self._small_numel:
+            return
+        if key in self._read_once_keys:
             self._small_tensor_cache[key] = tensor.clone()
+        else:
+            self._read_once_keys.add(key)
 
     def _invalidate_handle(self, file_path: Path) -> None:
         """Drop a reused handle so the next access re-reads the shard header (e.g. after a retry)."""
