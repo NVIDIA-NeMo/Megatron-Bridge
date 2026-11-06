@@ -777,11 +777,11 @@ def test_qwen35_vl_27b_sft_fits_16_h100(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.sequence_parallel is True
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 4
-    assert cfg.model.recompute_granularity == "full"
-    assert cfg.model.recompute_modules is None
-    assert cfg.model.recompute_method == "uniform"
-    assert cfg.model.recompute_num_layers == 1
-    # Full-layer recompute is valid only without CUDA graphs (or with full-iteration graphs).
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out", "mlp"]
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    # No CUDA graph scope can split a recomputed module.
     assert cfg.model.cuda_graph_impl == "none"
 
 

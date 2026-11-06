@@ -36,8 +36,8 @@ pytestmark = pytest.mark.integration
 
 _TP2_PP1 = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1}
 _TINY_MODEL = {"num_layers": 4, "linear_attention_freq": [1, 1, 1, 0]}
-# The recipe recomputes every layer to fit 80 GB H100s. The tiny model runs the other scenarios
-# without recompute, so Scenario 4 alone covers it.
+# The recipe recomputes attention cores, the GDN output norm and the dense MLP to fit 80 GB H100s.
+# The tiny model runs the other scenarios without recompute, so Scenario 4 alone covers it.
 _NO_RECOMPUTE = {"recompute_granularity": None, "recompute_method": None, "recompute_num_layers": None}
 
 
@@ -99,7 +99,7 @@ QWEN35_VL_SFT_PROJ_ONLY = [
 ]
 
 # ---------------------------------------------------------------------------
-# Scenario 4: SFT — activation recomputation
+# Scenario 4: SFT — the recipe's selective activation recomputation
 # ---------------------------------------------------------------------------
 
 QWEN35_VL_SFT_RECOMPUTE = [
@@ -107,12 +107,7 @@ QWEN35_VL_SFT_RECOMPUTE = [
         qwen35_vl_27b_sft_config,
         "qwen35_vl_27b_sft_recompute",
         _TP2_PP1,
-        {
-            **_TINY_MODEL,
-            "recompute_granularity": "full",
-            "recompute_method": "uniform",
-            "recompute_num_layers": 1,
-        },
+        _TINY_MODEL,
     ),
 ]
 
