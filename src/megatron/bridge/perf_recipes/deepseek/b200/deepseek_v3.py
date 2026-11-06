@@ -18,6 +18,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
+    _enable_deepseek_full_iteration,
     _enable_deepseek_transformer_engine_graph,
     _perf_precision,
     deepseek_v3_pretrain_config,
@@ -243,6 +244,94 @@ def deepseek_v3_pretrain_128gpu_b200_fp8mx_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_fullcg_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=8, NCCL-EP, full-iteration CUDA graph."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _deepseek_v3_common(cfg)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp", "core_attn"]
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    _benchmark_common(cfg)
+    # Full-iteration CG (sets HybridEP, paged_stash, overlap, cuda_graph_impl=full_iteration).
+    _enable_deepseek_full_iteration(cfg)
+    # Override dispatcher to NCCL-EP per official guidance.
+    _enable_ncclep(cfg)
+    cfg.model.moe_use_grouped_tensor = False
+    cfg.dist.distributed_timeout_minutes = 30
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=8, NCCL-EP, partial TE CUDA graph."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _deepseek_v3_common(cfg)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp", "core_attn"]
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    _benchmark_common(cfg)
+    _enable_deepseek_transformer_engine_graph(cfg)
+    _enable_ncclep(cfg)
+    cfg.model.moe_use_grouped_tensor = False
+    cfg.dist.distributed_timeout_minutes = 30
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
 
