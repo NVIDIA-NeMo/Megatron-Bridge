@@ -34,9 +34,100 @@ the direct MLA field names.
 """
 
 from dataclasses import dataclass
+from typing import Any
+
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
+
+
+def rebuild_deepseek_v4_pipeline_layout(
+    config: Any, pipeline_model_parallel_size: int, virtual_pipeline_model_parallel_size: int | None
+) -> list[list[str]] | None:
+    """Rebuild a DeepSeek-V4 config's native pattern and layout for a new PP/VPP topology.
+
+    The recipe runner calls this through ``_pipeline_model_parallel_layout_builder`` after
+    command-line PP or VPP overrides. It mutates ``hybrid_layer_pattern`` as well as the PP/VP
+    fields and ``pipeline_model_parallel_layout``. Existing pipe separators, including a recipe's
+    uneven stage allocation, are replaced by the default split of
+    :func:`~megatron.bridge.models.deepseek.deepseek_v4_bridge.set_deepseek_v4_pipeline_model_parallel_layout`;
+    the MTP suffix is preserved. The runner skips this hook when the command line supplies a layout,
+    so that caller must also supply matching native pattern segments.
+
+    Args:
+        config: DeepSeek-V4 provider or builder-backed model config to update in place.
+        pipeline_model_parallel_size: Requested pipeline-parallel size.
+        virtual_pipeline_model_parallel_size: Requested virtual pipeline size, or ``None``.
+
+    Returns:
+        The rebuilt ``pipeline_model_parallel_layout``.
+    """
+    from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
+
+    config.pipeline_model_parallel_size = pipeline_model_parallel_size
+    config.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    set_deepseek_v4_pipeline_model_parallel_layout(config)
+    return config.pipeline_model_parallel_layout
+
+
+def validate_deepseek_v4_pipeline_segments(config: Any) -> None:
+    """Require one ``|`` segment per PP/VP stage, matching any explicit layout.
+
+    MCore picks segment ``vp_stage * PP + pp_rank`` and only checks that the segment count is
+    divisible by PP, so segments left over from an earlier topology can build only part of the
+    decoder without an error: a PP4 pattern used at PP1 builds only its first segment. A pattern
+    without ``|`` keeps MCore's even split by PP. When VP is unset, an explicit layout supplies it,
+    as MCore's finalization infers it from the layout. The check does not change ``config``.
+
+    Args:
+        config: DeepSeek-V4 provider or builder-backed model config.
+
+    Raises:
+        ValueError: If the segments do not match PP x VP, or the layout places a different number of
+            decoder layers on a stage than the matching segment holds.
+    """
+    main_pattern = (config.hybrid_layer_pattern or "").partition(Symbols.MTP_SEPARATOR)[0]
+    segments = main_pattern.split(Symbols.PIPE)
+    if len(segments) == 1:
+        return
+
+    pp_size = config.pipeline_model_parallel_size or 1
+    # Before finalization the layout is still the string or list that MCore parses.
+    layout = config.pipeline_model_parallel_layout
+    if isinstance(layout, str):
+        layout = PipelineParallelLayerLayout.from_str(layout=layout, pipeline_model_parallel_size=pp_size)
+    elif layout is not None and not isinstance(layout, PipelineParallelLayerLayout):
+        layout = PipelineParallelLayerLayout(layout=layout, pipeline_model_parallel_size=pp_size)
+
+    vp_size = config.virtual_pipeline_model_parallel_size
+    if vp_size is None:
+        vp_size = layout.virtual_pipeline_model_parallel_size if layout is not None else 1
+    if len(segments) != pp_size * vp_size:
+        raise ValueError(
+            f"DSv4 hybrid_layer_pattern has {len(segments)} pipeline segments, but "
+            f"pipeline_model_parallel_size={pp_size} and virtual_pipeline_model_parallel_size="
+            f"{vp_size} need {pp_size * vp_size}. Call "
+            "set_deepseek_v4_pipeline_model_parallel_layout() after changing PP or VP, or supply "
+            "a hybrid_layer_pattern with one '|' segment per stage."
+        )
+
+    if layout is None:
+        return
+    decoder_counts = [
+        layout.layout[pp_rank][vp_rank].count(LayerType.decoder)
+        for vp_rank in range(layout.virtual_pipeline_model_parallel_size)
+        for pp_rank in range(layout.pipeline_model_parallel_size)
+    ]
+    segment_lengths = [len(segment) for segment in segments]
+    if decoder_counts != segment_lengths:
+        raise ValueError(
+            f"pipeline_model_parallel_layout places {decoder_counts} decoder layers per stage, but the "
+            f"DSv4 hybrid_layer_pattern segments hold {segment_lengths} layers. Supply both from "
+            "set_deepseek_v4_pipeline_model_parallel_layout()."
+        )
 
 
 @dataclass
@@ -44,8 +135,20 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
     """MLA-capable :class:`HybridModelProvider` for DeepSeek-V4.
 
     All configuration is supplied by :class:`DeepSeekV4Bridge.provider_bridge`;
-    this class only fixes the method-resolution order so a single provider is
-    both an MLA config carrier and a hybrid-model builder.
+    this class combines the MLA config and hybrid builder and keeps native
+    pipeline segments aligned with public runner topology overrides, as
+    :class:`~megatron.bridge.models.deepseek.deepseek_v4_config.DeepSeekV4ModelConfig` does.
     """
 
-    pass
+    def _pipeline_model_parallel_layout_builder(
+        self, pipeline_model_parallel_size: int, virtual_pipeline_model_parallel_size: int | None
+    ) -> list[list[str]] | None:
+        """Rebuild this provider's pattern and layout after runner PP/VPP overrides."""
+        return rebuild_deepseek_v4_pipeline_layout(
+            self, pipeline_model_parallel_size, virtual_pipeline_model_parallel_size
+        )
+
+    def finalize(self) -> None:
+        """Finalize the hybrid provider and reject stale native pipeline segments."""
+        super().finalize()
+        validate_deepseek_v4_pipeline_segments(self)
