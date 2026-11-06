@@ -304,7 +304,7 @@ cfg.model.register_pre_wrap_hook(freeze_all_but_lsq_scales)
 # cfg.model.pre_wrap_hooks.append(freeze_all_but_lsq_scales)
 ```
 
-The hook can run before or after the ModelOpt state is restored. The provider and the hook need nvidia-modelopt with [NVIDIA/Model-Optimizer#3069](https://github.com/NVIDIA/Model-Optimizer/pull/3069), which computes the scale gradients of Transformer Engine `LayerNormLinear` layers and of frozen weights, and raise an error with an older version. The same PR adds them to ModelOpt's [`examples/megatron_bridge/distill.py`](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge) as `--lsq_scale_lr` and `--lsq_scale_only`.
+The hook can run before or after the ModelOpt state is restored. Training the scales, with or without the provider and the hook, needs nvidia-modelopt with [NVIDIA/Model-Optimizer#3069](https://github.com/NVIDIA/Model-Optimizer/pull/3069), which computes the scale gradients of Transformer Engine `LayerNormLinear` layers and of frozen weights; the provider and the hook raise an error with an older version. The same PR adds them to ModelOpt's [`examples/megatron_bridge/distill.py`](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge) as `--lsq_scale_lr` and `--lsq_scale_only`.
 
 ### Supported Models For QAT
 
