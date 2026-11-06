@@ -117,20 +117,25 @@ items:
   inference:
     status: verified
     precision: bf16
-    bridge_commit: eb91f8be86e5f88771bfa020b33cd74dd3de80ad  # pragma: allowlist secret
+    bridge_commit: fbce9ac37bafd9e48453823cab75a95c20f7f6fd  # pragma: allowlist secret
     command: >
-      uv run python examples/conversion/hf_to_megatron_generate_text.py
+      ./scripts/inference/infer.sh --nodes 8 --gpus-per-node 3
+      --task legacy-full-prefix-generation --legacy-full-prefix
       --hf_model_path moonshotai/Kimi-K3 --trust-remote-code
+      --hf-revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
       --apply-chat-template --thinking-mode disabled
       --prompt "What is 15% of 240? Answer in one short sentence."
       --max_new_tokens 32 --tp 1 --pp 3 --ep 8 --etp 1
-    last_verified: 2026-07-27
+    last_verified: 2026-11-06
     expected_result: >-
-      On 24x GB300, the pinned complete language backbone imports directly into
-      Megatron at TP1/PP3/EP8/ETP1. The command exits successfully in 22:59
-      after exactly 32 new greedy tokens and prints this completion,
-      represented with JSON Unicode escapes for the model control-token
-      brackets:
+      On 24x GB300 across eight nodes, the pinned complete language backbone
+      imports directly into Megatron at TP1/PP3/EP8/ETP1 and the launcher's
+      full-prefix decoding path runs one deterministic greedy generation.
+      Inference environment: NeMo Framework 26.12 development nightly runtime;
+      the card-level 26.06 base container applies to the other verified
+      items. The command exits successfully after exactly 32 new tokens,
+      without an earlier EOS, and prints this completion, represented with
+      JSON Unicode escapes for the model control-token brackets:
       "15% of 240 = 0.15 × 240 = 36.\u003c|close|\u003ethink\u003c|sep|\u003e\u003c|open|\u003eresponse\u003c|sep|\u003e15% of 240 is 36.".
 
   pretrain:
