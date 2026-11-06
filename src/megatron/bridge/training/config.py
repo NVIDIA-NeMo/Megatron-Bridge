@@ -152,13 +152,15 @@ class OptimizerConfig(MCoreOptimizerConfig):
         pass
 
     def finalize(self) -> None:
-        """Execute the deferred MCore post-init logic.
+        """Execute the deferred MCore validation and finalization.
 
-        This method calls the original Megatron Core OptimizerConfig.__post_init__()
-        to compute derived fields based on the current field values.
+        This method normalizes optimizer aliases, runs Megatron Core's
+        ``OptimizerConfig.validate()`` and then ``finalize_optimizer_config()`` to
+        resolve dtypes and derived fields based on the current field values.
         """
         normalize_optimizer_config(self)
-        super().__post_init__()
+        self.validate()
+        self.finalize_optimizer_config()
 
 
 @dataclass(kw_only=True)
@@ -328,10 +330,12 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         return config_dict
 
     def finalize(self) -> None:
-        """Execute the deferred MCore post-init logic and Bridge-specific checks.
+        """Execute the deferred MCore validation and Bridge-specific checks.
 
-        This method calls the original Megatron Core GPTDatasetConfig.__post_init__()
-        and then performs Bridge-specific validation.
+        This method runs Megatron Core's tokenizer-free ``GPTDatasetConfig`` checks
+        and then performs Bridge-specific validation. The tokenizer is bound later
+        during setup; ``BlendedMegatronDatasetBuilder`` runs the full ``validate()``
+        before building datasets.
         """
         self.sequence_length = self.seq_length
 
@@ -349,8 +353,8 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
             with open(self.per_dataset_sequences_path, "r") as f:
                 self.sequences_per_dataset = json.load(f)
 
-        # Call MCore's post_init
-        super(MCoreGPTDatasetConfig, self).__post_init__()
+        # Run MCore's checks that do not need the tokenizer.
+        MCoreGPTDatasetConfig.validate_without_tokenizer(self)
 
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
@@ -1222,7 +1226,6 @@ class ConfigContainer(Container):
         if self.model.fp4 or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP4.")
 
-        self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
         self.optimizer.use_distributed_optimizer = False
         self.ddp.overlap_grad_reduce = False

@@ -38,7 +38,6 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("deepseek-v4-flash", "checkpoint_resume", "GB200"): (4096, 256, 64),
     ("deepseek-v4-flash", "sft", "GB200"): (1024, 128, 32),
     ("deepseek-v4-flash", "peft", "GB200"): (1024, 128, 32),
-    ("deepseek-v4-flash", "sft_long_context", "GB200"): (1024, 128, 64),
     ("deepseek-v4-flash", "pretrain_performance", "GB200"): (4096, 2048, 128),
     ("deepseek-v4-flash", "pretrain_performance", "GB300"): (4096, 2048, 128),
     ("gemma-3-4b-it", "sft", "H100"): (4096, 32, 8),

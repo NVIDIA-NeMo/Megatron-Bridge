@@ -61,6 +61,11 @@ from megatron.bridge.models.diffusion_gemma import (
 )
 from megatron.bridge.models.ernie import (
     Ernie45Bridge,
+    Ernie55Bridge,
+    Ernie55Config,
+    Ernie55ModelBuilder,
+    Ernie55ModelConfig,
+    Ernie55TransformerConfig,
 )
 from megatron.bridge.models.ernie_vl import (
     Ernie45VLBridge,
@@ -148,6 +153,7 @@ from megatron.bridge.models.mimo_v2_flash import (
     MiMoV2FlashBridge,
     MiMoV2FlashModelProvider,
 )
+from megatron.bridge.models.minicpmo import MiniCPMOBridge, MiniCPMOModelConfig
 from megatron.bridge.models.minimax_m2 import (
     MiniMaxM2Bridge,
 )
@@ -253,6 +259,8 @@ from megatron.bridge.models.t5_provider import T5ModelProvider
 
 __all__ = [
     "AutoBridge",
+    "MiniCPMOBridge",
+    "MiniCPMOModelConfig",
     "MegatronMappingRegistry",
     "MegatronModelBridge",
     "ColumnParallelMapping",
@@ -268,6 +276,11 @@ __all__ = [
     "DeepSeekV3Bridge",
     # ERNIE Text-Only Models
     "Ernie45Bridge",
+    "Ernie55Bridge",
+    "Ernie55Config",
+    "Ernie55ModelBuilder",
+    "Ernie55ModelConfig",
+    "Ernie55TransformerConfig",
     # ERNIE VL Models
     "Ernie45VLBridge",
     "Ernie45VLModel",
