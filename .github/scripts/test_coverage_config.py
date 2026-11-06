@@ -83,25 +83,25 @@ const cases = [
   }
   for (const [name, paths, expected] of cases) {
     const files = paths.map(path => typeof path === 'string' ? {filename:path} : path);
-    process.env.PR_INFO = JSON.stringify({number:6810, head:{sha:'head'}, changed_files:files.length});
+    process.env.PR_INFO = JSON.stringify({number:6810, base:{sha:'base'}, head:{sha:'head'}, changed_files:files.length});
     let result;
-    const github = {rest:{pulls:{listFiles:{}}}, paginate:async (_, params) => {
-      assert.equal(params.pull_number, 6810);
-      assert.equal(params.per_page, 100);
-      return files;
-    }};
+    const github = {rest:{repos:{compareCommitsWithBasehead:async params => {
+      assert.equal(params.basehead, 'base...head');
+      return {data:{files}};
+    }}}};
     await classify(github, context, {setOutput:(_, value) => result = value});
     assert.equal(result, String(expected), name);
   }
-  for (const pr of [{}, {number:6810, head:{sha:'stale'}}, {number:6810,head:{sha:'head'},changed_files:2}]) {
+  for (const pr of [{}, {number:6810, head:{sha:'stale'}},
+    {number:6810,base:{sha:'base'},head:{sha:'head'},changed_files:2}]) {
     process.env.PR_INFO = JSON.stringify(pr);
     let result;
-    await classify({rest:{pulls:{listFiles:{}}},paginate:async()=>[{filename:'uv.lock'}]}, context,
+    await classify({rest:{repos:{compareCommitsWithBasehead:async()=>({data:{files:[{filename:'uv.lock'}]}})}}}, context,
       {setOutput:(_,value)=>result=value});
     assert.equal(result, 'false');
   }
-  process.env.PR_INFO = JSON.stringify({number:6810,head:{sha:'head'},changed_files:1});
-  await assert.rejects(classify({rest:{pulls:{listFiles:{}}},paginate:async()=>{throw Error('API failed')}},context,
+  process.env.PR_INFO = JSON.stringify({number:6810,base:{sha:'base'},head:{sha:'head'},changed_files:1});
+  await assert.rejects(classify({rest:{repos:{compareCommitsWithBasehead:async()=>{throw Error('API failed')}}}},context,
     {setOutput:()=>assert.fail('API failure must not emit exemption')}), /API failed/);
   const evaluate = (expression, dependencyOnly, result, cancelled=false) => {
     const needs = {configure:{outputs:{docs_only:'false',perf_scripts_only:'false',dependency_only:String(dependencyOnly)}},

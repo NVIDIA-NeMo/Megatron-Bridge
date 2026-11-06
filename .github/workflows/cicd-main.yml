@@ -124,12 +124,12 @@ jobs:
             const pr = JSON.parse(process.env.PR_INFO);
             let dependencyOnly = false;
             if (pr.number && pr.head.sha === context.sha) {
-              const files = await github.paginate(github.rest.pulls.listFiles, {
+              const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                pull_number: pr.number,
-                per_page: 100
+                basehead: `${pr.base.sha}...${pr.head.sha}`
               });
+              const files = comparison.files || [];
               const dependencyPaths = new Set([
                 '.main.commit', '.dev.commit', '3rdparty/Megatron-LM', 'uv.lock'
               ]);
