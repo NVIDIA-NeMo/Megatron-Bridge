@@ -1879,10 +1879,10 @@ class TestGemma4PLEHelpers:
             def _forward_attention(self, input_ids=None):
                 del input_ids
 
-            def __call__(self, **kwargs):
+            def __call__(self, hidden_states, /, **kwargs):
                 self.calls.append(kwargs)
                 return (
-                    kwargs["hidden_states"] + kwargs["per_layer_input"].sum() + float(self.layer_number),
+                    hidden_states + kwargs["per_layer_input"].sum() + float(self.layer_number),
                     f"context-{self.layer_number}",
                 )
 
@@ -1892,11 +1892,11 @@ class TestGemma4PLEHelpers:
             def __init__(self):
                 self.calls = []
 
-            def __call__(self, **kwargs):
+            def __call__(self, hidden_states, /, **kwargs):
                 self.calls.append(kwargs)
                 assert "per_layer_input" not in kwargs
                 assert "context" not in kwargs
-                return kwargs["hidden_states"] + 100.0
+                return hidden_states + 100.0
 
         def fake_checkpoint(function, distribute_saved_activations, *args):
             checkpoint_calls.append(distribute_saved_activations)
@@ -1963,9 +1963,9 @@ class TestGemma4PLEHelpers:
             def _forward_attention(self):
                 pass
 
-            def __call__(self, **kwargs):
+            def __call__(self, hidden_states, /, **kwargs):
                 self.calls.append(kwargs)
-                return kwargs["hidden_states"] + float(self.layer_number), None
+                return hidden_states + float(self.layer_number), None
 
         def fake_checkpoint(function, distribute_saved_activations, *args):
             del distribute_saved_activations
@@ -2016,8 +2016,8 @@ class TestGemma4PLEHelpers:
             def __init__(self, layer_number):
                 self.layer_number = layer_number
 
-            def __call__(self, **kwargs):
-                return kwargs["hidden_states"] + float(self.layer_number), None
+            def __call__(self, hidden_states, /, **kwargs):
+                return hidden_states + float(self.layer_number), None
 
         def fake_checkpoint(function, distribute_saved_activations, *args):
             checkpoint_calls.append(distribute_saved_activations)
@@ -2070,7 +2070,7 @@ class TestGemma4PLEHelpers:
                 self.layer_number = layer_number
                 self.rotary_pos_embs = []
 
-            def __call__(self, *, hidden_states, rotary_pos_emb, per_layer_input, **kwargs):
+            def __call__(self, hidden_states, /, *, rotary_pos_emb, per_layer_input, **kwargs):
                 del kwargs
                 self.rotary_pos_embs.append(rotary_pos_emb)
                 if isinstance(rotary_pos_emb, tuple):
@@ -2174,7 +2174,7 @@ class TestGemma4PLEHelpers:
                 self.key_weight = torch.nn.Parameter(torch.randn(4))
                 self.value_weight = torch.nn.Parameter(torch.randn(4))
 
-            def forward(self, *, hidden_states, per_layer_input, **kwargs):
+            def forward(self, hidden_states, /, *, per_layer_input, **kwargs):
                 del kwargs
                 attention = self.self_attention
                 if attention._kv_source_ref is not None:
@@ -2250,7 +2250,7 @@ class TestGemma4PLEHelpers:
         expected_output = expected_hidden_states
         for index, layer in enumerate(layers):
             per_layer_input = expected_per_layer_inputs[:, :, index, :].transpose(0, 1)
-            expected_output, _ = layer(hidden_states=expected_output, per_layer_input=per_layer_input)
+            expected_output, _ = layer(expected_output, per_layer_input=per_layer_input)
         expected_output.sum().backward()
 
         torch.testing.assert_close(output, expected_output)
