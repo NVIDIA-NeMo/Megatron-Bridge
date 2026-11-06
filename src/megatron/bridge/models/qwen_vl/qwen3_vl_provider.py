@@ -26,18 +26,21 @@ from typing import ClassVar, List, Optional
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.mimo import (
     Qwen3VLMIMOModel,
     Qwen3VLMIMOVisionModel,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _QWEN_VISUAL_ENCODER_KEY = "qwen_visual"
@@ -402,12 +405,14 @@ def _qwen3_build_language_spec(
     provider: Qwen3VLModelProvider | Qwen3VLMoEModelProvider, vp_stage: int | None = None, pp_rank: int | None = None
 ) -> ModuleSpec:
     """Build the language transformer layer spec."""
-    return get_gpt_layer_with_transformer_engine_spec(
+    spec = get_gpt_layer_with_transformer_engine_spec(
         num_experts=provider.num_moe_experts,
         moe_grouped_gemm=provider.moe_grouped_gemm if provider.num_moe_experts is not None else False,
         qk_layernorm=provider.qk_layernorm,
         fp8=False,
     )
+    spec.submodules.self_attention.module = Qwen3VLSelfAttention
+    return spec
 
 
 def _qwen3_build_language_model_spec(
@@ -419,6 +424,8 @@ def _qwen3_build_language_model_spec(
         # All auxiliary features are consumed by the first decoder chunk.
         # Use the actual partition, including uneven and virtual PP splits.
         layout = provider.pipeline_model_parallel_layout
+        if isinstance(layout, (str, list)):
+            layout = PipelineParallelLayerLayout(layout, provider.pipeline_model_parallel_size)
         if layout is not None:
             first_stage_layers = layout.get_num_layers_to_build(layer_type=LayerType.decoder, vp_stage=0, pp_rank=0)
         else:
@@ -434,7 +441,15 @@ def _qwen3_build_language_model_spec(
         params={
             "config": provider,
             "transformer_layer_spec": provider.build_language_spec(pp_rank=pp_rank),
-            "vocab_size": provider.vocab_size,
+            "vocab_size": (
+                calculate_padded_vocab_size(
+                    provider.vocab_size,
+                    provider.make_vocab_size_divisible_by,
+                    provider.tensor_model_parallel_size,
+                )
+                if provider.should_pad_vocab
+                else provider.vocab_size
+            ),
             "max_sequence_length": provider.language_max_sequence_length,
             "fp16_lm_cross_entropy": provider.fp16_lm_cross_entropy,
             "logit_dtype": provider.logit_dtype,

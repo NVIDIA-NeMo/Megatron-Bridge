@@ -5,6 +5,7 @@ import pytest
 import torch
 import yaml
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import _clear_derived_spec_fields
@@ -13,6 +14,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     ModuleParallelismConfig,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.mimo import Qwen3VLMIMOModel, Qwen3VLMIMOVisionModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
@@ -58,6 +60,13 @@ class TestQwen3VLProviderMIMOAPI:
         assert provider.modality_keys == {"images": "qwen_visual"}
         assert provider.special_token_ids == {"images": provider.image_token_id}
 
+    def test_language_spec_uses_qwen_attention(self, provider_cls):
+        provider = _make_language_provider(provider_cls)
+
+        spec = provider.build_language_spec()
+
+        assert spec.submodules.self_attention.module is Qwen3VLSelfAttention
+
     def test_language_model_spec_shape(self, provider_cls, monkeypatch):
         provider = _make_language_provider(provider_cls)
         sentinel_block_spec = ModuleSpec(module=object)
@@ -96,8 +105,8 @@ class TestQwen3VLProviderMIMOAPI:
         assert spec.params["logit_dtype"] is torch.float32
 
     @pytest.mark.parametrize("first_layers", [2, 3])
-    def test_deepstack_pipeline_first_chunk_capacity(self, monkeypatch, first_layers):
-        provider = _make_language_provider()
+    def test_deepstack_pipeline_first_chunk_capacity(self, provider_cls, monkeypatch, first_layers):
+        provider = _make_language_provider(provider_cls)
         provider.num_layers = 8
         provider.pipeline_model_parallel_size = 2
         provider.num_layers_in_first_pipeline_stage = first_layers
@@ -108,6 +117,55 @@ class TestQwen3VLProviderMIMOAPI:
         else:
             with pytest.raises(ValueError, match="at least 3 decoder layers.*got 2"):
                 provider.build_language_model_spec()
+
+    @pytest.mark.parametrize("layout_type", ["list", "string", "parsed"])
+    @pytest.mark.parametrize("first_layers", [2, 3])
+    @pytest.mark.parametrize("virtual", [False, True])
+    def test_deepstack_explicit_pipeline_layout(self, provider_cls, monkeypatch, layout_type, first_layers, virtual):
+        layout = [["embedding"] + ["decoder"] * first_layers, ["decoder"] * 3]
+        if virtual:
+            layout.extend([["decoder"], ["loss"]])
+        else:
+            layout[-1].append("loss")
+        if layout_type == "string":
+            layout = f"Et*{first_layers}|t*3" + ("|t|L" if virtual else "L")
+        elif layout_type == "parsed":
+            layout = PipelineParallelLayerLayout(layout, pipeline_model_parallel_size=2)
+        provider = _make_language_provider(
+            provider_cls,
+            num_layers=first_layers + 3 + int(virtual),
+            pipeline_model_parallel_size=2,
+            pipeline_model_parallel_layout=layout,
+        )
+        monkeypatch.setattr(provider, "build_language_spec", lambda **kwargs: ModuleSpec(module=object))
+
+        if first_layers == 3:
+            assert provider.build_language_model_spec().module is Qwen3VLGPTModel
+        else:
+            with pytest.raises(ValueError, match="at least 3 decoder layers.*got 2"):
+                provider.build_language_model_spec()
+        assert provider.pipeline_model_parallel_layout is layout
+
+    @pytest.mark.parametrize(
+        ("vocab_size", "should_pad_vocab", "expected_vocab_size"),
+        [(257, True, 512), (257, False, 257), (512, True, 512)],
+    )
+    def test_language_model_spec_vocabulary_padding(
+        self, provider_cls, monkeypatch, vocab_size, should_pad_vocab, expected_vocab_size
+    ):
+        provider = _make_language_provider(
+            provider_cls,
+            vocab_size=vocab_size,
+            should_pad_vocab=should_pad_vocab,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=2,
+        )
+        monkeypatch.setattr(provider, "build_language_spec", lambda **kwargs: ModuleSpec(module=object))
+
+        spec = provider.build_language_model_spec()
+
+        assert spec.params["vocab_size"] == expected_vocab_size
+        assert provider.vocab_size == vocab_size
 
 
 class TestMegatronMIMOProviderFactory:
