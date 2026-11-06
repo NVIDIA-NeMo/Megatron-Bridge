@@ -781,6 +781,43 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
     assert gb200 == h100
 
 
+def test_nemotron_3_5_lightning_32k_sft_differs_from_sft_only_in_long_context_layout():
+    """The 32K SFT recipe keeps the Lightning SFT contract apart from its sequence length and layout."""
+    from megatron.bridge.recipes.nemotronh import (
+        nemotron_3_5_lightning_sft_32k_config,
+        nemotron_3_5_lightning_sft_config,
+    )
+
+    base = nemotron_3_5_lightning_sft_config()
+    long_context = nemotron_3_5_lightning_sft_32k_config()
+
+    # Remove the 32K sequence length and its execution layout. Any other
+    # difference, including a convergence-setting drift, must fail.
+    model_layout_fields = {
+        "seq_length",
+        "context_parallel_size",
+        "cp_comm_type",
+        "moe_flex_dispatcher_backend",
+        "cross_entropy_loss_fusion",
+        "recompute_granularity",
+        "recompute_modules",
+        "recompute_method",
+        "recompute_num_layers",
+    }
+    base_model = {key: value for key, value in _model_fields(base.model).items() if key not in model_layout_fields}
+    long_context_model = {
+        key: value for key, value in _model_fields(long_context.model).items() if key not in model_layout_fields
+    }
+    assert long_context_model == base_model
+
+    long_context.model = base.model
+    long_context.dataset.seq_length = base.dataset.seq_length
+    long_context.dataset.offline_packing_specs = base.dataset.offline_packing_specs
+    long_context.ddp.overlap_param_gather = base.ddp.overlap_param_gather
+
+    assert long_context == base
+
+
 # --- Nemotron 3 Super tests ---
 
 
