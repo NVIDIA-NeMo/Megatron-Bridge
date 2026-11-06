@@ -247,6 +247,17 @@ def _validate_gpu_only_placement(model: Any) -> None:
         raise RuntimeError(f"Model has non-GPU placements: {non_gpu}")
 
 
+def _bind_current_cuda_device(torch: Any, model: Any) -> None:
+    """Make each device-mapped CUDA shard run with its own GPU as the current device."""
+    # Custom kernels (for example Mamba SSM) launch on the current device, not on their inputs' device.
+    for name, device in (getattr(model, "hf_device_map", None) or {}).items():
+        placement = str(device) if not isinstance(device, int) else f"cuda:{device}"
+        if placement.split(":", 1)[0] != "cuda":
+            continue
+        index = int(placement.split(":", 1)[1]) if ":" in placement else 0
+        model.get_submodule(name).register_forward_pre_hook(lambda *_, index=index: torch.cuda.set_device(index))
+
+
 def _capped_max_memory(torch: Any, max_gpu_memory_gib: float) -> dict[int | str, int]:
     """Cap every visible GPU and let the remaining modules use CPU memory.
 
@@ -297,6 +308,8 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
         model_kwargs["tp_plan"] = args.tp_plan
     model, loading_info = model_cls.from_pretrained(args.hf_model, **model_kwargs)
     _validate_loading_info(loading_info)
+    if args.device_map:
+        _bind_current_cuda_device(torch, model)
     if not args.device_map and not args.tp_plan:
         model = model.to(args.device)
     model = model.eval()
