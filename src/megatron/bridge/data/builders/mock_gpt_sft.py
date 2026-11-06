@@ -18,6 +18,9 @@ The samples exercise global-batch packing and dynamic context parallelism withou
 is random token IDs whose length is drawn from three buckets defined by the context-parallel capacity it needs: at most
 ``seq_length // 4`` tokens (fits one rank of a CP4 group), at most ``seq_length // 2`` (CP2), or up to ``seq_length``
 (CP4). Lengths are uniform within each bucket, and only the final ``completion_fraction`` of each sample is supervised.
+
+Lengths are drawn in blocks of ``LENGTH_BLOCK_SIZE`` samples, each with the exact bucket split and its own seed, so a
+sample's length and tokens depend only on its index, not on how many samples a run requests.
 """
 
 import math
@@ -33,6 +36,8 @@ from megatron.bridge.data.packing.global_batch import build_unpacked_sequence_sa
 
 
 _SPLITS = ("train", "validation", "test")
+LENGTH_BLOCK_SIZE = 1024
+"""Samples per independently seeded block of drawn lengths."""
 
 
 @dataclass(kw_only=True)
@@ -110,8 +115,26 @@ def length_bucket_counts(num_samples: int, fractions: Sequence[float]) -> list[i
     return counts
 
 
+def _length_block(config: MockGPTSFTDatasetConfig, split: str, block: int) -> np.ndarray:
+    """Return the lengths of samples ``[block * LENGTH_BLOCK_SIZE, (block + 1) * LENGTH_BLOCK_SIZE)`` of ``split``."""
+    # The trailing 0 keeps these streams apart from the per-sample token streams seeded with (seed, split, index).
+    rng = np.random.default_rng((config.random_seed, _SPLITS.index(split), block, 0))
+    counts = length_bucket_counts(LENGTH_BLOCK_SIZE, config.length_bucket_fractions)
+    lengths = np.concatenate(
+        [
+            rng.integers(low, high + 1, size=count)
+            for (low, high), count in zip(length_bucket_bounds(config.seq_length), counts)
+        ]
+    ).astype(np.int64)
+    rng.shuffle(lengths)
+    return lengths
+
+
 def mock_sft_sequence_lengths(config: MockGPTSFTDatasetConfig, num_samples: int, split: str = "train") -> np.ndarray:
     """Return the deterministic training length of every sample of ``split``, in dataset order.
+
+    Each block of ``LENGTH_BLOCK_SIZE`` samples holds the exact bucket split, interleaved, so the first ``n`` lengths
+    are the same whatever ``num_samples`` is.
 
     Raises:
         ValueError: If ``split`` is unknown or ``num_samples`` is negative.
@@ -120,16 +143,8 @@ def mock_sft_sequence_lengths(config: MockGPTSFTDatasetConfig, num_samples: int,
         raise ValueError(f"split must be one of {_SPLITS}.")
     if num_samples < 0:
         raise ValueError("num_samples must be non-negative.")
-    rng = np.random.default_rng((config.random_seed, _SPLITS.index(split)))
-    lengths = [
-        rng.integers(low, high + 1, size=count)
-        for (low, high), count in zip(
-            length_bucket_bounds(config.seq_length), length_bucket_counts(num_samples, config.length_bucket_fractions)
-        )
-    ]
-    lengths = np.concatenate(lengths).astype(np.int64)
-    rng.shuffle(lengths)
-    return lengths
+    blocks = [_length_block(config, split, block) for block in range(math.ceil(num_samples / LENGTH_BLOCK_SIZE))]
+    return np.concatenate(blocks)[:num_samples] if blocks else np.zeros(0, dtype=np.int64)
 
 
 class MockGPTSFTDataset(torch.utils.data.Dataset):
