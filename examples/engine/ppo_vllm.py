@@ -25,7 +25,7 @@ import logging
 import time
 
 import torch
-from dapo_math import Sample, gae, response_slice, to_datum
+from dapo_math import Sample, gae, response_slice, to_datum, without_routing
 from grpo_vllm import (
     RunLogger,
     chunks,
@@ -56,7 +56,7 @@ def critic_round(critic: TrainingEngine, samples: list[Sample], datums: list[Dat
     """Score with the critic, write GAE advantages/returns into the Datums, then update the critic."""
     critic.cuda()
     start = time.perf_counter()
-    values = critic.forward_only(datums).values
+    values = critic.forward_only(without_routing(datums)).values
     all_adv = []
     for sample, datum, value in zip(samples, datums, values):
         v = response_slice(datum, value.cpu())
@@ -79,7 +79,7 @@ def critic_round(critic: TrainingEngine, samples: list[Sample], datums: list[Dat
     grad_norms = []
     for step_datums in chunks(datums, args.steps_per_round):
         for call_datums in chunks(step_datums, args.calls_per_step):
-            out = critic.forward_backward(call_datums, loss_kwargs={"clip": args.value_clip})
+            out = critic.forward_backward(without_routing(call_datums), loss_kwargs={"clip": args.value_clip})
             tokens += out.num_loss_tokens
             error += out.metrics["value_abs_error_sum"]
             clipped += out.metrics["value_clipped_tokens"]
@@ -100,6 +100,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     args = parse_grpo_args(_ppo_arguments, description=__doc__)
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    recipe.router_replay = args.router_replay  # only the policy receives Datums with routing
     prompts, eval_prompts = load_data(args, recipe)
 
     policy = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint)
@@ -113,6 +114,7 @@ def main() -> None:
         gpu_memory_utilization=args.gpu_memory_utilization,
         max_model_len=args.max_prompt_tokens + args.max_tokens + 64,
         enforce_eager=not args.vllm_cuda_graphs,
+        return_routed_experts=args.router_replay,
     )
     rollout.sleep()
     engines = {"policy": policy, "critic": critic}  # the reference never changes, so it is not saved
@@ -136,7 +138,7 @@ def main() -> None:
         datums = [to_datum(s) for s in samples]
 
         reference.cuda()
-        ref_logprobs = reference.forward_only(datums).logprobs
+        ref_logprobs = reference.forward_only(without_routing(datums)).logprobs
         reference.cpu()
         for datum, lp in zip(datums, ref_logprobs):
             datum.reference_logprobs = lp.cpu()

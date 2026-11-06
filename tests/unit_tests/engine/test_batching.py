@@ -155,6 +155,45 @@ def test_check_microbatches_rejects_contract_violations():
         check_microbatches([mb], layout="thd", vocab_size=100, dp_group=None)
 
 
+def _routed(n: int, layers: int = 3, topk: int = 2, start: int = 0) -> torch.Tensor:
+    return torch.arange(start, start + n * layers * topk, dtype=torch.int16).view(n, layers, topk)
+
+
+def test_pack_sequences_places_routing_by_segment_with_minus_one_padding():
+    datums = [_datum(5, routed_experts=_routed(5)), _datum(3, routed_experts=_routed(3, start=100))]
+    mb = pack_sequences(datums, [0, 1], seq_length=64, pad_multiple=4, device=CPU)
+    assert mb.routed_experts.shape == (1, 12, 3, 2) and mb.routed_experts.dtype == torch.int64
+    assert torch.equal(mb.routed_experts[0, :5], _routed(5).long())
+    assert (mb.routed_experts[0, 5:8] == -1).all() and (mb.routed_experts[0, 11] == -1).all()
+    assert torch.equal(mb.routed_experts[0, 8:11], _routed(3, start=100).long())
+    assert "routed_experts" in mb.token_tensors()
+    # The CP shard keeps the token axis in sync with every other field (identity split on one rank).
+    sharded = shard_for_cp(mb, None)
+    assert torch.equal(sharded.routed_experts, mb.routed_experts)
+    # Fillers copy the schema as all-padding routing.
+    filler = filler_microbatch(pad_multiple=4, device=CPU, layout="thd", schema_from=datums[0])
+    assert filler.routed_experts.shape == (1, 4, 3, 2) and (filler.routed_experts == -1).all()
+    # Without routing on the Datums the field stays unset.
+    assert pack_sequences([_datum(3)], [0], seq_length=8, pad_multiple=1, device=CPU).routed_experts is None
+
+
+def test_check_microbatches_validates_routing_against_the_replayable_shape():
+    with_routing = pack_sequences(
+        [_datum(3, routed_experts=_routed(3))], [0], seq_length=8, pad_multiple=1, device=CPU
+    )
+    plain = pack_sequences([_datum(3)], [0], seq_length=8, pad_multiple=1, device=CPU)
+    with pytest.raises(ValueError, match="every microbatch of a call or for none"):
+        check_microbatches([with_routing, plain], layout="thd", vocab_size=100, dp_group=None)
+    with pytest.raises(ValueError, match="cannot replay routing"):
+        check_microbatches([with_routing], layout="thd", vocab_size=100, dp_group=None, routed_shape=None)
+
+
+def test_unshard_from_cp_keeps_trailing_dims():
+    mb = shard_for_cp(pack_sequences([_datum(3)], [0], seq_length=8, pad_multiple=4, device=CPU), None)
+    values = torch.arange(4 * 6, dtype=torch.float32).view(4, 3, 2)  # 3 tokens padded to 4
+    assert torch.equal(unshard_from_cp(mb, values, None), values)
+
+
 def test_bshd_layout_is_an_explicit_placeholder():
     with pytest.raises(NotImplementedError, match="bshd"):
         default_preprocess(

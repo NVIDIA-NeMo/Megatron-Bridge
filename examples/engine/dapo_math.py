@@ -19,8 +19,9 @@ the integer answer as text. Rewards are +1 / -1 as in DAPO (``dapo_math_reward.c
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+import numpy as np
 import pyarrow.parquet as pq
 import torch
 from dapo_math_reward import compute_score
@@ -48,6 +49,8 @@ class Sample:
     reward: float = 0.0
     advantage: float = 0.0
     extras: dict = field(default_factory=dict)
+    # [prompt + response - 1, num_moe_layers, topk] expert ids from the generation backend (routing replay).
+    routed_experts: np.ndarray | None = None
 
 
 def load_prompts(
@@ -95,7 +98,8 @@ def to_datum(sample: Sample, **per_token: torch.Tensor | None) -> Datum:
     """Prompt + response as one Datum: targets are the response tokens, every prompt position is masked out.
 
     Per-token fields (``advantages`` broadcast from the scalar, ``rollout_logprobs`` from the sampler, and
-    any ``per_token`` override) are ``[L]`` with ``L = len(prompt) + len(response) - 1``.
+    any ``per_token`` override) are ``[L]`` with ``L = len(prompt) + len(response) - 1``; the sampler's
+    ``routed_experts`` rows map one-to-one onto the same input positions.
     """
     full = torch.tensor(sample.prompt.prompt_ids + sample.response_ids, dtype=torch.int64)
     length = len(full) - 1
@@ -107,6 +111,10 @@ def to_datum(sample: Sample, **per_token: torch.Tensor | None) -> Datum:
     rollout = torch.zeros(length, dtype=torch.float32)
     rollout[length - response :] = torch.tensor(sample.rollout_logprobs, dtype=torch.float32)
     fields = {"advantages": advantages, "rollout_logprobs": rollout}
+    if sample.routed_experts is not None:
+        if sample.routed_experts.shape[0] != length:
+            raise ValueError(f"routed_experts has {sample.routed_experts.shape[0]} rows for {length} input positions")
+        fields["routed_experts"] = torch.from_numpy(sample.routed_experts)  # narrow ints; int64 only once packed
     fields.update({k: v for k, v in per_token.items() if v is not None})
     return Datum(
         input_ids=full[:-1],
@@ -115,6 +123,12 @@ def to_datum(sample: Sample, **per_token: torch.Tensor | None) -> Datum:
         sample_inputs={"prompt_index": sample.prompt.index, "reward": sample.reward},
         **fields,
     )
+
+
+def without_routing(datums: list[Datum]) -> list[Datum]:
+    """The same Datums without ``routed_experts`` (shallow copies sharing every other field), so an engine
+    scores them with its own routing: the reference and the critic in the examples."""
+    return [replace(datum, routed_experts=None) for datum in datums]
 
 
 def response_slice(datum: Datum, values: torch.Tensor) -> torch.Tensor:

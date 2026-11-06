@@ -75,6 +75,10 @@ class TrainingRecipe:
             tokenizer files and weight layout from it. ``None`` disables ``export``. It must be the
             text-only causal-LM checkpoint; a multimodal wrapper (one with ``text_config``) is rejected.
         hf_revision: HF revision of ``hf_path`` when it is a model ID; ``None`` for a local directory.
+        router_replay: Rollout routing replay for MoE models. ``True`` builds the routers with Megatron's
+            ``moe_enable_routing_replay`` and turns the fused router off (the fused top-k ignores
+            replay); the engine then replays ``routed_experts`` whenever a prepared microbatch carries
+            it (the default pipeline fills it from ``Datum.routed_experts``). ``False`` rejects the field.
     """
 
     model: ModelProviderMixin
@@ -90,6 +94,7 @@ class TrainingRecipe:
     mtp_target_scope: Literal["primary", "all_valid"] = "primary"
     hf_path: str | None = None
     hf_revision: str | None = None
+    router_replay: bool = False
 
 
 SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")
@@ -138,6 +143,11 @@ def check_supported(recipe: TrainingRecipe) -> None:
         problems.append(f"mtp_target_scope must be one of {SUPPORTED_MTP_TARGET_SCOPES}")
     # model.mtp_detach_heads is accepted: the head trains on MCore's per-token MTP loss divided by the
     # primary count; see TODO(detached-mtp) in TrainingEngine.optim_step for the exact pooled mean.
+    if getattr(recipe, "router_replay", False):
+        if not getattr(recipe.model, "num_moe_experts", None):
+            problems.append("router_replay needs an MoE model (model.num_moe_experts)")
+        if getattr(recipe.model, "moe_router_load_balancing_type", "aux_loss") in ("sinkhorn",):
+            problems.append("router_replay is not supported with sinkhorn routing (it bypasses the replay hook)")
     if problems:
         raise ValueError("Recipe is not supported by TrainingEngine:\n  - " + "\n  - ".join(problems))
 
@@ -168,6 +178,9 @@ def finalize_recipe(recipe: TrainingRecipe) -> None:
 
     model.calculate_per_token_loss = True
     recipe.ddp.average_in_collective = False
+    if recipe.router_replay:
+        model.moe_enable_routing_replay = True
+        model.moe_router_fusion = False  # the fused top-k path never consults the replay hook
     if recipe.batch_layout == "thd":
         _enable_safe_hybridep_dispatch(model, uses_thd=True)
     else:

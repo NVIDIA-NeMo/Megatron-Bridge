@@ -31,6 +31,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.engine.datum import ModelOutput, PreparedMicrobatch
+from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.training.gpt_step import _prepare_packed_padding_mask
 
 
@@ -92,11 +93,18 @@ def scored_tensor(output: ModelOutput) -> torch.Tensor:
     return output.values if output.logprobs is None else output.logprobs
 
 
-def _make_scoring_step(pg_collection: ProcessGroupCollection, mtp_target_scope: str, output_head: str) -> Callable:
+def _make_scoring_step(
+    pg_collection: ProcessGroupCollection,
+    mtp_target_scope: str,
+    output_head: str,
+    router_replay: RouterReplayState | None,
+) -> Callable:
     def forward_step_func(
         data_iterator: Iterator[PreparedMicrobatch], model: MegatronModule
     ) -> tuple[torch.Tensor, Callable]:
         microbatch = next(data_iterator)
+        if router_replay is not None:
+            router_replay.arm_forward(microbatch)
         raw = call_model(model, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, output_head=output_head)
 
         def collect(output_tensor: torch.Tensor, non_loss_data: bool = False) -> torch.Tensor:
@@ -114,11 +122,13 @@ def run_forward_only(
     pg_collection: ProcessGroupCollection,
     mtp_target_scope: str = "primary",
     output_head: str = "lm",
+    router_replay: RouterReplayState | None = None,
 ) -> list[torch.Tensor]:
     """Score microbatches with the schedule in forward-only mode; one ``[T_local]`` logprob tensor each.
 
     Runs in eval mode under ``no_grad`` so dropout, router expert-bias updates and auxiliary-loss
-    bookkeeping are untouched; an open accumulation window is preserved.
+    bookkeeping are untouched; an open accumulation window is preserved. ``router_replay`` (the
+    engine's ``RouterReplayState``) arms the MoE routers per microbatch when it carries routing.
     """
     if not microbatches:
         return []
@@ -128,7 +138,7 @@ def run_forward_only(
     try:
         with torch.no_grad():
             store: list[Any] = get_forward_backward_func()(
-                forward_step_func=_make_scoring_step(pg_collection, mtp_target_scope, output_head),
+                forward_step_func=_make_scoring_step(pg_collection, mtp_target_scope, output_head, router_replay),
                 data_iterator=iter(microbatches),
                 model=model,
                 num_microbatches=len(microbatches),
@@ -139,6 +149,8 @@ def run_forward_only(
                 pg_collection=pg_collection,
             )
     finally:
+        if router_replay is not None:
+            router_replay.clear()
         for chunk, flag in zip(model, was_training):
             chunk.train(flag)
     return store
@@ -152,6 +164,7 @@ def run_forward_backward(
     pg_collection: ProcessGroupCollection,
     mtp_target_scope: str = "primary",
     output_head: str = "lm",
+    router_replay: RouterReplayState | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
     """Forward/backward over the microbatches, accumulating raw FP32 gradient sums in the DDP buffers.
 
@@ -160,7 +173,9 @@ def run_forward_backward(
     so no DP reduce-scatter and no ``1/num_tokens`` scaling happen here (the engine does both once at
     ``optim_step``). The loss method returns an additive scalar per microbatch, optionally paired with
     a dictionary of additive scalar metrics; with ``calculate_per_token_loss=True`` the schedule leaves
-    the scalar unscaled.
+    the scalar unscaled. ``router_replay`` (the engine's ``RouterReplayState``) arms the MoE routers
+    per microbatch when it carries routing: replay mode for the forward, queued replay for the
+    recompute in the backward.
 
     Returns:
         ``(loss_sum, num_loss_tokens, metrics)`` for this rank's microbatches, un-reduced, detached;
@@ -180,7 +195,11 @@ def run_forward_backward(
 
     def forward_step_func(data_iterator: Iterator[PreparedMicrobatch], chunk: MegatronModule) -> tuple:
         microbatch = next(data_iterator)
+        if router_replay is not None:
+            router_replay.arm_forward(microbatch)
         raw = call_model(chunk, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, output_head=output_head)
+        if router_replay is not None:
+            router_replay.arm_backward(microbatch)
 
         def loss_func(output_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, dict]:
             loss, extra = split_loss_return(loss_method(microbatch, to_model_output(output_tensor, output_head)))
@@ -212,6 +231,8 @@ def run_forward_backward(
                 pg_collection=pg_collection,
             )
     finally:
+        if router_replay is not None:
+            router_replay.clear()
         config.finalize_model_grads_func, config.grad_sync_func, config.no_sync_func = saved
     return loss_sum, num_loss_tokens, metrics
 

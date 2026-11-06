@@ -169,7 +169,8 @@ def pack_sequences(
     """Concatenate the selected Datums into one THD row (``[1, T]``, not yet CP-sharded).
 
     Each sequence is padded to ``pad_multiple``; padding carries ``PAD_TOKEN_ID`` inputs and targets,
-    ``loss_mask`` 0, ``padding_mask`` True and 0 in every optional field. With ``pad_to_max_length`` the
+    ``loss_mask`` 0, ``padding_mask`` True, 0 in every optional field and -1 in ``routed_experts`` (the
+    engine substitutes a valid routing there). With ``pad_to_max_length`` the
     pack is padded to exactly ``seq_length`` so every microbatch has the same physical width (fixed
     kernel shapes, no per-shape autotuning; what the offline-packed SFT recipes do). The mapping records
     each Datum's offset and length.
@@ -195,6 +196,15 @@ def pack_sequences(
     for key, value in metadata.items():
         if isinstance(value, torch.Tensor) and value.dim() > 0:
             metadata[key] = value.to(device)
+    routed = None
+    if datums[indices[0]].routed_experts is not None:
+        # [1, T, num_moe_layers, topk] int64; the row builder only packs [L] fields, so routing is placed by segment.
+        trailing = tuple(datums[indices[0]].routed_experts.shape[1:])
+        routed = torch.full((1, total_tokens, *trailing), -1, dtype=torch.int64)
+        for segment in segments:
+            end = segment.offset + segment.length
+            routed[0, segment.offset : end] = datums[segment.index].routed_experts.to(torch.int64)
+        routed = routed.to(device)
 
     def _dev(key: str) -> torch.Tensor:
         return packed[key].to(device)
@@ -207,6 +217,7 @@ def pack_sequences(
         padding_mask=_dev("padding_mask"),
         packed_seq_params=get_packed_seq_params(metadata),
         **{name: _dev(name) for name in COMMON_FIELDS if name in extra_keys},
+        routed_experts=routed,
         loss_inputs={key: _dev(key) for key in extra_keys if key not in COMMON_FIELDS},
         sample_inputs=[datums[index].sample_inputs for index in indices],
         mapping=MicrobatchMapping(
@@ -252,6 +263,9 @@ def filler_microbatch(
         for name in COMMON_FIELDS:
             if getattr(schema_from, name) is not None:
                 setattr(datum, name, torch.zeros(width, dtype=torch.float32))
+        if schema_from.routed_experts is not None:
+            trailing = tuple(schema_from.routed_experts.shape[1:])
+            datum.routed_experts = torch.full((width, *trailing), -1, dtype=torch.int64)
         datum.loss_inputs = {
             key: torch.zeros(width, dtype=value.dtype) for key, value in schema_from.loss_inputs.items()
         }
@@ -301,6 +315,7 @@ def shard_for_cp(
         microbatch,
         **{name: local[name] for name in ("input_ids", "target_ids", "position_ids", "loss_mask", "padding_mask")},
         **{name: local[name] for name in COMMON_FIELDS if name in local},
+        routed_experts=local.get("routed_experts"),
         loss_inputs={key: local[key] for key in microbatch.loss_inputs},
         packed_seq_params=params,
         mapping=dataclasses.replace(mapping, cp_indices=indices),
@@ -316,15 +331,29 @@ def check_microbatches(
     layout: str,
     vocab_size: int,
     dp_group: torch.distributed.ProcessGroup | None,
+    routed_shape: tuple[int, int] | None = None,
+    num_experts: int | None = None,
 ) -> None:
     """Validate prepared microbatches before they reach the schedule.
+
+    ``routed_shape`` is ``(num_moe_layers, topk)`` the engine can replay, ``None`` when it cannot replay
+    routing at all; ``num_experts`` bounds the expert ids.
 
     Raises:
         ValueError: On any contract violation, naming the microbatch and field.
     """
+    routed_present = [mb.routed_experts is not None for mb in microbatches]
+    if any(routed_present) and not all(routed_present):
+        raise ValueError("routed_experts must be set for every microbatch of a call or for none.")
+    if any(routed_present) and routed_shape is None:
+        raise ValueError(
+            "routed_experts is set but this engine cannot replay routing: build it from a recipe with "
+            "router_replay=True (MoE model), or drop the field."
+        )
     for slot, mb in enumerate(microbatches):
         where = f"microbatch[{slot}]"
         tensors = mb.token_tensors()
+        routed = tensors.pop("routed_experts", None)
         shape = tuple(mb.input_ids.shape)
         if len(shape) != 2 or (layout == "thd" and shape[0] != 1):
             raise ValueError(f"{where}.input_ids must be [1, T_local] for thd / [B, S_local] for bshd, got {shape}.")
@@ -337,6 +366,16 @@ def check_microbatches(
                 raise ValueError(f"{where}.{name} has shape {tuple(tensor.shape)}, expected {shape}.")
             if not tensor.is_contiguous():
                 raise ValueError(f"{where}.{name} must be contiguous.")
+        if routed is not None:
+            expected = shape + tuple(routed_shape)
+            if not isinstance(routed, torch.Tensor) or routed.device.type != "cuda":
+                raise ValueError(f"{where}.routed_experts must be a CUDA tensor.")
+            if tuple(routed.shape) != expected:
+                raise ValueError(f"{where}.routed_experts has shape {tuple(routed.shape)}, expected {expected}.")
+            if routed.dtype != torch.int64 or not routed.is_contiguous():
+                raise ValueError(f"{where}.routed_experts must be a contiguous int64 tensor.")
+            if bool((routed < -1).any()) or (num_experts is not None and bool((routed >= num_experts).any())):
+                raise ValueError(f"{where}.routed_experts must hold expert ids in [0, {num_experts}) or -1.")
         for name in ("input_ids", "target_ids", "position_ids"):
             if tensors[name].dtype != torch.int64:
                 raise ValueError(f"{where}.{name} must be int64.")
@@ -374,12 +413,12 @@ def check_microbatches(
 def unshard_from_cp(
     microbatch: PreparedMicrobatch, values: torch.Tensor, cp_group: torch.distributed.ProcessGroup | None
 ) -> torch.Tensor:
-    """Reassemble per-token values for the un-sharded microbatch (``[total_tokens]``) from all CP ranks.
+    """Reassemble per-token values for the un-sharded microbatch (``[total_tokens, ...]``) from all CP ranks.
 
     TODO(dynamic-cp): gather over the microbatch's own ``cp_group`` from the mapping instead of the static one.
     """
     mapping: MicrobatchMapping = microbatch.mapping
-    full = torch.empty(mapping.total_tokens, dtype=values.dtype, device=values.device)
+    full = torch.empty((mapping.total_tokens, *values.shape[1:]), dtype=values.dtype, device=values.device)
     if cp_group is None or cp_group.size() == 1:
         full[mapping.cp_indices] = values
         return full

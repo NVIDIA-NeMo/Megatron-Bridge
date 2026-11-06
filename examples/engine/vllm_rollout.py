@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
 import torch
 from dapo_math import MathPrompt, Sample
 
@@ -54,6 +55,24 @@ def _in_process_model(llm):
     raise AttributeError("could not find vllm's in-process model; vllm's object layout changed")
 
 
+def _routed_experts(completion, prompt_len: int, response_len: int) -> np.ndarray:
+    """The ``[prompt + response - 1, num_hidden_layers, topk]`` routing of one completion, as vllm's narrow ints.
+
+    vllm records a row for every token that went through the model: the prompt and all response tokens
+    but the last one, which is sampled and never fed back. Some versions append that last row too; it is
+    dropped so the rows match the Datum's input positions.
+    """
+    routed = completion.routed_experts
+    if routed is None:
+        raise RuntimeError("vllm returned no routed_experts; the MoE kernel in use does not support capture")
+    expected = prompt_len + response_len - 1
+    if routed.shape[0] == expected + 1:
+        routed = routed[:expected]
+    if routed.shape[0] != expected:
+        raise RuntimeError(f"routed_experts has {routed.shape[0]} rows, expected {expected} (prompt + response - 1)")
+    return np.ascontiguousarray(routed)
+
+
 class VllmRollout:
     """vllm 0.29 ``LLM`` built over the already-initialized torch.distributed world (external_launcher)."""
 
@@ -65,11 +84,13 @@ class VllmRollout:
         max_model_len: int,
         seed: int = 0,
         enforce_eager: bool = True,
+        return_routed_experts: bool = False,
     ):
         from vllm import LLM
 
         self.rank = torch.distributed.get_rank()
         self.world = torch.distributed.get_world_size()
+        self.return_routed_experts = return_routed_experts
         start = time.perf_counter()
         self.llm = LLM(
             model=hf_path,
@@ -90,6 +111,9 @@ class VllmRollout:
             # Eager by default: the torch.compile / CUDA-graph path stalled for many minutes on this
             # image while the eager path ran every probe cleanly. Opt in with enforce_eager=False.
             enforce_eager=enforce_eager,
+            # Rollout routing replay: every completion then carries the expert ids each token was routed
+            # to, [tokens, num_hidden_layers, topk], prompt tokens included, the last sampled token excluded.
+            enable_return_routed_experts=return_routed_experts,
         )
         self.model = _in_process_model(self.llm)
         self.runner = self.llm.llm_engine.model_executor.driver_worker.worker.model_runner
@@ -148,6 +172,9 @@ class VllmRollout:
         for prompt, output in zip(mine, outputs):
             for completion in output.outputs:
                 logprobs = [entry[token].logprob for token, entry in zip(completion.token_ids, completion.logprobs)]
+                routed = None
+                if self.return_routed_experts:
+                    routed = _routed_experts(completion, len(prompt.prompt_ids), len(completion.token_ids))
                 local.append(
                     Sample(
                         prompt=prompt,
@@ -155,6 +182,7 @@ class VllmRollout:
                         rollout_logprobs=logprobs,
                         text=completion.text,
                         extras={"finish_reason": completion.finish_reason},
+                        routed_experts=routed,
                     )
                 )
         gathered: list[list[Sample] | None] = [None] * self.world

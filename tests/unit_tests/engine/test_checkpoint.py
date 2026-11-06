@@ -15,6 +15,7 @@ from megatron.bridge.engine.checkpoint import (
     write_user_state,
 )
 from megatron.bridge.engine.engine import Topology
+from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.training.checkpointing import _get_run_config_tp_pp
 from megatron.bridge.training.config import CheckpointConfig
 
@@ -62,6 +63,7 @@ def _engine_with_window(open_window: bool) -> TrainingEngine:
     engine._trainable = True
     engine._closed = False
     engine._resident = True
+    engine._router_replay = RouterReplayState([])
     engine._runtime = SimpleNamespace(
         topology=Topology(1, 1, 1, None, 1, 1, None, False), detach=lambda engine: None, pg_collection=None
     )

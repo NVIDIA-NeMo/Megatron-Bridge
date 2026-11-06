@@ -92,6 +92,21 @@ engine reports it moved and prints transfer times.
 NVTE_ALLOW_NONDETERMINISTIC_ALGO=0 ... movement_gate.py --parquet /data/packed/training.parquet --packs-per-step 8
 ```
 
+### `router_replay_gate.py` (rollout routing replay)
+
+One small vllm rollout with `enable_return_routed_experts`, then on a policy built with
+`recipe.router_replay=True`: logprobs with native and with replayed routing and their gap to vllm's
+logprobs; the overlap between the routing the policy's own routers record and the prepared
+`routed_experts` (a token-order bug would drop it to about topk / num_experts); replaying the policy's
+own recorded routing must reproduce the native logprobs and, through `forward_backward` with one
+call and with four, the native gradient norm; and with vllm's routing the gradient must be the same
+with and without MoE recompute in the backward (the queued replay). Prints `ROUTER REPLAY GATE PASSED`.
+
+```bash
+NVTE_ALLOW_NONDETERMINISTIC_ALGO=0 ... router_replay_gate.py --parquet /data/dapo-math/data/dapo-math-17k.parquet \
+    --rounds 1 --prompts-per-round 8 --group-size 2 --max-tokens 2048
+```
+
 ### `grpo_vllm.py` (GRPO + truncated importance sampling, vllm colocated)
 
 Per round: refresh vllm's weights from the policy's streaming export, offload the policy, sample
@@ -117,6 +132,11 @@ Knobs:
 - `--vllm-cuda-graphs` lets vllm compile and capture CUDA graphs (about 4x faster decoding; off by
   default). `--gpu-memory-utilization` (0.5) is vllm's share of each GPU while the engines are
   offloaded.
+- `--router-replay` turns on rollout routing replay: vllm returns the experts each token was routed
+  to, the samples carry them into `Datum.routed_experts`, and the policy replays them when it scores
+  (`old_logprobs`) and trains, so the MoE routing matches the one that produced the samples. The
+  recipe gets `router_replay=True` (Megatron's routing replay on, fused router off). The reference
+  and the critic score the same Datums without the field and keep their own routing.
 - `--eval-every N` scores a fixed held-out set (`--eval-prompts` prompts from parquet row
   `--eval-offset`, de-duplicated against the training prompts, `--eval-samples` each) with the same
   weights right after the training batch; reported as `eval_*`.
@@ -148,14 +168,17 @@ Round lines are `[ppo] {...}` and add `value_abs_error`, `value_clipped_fraction
 
 - `dapo_math.py`: DAPO-Math prompt loading with the chat template, the +1/-1 reward, GRPO group
   normalization, GAE, and the sample-to-`Datum` assembly (prompt plus response, response-only loss mask,
-  per-token `advantages` and `rollout_logprobs`).
+  per-token `advantages` and `rollout_logprobs`, `routed_experts` when vllm returned them;
+  `without_routing` strips the field for engines that should route natively).
 - `dapo_math_reward.py`: verl's DAPO scorer, copied unchanged (Minerva-style `Answer:` extraction
   first, then the last `\boxed{}`).
 - `vllm_rollout.py`: vllm 0.29 in the training process (`distributed_executor_backend="external_launcher"`,
   one data-parallel replica per rank, `async_scheduling=False`), weight refresh through the runner's
   layerwise reload from `engine.export(streaming=True)`, sleep level 2 between rounds, and sharded
   generation with an all-gather so every rank holds the same sample list. Ranks without prompts still
-  drive their engine so the data-parallel coordination stays in lockstep.
+  drive their engine so the data-parallel coordination stays in lockstep. With
+  `return_routed_experts=True` each sample also carries vllm's per-token expert ids
+  (`[prompt + response - 1, num_layers, topk]`, the last sampled token has none).
 
 ## Residency protocol used by the RL examples
 

@@ -60,6 +60,12 @@ def parse_args(add_arguments=None, description: str = __doc__) -> argparse.Names
     parser.add_argument("--tis-coef", type=float, default=2.0)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.5)
     parser.add_argument("--vllm-cuda-graphs", action="store_true", help="Let vllm compile and capture CUDA graphs")
+    parser.add_argument(
+        "--router-replay",
+        action="store_true",
+        help="Rollout routing replay: vllm returns each token's experts and the policy replays them when scoring "
+        "and training (recipe router_replay=True; the reference and critic keep their own routing)",
+    )
     parser.add_argument("--prompt-offset", type=int, default=0)
     # Convergence-run extras: W&B logging, a fixed held-out prompt set, periodic checkpoints and resume.
     parser.add_argument("--wandb-project", default=None)
@@ -316,6 +322,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     args = parse_args()
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    recipe.router_replay = args.router_replay
     prompts, eval_prompts = load_data(args, recipe)
 
     policy = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint)
@@ -325,6 +332,7 @@ def main() -> None:
         gpu_memory_utilization=args.gpu_memory_utilization,
         max_model_len=args.max_prompt_tokens + args.max_tokens + 64,
         enforce_eager=not args.vllm_cuda_graphs,
+        return_routed_experts=args.router_replay,
     )
     rollout.sleep()
     policy.cuda()

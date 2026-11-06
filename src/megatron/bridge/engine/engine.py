@@ -69,6 +69,7 @@ from megatron.bridge.engine.export import ExportState, export_hf_weights, make_e
 from megatron.bridge.engine.offload import HostState, check_movable, offload_to_cpu, reload_to_cuda
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
+from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -342,6 +343,8 @@ class TrainingEngine:
         for hook in hooks:
             _register_pre_wrap_hook(recipe.model, hook)
 
+        # MCore's RouterReplay instances register in a process-wide list; claim the ones this build creates.
+        replay_mark = RouterReplayState.mark()
         self._optimizer = None
         if trainable:
             self._model = _build_distributed_model(recipe, pg_collection)
@@ -354,6 +357,10 @@ class TrainingEngine:
             )
         else:
             self._model = _build_frozen_model(recipe, pg_collection)
+        self._router_replay = RouterReplayState.claim(
+            replay_mark,
+            sequence_parallel=runtime.topology.tp > 1 and bool(getattr(recipe.model, "sequence_parallel", False)),
+        )
 
         if checkpoint_path is not None and output_head != "value":
             # value model loads the checkpoint during the make_value_head_hook
@@ -394,7 +401,8 @@ class TrainingEngine:
         ``list[Datum]`` on every rank. ``gather_output=True`` returns every Datum's complete scores on
         every rank in input order; ``False`` returns only what this rank computed (its DP replica's
         samples, its CP positions) with ``sample_indices`` and ``token_positions``. Gradients and any
-        open accumulation window are untouched.
+        open accumulation window are untouched. Microbatches carrying ``routed_experts`` are scored
+        with those expert choices replayed in the MoE routers (recipe ``router_replay``).
         """
         self._require_open()
         self._require_resident("forward_only")
@@ -416,6 +424,7 @@ class TrainingEngine:
             pg_collection=self._runtime.pg_collection,
             mtp_target_scope=self._recipe.mtp_target_scope,
             output_head=self._output_head,
+            router_replay=self._router_replay,
         )
         return self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
 
@@ -433,7 +442,8 @@ class TrainingEngine:
         and applies them. Returns this call's detached loss sum, active-token count and any additive
         metrics the loss returned, all reduced over DP x CP. ``loss_fn`` defaults to ``cross_entropy``
         on a language-model engine and ``value_loss`` on a value-head engine; ``loss_kwargs`` are bound
-        to the loss method as keyword arguments (for example ``ppo_clip``'s clip bounds).
+        to the loss method as keyword arguments (for example ``ppo_clip``'s clip bounds). Microbatches
+        carrying ``routed_experts`` train with those expert choices replayed (recipe ``router_replay``).
         """
         self._require_open()
         self._require_resident("forward_backward")
@@ -459,6 +469,7 @@ class TrainingEngine:
             pg_collection=self._runtime.pg_collection,
             mtp_target_scope=self._recipe.mtp_target_scope,
             output_head=self._output_head,
+            router_replay=self._router_replay,
         )
         fwd_bwd_output = self.postprocess_forward_backward(microbatches, loss_sum, num_loss_tokens, metrics)
         self._add_to_window(fwd_bwd_output)
@@ -570,11 +581,16 @@ class TrainingEngine:
         and equal microbatch counts across DP replicas. Always runs, for default and custom pipelines."""
         if not microbatches:
             raise ValueError("preprocess returned no microbatches; every DP replica must run at least one.")
+        routed_shape = None
+        if getattr(self._recipe, "router_replay", False) and self._router_replay.num_layers:
+            routed_shape = (self._router_replay.num_layers, int(self._recipe.model.moe_router_topk))
         check_microbatches(
             microbatches,
             layout=self._recipe.batch_layout,
             vocab_size=int(self._recipe.model.vocab_size),
             dp_group=self._runtime.pg_collection.dp,
+            routed_shape=routed_shape,
+            num_experts=getattr(self._recipe.model, "num_moe_experts", None),
         )
 
     def optim_step(self, adam_params: AdamParams, *, normalize_gradients: bool = True) -> dict[str, float]:
@@ -932,6 +948,7 @@ class TrainingEngine:
             for name in hook_names:
                 if hasattr(model_config, name):
                     setattr(model_config, name, None)
+        self._router_replay.release()
         self._optimizer = None
         self._finalize_model_grads_func = None
         self._export_state = None

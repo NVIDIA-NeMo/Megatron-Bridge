@@ -47,6 +47,19 @@ def test_common_fields_all_or_none_and_token_aligned():
         check_datums([_datum(3, old_logprobs=torch.zeros(2))])
 
 
+def test_routed_experts_all_or_none_integer_and_layer_aligned():
+    routed = torch.zeros(3, 4, 2, dtype=torch.uint8)  # any integer dtype; [L, num_moe_layers, topk]
+    check_datums([_datum(3, routed_experts=routed), _datum(2, routed_experts=routed[:2])])
+    with pytest.raises(ValueError, match="routed_experts must be set for every Datum"):
+        check_datums([_datum(3, routed_experts=routed), _datum(2)])
+    with pytest.raises(ValueError, match="same trailing dims"):
+        check_datums([_datum(3, routed_experts=routed), _datum(2, routed_experts=torch.zeros(2, 4, 3))])
+    with pytest.raises(ValueError, match="num_moe_layers, topk"):
+        check_datums([_datum(3, routed_experts=torch.zeros(3, 4))])
+    with pytest.raises(ValueError, match="integer expert ids"):
+        check_datums([_datum(3, routed_experts=torch.zeros(3, 4, 2))])
+
+
 def test_custom_loss_inputs_must_be_token_aligned_tensors():
     check_datums([_datum(3, loss_inputs={"teacher": torch.zeros(3)}, sample_inputs={"group": 7})])
     with pytest.raises(ValueError, match="loss_inputs\\['teacher'\\]"):

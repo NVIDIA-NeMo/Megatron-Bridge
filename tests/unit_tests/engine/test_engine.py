@@ -10,6 +10,7 @@ from megatron.bridge.engine.batching import MicrobatchMapping, SequenceMapping, 
 from megatron.bridge.engine.datum import NormalizationPolicy, PreparedMicrobatch
 from megatron.bridge.engine.engine import Topology, _SharedRuntime
 from megatron.bridge.engine.recipes import check_supported, data_parallel_size
+from megatron.bridge.engine.router_replay import RouterReplayState
 
 
 def _recipe_like() -> SimpleNamespace:
@@ -42,6 +43,7 @@ def _unbuilt_engine(trainable: bool = True, closed: bool = False) -> TrainingEng
     engine._resident = True
     engine._offloaded_bytes = 0
     engine._moe_metrics_tracker = MoEMetricsTracker()
+    engine._router_replay = RouterReplayState([])
     engine._runtime = SimpleNamespace(topology=Topology(1, 1, 1, None, 1, 1, None, False))
     return engine
 
@@ -164,7 +166,7 @@ def test_forward_backward_runs_pipeline_and_opens_window(monkeypatch):
     )
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head: (
+        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head, router_replay: (
             torch.tensor(6.0),
             torch.tensor(3),
             {"clipped_tokens": torch.tensor(1.0)},
@@ -224,7 +226,7 @@ def test_unknown_sample_count_under_sample_mean_discards_the_window(monkeypatch)
     ran = []
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head: (
+        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head, router_replay: (
             ran.append(1) or (torch.tensor(6.0), torch.tensor(3), {})
         ),
     )
@@ -290,12 +292,33 @@ def test_forward_only_runs_preprocess_check_then_postprocess(monkeypatch):
     engine._recipe = SimpleNamespace(mtp_target_scope="primary")
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_only",
-        lambda model, mbs, pg_collection, mtp_target_scope, output_head: [output_head],
+        lambda model, mbs, pg_collection, mtp_target_scope, output_head, router_replay: [output_head],
     )
     assert engine.forward_only(_datums(), gather_output=False) == "out"
     assert calls == [("preprocess", False), ("check", ["mb"]), ("post", False)]
     # Each compute call installs the engine's own MoE metrics tracker (per-layer buffers differ per model).
     assert get_moe_metrics_tracker() is engine._moe_metrics_tracker
+
+
+def test_check_microbatches_passes_the_replayable_shape(monkeypatch):
+    engine = _unbuilt_engine()
+    engine._recipe = SimpleNamespace(
+        batch_layout="thd", model=SimpleNamespace(vocab_size=100, moe_router_topk=8, num_moe_experts=256)
+    )
+    engine._runtime.pg_collection = SimpleNamespace(dp=None)
+    seen = {}
+    monkeypatch.setattr("megatron.bridge.engine.engine.check_microbatches", lambda mbs, **kwargs: seen.update(kwargs))
+    # Recipe without router_replay: routing cannot be replayed, whatever routers exist.
+    engine._recipe.router_replay = False
+    engine.check_microbatches(["mb"])
+    assert seen["routed_shape"] is None and seen["num_experts"] == 256
+    # With the knob on, the shape is (replayable routers, topk).
+    engine._recipe.router_replay = True
+    engine._router_replay = SimpleNamespace(num_layers=40)
+    engine.check_microbatches(["mb"])
+    assert seen["routed_shape"] == (40, 8)
+    with pytest.raises(ValueError, match="no microbatches"):
+        engine.check_microbatches([])
 
 
 def test_value_head_engine_defaults_to_value_loss_and_rejects_export(monkeypatch):
@@ -315,7 +338,7 @@ def test_value_head_engine_defaults_to_value_loss_and_rejects_export(monkeypatch
     seen = []
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head: (
+        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head, router_replay: (
             seen.append((loss_method.__func__, output_head)) or (torch.tensor(1.0), torch.tensor(2), {})
         ),
     )
