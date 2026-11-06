@@ -5006,7 +5006,7 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
+          "bridge_commit": "5bf7e75c95e93c8806c5d9087de5b33bcd3dd223",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -5023,15 +5023,15 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "nemotron-3-super-120b-a12b-pretrain-h100",
-          "expected_result": "On exactly 64 H100s, the BF16 support run completes 100 bounded RP2 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. Loss remains finite from 12.19922 to 5.706429 with zero skipped or NaN iterations. The final ten steps average 29368.690 ms and 236.330 TFLOP/s/GPU. Peak device memory is 58.079 GiB allocated and 70.336 GiB reserved. The resolved configuration persists, and complete iter_0000050 and iter_0000100 checkpoints each contain 64 distributed rank shards plus checkpoint metadata and training state.\n",
+          "expected_result": "On exactly 64 H100s, the BF16 support run completes 100 bounded RP2 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. Loss remains finite from 12.19921 to 5.705510 with zero skipped or NaN iterations. The final ten steps average 27330.230 ms and 251.590 TFLOP/s/GPU. The resolved configuration persists, and complete iter_0000050 and iter_0000100 checkpoints each contain 64 distributed rank shards plus checkpoint metadata and training state.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-03",
+          "last_verified": "2026-11-06",
           "metrics": {
-            "final_loss": 5.706429,
-            "initial_loss": 12.19922,
-            "last_10_steps_model_tflops_per_gpu_avg": 236.33,
-            "last_10_steps_step_time_ms_avg": 29368.69,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 2789.365
+            "final_loss": 5.70551,
+            "initial_loss": 12.19921,
+            "last_10_steps_model_tflops_per_gpu_avg": 251.59,
+            "last_10_steps_step_time_ms_avg": 27330.23,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 2997.413
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.H100",
@@ -5347,7 +5347,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
+          "bridge_commit": "5bf7e75c95e93c8806c5d9087de5b33bcd3dd223",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -5362,19 +5362,19 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-super-120b-a12b-checkpoint-resume-h100",
-          "expected_result": "A direct H100 continuation must restore model, optimizer, scheduler, data-order, and RNG state from iter_0000050, execute exactly steps 51-100 into a distinct output root, match both declared loss sentinels, record all five metrics, and save a complete iter_0000100 checkpoint. Staging the expanded precision-aware Adam state on CPU during checkpoint load and save is execution-only; checkpoint values and dtypes are unchanged.\n",
+          "expected_result": "The direct H100 continuation restores model, optimizer, scheduler, data-order, and RNG state from iter_0000050, executes exactly steps 51-100 into a distinct output root with finite loss and zero skipped or NaN iterations, matches both declared loss sentinels against the uninterrupted reference, records all five metrics, persists the resolved configuration, and saves a complete iter_0000100 checkpoint. Staging the expanded precision-aware Adam state on CPU during checkpoint load and save is execution-only; checkpoint values and dtypes are unchanged.\n",
           "hardware": "H100",
-          "last_verified": null,
+          "last_verified": "2026-11-06",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 5.704863,
+            "initial_loss": 6.285746,
+            "last_10_steps_model_tflops_per_gpu_avg": 246.8,
+            "last_10_steps_step_time_ms_avg": 27854.75,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 2940.971
           },
           "precision": "bf16",
           "source_pointer": "items.checkpoint_resume.H100",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "checkpoint_resume"
         },

@@ -24,8 +24,8 @@ verification_index:
       - manual_forward_pass
   training:
     H100:
-      verified: [pretrain, sft_long_context]
-      unverified: [sft, sft_export_inference, peft, checkpoint_resume]
+      verified: [pretrain, sft_long_context, checkpoint_resume]
+      unverified: [sft, sft_export_inference, peft]
     GB200:
       verified: [peft]
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
@@ -161,6 +161,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 5bf7e75c95e93c8806c5d9087de5b33bcd3dd223  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -180,23 +181,22 @@ items:
         logger.log_device_memory_used=true
         logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
-      last_verified: 2026-08-03
+      last_verified: 2026-11-06
       metrics:
-        initial_loss: 12.19922
-        final_loss: 5.706429
-        last_10_steps_step_time_ms_avg: 29368.690
-        last_10_steps_model_tflops_per_gpu_avg: 236.330
-        last_10_steps_tokens_per_second_per_gpu_avg: 2789.365
+        initial_loss: 12.19921
+        final_loss: 5.705510
+        last_10_steps_step_time_ms_avg: 27330.230
+        last_10_steps_model_tflops_per_gpu_avg: 251.590
+        last_10_steps_tokens_per_second_per_gpu_avg: 2997.413
       expected_result: >
         On exactly 64 H100s, the BF16 support run completes 100 bounded RP2
         optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural
         routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager
         execution, selective recompute of layernorm, moe_act, moe, and
         core_attn, no optimizer-state CPU offload, and ordered gradient
-        reduction. Loss remains finite from 12.19922 to 5.706429 with zero
-        skipped or NaN iterations. The final ten steps average 29368.690 ms and
-        236.330 TFLOP/s/GPU. Peak device memory is 58.079 GiB allocated and
-        70.336 GiB reserved. The resolved configuration persists, and complete
+        reduction. Loss remains finite from 12.19921 to 5.705510 with zero
+        skipped or NaN iterations. The final ten steps average 27330.230 ms and
+        251.590 TFLOP/s/GPU. The resolved configuration persists, and complete
         iter_0000050 and iter_0000100 checkpoints each contain 64 distributed
         rank shards plus checkpoint metadata and training state.
 
@@ -564,8 +564,9 @@ items:
 
   checkpoint_resume:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 5bf7e75c95e93c8806c5d9087de5b33bcd3dd223  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
@@ -591,22 +592,23 @@ items:
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
-      last_verified: null
+        sentinels_match: true
+      last_verified: 2026-11-06
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 6.285746
+        final_loss: 5.704863
+        last_10_steps_step_time_ms_avg: 27854.750
+        last_10_steps_model_tflops_per_gpu_avg: 246.800
+        last_10_steps_tokens_per_second_per_gpu_avg: 2940.971
       expected_result: >
-        A direct H100 continuation must restore model, optimizer, scheduler,
-        data-order, and RNG state from iter_0000050, execute exactly steps
-        51-100 into a distinct output root, match both declared loss sentinels,
-        record all five metrics, and save a complete iter_0000100 checkpoint.
-        Staging the expanded precision-aware Adam state on CPU during
-        checkpoint load and save is execution-only; checkpoint values and
-        dtypes are unchanged.
+        The direct H100 continuation restores model, optimizer, scheduler,
+        data-order, and RNG state from iter_0000050, executes exactly steps
+        51-100 into a distinct output root with finite loss and zero skipped or
+        NaN iterations, matches both declared loss sentinels against the
+        uninterrupted reference, records all five metrics, persists the resolved
+        configuration, and saves a complete iter_0000100 checkpoint. Staging
+        the expanded precision-aware Adam state on CPU during checkpoint load
+        and save is execution-only; checkpoint values and dtypes are unchanged.
 
     GB200:
       status: unverified
