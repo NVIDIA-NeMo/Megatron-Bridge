@@ -23,6 +23,21 @@ from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 class TestTERowParallelLinearLayerNorm:
     """Test cases for the TERowParallelLinearLayerNorm module shared by Gemma3 and EXAONE 4.0."""
 
+    def test_post_layernorm_uses_config_epsilon(self):
+        """Post-LN is built with config.layernorm_epsilon, not TENorm's 1e-5 default."""
+        config = Mock()
+        config.layernorm_epsilon = 1e-6
+        post_layernorm = Mock()
+
+        layer = TERowParallelLinearLayerNorm.__new__(TERowParallelLinearLayerNorm)
+        with patch.object(TERowParallelLinearLayerNorm.__bases__[0], "__init__", return_value=None) as mock_super_init:
+            with patch("megatron.bridge.models.common.te_layers.TENorm", return_value=post_layernorm) as mock_te_norm:
+                TERowParallelLinearLayerNorm.__init__(layer, 1024, 512, config=config, tp_comm_buffer_name="proj")
+
+        mock_super_init.assert_called_once_with(1024, 512, config=config, tp_comm_buffer_name="proj")
+        mock_te_norm.assert_called_once_with(config, 512, eps=1e-6)
+        assert layer.post_layernorm is post_layernorm
+
     def test_forward_applies_post_layernorm(self):
         """Forward applies Post-LN to the linear output and passes the None bias through."""
         layer = TERowParallelLinearLayerNorm.__new__(TERowParallelLinearLayerNorm)
