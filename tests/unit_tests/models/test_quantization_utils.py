@@ -240,6 +240,48 @@ def test_mxfp4_helpers_reject_unsupported_geometry():
         quantize_mxfp4_e2m1_like_scale(torch.ones(1, 30), torch.ones(1, 1))
 
 
+def _mxfp4_roundtrip_fixture(num_rows: int):
+    values = torch.tensor(
+        [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0],
+        dtype=torch.float32,
+    ).repeat(2)
+    weight = values.reshape(1, 32).repeat(num_rows, 1).to(torch.bfloat16)
+    source_scale = torch.arange(1, num_rows + 1, dtype=torch.float32).reshape(num_rows, 1)
+    return quantize_mxfp4_e2m1_like_scale(weight, source_scale) + (weight,)
+
+
+def test_dequantize_mxfp4_e2m1_packed_preserves_cpu_device_by_default():
+    packed, scale, weight = _mxfp4_roundtrip_fixture(num_rows=4)
+
+    result = dequantize_mxfp4_e2m1_packed(packed, scale)
+
+    assert result.device.type == "cpu"
+    assert torch.equal(result.float(), weight.float())
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_dequantize_mxfp4_e2m1_packed_moves_to_explicit_cuda_device():
+    packed, scale, weight = _mxfp4_roundtrip_fixture(num_rows=4)
+
+    result = dequantize_mxfp4_e2m1_packed(packed, scale, device="cuda")
+
+    assert result.device.type == "cuda"
+    assert torch.equal(result.float().cpu(), weight.float())
+    # Inputs on CPU are untouched; the function moves copies, not in place.
+    assert packed.device.type == "cpu"
+    assert scale.device.type == "cpu"
+
+
+def test_dequantize_mxfp4_e2m1_packed_chunking_matches_unchunked():
+    packed, scale, weight = _mxfp4_roundtrip_fixture(num_rows=5)
+
+    unchunked = dequantize_mxfp4_e2m1_packed(packed, scale)
+    chunked = dequantize_mxfp4_e2m1_packed(packed, scale, rows_per_chunk=2)
+
+    assert torch.equal(chunked, unchunked)
+    assert torch.equal(chunked.float(), weight.float())
+
+
 def test_maybe_dequantize_hf_quantized_weight_dispatches_by_dtype_and_sibling_scale():
     fp8_weight = torch.ones(2, 2, dtype=torch.float8_e4m3fn)
     mxfp4_weight = torch.zeros(1, 16, dtype=torch.int8)
