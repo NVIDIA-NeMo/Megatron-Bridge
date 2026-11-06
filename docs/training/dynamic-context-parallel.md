@@ -143,9 +143,9 @@ uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_r
 ```
 
 On one GB200 node with the NeMo 26.10 container, 200 steps with the first 10
-dropped, dynamic CP reaches 13,069 runtime tokens/s against 12,157 for static
-CP4 on identical samples: 7.5% more throughput (95% bootstrap interval +4.8%
-to +10.3%), with an 8.5% faster median step.
+dropped, dynamic CP reaches 13,564 runtime tokens/s against 12,253 for static
+CP4 on identical samples: 10.7% more throughput (95% bootstrap interval +7.5%
+to +14.0%), with a 13.3% faster median step.
 
 `examples/agentic_sft` describes the setup and has a script that compares two
 runs' logs on identical inputs.

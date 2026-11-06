@@ -70,18 +70,19 @@ sample).
 
 ## Measured performance
 
-One four-GPU GB200 node per run, NeMo 26.10 container, Megatron-Core with
-[NVIDIA/Megatron-LM#7048](https://github.com/NVIDIA/Megatron-LM/pull/7048), the two commands above (200 steps, global
+One four-GPU GB200 node per run, NeMo 26.10 container, Megatron-Core at Bridge's pin (which includes
+[NVIDIA/Megatron-LM#7048](https://github.com/NVIDIA/Megatron-LM/pull/7048)), the two commands above (200 steps, global
 batch 32, 6,400 mock samples), steps 1–10 excluded as compilation warmup:
 
 | Mode | Mean s/step | Median s/step | Runtime tokens/s | Median model TFLOP/s per GPU |
 | --- | ---: | ---: | ---: | ---: |
-| Static CP4 (`dp_balanced`) | 55.98 | 54.24 | 12,157 | 96 |
-| Dynamic CP | 52.07 | 49.64 | 13,069 | 104 |
+| Static CP4 (`dp_balanced`) | 55.43 | 53.87 | 12,253 | 95 |
+| Dynamic CP | 50.07 | 47.56 | 13,564 | 109 |
 
-**Dynamic CP is 7.5% faster in throughput** (95% bootstrap interval +4.8% to +10.3%) and its median step is 8.5%
-faster. It is faster on 161 of the 190 paired steps (mean paired difference 3.9 ± 0.7 s) and in each of five
-consecutive 38-step blocks (+3.9% to +11.0%).
+**Dynamic CP is 10.7% faster in throughput** (95% bootstrap interval +7.5% to +14.0%) and its median step is 13.3%
+faster. It is faster on 158 of the 190 paired steps (mean paired difference 5.4 ± 0.8 s) and in each of five
+consecutive 38-step blocks (+3.9% to +13.7%; the first block includes dynamic CP's longer warmup, and steps 41–200
+give +12.5%).
 
 * Step times depend on the batch, so short runs can mislead in either direction.
 * The two runs used different nodes.
