@@ -21,6 +21,7 @@ optional optimizer parameter group for the scales, and a pre-wrap hook for scale
 
 from dataclasses import dataclass
 
+import modelopt.torch.opt as mto
 import torch
 from megatron.core.optimizer import ParamKey
 from megatron.core.optimizer_param_scheduler import ParamGroupOverride
@@ -86,6 +87,8 @@ def _check_modelopt_lsq_gradients() -> None:
     Without NVIDIA/Model-Optimizer#3069, the scales of Transformer Engine ``LayerNormLinear`` layers, and of
     linear layers whose weight is frozen, get no or an all-zero gradient, so training leaves them unchanged.
     """
+    # Imported on use: ModelOpt loads its Megatron plugin as optional, and a failed import at module level
+    # would break every importer of post_training/checkpointing.py, not only LSQ.
     from modelopt.torch.quantization.plugins.megatron import _MegatronParallelLinear
 
     # TODO: Replace with a version check once a ModelOpt release includes NVIDIA/Model-Optimizer#3069.
@@ -114,8 +117,6 @@ def freeze_all_but_lsq_scales(model: list[MegatronModule]) -> list[MegatronModul
         RuntimeError: If the installed ModelOpt cannot compute the scale gradients.
         ValueError: If the restored ModelOpt state has no LSQ scale parameters.
     """
-    import modelopt.torch.opt as mto
-
     _check_modelopt_lsq_gradients()
     num_scales = num_frozen = 0
     for model_chunk in model:
