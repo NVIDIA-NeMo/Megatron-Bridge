@@ -578,6 +578,7 @@ items:
         rng.seed=1234 dataset.random_seed=1234
         validation.eval_iters=0 validation.eval_interval=0
         checkpoint.ckpt_format=torch_dist checkpoint.async_save=false
+        checkpoint.stage_precision_aware_optimizer_state_on_cpu=true
         --load_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-reference
         checkpoint.ckpt_step=50
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-resumed
@@ -603,6 +604,9 @@ items:
         data-order, and RNG state from iter_0000050, execute exactly steps
         51-100 into a distinct output root, match both declared loss sentinels,
         record all five metrics, and save a complete iter_0000100 checkpoint.
+        Staging the expanded precision-aware Adam state on CPU during
+        checkpoint load and save is execution-only; checkpoint values and
+        dtypes are unchanged.
 
     GB200:
       status: unverified

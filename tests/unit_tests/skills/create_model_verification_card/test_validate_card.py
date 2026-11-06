@@ -770,6 +770,51 @@ def test_sft_export_inference_accepts_hf_inference_launcher():
 
 
 @pytest.mark.parametrize(
+    ("resume_override", "expected_errors"),
+    [
+        ("checkpoint.stage_precision_aware_optimizer_state_on_cpu=true", []),
+        ("train.empty_unused_memory_level=2", []),
+        (
+            "model.recompute_granularity=full",
+            [
+                "/items/checkpoint_resume/H100/command: reference and resume launch settings must match; "
+                "differences found in model.recompute_granularity"
+            ],
+        ),
+    ],
+)
+def test_resume_allows_execution_only_overrides(resume_override, expected_errors):
+    validator = _load_validator()
+    errors = []
+    common_command = (
+        "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 "
+        "--recipe llm_pretrain --mode pretrain --dataset megatron-indexed --max_steps 100"
+    )
+
+    validator._validate_resume_against_pretrain(
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": (
+                f"{common_command} {resume_override} "
+                "--load_dir work/reference --save_dir work/resume checkpoint.ckpt_step=50"
+            ),
+        },
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": f"{common_command} --save_dir work/reference checkpoint.load=null",
+        },
+        resume_path=("items", "checkpoint_resume", "H100"),
+        pretrain_path=("items", "pretrain", "H100"),
+        default_bridge_commit=None,
+        errors=errors,
+    )
+
+    assert errors == expected_errors
+
+
+@pytest.mark.parametrize(
     ("resume_initialization", "expected_errors"),
     [
         ("", []),
