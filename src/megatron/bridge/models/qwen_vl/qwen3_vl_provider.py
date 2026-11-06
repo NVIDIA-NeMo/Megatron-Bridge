@@ -21,15 +21,30 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_block import get_num_layers_to_build
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.mimo import (
+    Qwen3VLMIMOModel,
+    Qwen3VLMIMOVisionModel,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+
+
+_QWEN_VISUAL_ENCODER_KEY = "qwen_visual"
+_IMAGES_MODALITY_KEY = "images"
 
 
 @dataclass
@@ -133,6 +148,26 @@ class Qwen3VLModelProvider(GPTModelProvider):
     # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
     # If None, calculated from num_position_embeddings / spatial_merge_size^2
     max_vision_cuda_graph_seq_length: Optional[int] = None
+
+    mimo_model_class: ClassVar[type[Qwen3VLMIMOModel]] = Qwen3VLMIMOModel
+    modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
+
+    @property
+    def special_token_ids(self) -> dict[str, int]:
+        """Return modality token ids."""
+        return {_IMAGES_MODALITY_KEY: self.image_token_id}
+
+    def build_language_spec(self, vp_stage: int | None = None, pp_rank: int | None = None) -> ModuleSpec:
+        """Build the language transformer layer spec."""
+        return _qwen3_build_language_spec(self, vp_stage=vp_stage, pp_rank=pp_rank)
+
+    def build_language_model_spec(self, pp_rank: int | None = 0) -> ModuleSpec:
+        """Build the language model spec."""
+        return _qwen3_build_language_model_spec(self, pp_rank=pp_rank)
+
+    def build_vision_encoder_spec(self) -> ModuleSpec:
+        """Build the vision encoder spec."""
+        return _qwen3_build_vision_encoder_spec(self)
 
     def finalize(self) -> None:
         if (self.context_parallel_size or 1) > 1:
@@ -299,6 +334,26 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
     max_vision_cuda_graph_seq_length: Optional[int] = None
 
+    mimo_model_class: ClassVar[type[Qwen3VLMIMOModel]] = Qwen3VLMIMOModel
+    modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
+
+    @property
+    def special_token_ids(self) -> dict[str, int]:
+        """Return modality token ids."""
+        return {_IMAGES_MODALITY_KEY: self.image_token_id}
+
+    def build_language_spec(self, vp_stage: int | None = None, pp_rank: int | None = None) -> ModuleSpec:
+        """Build the language transformer layer spec."""
+        return _qwen3_build_language_spec(self, vp_stage=vp_stage, pp_rank=pp_rank)
+
+    def build_language_model_spec(self, pp_rank: int | None = 0) -> ModuleSpec:
+        """Build the language model spec."""
+        return _qwen3_build_language_model_spec(self, pp_rank=pp_rank)
+
+    def build_vision_encoder_spec(self) -> ModuleSpec:
+        """Build the vision encoder spec."""
+        return _qwen3_build_vision_encoder_spec(self)
+
     def finalize(self) -> None:
         if (self.context_parallel_size or 1) > 1:
             self.calculate_per_token_loss = True
@@ -344,3 +399,102 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
         """Provide just the language MoE model component without vision."""
         # Use GPTModelProvider's provide method to create standard MoE language model
         return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+
+def _qwen3_build_language_spec(
+    provider: Qwen3VLModelProvider | Qwen3VLMoEModelProvider, vp_stage: int | None = None, pp_rank: int | None = None
+) -> ModuleSpec:
+    """Build the language transformer layer spec."""
+    spec = get_gpt_layer_with_transformer_engine_spec(
+        num_experts=provider.num_moe_experts,
+        moe_grouped_gemm=provider.moe_grouped_gemm if provider.num_moe_experts is not None else False,
+        qk_layernorm=provider.qk_layernorm,
+        fp8=False,
+    )
+    spec.submodules.self_attention.module = Qwen3VLSelfAttention
+    return spec
+
+
+def _qwen3_build_language_model_spec(
+    provider: Qwen3VLModelProvider | Qwen3VLMoEModelProvider, pp_rank: int | None = 0
+) -> ModuleSpec:
+    """Build the language model spec."""
+    deepstack_count = len(provider.vision_config.deepstack_visual_indexes)
+    if deepstack_count:
+        # All auxiliary features are consumed by the first decoder chunk.
+        # Use the actual partition, including uneven and virtual PP splits.
+        layout = provider.pipeline_model_parallel_layout
+        if isinstance(layout, (str, list)):
+            layout = PipelineParallelLayerLayout(layout, provider.pipeline_model_parallel_size)
+        if layout is not None:
+            first_stage_layers = layout.get_num_layers_to_build(layer_type=LayerType.decoder, vp_stage=0, pp_rank=0)
+        else:
+            first_stage_layers = get_num_layers_to_build(provider, vp_stage=0, pp_rank=0)
+        if first_stage_layers < deepstack_count:
+            raise ValueError(
+                f"Qwen3-VL DeepStack MIMO requires at least {deepstack_count} decoder layers in the first "
+                f"pipeline stage's first chunk, got {first_stage_layers}."
+            )
+
+    return ModuleSpec(
+        module=Qwen3VLGPTModel,
+        params={
+            "config": provider,
+            "transformer_layer_spec": provider.build_language_spec(pp_rank=pp_rank),
+            "vocab_size": (
+                calculate_padded_vocab_size(
+                    provider.vocab_size,
+                    provider.make_vocab_size_divisible_by,
+                    provider.tensor_model_parallel_size,
+                )
+                if provider.should_pad_vocab
+                else provider.vocab_size
+            ),
+            "max_sequence_length": provider.language_max_sequence_length,
+            "fp16_lm_cross_entropy": provider.fp16_lm_cross_entropy,
+            "logit_dtype": provider.logit_dtype,
+            "parallel_output": True,
+            "share_embeddings_and_output_weights": provider.share_embeddings_and_output_weights,
+            "position_embedding_type": "mrope",
+            "rotary_percent": provider.rotary_percent,
+            "rotary_base": provider.rotary_base,
+            "scatter_embedding_sequence_parallel": False,
+            "mtp_block_spec": None,
+        },
+    )
+
+
+def _qwen3_build_vision_encoder_spec(provider: Qwen3VLModelProvider | Qwen3VLMoEModelProvider) -> ModuleSpec:
+    """Build the vision encoder spec."""
+    from megatron.core.extensions.transformer_engine import (
+        TEColumnParallelLinear,
+        TENorm,
+        TERowParallelLinear,
+    )
+    from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
+
+    if provider.use_hf_vision_model:
+        raise ValueError("use_hf_vision_model is not supported for Qwen3VLVisionModel")
+    layer_spec = get_vit_layer_with_transformer_engine_spec()
+    layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+    config = get_vision_model_config(provider.vision_config, megatron_config=provider)
+    config.pipeline_model_parallel_size = 1
+    config.first_pipeline_num_layers = None
+    return ModuleSpec(
+        module=Qwen3VLMIMOVisionModel,
+        params={
+            "transformer_config": config,
+            "transformer_layer_spec": layer_spec,
+            "patch_merger_spec": PatchMergerSubmodules(
+                patch_norm=TENorm,
+                linear_fc1=TEColumnParallelLinear,
+                linear_fc2=TERowParallelLinear,
+            ),
+            "pre_process": True,
+            "post_process": True,
+        },
+    )

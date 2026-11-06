@@ -482,7 +482,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         if llm_pg is not None:
             mimo_model_kwargs["cp_group"] = llm_pg.cp
             mimo_model_kwargs["tp_group"] = llm_pg.tp
-        megatron_mimo_model = MimoModel(mimo_model_config, **mimo_model_kwargs)
+        # A family may need to unpack auxiliary features from its modality payload.
+        model_class = getattr(self.standard_provider, "mimo_model_class", MimoModel)
+        megatron_mimo_model = model_class(mimo_model_config, **mimo_model_kwargs)
 
         # Apply freezing
         self._apply_freezing(megatron_mimo_model)

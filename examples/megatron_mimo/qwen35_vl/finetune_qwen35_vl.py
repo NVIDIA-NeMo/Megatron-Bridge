@@ -94,6 +94,7 @@ G_COMPONENT_KEY_TO_FIELD = {
     "pp": "pipeline_model_parallel_size",
     "dp": "data_parallel_size",
     "cp": "context_parallel_size",
+    "ep": "expert_model_parallel_size",
     "etp": "expert_tensor_parallel_size",
     "rank_offset": "rank_offset",
 }
@@ -197,7 +198,7 @@ def _tokenizer_pad_token_id(args: argparse.Namespace) -> int | None:
 
 def _parse_component_spec(raw: str) -> tuple[str, ModuleParallelismConfig]:
     if "=" not in raw:
-        raise ValueError(f"Invalid --component {raw!r}; expected name=tp=N[,pp=N,dp=N,rank_offset=N]")
+        raise ValueError(f"Invalid --component {raw!r}; expected name=tp=N[,pp=N,dp=N,ep=N,etp=N,rank_offset=N]")
 
     name, _, payload = raw.partition("=")
     parsed: dict[str, int] = {}
@@ -1244,7 +1245,7 @@ def _parse_args() -> argparse.Namespace:
         "--component",
         action="append",
         default=None,
-        help="Component layout: name=tp=N[,pp=N,cp=N,dp=N,rank_offset=N]",
+        help="Component layout: name=tp=N[,pp=N,cp=N,dp=N,ep=N,etp=N,rank_offset=N]",
     )
     parser.add_argument("--experiment-root", type=str, default=G_EXAMPLE_ROOT)
     parser.add_argument("--run-name", type=str, default=None)
