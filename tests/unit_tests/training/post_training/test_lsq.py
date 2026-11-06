@@ -23,7 +23,9 @@ import torch
 from megatron.core.optimizer import OptimizerConfig, ParamKey, _get_param_groups
 from megatron.core.optimizer.optimizer import param_group_identifier_keys
 from megatron.core.transformer.transformer_block import TransformerBlock
+from megatron.core.utils import WrappedTensor
 
+from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
 from megatron.bridge.training.config import OptimizerConfigOverrideProvider, OptimizerConfigOverrideProviderContext
 from megatron.bridge.training.post_training.lsq import (
     LSQ_SCALE_PARAM_PATTERNS,
@@ -235,6 +237,23 @@ class TestFreezeAllButLSQScales:
         with torch.no_grad():
             assert not model.decoder.forward(hidden_states=hidden_states).requires_grad
         assert model.decoder.forward(hidden_states=None) is None
+        wrapped = WrappedTensor(hidden_states)
+        assert model.decoder.forward(hidden_states=wrapped) is wrapped
+
+    def test_shares_the_peft_recompute_patch(self):
+        """A block that PEFT's recompute fix already wraps is not wrapped a second time."""
+        model = _ToyDistillationModel("full")
+        model.config = SimpleNamespace(recompute_method="uniform")
+        model.decoder.requires_grad_(False)
+        model.lora = torch.nn.Module()
+        model.lora.adapter = torch.nn.Linear(16, 4)  # adapter-only training, as PEFT patches it
+        maybe_enable_recompute_inputs_grad(model)
+        decoder_forward = model.decoder.forward
+
+        freeze_all_but_lsq_scales([model])
+
+        assert model.decoder.forward is decoder_forward
+        assert model.decoder.forward(hidden_states=torch.ones(2, 16)).requires_grad
 
 
 @pytest.mark.unit

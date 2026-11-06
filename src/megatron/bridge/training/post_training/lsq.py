@@ -20,13 +20,13 @@ optional optimizer parameter group for the scales, and a pre-wrap hook for scale
 """
 
 from dataclasses import dataclass
-from functools import wraps
 
 import torch
 from megatron.core.optimizer import ParamKey
 from megatron.core.optimizer_param_scheduler import ParamGroupOverride
 from megatron.core.transformer.module import MegatronModule
 
+from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
 from megatron.bridge.training.config import OptimizerConfigOverrideProvider, OptimizerConfigOverrideProviderContext
 from megatron.bridge.utils.common_utils import print_rank_0, warn_rank_0
 
@@ -127,47 +127,27 @@ def freeze_all_but_lsq_scales(model: list[MegatronModule]) -> list[MegatronModul
         for module in model_chunk.modules():
             if hasattr(module, "expert_bias"):
                 module.frozen_expert_bias = True
-        _require_grad_on_recompute_inputs(model_chunk)
+        maybe_enable_recompute_inputs_grad(model_chunk, block_requires_input_grad=_recompute_needs_input_grad)
     if num_scales == 0 and any(mto.ModeloptStateManager.is_converted(chunk) for chunk in model):
         raise ValueError(f"No LSQ scale parameters {LSQ_SCALE_PARAM_PATTERNS}; quantize with an LSQ recipe.")
     print_rank_0(f"LSQ scale-only learning: froze {num_frozen} parameters")
     return model
 
 
-def _require_grad_on_recompute_inputs(model: torch.nn.Module) -> None:
-    """Make recomputed transformer blocks with trainable parameters take a grad-requiring input.
+def _recompute_needs_input_grad(block: torch.nn.Module) -> bool:
+    """Whether a transformer block must take a grad-requiring input when it runs.
 
     Megatron-Core's reentrant activation recompute skips a chunk's backward when no input requires
-    grad, as for the first block once the embedding is frozen (same fix as PEFT's
-    ``maybe_enable_recompute_inputs_grad``). Trainability is checked when the block runs, since the
-    scales may be created after this hook; a distillation teacher's blocks run unchanged.
+    grad, as for the first block once the embedding is frozen. Trainability is checked when the block
+    runs, since the scales may be created after this hook; a distillation teacher's blocks run unchanged.
+    Later pipeline stages pass ``None`` and inference may pass a ``WrappedTensor``; the patched forward
+    leaves both unchanged.
     """
-    from megatron.core.models.hybrid.hybrid_block import HybridStack
-    from megatron.core.transformer.transformer_block import TransformerBlock
-
-    for module in model.modules():
-        if (
-            not isinstance(module, (TransformerBlock, HybridStack))
-            or module.config.recompute_granularity is None
-            or getattr(module.forward, "_lsq_requires_grad_input", False)
-        ):
-            continue
-
-        @wraps(module.forward)
-        def forward(hidden_states, *args, _forward=module.forward, _block=module, **kwargs):
-            # Later pipeline stages pass None; inference may pass a WrappedTensor.
-            if (
-                torch.is_grad_enabled()
-                and torch.is_tensor(hidden_states)
-                and hidden_states.is_floating_point()
-                and not hidden_states.requires_grad
-                and any(param.requires_grad for param in _block.parameters())
-            ):
-                hidden_states = hidden_states.detach().requires_grad_(True)
-            return _forward(hidden_states, *args, **kwargs)
-
-        forward._lsq_requires_grad_input = True
-        module.forward = forward
+    return (
+        torch.is_grad_enabled()
+        and block.config.recompute_granularity is not None
+        and any(param.requires_grad for param in block.parameters())
+    )
 
 
 @dataclass

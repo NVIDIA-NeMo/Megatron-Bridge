@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from functools import wraps
-from typing import Iterable, MutableSet
+from typing import Callable, Iterable, MutableSet
 from weakref import WeakSet
 
 import torch
@@ -42,7 +42,9 @@ def _iter_unwrapped_models(model) -> Iterable[torch.nn.Module]:
 
 
 def maybe_enable_recompute_inputs_grad(
-    model, peft_recompute_patched: MutableSet[torch.nn.Module] | None = None
+    model,
+    peft_recompute_patched: MutableSet[torch.nn.Module] | None = None,
+    block_requires_input_grad: Callable[[torch.nn.Module], bool] | None = None,
 ) -> MutableSet[torch.nn.Module]:
     """Enable grad on recompute-block inputs when only adapters are trainable.
 
@@ -63,6 +65,17 @@ def maybe_enable_recompute_inputs_grad(
 
     Borrowed (with modifications) from
     https://github.com/HollowMan6/verl/blob/4285f0601028aee7ddcb9ec5a15198ebfc69bba3/verl/utils/megatron_peft_utils.py
+
+    Args:
+        model: Model or list of model chunks.
+        peft_recompute_patched: Registry of already patched models; defaults to ``PEFT_RECOMPUTE_PATCHED``.
+        block_requires_input_grad: Called with the block each time a patched block runs; the input is made
+            to require grad only when it returns True. When given, it replaces the recompute and adapter-only
+            checks made here, and every recompute block is patched, so parameters that become trainable after
+            this call are covered.
+
+    Returns:
+        The registry of patched models.
     """
 
     from megatron.core.models.hybrid.hybrid_block import HybridStack
@@ -75,7 +88,7 @@ def maybe_enable_recompute_inputs_grad(
     try:
         for unwrapped_model in _iter_unwrapped_models(model):
             cfg = getattr(unwrapped_model, "config", None)
-            if cfg is None or getattr(cfg, "recompute_method", None) is None:
+            if block_requires_input_grad is None and (cfg is None or getattr(cfg, "recompute_method", None) is None):
                 continue
 
             if unwrapped_model in patched_registry:
@@ -91,7 +104,7 @@ def maybe_enable_recompute_inputs_grad(
                 for n, p in params
             )
 
-            if not (trainable_adapter and not trainable_base):
+            if block_requires_input_grad is None and not (trainable_adapter and not trainable_base):
                 continue  # Not adapter-only training, no fix needed
 
             def _patch_recompute_block(module: torch.nn.Module) -> bool:
@@ -99,12 +112,15 @@ def maybe_enable_recompute_inputs_grad(
                     original_forward = module.forward
 
                     @wraps(original_forward)
-                    def patched_forward(hidden_states, *args, _original_forward=original_forward, **kwargs):
+                    def patched_forward(
+                        hidden_states, *args, _original_forward=original_forward, _block=module, **kwargs
+                    ):
                         # Ensure hidden_states requires grad so checkpoint backward is called
                         if (
                             torch.is_tensor(hidden_states)
                             and not hidden_states.requires_grad
                             and hidden_states.is_floating_point()
+                            and (block_requires_input_grad is None or block_requires_input_grad(_block))
                         ):
                             hidden_states = hidden_states.detach().requires_grad_(True)
                         return _original_forward(hidden_states, *args, **kwargs)
@@ -119,11 +135,12 @@ def maybe_enable_recompute_inputs_grad(
                     patched = True
             if patched:
                 patched_registry.add(unwrapped_model)
-                print_rank_0(
-                    "[PEFT+Recompute] Patched recompute-block forward to enable grad on "
-                    "hidden_states input. This ensures checkpoint backward is called when "
-                    "only adapters are trainable (PP=1 with frozen base model).",
-                )
+                if block_requires_input_grad is None:
+                    print_rank_0(
+                        "[PEFT+Recompute] Patched recompute-block forward to enable grad on "
+                        "hidden_states input. This ensures checkpoint backward is called when "
+                        "only adapters are trainable (PP=1 with frozen base model).",
+                    )
     except Exception as exc:  # pragma: no cover - best effort logging
         # Log but don't fail - user will see grad_norm=0 and can debug
         print_rank_0(f"[PEFT+Recompute] Warning: Failed to patch recompute block: {exc}")
