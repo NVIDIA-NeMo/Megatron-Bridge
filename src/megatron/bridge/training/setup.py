@@ -83,7 +83,10 @@ from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.training.utils.optimizer_utils import uses_layer_wise_optimizer
-from megatron.bridge.training.utils.train_utils import start_memory_history_recording
+from megatron.bridge.training.utils.train_utils import (
+    initialize_dsa_indexer_metric_tracker,
+    start_memory_history_recording,
+)
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
@@ -343,16 +346,6 @@ def setup(
     if hasattr(cfg.dataset, "tokenizer"):
         cfg.dataset.tokenizer = tokenizer
 
-    # Compute token_dtype_code for sequences_per_dataset support.
-    # Bridge skips MCoreGPTDatasetConfig.__post_init__() (tokenizer unavailable at
-    # finalize time), so this field must be set once the tokenizer is available.
-    if hasattr(cfg.dataset, "token_dtype_code") and cfg.dataset.token_dtype_code is None:
-        vocab_size = getattr(tokenizer, "vocab_size", None)
-        if vocab_size is not None:
-            import numpy
-
-            cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
-
     if cfg.train.num_epochs is not None:
         if should_fire(callback_manager, "on_data_init_start"):
             raise ValueError("num_epochs is not supported with on_data_init_start callbacks")
@@ -484,6 +477,9 @@ def setup(
         pg_collection=pg_collection,
         peft_enabled=cfg.peft is not None,
     )
+
+    # Fix the DSA indexer-loss tracker's capacity before any forward (callback warmups included) or graph capture.
+    initialize_dsa_indexer_metric_tracker(cfg.model, model, pg_collection)
 
     # Fire on_data_init_start before any dataset files are opened.
     # This is the correct place for JIT warmup with mock data and MLPerf

@@ -157,7 +157,8 @@ class TestDeepSeekV4FinetuneRecipes:
         eval_samples = config.validation.eval_iters * config.train.global_batch_size
         test_samples = 8
         total = train_samples + eval_samples + test_samples
-        config.dataset.split = [train_samples / total, eval_samples / total, test_samples / total]
+        # Megatron Core parses ``split`` as a comma-separated string of weights.
+        config.dataset.split = f"{train_samples / total},{eval_samples / total},{test_samples / total}"
 
         from megatron.bridge.training.gpt_step import forward_step
         from megatron.bridge.training.pretrain import pretrain
