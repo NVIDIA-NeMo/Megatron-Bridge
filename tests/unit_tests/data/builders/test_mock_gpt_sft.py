@@ -21,6 +21,7 @@ import torch
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.builders import MockGPTSFTDatasetBuilder, MockGPTSFTDatasetConfig
 from megatron.bridge.data.builders.mock_gpt_sft import (
+    LENGTH_BLOCK_SIZE,
     MockGPTSFTDataset,
     length_bucket_bounds,
     length_bucket_counts,
@@ -52,19 +53,32 @@ def test_bucket_counts_are_exact():
 
 def test_lengths_follow_the_bucket_split_and_are_deterministic():
     config = _config(seq_length=65536)
-    lengths = mock_sft_sequence_lengths(config, 5120)
+    lengths = mock_sft_sequence_lengths(config, 5 * LENGTH_BLOCK_SIZE)
 
+    # Every block holds the exact bucket split.
     counts = [int(((lengths >= low) & (lengths <= high)).sum()) for low, high in length_bucket_bounds(65536)]
-    assert counts == [2560, 1536, 1024]
+    assert counts == [5 * count for count in length_bucket_counts(LENGTH_BLOCK_SIZE, (0.5, 0.3, 0.2))]
     shares = [
         lengths[(lengths >= low) & (lengths <= high)].sum() / lengths.sum()
         for low, high in length_bucket_bounds(65536)
     ]
     assert shares == pytest.approx([0.19, 0.35, 0.46], abs=0.02)
-    assert np.array_equal(lengths, mock_sft_sequence_lengths(config, 5120))
+    assert np.array_equal(lengths, mock_sft_sequence_lengths(config, 5 * LENGTH_BLOCK_SIZE))
     assert not np.array_equal(lengths, np.sort(lengths)), "buckets must be interleaved"
-    assert not np.array_equal(lengths[:100], mock_sft_sequence_lengths(config, 5120, "validation")[:100])
-    assert not np.array_equal(lengths, mock_sft_sequence_lengths(_config(seq_length=65536, random_seed=7), 5120))
+    assert not np.array_equal(
+        lengths[:100], mock_sft_sequence_lengths(config, 5 * LENGTH_BLOCK_SIZE, "validation")[:100]
+    )
+    assert not np.array_equal(
+        lengths, mock_sft_sequence_lengths(_config(seq_length=65536, random_seed=7), 5 * LENGTH_BLOCK_SIZE)
+    )
+
+
+def test_lengths_do_not_depend_on_how_many_samples_are_requested():
+    config = _config(seq_length=65536)
+    many = mock_sft_sequence_lengths(config, 3 * LENGTH_BLOCK_SIZE + 17)
+    assert len(many) == 3 * LENGTH_BLOCK_SIZE + 17
+    for count in (0, 5, LENGTH_BLOCK_SIZE, 2 * LENGTH_BLOCK_SIZE + 3):
+        assert np.array_equal(mock_sft_sequence_lengths(config, count), many[:count])
 
 
 @pytest.mark.parametrize(

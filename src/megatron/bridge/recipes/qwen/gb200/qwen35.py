@@ -600,7 +600,8 @@ def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config() -> ConfigContainer:
         "USE_MNNVL": 1,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        # The CPU optimizer needs host threads.
+        # Host threads for the CPU optimizer. Recipe env vars never override the launcher's: torchrun sets
+        # OMP_NUM_THREADS=1, so export OMP_NUM_THREADS before torchrun for this value to apply.
         "OMP_NUM_THREADS": 12,
         "OPENBLAS_NUM_THREADS": 1,
     }
