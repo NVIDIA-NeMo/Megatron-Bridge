@@ -31,6 +31,10 @@ on:
         description: "MCore commit SHA to test against"
         required: false
         type: string
+      mcore_branch:
+        description: "MCore source branch (for logging)"
+        required: false
+        type: string
       mcore_repo:
         description: "MCore repository URL (for fetching from forks)"
         required: false
