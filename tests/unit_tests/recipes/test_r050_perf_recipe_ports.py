@@ -32,6 +32,7 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config,
 )
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -223,7 +224,7 @@ def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
     _assert_full_iteration_hybridep_mxfp8(cfg)
 
 
-def test_deepseek_v4_pro_gb300_uses_eager_recompute_and_host_stash() -> None:
+def test_deepseek_v4_pro_gb300_uses_mok_without_paged_stash() -> None:
     cfg = deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config()
 
     assert cfg.train.global_batch_size == 4096
@@ -246,19 +247,26 @@ def test_deepseek_v4_pro_gb300_uses_eager_recompute_and_host_stash() -> None:
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_megakernel_backend == "mok"
+    assert cfg.model.moe_megakernel_backend_config == {
+        "fwd_num_comm_sms": 28,
+        "bwd_num_comm_sms": 28,
+        "minibatch_size": 4096,
+        "macrobatch_size": 32768,
+        "schedule_capacity_multiplier": 0.0625,
+        "all_gather_top_experts_chunk_bytes": 2048,
+    }
 
     assert cfg.model.cuda_graph_impl == "none"
-    assert cfg.model.cuda_graph_scope == []
-    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
-    assert cfg.model.moe_paged_stash is True
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 0.6
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 0.6
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is False
+    assert cfg.model.moe_paged_stash is False
 
     assert cfg.model.dsa_kernel_backend == "cudnn"
-    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.use_transformer_engine_op_fuser is False
     assert cfg.model.cross_entropy_fusion_impl == "native"
-    assert cfg.model.moe_mlp_glu_interleave_size == 32
+    assert cfg.model.moe_mlp_glu_interleave_size is None
+    assert cfg.model.moe_shared_expert_glu_interleave_size is None
     assert cfg.model.quant_recipe is None
     assert cfg.mixed_precision.fp8_param_gather is True
     assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True

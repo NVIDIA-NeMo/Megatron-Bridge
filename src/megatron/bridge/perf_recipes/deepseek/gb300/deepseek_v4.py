@@ -27,6 +27,7 @@ from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
 
 
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
@@ -60,8 +61,9 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Pro pretrain: 256× GB300, MXFP8, native HybridModel layout.
 
-    Uses eager execution and mHC recompute without fine-grained activation
-    offloading. Paged expert activations can spill to pinned host memory.
+    Uses eager MoK expert execution and mHC recompute without fine-grained
+    activation offloading or paged stashing. Requires the MoK backport in
+    core_r0.20.0 (NVIDIA/Megatron-LM#8929) and compatible Mixture-of-Kittens kernels.
     """
     cfg = deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config()
 
@@ -78,6 +80,15 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_megakernel_backend = "mok"
+    cfg.model.moe_megakernel_backend_config = {
+        "fwd_num_comm_sms": 28,
+        "bwd_num_comm_sms": 28,
+        "minibatch_size": 4096,
+        "macrobatch_size": 32768,
+        "schedule_capacity_multiplier": 0.0625,
+        "all_gather_top_experts_chunk_bytes": 2048,
+    }
     # Preserve the measured logical-block split, reserving room for MTP/loss.
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model, logical_layers_per_stage=[4] * 15 + [1])
     cfg.model.recompute_granularity = "selective"
@@ -87,25 +98,24 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
 
+    # core_r0.20.0 does not yet support mHC recompute with attention CUDA graphs.
     cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = []
+    clear_cuda_graph_modules(cfg.model)
     cfg.model.cuda_graph_warmup_steps = 3
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True
 
-    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
-    cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    # Preserve total stash capacity while moving half of it to pinned host memory.
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 0.6
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.6
+    # MoK owns expert padding and activation storage.
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = False
+    cfg.model.moe_paged_stash = False
 
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.dsa_kernel_backend = "cudnn"
-    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
-    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_mlp_glu_interleave_size = None
+    cfg.model.moe_shared_expert_glu_interleave_size = None
 
     cfg.model.quant_recipe = None
     cfg.mixed_precision.fp8_param_gather = True
