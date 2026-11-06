@@ -43,6 +43,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import partial_rotary_factor_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTMLAModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -2337,6 +2338,54 @@ def test_non_yarn_mapping_adds_no_yarn_defaults():
     kwargs = DummyBridge().hf_config_to_provider_kwargs(_yarn_qwen2_config(None))
 
     assert "position_embedding_type" not in kwargs
+    assert not any(key.startswith("yarn_") for key in kwargs)
+
+
+class _MLAModelConfigBridge(DummyBridge):
+    MODEL_CONFIG_CLASS = BridgeGPTMLAModelConfig
+
+
+def _deepseek_yarn_hf_config():
+    return SimpleNamespace(
+        num_hidden_layers=2,
+        hidden_size=64,
+        num_attention_heads=4,
+        vocab_size=128,
+        rope_theta=10000.0,
+        rope_scaling={
+            "type": "deepseek_yarn",
+            "factor": 40,
+            "original_max_position_embeddings": 4096,
+            "beta_fast": 16,
+            "beta_slow": 2,
+            "mscale": 0.707,
+            "mscale_all_dim": 0.707,
+        },
+        torch_dtype="bfloat16",
+    )
+
+
+def test_mla_mapping_applies_deepseek_yarn(caplog):
+    """MLA configs read DeepSeek's YaRN named "deepseek_yarn" (Sarvam MLA) as they read "yarn"."""
+    with caplog.at_level("WARNING"):
+        kwargs = _MLAModelConfigBridge().hf_config_to_model_config_kwargs(_deepseek_yarn_hf_config())
+
+    assert "Unsupported rope_type" not in caplog.text
+    assert kwargs["position_embedding_type"] == "rope"
+    assert kwargs["rotary_scaling_factor"] == 40
+    assert kwargs["original_max_position_embeddings"] == 4096
+    assert kwargs["beta_fast"] == 16
+    assert kwargs["beta_slow"] == 2
+    assert kwargs["mscale"] == 0.707
+    assert kwargs["mscale_all_dim"] == 0.707
+    assert not any(key.startswith("yarn_") for key in kwargs)
+
+
+def test_gpt_mapping_does_not_apply_deepseek_yarn():
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(_deepseek_yarn_hf_config())
+
+    assert "position_embedding_type" not in kwargs
+    assert "rotary_scaling_factor" not in kwargs
     assert not any(key.startswith("yarn_") for key in kwargs)
 
 
