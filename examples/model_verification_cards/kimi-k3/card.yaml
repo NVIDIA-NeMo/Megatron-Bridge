@@ -30,7 +30,7 @@ model:
   architecture: KimiK3ForConditionalGeneration
   min_transformers_version: "4.56.2"
 verification_environment:
-  base_container: nvcr.io/nvidia/nemo:26.06
+  base_container: nvcr.io/nvidia/nemo:26.10
   bridge_commit: ae77a6703c61669f15936a12ddf542c2cf5cbc3b  # pragma: allowlist secret
 
 items:
@@ -48,7 +48,7 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
-    bridge_commit: cec012e568c55a6c0906622d8a5b0986a79f40cf  # pragma: allowlist secret
+    bridge_commit: fbce9ac37bafd9e48453823cab75a95c20f7f6fd  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 12 --gpus-per-node 4
@@ -57,10 +57,10 @@ items:
       --megatron-path work/model-verification/kimi-k3/imported-megatron
       --torch-dtype bfloat16 --tp 2 --pp 3 --ep 8 --etp 2
       --distributed-timeout-minutes 180 --trust-remote-code
-    last_verified: 2026-07-28
+    last_verified: 2026-11-06
     expected_result: >
       On 48x GB200, the pinned complete checkpoint imports at
-      TP2/PP3/EP8/ETP2 and exits successfully in 27:01. Published MXFP4
+      TP2/PP3/EP8/ETP2 and exits successfully. Published MXFP4
       routed-expert weights are dequantized to BF16, and iter_0000000 is
       persisted with 48 distributed-checkpoint shards, metadata, and the
       recorded 93-layer run configuration. Exact Hugging Face round-trip
@@ -130,12 +130,10 @@ items:
     expected_result: >-
       On 24x GB300 across eight nodes, the pinned complete language backbone
       imports directly into Megatron at TP1/PP3/EP8/ETP1 and the launcher's
-      full-prefix decoding path runs one deterministic greedy generation.
-      Inference environment: NeMo Framework 26.12 development nightly runtime;
-      the card-level 26.06 base container applies to the other verified
-      items. The command exits successfully after exactly 32 new tokens,
-      without an earlier EOS, and prints this completion, represented with
-      JSON Unicode escapes for the model control-token brackets:
+      full-prefix decoding path runs one deterministic greedy generation. The
+      command exits successfully after exactly 32 new tokens, without an
+      earlier EOS, and prints this completion, represented with JSON Unicode
+      escapes for the model control-token brackets:
       "15% of 240 = 0.15 × 240 = 36.\u003c|close|\u003ethink\u003c|sep|\u003e\u003c|open|\u003eresponse\u003c|sep|\u003e15% of 240 is 36.".
 
   pretrain:
