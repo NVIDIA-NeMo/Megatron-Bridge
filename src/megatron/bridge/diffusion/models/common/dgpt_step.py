@@ -24,8 +24,9 @@ from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.rerun_state_machine import get_rerun_state_machine
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
+from megatron.core.utils import get_model_config, unwrap_model
 
+from megatron.bridge.diffusion.common.cp_utils import all_gather_seq_cp, local_zigzag_mask, zigzag_slice
 from megatron.bridge.diffusion.common.dllm import forward_process_simple_masking
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import _DEFAULT_SPIKY_LOSS_FACTOR as SPIKY_LOSS_FACTOR
@@ -98,7 +99,9 @@ def get_batch(
         use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
     )
-    batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=parallel_state.get_context_parallel_group())
+    # NOTE: do NOT shard across CP here. The sbd_block_diff sequence is doubled to
+    # [xt | x0] in DGPTStep._apply_noise; CP sharding must happen on the full 2L
+    # sequence (see DGPTStep.__call__), not on the pre-doubled L.
 
     return (
         batch["tokens"],
@@ -149,7 +152,11 @@ class DGPTStep:
 
         # Per-DP-rank noise generator
         if self.config.different_seed_per_dp and self._noise_generator is None:
-            noise_seed = self.seed + 100 * parallel_state.get_data_parallel_rank(with_context_parallel=True)
+            # Seed per DP replica WITHOUT context parallel: all CP ranks of a replica
+            # share the same global batch and must apply the SAME diffusion masking,
+            # otherwise the CP all-gather in attention reconstructs an inconsistently
+            # masked sequence. (with_context_parallel=True would desync masks per CP rank.)
+            noise_seed = self.seed + 100 * parallel_state.get_data_parallel_rank(with_context_parallel=False)
             self._noise_generator = torch.Generator(device="cuda")
             self._noise_generator.manual_seed(noise_seed)
 
@@ -165,18 +172,34 @@ class DGPTStep:
 
         timers("batch-generator").stop()
 
+        # Build the doubled [xt | x0] sequence on the FULL (un-sharded) batch.
         (noisy_tokens, labels, loss_mask, attention_mask, position_ids, masked_indices, p_mask, input_ids_len) = (
             self._apply_noise(tokens, labels, loss_mask, attention_mask, position_ids)
         )
-
-        forward_args = {
-            "input_ids": noisy_tokens,
-            "position_ids": position_ids,
-            "attention_mask": attention_mask,
-        }
-
         if cu_seqlens is not None:
             raise ValueError("Packed sequence support is not currently implemented for DGPTStep")
+
+        # Context-parallel sharding of the FULL 2L sequence (load-balanced zigzag,
+        # matching what TEDotProductAttention assumes). cp_size == 1 -> no-op.
+        cp_size = self.config.context_parallel_size
+        cp_group = parallel_state.get_context_parallel_group() if cp_size > 1 else None
+        cp_rank = parallel_state.get_context_parallel_rank() if cp_size > 1 else 0
+        if cp_size > 1:
+            input_ids_local = zigzag_slice(noisy_tokens, cp_rank, cp_size, seq_dim=1)
+        else:
+            input_ids_local = noisy_tokens
+
+        # position_ids are shape-only here: this model uses position_embedding_type="none",
+        # and the attention recomputes RoPE from an internal arange (per half of the doubled
+        # sequence, after the CP all-gather), so the *values* passed in are never consumed.
+        # We only need a tensor whose shape matches input_ids_local.
+        position_ids_local = torch.zeros_like(input_ids_local)
+
+        forward_args = {
+            "input_ids": input_ids_local,
+            "position_ids": position_ids_local,
+            "attention_mask": attention_mask,
+        }
 
         check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
         check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
@@ -193,13 +216,33 @@ class DGPTStep:
                 output = model(**forward_args)
                 logits = output[0] if isinstance(output, tuple) else output
 
-        # Split logits: first half = DLM logits over xt, second half = AR logits over x0
-        causal_logits = logits[:, input_ids_len:]
-        logits = logits[:, :input_ids_len]
+        # Gather the CP-sharded logits [b, 2L/cp, v] back to the full doubled
+        # sequence [b, 2L, v] so the [xt | x0] split is well-defined (identical on
+        # all CP ranks). Loss is then restricted to this rank's owned positions.
+        if cp_size > 1:
+            logits = all_gather_seq_cp(logits, cp_group, seq_dim=1)
+
+        # Split logits: first half = DLM logits over xt, second half = AR logits over x0.
+        # The two halves are views over shared storage, and vocab-parallel cross-entropy
+        # (used by both DLM and AR losses under calculate_per_token_loss) mutates its
+        # input in place -> clone the slices so each loss has independent storage. Clone
+        # is differentiable; grad flows back through the slice (and the CP all-gather).
+        causal_logits = logits[:, input_ids_len:].clone()
+        logits = logits[:, :input_ids_len].clone()
 
         core_model = unwrap_model(model)
         if hasattr(core_model, "language_model"):
             core_model = core_model.language_model
+
+        # Restrict the loss to this CP rank's owned (zigzag) positions so that
+        # summing loss/num_tokens across the CP group recovers the global totals
+        # (keeps standard Megatron CP loss reduction valid). No-op at cp_size == 1.
+        x0_owned = None
+        if cp_size > 1:
+            owned_2l = local_zigzag_mask(2 * input_ids_len, cp_rank, cp_size, device=logits.device)
+            xt_owned = owned_2l[:input_ids_len]  # [L]
+            x0_owned = owned_2l[input_ids_len:]  # [L]
+            masked_indices = masked_indices & xt_owned.unsqueeze(0)
 
         # DLM cross-entropy on masked tokens, scaled by 1/p_mask
         output_tensor = core_model.compute_language_model_loss(labels, logits.transpose(0, 1).contiguous())
@@ -213,7 +256,11 @@ class DGPTStep:
         ar_output_tensor = core_model.compute_language_model_loss(
             labels_causal, causal_logits.transpose(0, 1).contiguous()
         )
-        num_tokens_ar = labels_causal.numel()
+        if x0_owned is not None:
+            ar_output_tensor = ar_output_tensor[x0_owned.unsqueeze(0).expand_as(ar_output_tensor)]
+            num_tokens_ar = labels_causal.shape[0] * int(x0_owned.sum().item())
+        else:
+            num_tokens_ar = labels_causal.numel()
 
         output_tensor = (output_tensor, ar_output_tensor, num_tokens_ar)
         loss_function = _create_loss_function_sbd(
@@ -329,11 +376,21 @@ def _masked_loss_sbd_block_diff(
     reporting_loss_ar = torch.cat([ar_loss.clone().detach().view(1), num_tokens_ar.view(1)])
     reporting_loss = torch.cat([loss.clone().detach().view(1), num_tokens.view(1)])
 
+    # The training-log reducer interprets each report entry as a [numerator,
+    # denominator] pair and shows numerator/denominator (summed over microbatches
+    # and all-reduced over the DP-CP group). A 1-element entry degenerates to 0,
+    # so report num_tokens_dlm as [dlm_tokens, num_samples] -> the displayed value
+    # is the (global) average number of DLM/masked tokens per sample.
+    # Divide num_samples by the CP world size: all CP ranks of a replica hold the
+    # same batch (num_samples is replicated, not sharded, across CP), so without
+    # this the DP-CP all-reduce would count each sample cp_size times.
+    cp_world_size = parallel_state.get_context_parallel_world_size()
+    num_samples_dlm = torch.tensor([float(loss_mask.shape[0]) / cp_world_size], device=loss_mask.device)
     report_dict = {
         "lm loss": reporting_loss,
         "ar loss": reporting_loss_ar,
         "dlm loss": reporting_loss_dlm,
-        "num_tokens_dlm": torch.cat([num_tokens_dlm.view(1).to(torch.float)]),
+        "num_tokens_dlm": torch.cat([num_tokens_dlm.view(1).to(torch.float), num_samples_dlm]),
     }
 
     return loss, num_tokens, report_dict
