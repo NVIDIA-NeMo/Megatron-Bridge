@@ -391,6 +391,7 @@ class TestMultiLoRALinearSlots:
             patch.object(
                 multi_lora_layers_module, "gather_from_tensor_model_parallel_region", side_effect=lambda t: t
             ),
+            patch.object(multi_lora_layers_module, "copy_to_tensor_model_parallel_region", side_effect=lambda t: t),
         ):
             actual, _ = layer(x)
 

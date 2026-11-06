@@ -41,6 +41,7 @@ import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.mappings import (
     all_to_all,
+    copy_to_tensor_model_parallel_region,
     gather_from_sequence_parallel_region,
     gather_from_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
@@ -181,6 +182,12 @@ class MultiLoRALinear(AdapterWrapper):
         self._gather_output = not self.replicate_adapter and (
             attrs.input_is_parallel or not attrs.base_linear_is_parallel
         )
+        self._reduce_input_grad = (
+            not attrs.replicate_adapter
+            and not attrs.input_is_parallel
+            and not attrs.disable_tensor_parallel_comm
+            and not getattr(getattr(to_wrap, "config", None), "sequence_parallel", False)
+        )
 
         # ModuleList of ParallelLinearAdapters gives per-adapter optimizer state
         # isolation, clean checkpoint serialization, and bridge export compatibility.
@@ -248,6 +255,8 @@ class MultiLoRALinear(AdapterWrapper):
         # to full sequence before the adapter matmul.
         if not self.disable_sequence_parallel_comm and not self.input_is_parallel:
             x = gather_from_sequence_parallel_region(x)
+        elif self._reduce_input_grad:
+            x = copy_to_tensor_model_parallel_region(x)
 
         x_flat = x.reshape(-1, x.shape[-1])
 
@@ -284,6 +293,7 @@ class MultiLoRALinear(AdapterWrapper):
                 mid = reduce_from_tensor_model_parallel_region(mid)
             else:
                 mid = gather_from_tensor_model_parallel_region(mid)
+            mid = copy_to_tensor_model_parallel_region(mid)
 
         out = _dense_multi_lora_mm(mid, stacked_B, token_splits=token_splits, offsets=offsets)
 
