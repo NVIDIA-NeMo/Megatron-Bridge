@@ -64,6 +64,10 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     the main-branch MCore pin does not yet support this combination.
     """
     cfg = deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config()
+    # Benchmark-only state precision; the library recipe keeps FP32 state.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4

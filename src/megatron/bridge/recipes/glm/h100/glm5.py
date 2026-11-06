@@ -115,7 +115,7 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
         min_lr=3e-5,
     )
     cfg.scheduler.lr_decay_iters = 100
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
     block_counts = [6, 4] + [8] * 6 + [4] * 5

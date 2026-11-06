@@ -276,7 +276,7 @@ def test_glm52_pretrain_uses_reference_gradient_path() -> None:
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.ddp.average_in_collective is False
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
 
 
 def test_glm52_peft_targets_mla_attention_projections() -> None:

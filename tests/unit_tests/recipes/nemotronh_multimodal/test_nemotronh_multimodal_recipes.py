@@ -338,12 +338,12 @@ def test_cord_v2_8gpu_recipes_use_natural_routing_hybridep(
     assert cfg.optimizer.overlap_param_gather is False
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
-    assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert cfg.optimizer.main_params_dtype == torch.float16
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.optimizer.store_param_remainders is False
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
@@ -366,7 +366,7 @@ def test_cord_v2_8gpu_sft_recipe_uses_validated_execution_tuning(fake_processor)
     assert cfg.model.moe_router_fusion is True
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe", "layernorm"]
-    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is True
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
 
 
 @pytest.mark.parametrize(
@@ -377,7 +377,7 @@ def test_cord_v2_8gpu_sft_recipe_uses_validated_execution_tuning(fake_processor)
         _h100_recipe_module.nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config,
     ],
 )
-def test_cord_v2_8gpu_recipes_use_lower_precision_optimizer_state(
+def test_cord_v2_8gpu_recipes_use_fp32_optimizer_state(
     recipe_func: Callable,
     fake_processor,
 ):
@@ -390,12 +390,12 @@ def test_cord_v2_8gpu_recipes_use_lower_precision_optimizer_state(
     assert cfg.optimizer.overlap_param_gather is False
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
-    assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert cfg.optimizer.main_params_dtype == torch.float16
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.optimizer.store_param_remainders is False
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
 
@@ -471,7 +471,7 @@ def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
     assert cfg.dataset.seq_length == 8192
     assert cfg.dataset.enable_in_batch_packing is True
     assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 8
-    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is True
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
 
 
 def test_cord_v2_8gpu_peft_does_not_enable_checkpoint_cpu_staging(fake_processor):

@@ -165,7 +165,7 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Moonlight-16B.
 
     Recommended parallelism: TP=2, PP=1, EP=8
-    Uses precision-aware optimizer with bf16 gradients/moments.
+    Uses standard Adam with FP32 main parameters, gradients, and moments.
     """
     cfg = _pretrain_common()
 
@@ -215,12 +215,12 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 2000
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
 
-    # Optimizer settings - precision-aware optimizer with bf16 moments
-    cfg.optimizer.use_precision_aware_optimizer = True
+    # Optimizer settings - standard Adam with FP32 state
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -301,8 +301,7 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
     Recommended parallelism: TP=1, PP=1, CP=1, EP=8 on 16 H100 GPUs.
     The 100-step schedule uses GBS/MBS 1024/2 with 32-way gradient
-    accumulation, two expert-data replicas, precision-aware bf16 optimizer
-    state, and Moonlight's model-native routing configuration.
+    accumulation, two expert-data replicas, FP32 optimizer state, and Moonlight's model-native routing configuration.
 
     Returns:
         ConfigContainer with the Moonlight-16B pre-training contract.
@@ -320,9 +319,7 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
 
-    # The 16-GPU topology fits without activation recompute at MBS2. Matching
-    # the DeepSeek V3 precision-aware optimizer state reduces accumulation and
-    # optimizer overhead while keeping fp32 main parameters.
+    # Retain the execution layout; memory fit needs revalidation with FP32 optimizer state.
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.recompute_method = None
@@ -358,11 +355,11 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.min_lr = 3e-5
     cfg.optimizer.clip_grad = 1.0
     cfg.optimizer.use_distributed_optimizer = True
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     cfg.scheduler.start_weight_decay = 0.033
     cfg.scheduler.end_weight_decay = 0.033
@@ -579,19 +576,18 @@ def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
     }
     cfg.train.global_batch_size = 8
 
-    # The model fits without activation recompute at this topology. Router
-    # fusion and bf16 optimizer state reduce otherwise exposed execution and
-    # communication overhead while retaining fp32 main parameters.
+    # Retain router fusion and the execution layout with FP32 optimizer state.
+    # Memory fit needs revalidation on this allocation.
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.moe_router_fusion = True
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
@@ -668,11 +664,11 @@ def moonlight_16b_sft_8gpu_h100_bf16_8k_config() -> ConfigContainer:
     cfg.optimizer.adam_beta2 = 0.98
     cfg.optimizer.adam_eps = 1e-5
     cfg.optimizer.weight_decay = 0.1
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     cfg.scheduler.lr_warmup_iters = 2
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
@@ -817,12 +813,12 @@ def moonlight_16b_peft_2gpu_h100_bf16_config(
     cfg.optimizer.adam_eps = 1e-5
     cfg.optimizer.weight_decay = 0.1
 
-    # Precision-aware optimizer settings
-    cfg.optimizer.use_precision_aware_optimizer = True
+    # Standard Adam optimizer settings
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Scheduler overrides
     cfg.scheduler.lr_warmup_iters = 50

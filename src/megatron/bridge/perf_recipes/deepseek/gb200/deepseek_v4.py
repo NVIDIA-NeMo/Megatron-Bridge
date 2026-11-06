@@ -30,6 +30,10 @@ from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
 def _build_deepseek_v4_flash_gb200_fp8mx() -> ConfigContainer:
     """Shared HybridEP MXFP8 base for the DeepSeek V4 Flash GB200 recipe and its GB300 derivative."""
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
+    # Benchmark-only state precision; the library recipe keeps FP32 state.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1

@@ -162,11 +162,11 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_config(
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.average_in_collective = False
 
-    # Reduced-memory optimizer state.
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_params_dtype = torch.float16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    # Standard Adam with FP32 optimizer state.
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     cfg.model.init_method_std = 0.014
     cfg.model.apply_rope_fusion = False
@@ -247,11 +247,11 @@ def _apply_nemotron_3_super_64gpu_h100_training_stack(cfg: ConfigContainer) -> C
     # full MoE recompute provides the measured H100 activation headroom.
     cfg.model.recompute_modules = ["layernorm", "moe_act", "moe", "core_attn"]
 
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.main_params_dtype = torch.float16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.optimizer.optimizer_cpu_offload = False
     cfg.optimizer.optimizer_offload_fraction = 0.0
     cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = False
@@ -387,11 +387,11 @@ def nemotron_3_super_sft_16gpu_h100_bf16_config(
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.lr_decay_style = "cosine"
 
-    # Reduced-memory optimizer state.
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_params_dtype = torch.float16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    # Standard Adam with FP32 optimizer state.
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Tokenizer
 
