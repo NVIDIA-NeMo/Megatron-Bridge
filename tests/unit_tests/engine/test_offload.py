@@ -153,6 +153,21 @@ def test_non_ddp_chunk_moves_every_parameter():
     assert chunk.weight.device.type == "cuda" and torch.equal(chunk.weight.data, weight)
 
 
+@cuda_only
+def test_non_distributed_mixed_precision_masters_move_too():
+    # Float16OptimizerWithFloat16Params keeps its fp32 masters in fp32_from_float16_groups.
+    master = torch.randn(MASTER_NUMEL, device="cuda")
+    state = {master: {"exp_avg": torch.zeros_like(master)}}
+    optimizer = SimpleNamespace(fp32_from_float16_groups=[[master]], optimizer=SimpleNamespace(state=state))
+    host = HostState()
+    resident = _allocated()
+    released = offload_to_cpu([], optimizer, host, keep_gradients=False)
+    assert master.device.type == "cpu" and released == 2 * master.numel() * master.element_size()
+    assert resident - _allocated() == released
+    reload_to_cuda([], host)
+    assert master.device.type == "cuda" and _allocated() == resident
+
+
 @pytest.mark.parametrize(
     ("section", "flag"),
     [

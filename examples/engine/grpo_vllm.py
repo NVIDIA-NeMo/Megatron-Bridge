@@ -248,18 +248,34 @@ def load_data(args, recipe) -> tuple[list, list]:
     return prompts, eval_prompts
 
 
+def one_engine_at_a_time(engines: dict[str, TrainingEngine], action) -> dict[str, object]:
+    """Run ``action(name, engine)`` on each engine while it alone is resident, then restore residency.
+
+    The examples only fit because engines take turns on the GPU, so a checkpoint or restore must not
+    bring a second engine up next to the one that is already resident.
+    """
+    was_resident = {name: engine.device == "cuda" for name, engine in engines.items()}
+    results = {}
+    for name, engine in engines.items():
+        for other_name, other in engines.items():
+            if other_name != name and other.device == "cuda":
+                other.cpu()
+        engine.cuda()
+        results[name] = action(name, engine)
+    for name, engine in engines.items():
+        if was_resident[name] and engine.device == "cpu":
+            engine.cuda()
+        elif not was_resident[name] and engine.device == "cuda":
+            engine.cpu()
+    return results
+
+
 def resume_round(engines: dict[str, TrainingEngine], args) -> int:
     """Restore every engine from ``--resume-from/<name>``; returns the round to continue from."""
     if not args.resume_from:
         return 0
-    rounds = set()
-    for name, engine in engines.items():
-        resident = engine.device == "cuda"
-        engine.cuda()
-        state = engine.load_state(f"{args.resume_from}/{name}")
-        rounds.add(int(state["round"]))
-        if not resident:
-            engine.cpu()
+    states = one_engine_at_a_time(engines, lambda name, engine: engine.load_state(f"{args.resume_from}/{name}"))
+    rounds = {int(state["round"]) for state in states.values()}
     assert len(rounds) == 1, f"engines were saved at different rounds: {rounds}"
     next_round = rounds.pop()
     print_rank_0(f"[ckpt] resumed from {args.resume_from}; continuing at round {next_round}")
@@ -268,12 +284,10 @@ def resume_round(engines: dict[str, TrainingEngine], args) -> int:
 
 def save_round(engines: dict[str, TrainingEngine], args, next_round: int) -> None:
     """Checkpoint every trainable engine under ``--save-dir/<name>`` with the next round in user_state."""
-    for name, engine in engines.items():
-        resident = engine.device == "cuda"
-        engine.cuda()
-        engine.save_state(f"{args.save_dir}/{name}", user_state={"round": next_round})
-        if not resident:
-            engine.cpu()
+    one_engine_at_a_time(
+        engines,
+        lambda name, engine: engine.save_state(f"{args.save_dir}/{name}", user_state={"round": next_round}),
+    )
     print_rank_0(f"[ckpt] saved {sorted(engines)} to {args.save_dir} (next round {next_round})")
 
 

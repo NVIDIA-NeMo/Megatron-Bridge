@@ -150,11 +150,16 @@ def _swap_to_host(tensor: torch.Tensor, host: HostState) -> int:
 
 
 def _optimizer_tensors(optimizer: Any) -> list[torch.Tensor]:
-    """fp32 master shards and per-parameter optimizer state tensors of an MCore (possibly chained) optimizer."""
+    """fp32 master weights and per-parameter optimizer state tensors of an MCore (possibly chained) optimizer.
+
+    Masters live in ``shard_fp32_from_float16_groups`` on the distributed optimizer and in
+    ``fp32_from_float16_groups`` on the non-distributed mixed-precision optimizer.
+    """
     tensors = []
     for opt in getattr(optimizer, "chained_optimizers", [optimizer]):
-        for group in getattr(opt, "shard_fp32_from_float16_groups", []):
-            tensors.extend(t for t in group if t is not None)
+        for attr in ("shard_fp32_from_float16_groups", "fp32_from_float16_groups"):
+            for group in getattr(opt, attr, []):
+                tensors.extend(t for t in group if t is not None)
         inner = getattr(opt, "optimizer", None)
         state = getattr(inner, "state", None) or {}
         for entry in state.values():
