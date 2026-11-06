@@ -724,6 +724,40 @@ class TestCallableSpecPpRank:
         with patch("megatron.bridge.models.gpt_provider.get_pg_rank", return_value=5) as mock_rank:
             result = mtp_block_spec(provider, vp_stage=0)
 
-        mock_rank.assert_called_once_with(pp_group)
+        assert all(call.args == (pp_group,) for call in mock_rank.call_args_list)
         assert captured["pp_rank"] == 5
+        assert mock_get_mtp.call_args.kwargs["pp_rank"] == 5
         assert result == "mtp_spec"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("pp_size", "pp_rank", "expected_layers"), [(1, 0, 1), (2, 0, 0), (2, 1, 1)])
+def test_mtp_spec_uses_provider_pipeline_group(pp_size, pp_rank, expected_layers):
+    """The real MCore MTP spec must work without a global pipeline group."""
+    from megatron.core.transformer.spec_utils import ModuleSpec
+    from megatron.core.transformer.transformer_layer import TransformerLayer
+
+    provider = GPTModelProvider(
+        num_layers=2,
+        hidden_size=128,
+        num_attention_heads=4,
+        pipeline_model_parallel_size=pp_size,
+        mtp_num_layers=1,
+        transformer_layer_spec=lambda config: ModuleSpec(module=TransformerLayer),
+    )
+    pp_group = object()
+    provider._pg_collection = type("PG", (), {"pp": pp_group})()
+
+    with (
+        patch("megatron.bridge.models.gpt_provider.get_pg_rank", return_value=pp_rank),
+        patch(
+            "megatron.core.parallel_state.get_pipeline_model_parallel_rank",
+            side_effect=AssertionError("MTP spec must not read global pipeline rank"),
+        ),
+    ):
+        spec = gpt_provider.mtp_block_spec(provider)
+
+    if expected_layers:
+        assert len(spec.layer_specs) == expected_layers
+    else:
+        assert spec is None
