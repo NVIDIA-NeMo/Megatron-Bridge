@@ -1,0 +1,277 @@
+{
+  "tokenizer": "checkpoint chat_template.jinja",
+  "vocab_size": 200027,
+  "cases": [
+    {
+      "name": "plain",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。"
+        }
+      ],
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "</ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "multi",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。"
+        }
+      ],
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n</ernie:think>答案是 2。<|ernie:im_end|>\n<|ernie:im_start|>user\n继续<|ernie:im_end|>\n<|ernie:im_start|>assistant\n</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "</ernie:think>答案是 2。<|ernie:im_end|></ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "history_loss_false",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。",
+          "reasoning_content": "history",
+          "loss": false
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。",
+          "reasoning_content": "current"
+        }
+      ],
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>history</ernie:think>答案是 2。<|ernie:im_end|>\n<|ernie:im_start|>user\n继续<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>current</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "current</ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "system",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是助手。"
+        },
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。"
+        }
+      ],
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:system_setting>\n你是助手。\n</ernie:system_setting>\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "</ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "developer",
+      "messages": [
+        {
+          "role": "developer",
+          "content": "Be precise."
+        },
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。"
+        }
+      ],
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "</ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "reasoning_field",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。",
+          "reasoning_content": "逐步求和。"
+        }
+      ],
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>逐步求和。</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "逐步求和。</ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "thinking_off",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。"
+        }
+      ],
+      "kwargs": {
+        "enable_thinking": false
+      },
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "reasoning_tags",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "<ernie:think>\n逐步求和。\n</ernie:think>\n\n答案是 2。"
+        }
+      ],
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>逐步求和。</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "逐步求和。</ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "reasoning_history_removed",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。",
+          "reasoning_content": "history"
+        },
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。",
+          "reasoning_content": "current"
+        }
+      ],
+      "kwargs": {
+        "preserve_thinking": false
+      },
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>history</ernie:think>答案是 2。<|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>current</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "history</ernie:think>答案是 2。<|ernie:im_end|>current</ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "tools_xml",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "调用函数。",
+          "tool_calls": [
+            {
+              "type": "function",
+              "function": {
+                "name": "add",
+                "arguments": {
+                  "x": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "content": "2"
+        },
+        {
+          "role": "assistant",
+          "content": "答案是 2。"
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "add",
+            "description": "求和",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\nparallel_tool_calls=True\n</ernie:global_setting>\n<ernie:tool_list>\n[{\"type\": \"function\", \"function\": {\"name\": \"add\", \"description\": \"求和\", \"parameters\": {\"type\": \"object\", \"properties\": {\"x\": {\"type\": \"integer\"}}}}}]\n</ernie:tool_list><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>调用函数。</ernie:think><ernie:tool_call>\n<invoke name=\"add\"><parameter name=\"x\">1</parameter></invoke>\n</ernie:tool_call><|ernie:im_end|>\n<|ernie:im_start|>tool\n<ernie:tool_output>2</ernie:tool_output><|ernie:im_end|>\n<|ernie:im_start|>assistant\n</ernie:think>答案是 2。<|ernie:im_end|>",
+      "supervised_text": "调用函数。</ernie:think><ernie:tool_call>\n<invoke name=\"add\"><parameter name=\"x\">1</parameter></invoke>\n</ernie:tool_call><|ernie:im_end|></ernie:think>答案是 2。<|ernie:im_end|>"
+    },
+    {
+      "name": "inference_on",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        }
+      ],
+      "inference": true,
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>"
+    },
+    {
+      "name": "inference_off",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        }
+      ],
+      "inference": true,
+      "kwargs": {
+        "enable_thinking": false
+      },
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:global_setting>\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n</ernie:think>"
+    },
+    {
+      "name": "think_switch",
+      "messages": [
+        {
+          "role": "system",
+          "content": "<|think_off|> Be brief."
+        },
+        {
+          "role": "user",
+          "content": "你好，计算 1+1。"
+        }
+      ],
+      "inference": true,
+      "text": "<|ERNIE_MASK|><|ernie:im_start|>system\n<ernie:system_setting>\n<|think_off|> Be brief.\n</ernie:system_setting>\n<ernie:global_setting>\nreasoning_effort=high\n</ernie:global_setting><|ernie:im_end|>\n<|ernie:im_start|>user\n你好，计算 1+1。<|ernie:im_end|>\n<|ernie:im_start|>assistant\n<ernie:think>"
+    }
+  ]
+}

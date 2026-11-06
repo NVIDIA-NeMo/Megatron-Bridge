@@ -21,6 +21,10 @@ from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.models.common.dsa_metrics import register_dsa_metric_hook
+from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import (
+    rebuild_deepseek_v4_pipeline_layout,
+    validate_deepseek_v4_pipeline_segments,
+)
 from megatron.bridge.models.hybrid import BridgeHybridModelBuilder
 from megatron.bridge.models.hybrid.model_config import BridgeHybridMLAModelConfig
 from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
@@ -31,11 +35,11 @@ class DeepSeekV4TransformerConfig(MLATransformerConfig):
     """MLA transformer config with the DeepSeek-V4 settings that every supported Megatron Core pin needs."""
 
     cp_partition_mode: Literal["zigzag", "contiguous"] = "zigzag"
-    """Token assignment across context-parallel ranks.
+    """Token assignment across context-parallel ranks on Megatron Core's dev pin.
 
-    DeepSeek-V4's compressed sparse attention exchanges boundary states between adjacent ranks, so
-    packed training with CP > 1 uses ``contiguous`` through ``dsv4_step``. Megatron Core's dev pin
-    declares this field; its main pin does not.
+    Megatron Core's dev pin declares this field; its main pin does not. On the main pin,
+    ``dsv4_step`` selects contiguous packed context parallelism through ``attention_cp_layout`` and
+    ``linear_cp_layout`` instead and does not read this field.
     """
 
 
@@ -46,12 +50,26 @@ class DeepSeekV4ModelConfig(BridgeHybridMLAModelConfig):
     Each logical DeepSeek-V4 block is an attention-only Hybrid layer (``W``, ``C`` or ``H``)
     followed by a MoE-only layer (``E``), and each MTP depth appends ``WE``. Like the provider,
     it uses Hybrid construction and finalization with the DeepSeek-V4 MLA config
-    and registers DSA metric setup after wrapping.
+    and registers DSA metric setup after wrapping. It also rebuilds native pipeline segments
+    after PP/VPP overrides and rejects segments that do not match the topology.
     """
 
     builder: ClassVar[str] = "megatron.bridge.models.deepseek.deepseek_v4_config.DeepSeekV4ModelBuilder"
 
     transformer_config_class: ClassVar[type[TransformerConfig]] = DeepSeekV4TransformerConfig
+
+    def _pipeline_model_parallel_layout_builder(
+        self, pipeline_model_parallel_size: int, virtual_pipeline_model_parallel_size: int | None
+    ) -> list[list[str]] | None:
+        """Rebuild this config's pattern and layout after runner PP/VPP overrides."""
+        return rebuild_deepseek_v4_pipeline_layout(
+            self, pipeline_model_parallel_size, virtual_pipeline_model_parallel_size
+        )
+
+    def validate(self) -> None:
+        """Check the Hybrid settings and that the native pipeline segments match PP x VPP."""
+        super().validate()
+        validate_deepseek_v4_pipeline_segments(self)
 
     def get_builder_cls(self) -> type:
         """Use DSA setup when restoring an older config that saved the generic Hybrid builder."""

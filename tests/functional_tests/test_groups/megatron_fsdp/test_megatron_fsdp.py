@@ -30,7 +30,6 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
-    DistributedInitConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,
@@ -235,7 +234,7 @@ def create_base_ddp_config(**kwargs) -> DistributedDataParallelConfig:
         "average_in_collective": False,  # Required for FSDP
         "data_parallel_sharding_strategy": "optim_grads_params",  # For Megatron FSDP only
         "use_distributed_optimizer": True,
-        "use_megatron_fsdp": True,  # Enable FSDP in DDP config too
+        "use_megatron_fsdp": True,
     }
     base_config.update(kwargs)
     return DistributedDataParallelConfig(**base_config)
@@ -311,7 +310,6 @@ def create_fsdp_config_container(
     """Create a complete FSDP configuration container with common defaults."""
     return ConfigContainer(
         model=create_fsdp_model_config(seq_length, **overrides.pop("model", {})),
-        dist=DistributedInitConfig(use_megatron_fsdp=True),
         train=create_base_training_config(train_iters, **overrides.pop("train", {})),
         validation=create_base_validation_config(train_iters, **overrides.pop("validation", {})),
         optimizer=create_base_optimizer_config(**overrides.pop("optimizer", {})),

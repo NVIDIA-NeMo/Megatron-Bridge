@@ -55,7 +55,9 @@ def _make_gdn(cp_size: int) -> GatedDeltaNet:
     gdn.tp_size = 1
     gdn.qk_dim_local_tp = 256
     gdn.v_dim_local_tp = 256
+    gdn.num_key_heads = 8
     gdn.num_value_heads = 8
+    gdn.num_k_heads_local_tp = 8
     gdn.num_v_heads_local_tp = 8
     gdn._setup_variant_attrs()
     return gdn
@@ -85,6 +87,7 @@ def _make_gdn2(cp_size: int) -> torch.nn.Module:
     gdn.num_k_heads_local_tp = 8
     gdn.num_key_heads = 8
     gdn.num_value_heads = 8
+    gdn.num_v_heads_local_tp = 8
     gdn._setup_variant_attrs()
     return gdn
 

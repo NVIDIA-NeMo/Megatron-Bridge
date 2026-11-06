@@ -511,9 +511,8 @@ def test_source_dtype_skips_checkpoint_requantization_and_keeps_key_fixes(monkey
     ]
     tasks = [replace(task, weight_dtype=weight_dtype) for task in tasks]
     plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[quantized])
-    native_key = "layers.0.indexer.scorer.weights_proj.weight"
-    legacy_key = "layers.0.indexer.weights_proj.weight"
-    hf_source = {legacy_key: torch.ones(4, 4)}
+    synthesized_bias = "layers.0.ffn.gate.bias"
+    hf_source = {}
     for task in tasks:
         hf_source[task.mapping.hf_param] = task.param_weight.to(torch.float8_e4m3fn)
         hf_source[task.mapping.hf_param.removesuffix(".weight") + ".weight_scale_inv"] = torch.ones(1)
@@ -527,10 +526,10 @@ def test_source_dtype_skips_checkpoint_requantization_and_keeps_key_fixes(monkey
         assert task.weight_dtype == (weight_dtype or task.param_weight.dtype)
         hf_name = task.mapping.hf_param
         result = bridge.maybe_modify_converted_hf_weight(
-            task, {hf_name: task.param_weight, native_key: hf_source[legacy_key]}, hf_source
+            task, {hf_name: task.param_weight, synthesized_bias: torch.zeros(4)}, hf_source
         )
         assert result[hf_name] is task.param_weight
-        assert native_key not in result and legacy_key in result
+        assert synthesized_bias not in result
         assert not any(name.endswith("weight_scale_inv") for name in result)
 
 
@@ -550,19 +549,16 @@ def test_source_dtype_reaches_non_owning_pp_task(monkeypatch):
 def test_legacy_renamed_weight_fails_closed_only_when_quantized(quantized):
     module = _fp8_linear() if quantized else torch.nn.Linear(4, 4, bias=False)
     dense = _fp8_linear()
-    native_key = "layers.0.attn.indexer.scorer.weights_proj.weight"
-    legacy_key = "layers.0.attn.indexer.weights_proj.weight"
+    native_key = "layers.0.attn.native_name.weight"
+    legacy_key = "layers.0.attn.legacy_name.weight"
     task = _task(ColumnParallelMapping("scorer.weight", native_key), module)
     plan = modelopt_utils.build_modelopt_export_plan(
         [task, _task(ColumnParallelMapping("dense.weight", "dense.weight"), dense, global_name="dense.weight")],
         model=[dense],
     )
     prepared = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
-    bridge = object.__new__(DeepSeekV4Bridge)
-    result = bridge.maybe_modify_converted_hf_weight(
-        prepared, {native_key: module.weight}, {legacy_key: module.weight}
-    )
-    output = HFWeightTuple(legacy_key, result[legacy_key]).iter_finalized(cpu=True, export_hook=prepared.export_hook)
+    # A bridge renaming the converted weight, as maybe_modify_converted_hf_weight may.
+    output = HFWeightTuple(legacy_key, module.weight).iter_finalized(cpu=True, export_hook=prepared.export_hook)
 
     if quantized:
         with pytest.raises(RuntimeError, match=f"Missing ModelOpt export state for {legacy_key}"):
@@ -1323,6 +1319,18 @@ def test_unquantized_grouped_transpose_mapping_keeps_offline_export_path():
 
     assert plan.conversion_tasks[0].mapping is expert_mapping
     assert plan.conversion_tasks[0].export_hook is None
+
+
+@pytest.mark.unit
+def test_quantized_weight_must_map_to_hf_weight_tensor():
+    # E.g. DeepSeek-V4's hyper-connection mixer, an nn.Linear in Megatron but a bare parameter in HF.
+    module = _fp8_linear()
+    mapping = ColumnParallelMapping("decoder.layers.0.attn_hc.mapping_proj.weight", "layers.0.hc_attn_fn")
+
+    with pytest.raises(RuntimeError, match=r"map to HF '\.weight' tensors, not \['layers\.0\.hc_attn_fn'\]"):
+        modelopt_utils.build_modelopt_export_plan(
+            [_task(mapping, module, global_name=mapping.megatron_param)], model=[module]
+        )
 
 
 def test_custom_quantized_expert_mapping_is_rejected_before_ep_gather():
