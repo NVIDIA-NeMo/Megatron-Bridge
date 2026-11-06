@@ -17,7 +17,7 @@
 import signal
 import time
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, call, patch
 
 import pytest
 import torch
@@ -33,6 +33,7 @@ from megatron.bridge.training.train import (
     _finish_train,
     _handle_mxfp8_param_buffer_copy,
     _maybe_register_fsdp_buffers,
+    _release_full_iteration_grad_copies,
     _should_skip_and_handle_iteration,
     checkpoint_and_decide_exit,
     force_param_sync,
@@ -114,6 +115,8 @@ class TestCheckpointManagerLifecycle:
             dp=SimpleNamespace(size=Mock(return_value=1)),
         )
         checkpoint_manager = OneShotCheckpointManager()
+        model = [Mock()]
+        optimizer = Mock()
 
         with (
             patch("megatron.bridge.training.train.get_model_config", return_value=model_config),
@@ -124,15 +127,15 @@ class TestCheckpointManagerLifecycle:
             patch("megatron.bridge.training.train.get_num_microbatches", return_value=1),
             patch("megatron.bridge.training.train.get_forward_backward_func", return_value=Mock()),
             patch("megatron.bridge.training.train.P2PCommunicator", return_value=Mock()),
-            patch("megatron.bridge.training.train._delete_cuda_graphs"),
+            patch("megatron.bridge.training.train._delete_cuda_graphs") as mock_delete_cuda_graphs,
             patch("megatron.bridge.training.train.safe_shutdown_nvrx_straggler_manager"),
             patch("megatron.bridge.training.train.destroy_global_state"),
             patch("megatron.bridge.training.train.fault_tolerance"),
         ):
             train(
                 Mock(),
-                [Mock()],
-                Mock(),
+                model,
+                optimizer,
                 Mock(),
                 None,
                 None,
@@ -143,6 +146,8 @@ class TestCheckpointManagerLifecycle:
             _finish_train(state, checkpoint_manager)
 
         assert checkpoint_manager.finalize_calls == [(True, False), (True, True)]
+        # The optimizer's full-iteration gradient copies hold the training graph and must be released too.
+        assert mock_delete_cuda_graphs.call_args_list[0] == call(ANY, model, optimizer)
 
     def test_natural_completion_restores_original_signal_handler(self):
         """Terminal training cleanup should restore the caller's signal handler."""
@@ -348,6 +353,76 @@ class TestCudaGraphCleanup:
 
         mock_delete_runners.assert_called_once_with(model)
         assert calls == ["runners", "global"]
+
+    @patch("megatron.bridge.training.train.torch.cuda.synchronize")
+    def test_release_full_iteration_grad_copies_walks_chained_optimizers(self, mock_sync):
+        """Every chained optimizer must drop the training graph its gradient copy references."""
+        legacy_copy = SimpleNamespace(
+            graph=Mock(), forward_backward_graph=Mock(), outputs=[(Mock(), Mock())], source_signature=[Mock()]
+        )
+        resettable_copy = Mock(spec=["reset"])
+        layer_wise = SimpleNamespace(
+            chained_optimizers=[SimpleNamespace(_cudagraphed_grad_copy=resettable_copy)],
+            _cudagraphed_grad_copy=None,
+        )
+        optimizer = SimpleNamespace(
+            chained_optimizers=[
+                SimpleNamespace(_cudagraphed_grad_copy=legacy_copy),
+                layer_wise,
+                SimpleNamespace(_cudagraphed_grad_copy=None),
+            ]
+        )
+
+        _release_full_iteration_grad_copies(optimizer)
+
+        mock_sync.assert_called_once_with()
+        assert legacy_copy.graph is None
+        assert legacy_copy.forward_backward_graph is None
+        assert legacy_copy.outputs == []
+        assert legacy_copy.source_signature is None
+        resettable_copy.reset.assert_called_once_with()
+
+    @patch("megatron.bridge.training.train.torch.cuda.synchronize")
+    def test_release_full_iteration_grad_copies_skips_eager_optimizers(self, mock_sync):
+        """Without a full-iteration gradient copy there is nothing to release or synchronize."""
+        _release_full_iteration_grad_copies(None)
+        _release_full_iteration_grad_copies(
+            SimpleNamespace(chained_optimizers=[SimpleNamespace(_cudagraphed_grad_copy=None), Mock(spec=[])])
+        )
+
+        mock_sync.assert_not_called()
+
+    @patch("megatron.bridge.training.train.torch.cuda.synchronize")
+    def test_release_full_iteration_grad_copies_clears_mcore_copy(self, _mock_sync):
+        """The release must work on MCore's own FullIterationGradCopy, not only on stand-ins."""
+        from megatron.core.full_cuda_graph import FullIterationGradCopy
+
+        grad_copy = FullIterationGradCopy()
+        grad_copy.graph = Mock()
+        grad_copy.outputs = [(Mock(), Mock())]
+        grad_copy.source_signature = [Mock()]
+
+        _release_full_iteration_grad_copies(SimpleNamespace(_cudagraphed_grad_copy=grad_copy))
+
+        assert grad_copy.graph is None
+        assert grad_copy.forward_backward_graph is None
+        assert grad_copy.outputs == []
+        assert grad_copy.source_signature is None
+
+    @patch("megatron.bridge.training.train.delete_local_cuda_graphs")
+    @patch("megatron.bridge.training.train._release_full_iteration_grad_copies")
+    @patch("megatron.bridge.training.train.gc.collect")
+    def test_delete_cuda_graphs_releases_grad_copies_before_gc(self, mock_collect, mock_release, _mock_delete_local):
+        """Graphs held by the optimizer must be released before the final garbage collection."""
+        calls = []
+        mock_release.side_effect = lambda _optimizer: calls.append("grad_copies")
+        mock_collect.side_effect = lambda: calls.append("gc")
+        optimizer = Mock()
+
+        _delete_cuda_graphs(None, None, optimizer)
+
+        mock_release.assert_called_once_with(optimizer)
+        assert calls == ["grad_copies", "gc"]
 
 
 class TestFSDPRegistration:
