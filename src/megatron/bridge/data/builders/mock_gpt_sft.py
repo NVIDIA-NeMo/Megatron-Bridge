@@ -24,7 +24,8 @@ sample's length and tokens depend only on its index, not on how many samples a r
 
 With ``enable_offline_packing``, the samples are first packed offline into rows of at most
 ``offline_packing_specs.packed_sequence_size`` tokens, and each dataset item is one row that yields its samples, so the
-global batch counts packed rows as in offline packed SFT.
+global batch counts packed rows as in offline packed SFT. Rows are packed first-fit decreasing over consecutive chunks of
+``OFFLINE_PACKING_CHUNK_SIZE`` samples, so they too do not depend on how many rows a run requests.
 """
 
 import math
@@ -44,6 +45,8 @@ from megatron.bridge.data.packing.global_batch import build_unpacked_sequence_sa
 _SPLITS = ("train", "validation", "test")
 LENGTH_BLOCK_SIZE = 1024
 """Samples per independently seeded block of drawn lengths."""
+OFFLINE_PACKING_CHUNK_SIZE = 4 * LENGTH_BLOCK_SIZE
+"""Samples packed together into offline rows; a multiple of ``LENGTH_BLOCK_SIZE``."""
 
 
 @dataclass(kw_only=True)
@@ -168,25 +171,17 @@ def mock_sft_sequence_lengths(config: MockGPTSFTDatasetConfig, num_samples: int,
     return np.concatenate(blocks)[:num_samples] if blocks else np.zeros(0, dtype=np.int64)
 
 
-def _mean_sample_length(config: MockGPTSFTDatasetConfig) -> float:
-    """Expected sample length under the bucket fractions."""
-    return sum(
-        fraction * (low + high) / 2
-        for fraction, (low, high) in zip(config.length_bucket_fractions, length_bucket_bounds(config.seq_length))
-    )
-
-
 def mock_sft_packed_rows(
     config: MockGPTSFTDatasetConfig, num_rows: int, split: str = "train"
 ) -> tuple[np.ndarray, list[list[int]]]:
     """Pack mock samples offline into ``num_rows`` rows.
 
-    Draws a pool of samples large enough to fill ``num_rows`` rows, packs the pool first-fit decreasing on lengths
-    aligned to ``offline_packing_specs.pad_seq_to_mult``, shuffles the rows with the seed, and keeps the first
-    ``num_rows``.
+    Packs consecutive chunks of ``OFFLINE_PACKING_CHUNK_SIZE`` samples first-fit decreasing, on lengths aligned to
+    ``offline_packing_specs.pad_seq_to_mult``, shuffles each chunk's rows with its own seed, and appends chunks until
+    there are ``num_rows`` rows. The first ``n`` rows are the same whatever ``num_rows`` is.
 
     Returns:
-        The pool's sample lengths and, per row, the indices of its samples into that pool.
+        The lengths of the samples drawn and, per row, the indices of its samples into them.
 
     Raises:
         ValueError: If offline packing is not enabled or ``num_rows`` is negative.
@@ -196,20 +191,29 @@ def mock_sft_packed_rows(
         raise ValueError("mock_sft_packed_rows needs enable_offline_packing and offline_packing_specs.")
     if num_rows < 0:
         raise ValueError("num_rows must be non-negative.")
-    if num_rows == 0:
-        return np.zeros(0, dtype=np.int64), []
     align = specs.pad_seq_to_mult or 1
-    num_samples = math.ceil(num_rows * specs.packed_sequence_size / _mean_sample_length(config))
-    while True:
-        lengths = mock_sft_sequence_lengths(config, num_samples, split)
-        aligned = [math.ceil(int(length) / align) * align for length in lengths]
-        rows = first_fit_decreasing(list(range(num_samples)), specs.packed_sequence_size, item_lengths=aligned)
-        if len(rows) >= num_rows:
-            break
-        num_samples = math.ceil(num_samples * 1.25)
-    rng = np.random.default_rng((config.random_seed, _SPLITS.index(split), len(rows)))
-    order = rng.permutation(len(rows))
-    return lengths, [sorted(rows[index]) for index in order[:num_rows]]
+    blocks_per_chunk = OFFLINE_PACKING_CHUNK_SIZE // LENGTH_BLOCK_SIZE
+    length_blocks: list[np.ndarray] = []
+    rows: list[list[int]] = []
+    chunk = 0
+    while len(rows) < num_rows:
+        first_block = chunk * blocks_per_chunk
+        length_blocks.extend(
+            _length_block(config, split, block) for block in range(first_block, first_block + blocks_per_chunk)
+        )
+        chunk_lengths = np.concatenate(length_blocks[first_block:])
+        start = first_block * LENGTH_BLOCK_SIZE
+        aligned = [math.ceil(int(length) / align) * align for length in chunk_lengths]
+        chunk_rows = first_fit_decreasing(
+            list(range(start, start + len(chunk_lengths))), specs.packed_sequence_size, item_lengths=aligned
+        )
+        order = np.random.default_rng((config.random_seed, _SPLITS.index(split), chunk, 1)).permutation(
+            len(chunk_rows)
+        )
+        rows.extend(sorted(chunk_rows[index]) for index in order)
+        chunk += 1
+    lengths = np.concatenate(length_blocks) if length_blocks else np.zeros(0, dtype=np.int64)
+    return lengths, rows[:num_rows]
 
 
 class MockGPTSFTDataset(torch.utils.data.Dataset):

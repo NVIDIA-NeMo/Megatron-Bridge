@@ -22,6 +22,7 @@ from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.builders import MockGPTSFTDatasetBuilder, MockGPTSFTDatasetConfig
 from megatron.bridge.data.builders.mock_gpt_sft import (
     LENGTH_BLOCK_SIZE,
+    OFFLINE_PACKING_CHUNK_SIZE,
     MockGPTSFTDataset,
     length_bucket_bounds,
     length_bucket_counts,
@@ -179,6 +180,17 @@ def test_offline_rows_pack_every_sample_once_within_the_row_capacity():
     again_lengths, again_rows = mock_sft_packed_rows(config, 40)
     assert again_rows == rows and np.array_equal(again_lengths, lengths)
     assert mock_sft_packed_rows(config, 40, split="validation")[1] != rows
+
+
+def test_offline_rows_do_not_depend_on_how_many_rows_are_requested():
+    config = _offline_config()
+    lengths, rows = mock_sft_packed_rows(config, 2000)
+    # 2000 rows of this mix span more than one packing chunk.
+    assert max(max(row) for row in rows) >= OFFLINE_PACKING_CHUNK_SIZE
+    for count in (0, 7, 1000):
+        few_lengths, few_rows = mock_sft_packed_rows(config, count)
+        assert few_rows == rows[:count]
+        assert np.array_equal(few_lengths, lengths[: len(few_lengths)])
 
 
 def test_offline_dataset_items_are_rows_and_collate_to_one_sample_per_sequence():

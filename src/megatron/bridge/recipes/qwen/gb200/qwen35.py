@@ -615,6 +615,10 @@ def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config() -> ConfigCo
     eight rows, and the global-batch scheduler unpacks them and runs every packed bin on a CP1, CP2 or CP4 group sized
     for its longest sequence. Offline packing decides which samples share a step; dynamic CP still re-bins them.
     Steps therefore carry a nearly constant number of tokens instead of 32 samples of varying total length.
+
+    On these full rows static CP4 (``model.dynamic_context_parallel=false``) is faster than dynamic CP: the rows are
+    already balanced CP4 bins, and dynamic CP's re-binning adds microbatches whose ranks carry uneven work, which every
+    MoE layer's expert-parallel dispatch then waits on. See ``docs/training/dynamic-context-parallel.md``.
     """
     cfg = qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config()
     cfg.dataset.enable_offline_packing = True
@@ -622,5 +626,7 @@ def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config() -> ConfigCo
     cfg.dataset.offline_packing_specs = PackedSequenceSpecs(
         packed_sequence_size=cfg.dataset.seq_length, pad_seq_to_mult=2 * cfg.model.context_parallel_size
     )
+    # Eight rows per step, as the original Megatron-LM example's offline mode. A step then carries about 524K tokens,
+    # against about 685K for the online recipe's 32 samples.
     cfg.train.global_batch_size = 8
     return cfg
