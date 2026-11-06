@@ -969,8 +969,25 @@ def build_modelopt_export_plan(
     pp_group = model_bridge_utils._get_pp_group(model) if torch.distributed.is_initialized() else None
     source_specs = _sync_source_specs(local_specs, pp_group)
 
+    # A grouped HF tensor is packed by one expert's hook, so its experts must all be quantized or none,
+    # and OpenAI's MXFP4 layout has no BF16 experts. Gathered from every rank, as EP splits the experts.
+    oai_mxfp4_experts: dict[str, set[bool]] = {}
+    for task in concrete_tasks:
+        source = source_specs.get(task.global_param_name)
+        # Biases share the mapping but stay BF16.
+        if getattr(task.mapping, "oai_mxfp4_export", False) and source is not None and len(source.weight_shape) > 1:
+            oai_mxfp4_experts.setdefault(task.mapping.hf_param, set()).add(source.state is not None)
+    for rank_experts in _all_gather_objects(oai_mxfp4_experts, _world_group()):
+        for name, quantized in rank_experts.items():
+            oai_mxfp4_experts.setdefault(name, set()).update(quantized)
+
     expert_mapping_error = None
     try:
+        if any(True in quantized for quantized in oai_mxfp4_experts.values()):
+            if partial := sorted(name for name, quantized in oai_mxfp4_experts.items() if False in quantized):
+                raise NotImplementedError(
+                    f"OpenAI's MXFP4 format quantizes every expert, but these have unquantized experts: {partial[:4]}"
+                )
         for task in concrete_tasks:
             source = source_specs.get(task.global_param_name)
             if source is None or source.state is None or not task.mapping.is_expert:

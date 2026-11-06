@@ -1438,6 +1438,17 @@ def test_gpt_oss_openai_mxfp4_export_rejects_other_quantized_layers():
         modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
 
 
+@_requires_weight_only_mxfp4
+@pytest.mark.parametrize("expert", [0, -1])
+def test_gpt_oss_openai_mxfp4_export_rejects_unquantized_experts(expert):
+    # The last expert's hook packs the whole projection, so cover it and another one.
+    module, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
+    module.weight_quantizer[expert].disable()
+
+    with pytest.raises(RuntimeError, match="quantizes every expert"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+
+
 def test_gpt_oss_experts_reject_formats_besides_weight_only_mxfp4():
     module, tasks = _gpt_oss_expert_tasks(
         "down_proj", lambda out_features, in_features: _fp8_linear(out_features, in_features)
