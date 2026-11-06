@@ -178,7 +178,10 @@ Round lines are `[ppo] {...}` and add `value_abs_error`, `value_clipped_fraction
   generation with an all-gather so every rank holds the same sample list. Ranks without prompts still
   drive their engine so the data-parallel coordination stays in lockstep. With
   `return_routed_experts=True` each sample also carries vllm's per-token expert ids
-  (`[prompt + response - 1, num_layers, topk]`, the last sampled token has none).
+  (`[prompt + response - 1, num_moe_layers, topk]`, the last sampled token has none). vllm records a
+  slot for every decoder layer, so the adapter keeps only the policy's MoE layers, passed as
+  `moe_layers=policy.router_replay_layers`; for a model mixing dense and MoE layers that is where the
+  numbering is translated.
 
 ## Residency protocol used by the RL examples
 

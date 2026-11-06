@@ -188,6 +188,17 @@ def test_check_microbatches_validates_routing_against_the_replayable_shape():
         check_microbatches([with_routing], layout="thd", vocab_size=100, dp_group=None, routed_shape=None)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="the strict check runs on CUDA tensors")
+def test_check_microbatches_allows_the_sentinel_only_at_padding():
+    cuda = torch.device("cuda")
+    mb = pack_sequences([_datum(3, routed_experts=_routed(3))], [0], seq_length=8, pad_multiple=4, device=cuda)
+    assert (mb.routed_experts[0, 3] == -1).all()  # the padded slot
+    check_microbatches([mb], layout="thd", vocab_size=100, dp_group=None, routed_shape=(3, 2), num_experts=64)
+    mb.routed_experts[0, 1, 0, 0] = -1  # a real token loses one routing entry
+    with pytest.raises(ValueError, match="non-padding positions"):
+        check_microbatches([mb], layout="thd", vocab_size=100, dp_group=None, routed_shape=(3, 2), num_experts=64)
+
+
 def test_unshard_from_cp_keeps_trailing_dims():
     mb = shard_for_cp(pack_sequences([_datum(3)], [0], seq_length=8, pad_multiple=4, device=CPU), None)
     values = torch.arange(4 * 6, dtype=torch.float32).view(4, 3, 2)  # 3 tokens padded to 4

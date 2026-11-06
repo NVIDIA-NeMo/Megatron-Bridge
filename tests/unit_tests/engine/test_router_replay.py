@@ -73,6 +73,17 @@ def test_arm_forward_sets_targets_per_layer_and_fills_padding():
     assert layer0.replay_backward_list == []
 
 
+def test_layer_indices_follow_megatron_layer_numbers():
+    state = _build(3, mtp=True)
+    # Megatron numbers layers from 1; a dense layer in between leaves a gap, MTP routers are excluded.
+    for router, number in zip(state.routers, (1, 2, 4)):
+        router.layer_number = number
+    state.owned[-1].layer_number = 5
+    assert state.layer_indices == [0, 1, 3]
+    with pytest.raises(RuntimeError, match="layer numbers are not set"):
+        _build(1).layer_indices
+
+
 def test_arm_is_a_no_op_without_routing():
     state = _build(2)
     state.arm_forward(_microbatch(None))

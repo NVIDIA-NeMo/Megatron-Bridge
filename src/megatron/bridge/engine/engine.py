@@ -867,6 +867,13 @@ class TrainingEngine:
         """GPU bytes released by the last ``cpu()``; 0 while resident. Compare with ``torch.cuda.memory_allocated``."""
         return self._offloaded_bytes
 
+    @property
+    def router_replay_layers(self) -> list[int]:
+        """Zero-based decoder layer indices whose routing ``routed_experts`` replays, in field order; empty
+        without ``recipe.router_replay``. A generation backend that records every decoder layer must keep
+        exactly these columns (dense layers have no router)."""
+        return self._router_replay.layer_indices if self._recipe.router_replay else []
+
     # ---- introspection ------------------------------------------------------------------------
 
     @property

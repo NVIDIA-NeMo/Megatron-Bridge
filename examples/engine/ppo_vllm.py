@@ -115,6 +115,7 @@ def main() -> None:
         max_model_len=args.max_prompt_tokens + args.max_tokens + 64,
         enforce_eager=not args.vllm_cuda_graphs,
         return_routed_experts=args.router_replay,
+        moe_layers=policy.router_replay_layers if args.router_replay else None,
     )
     rollout.sleep()
     engines = {"policy": policy, "critic": critic}  # the reference never changes, so it is not saved

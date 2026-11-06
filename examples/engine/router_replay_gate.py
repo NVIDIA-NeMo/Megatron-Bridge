@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import replace
 
@@ -143,6 +144,7 @@ def main() -> None:
         max_model_len=args.max_prompt_tokens + args.max_tokens + 64,
         enforce_eager=not args.vllm_cuda_graphs,
         return_routed_experts=True,
+        moe_layers=policy.router_replay_layers,
     )
     rollout.sleep()
     policy.cuda()
@@ -172,6 +174,9 @@ def main() -> None:
     native_again = timed("native forward_only (repeat)", plain)
     replay = timed("replay forward_only", datums)
     replay_again = timed("replay forward_only (repeat)", datums)
+    for label, scores in (("native", native), ("replay", replay)):
+        if not all(bool(torch.isfinite(lp).all()) for lp in scores):
+            raise SystemExit(f"ROUTER REPLAY GATE FAILED: non-finite {label} logprobs")
     report = {
         "vllm_gap_native": consistency(datums, native),
         "vllm_gap_replay": consistency(datums, replay),
@@ -224,7 +229,14 @@ def main() -> None:
                 tokens += out.num_loss_tokens
         finally:
             RouterReplay.get_replay_topk = original
-        norm = policy.optim_step(AdamParams(learning_rate=0.0))["grad_norm"]
+        result = policy.optim_step(AdamParams(learning_rate=0.0))
+        norm = result["grad_norm"]
+        # A skipped update or a non-finite number would make every tolerance comparison vacuously pass.
+        if not result["update_successful"] or not all(math.isfinite(x) for x in (norm, loss_sum, diff)):
+            raise SystemExit(
+                f"ROUTER REPLAY GATE FAILED: {label}: update_successful={result['update_successful']}, "
+                f"grad_norm={norm}, loss_sum={loss_sum}, logprob_diff={diff}"
+            )
         report[f"grad_norm_{label}"] = norm
         report[f"loss_sum_{label}"] = loss_sum
         report[f"train_vs_score_logprob_diff_{label}"] = diff / max(tokens, 1)

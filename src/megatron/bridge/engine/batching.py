@@ -376,6 +376,11 @@ def check_microbatches(
                 raise ValueError(f"{where}.routed_experts must be a contiguous int64 tensor.")
             if bool((routed < -1).any()) or (num_experts is not None and bool((routed >= num_experts).any())):
                 raise ValueError(f"{where}.routed_experts must hold expert ids in [0, {num_experts}) or -1.")
+            # -1 (no recorded routing) is allowed only where padding_mask is True; a real token without a
+            # routing would otherwise silently train through the fallback experts.
+            missing = (routed < 0).flatten(2).any(-1)
+            if bool((missing & ~mb.padding_mask).any()):
+                raise ValueError(f"{where}.routed_experts has -1 at non-padding positions; real tokens need routing.")
         for name in ("input_ids", "target_ids", "position_ids"):
             if tensors[name].dtype != torch.int64:
                 raise ValueError(f"{where}.{name} must be int64.")

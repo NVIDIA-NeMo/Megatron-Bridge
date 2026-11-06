@@ -56,6 +56,18 @@ class RouterReplayState:
         """Routers that replay (the model's MoE layers in order, MTP excluded)."""
         return len(self.routers)
 
+    @property
+    def layer_indices(self) -> list[int]:
+        """Zero-based decoder layer index of each replaying router, in replay order.
+
+        Megatron numbers layers from 1 and copies the number onto the router's ``RouterReplay`` at
+        build time. A backend that records routing for every decoder layer (vllm does) must select
+        these columns; models that mix dense and MoE layers have fewer routers than layers.
+        """
+        if any(router.layer_number is None for router in self.routers):
+            raise RuntimeError("router layer numbers are not set; the model was not built through Megatron's spec")
+        return [router.layer_number - 1 for router in self.routers]
+
     def arm_forward(self, microbatch: PreparedMicrobatch) -> None:
         """Set this microbatch's routing as the replay target and switch the routers to replay mode."""
         routed = microbatch.routed_experts
@@ -79,7 +91,8 @@ class RouterReplayState:
         # These placeholders do not skip expert computation by themselves: the
         # EP dispatcher uses padding_mask to remove padded assignments before dispatch.
         fallback = torch.arange(topk, device=ids.device).view(1, 1, topk).expand_as(ids)
-        ids = torch.where(ids < 0, fallback, ids)  # padding rows get a valid, distinct routing
+        # Only padded positions may be -1 (check_microbatches enforces it); they get a valid, distinct routing.
+        ids = torch.where(ids < 0, fallback, ids)
         for layer, router in enumerate(self.routers):
             router.set_target_indices(ids[:, layer].contiguous())
             router.set_router_replay_action(RouterReplayAction.REPLAY_FORWARD)

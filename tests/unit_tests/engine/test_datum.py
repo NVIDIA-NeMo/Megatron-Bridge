@@ -58,6 +58,8 @@ def test_routed_experts_all_or_none_integer_and_layer_aligned():
         check_datums([_datum(3, routed_experts=torch.zeros(3, 4))])
     with pytest.raises(ValueError, match="integer expert ids"):
         check_datums([_datum(3, routed_experts=torch.zeros(3, 4, 2))])
+    with pytest.raises(ValueError, match="valid expert id at every position"):
+        check_datums([_datum(3, routed_experts=torch.full((3, 4, 2), -1, dtype=torch.int16))])
 
 
 def test_custom_loss_inputs_must_be_token_aligned_tensors():

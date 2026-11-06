@@ -66,8 +66,9 @@ class Datum:
             backend (truncated importance sampling). Optional, all-or-none.
         routed_experts: strict when present. ``[L, num_moe_layers, topk]`` integer expert ids the
             generation backend routed each input position to, MoE layers in model order (rollout routing
-            replay); any integer dtype. Optional, all-or-none; the engine replays it when the recipe has
-            ``router_replay`` set and rejects it otherwise.
+            replay); any integer dtype, every entry a valid id (no sentinel: a Datum has no padding).
+            Optional, all-or-none; the engine replays it when the recipe has ``router_replay`` set and
+            rejects it otherwise.
         loss_inputs: loose values, strict transport. Custom token-aligned ``[L]`` tensors for the loss
             (for example ``returns`` and ``old_values`` for ``value_loss``); every Datum in a call carries
             the same keys. The engine only packs, pads with 0 and CP-slices them, keeping the dtype.
@@ -118,10 +119,10 @@ class PreparedMicrobatch:
         rollout_logprobs: strict when present. float32; see ``Datum``.
         routed_experts: strict when present. int64 ``[B, S_local, num_moe_layers, topk]`` /
             ``[1, T_local, num_moe_layers, topk]`` expert ids per token in the model's MoE-layer order,
-            ``-1`` at positions without a recorded routing (padding; the engine substitutes a valid
-            routing there). When set, the engine replays these choices in every MoE router instead of
-            the router's own top-k (rollout routing replay); it requires ``recipe.router_replay`` and
-            must be set for every microbatch of a call or for none.
+            ``-1`` only at padded positions (``padding_mask`` True; the engine substitutes a valid routing
+            there), a valid id everywhere else. When set, the engine replays these choices in every MoE
+            router instead of the router's own top-k (rollout routing replay); it requires
+            ``recipe.router_replay`` and must be set for every microbatch of a call or for none.
         loss_inputs: loose values, strict transport. The Datums' custom tensors after the same packing,
             padding (value 0) and CP split as the targets; shape is checked, dtype is the caller's.
         sample_inputs: loose. One dict per Datum in this microbatch, in the microbatch's segment order,
@@ -394,3 +395,5 @@ def _check_routed_experts(label: str, value: Any, length: int, trailing: tuple[i
         )
     if value.is_floating_point() or value.is_complex() or value.dtype == torch.bool:
         raise ValueError(f"{label} must hold integer expert ids, got {value.dtype}.")
+    if bool((value < 0).any()):
+        raise ValueError(f"{label} must hold a valid expert id at every position (Datums have no padding).")

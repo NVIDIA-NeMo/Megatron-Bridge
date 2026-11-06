@@ -55,12 +55,14 @@ def _in_process_model(llm):
     raise AttributeError("could not find vllm's in-process model; vllm's object layout changed")
 
 
-def _routed_experts(completion, prompt_len: int, response_len: int) -> np.ndarray:
-    """The ``[prompt + response - 1, num_hidden_layers, topk]`` routing of one completion, as vllm's narrow ints.
+def _routed_experts(completion, prompt_len: int, response_len: int, moe_layers: list[int]) -> np.ndarray:
+    """The ``[prompt + response - 1, num_moe_layers, topk]`` routing of one completion, as vllm's narrow ints.
 
     vllm records a row for every token that went through the model: the prompt and all response tokens
     but the last one, which is sampled and never fed back. Some versions append that last row too; it is
-    dropped so the rows match the Datum's input positions.
+    dropped so the rows match the Datum's input positions. vllm's layer axis covers every decoder layer
+    (dense layers' slots are never written), so only the training model's MoE layers, ``moe_layers``
+    (zero-based decoder indices, from ``TrainingEngine.router_replay_layers``), are kept, in that order.
     """
     routed = completion.routed_experts
     if routed is None:
@@ -70,7 +72,9 @@ def _routed_experts(completion, prompt_len: int, response_len: int) -> np.ndarra
         routed = routed[:expected]
     if routed.shape[0] != expected:
         raise RuntimeError(f"routed_experts has {routed.shape[0]} rows, expected {expected} (prompt + response - 1)")
-    return np.ascontiguousarray(routed)
+    if max(moe_layers) >= routed.shape[1]:
+        raise RuntimeError(f"vllm recorded {routed.shape[1]} layers; the policy's MoE layers reach {max(moe_layers)}")
+    return np.ascontiguousarray(routed[:, moe_layers, :])
 
 
 class VllmRollout:
@@ -85,12 +89,16 @@ class VllmRollout:
         seed: int = 0,
         enforce_eager: bool = True,
         return_routed_experts: bool = False,
+        moe_layers: list[int] | None = None,
     ):
         from vllm import LLM
 
         self.rank = torch.distributed.get_rank()
         self.world = torch.distributed.get_world_size()
         self.return_routed_experts = return_routed_experts
+        if return_routed_experts and not moe_layers:
+            raise ValueError("return_routed_experts needs moe_layers (the policy's router_replay_layers)")
+        self.moe_layers = list(moe_layers or [])
         start = time.perf_counter()
         self.llm = LLM(
             model=hf_path,
@@ -174,7 +182,9 @@ class VllmRollout:
                 logprobs = [entry[token].logprob for token, entry in zip(completion.token_ids, completion.logprobs)]
                 routed = None
                 if self.return_routed_experts:
-                    routed = _routed_experts(completion, len(prompt.prompt_ids), len(completion.token_ids))
+                    routed = _routed_experts(
+                        completion, len(prompt.prompt_ids), len(completion.token_ids), self.moe_layers
+                    )
                 local.append(
                     Sample(
                         prompt=prompt,
