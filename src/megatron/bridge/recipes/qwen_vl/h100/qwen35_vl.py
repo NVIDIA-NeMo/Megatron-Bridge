@@ -870,7 +870,8 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 27B (dense).
 
     Default configuration: 16 GPUs
-    - TP=4, PP=4
+    - TP=4, PP=4, sequence parallel
+    - One-layer full-uniform activation recompute
     - LR=5e-6 (full SFT)
     - Sequence length: 4096
     """
@@ -888,7 +889,7 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
 
     # VLM-specific settings
     cfg.model.freeze_language_model = False
@@ -909,11 +910,13 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
-    # Memory saving
-    cfg.model.recompute_granularity = None
+    # Memory saving: at MBS 4 the first pipeline stage runs out of 80 GB H100 memory in the first
+    # iteration without activation recompute, even with sequence parallelism. One-layer full-uniform
+    # recompute peaks at about 50 GiB allocated on 16 H100s (MedPix SFT, 2026-11-01).
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
