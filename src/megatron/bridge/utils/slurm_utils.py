@@ -19,6 +19,7 @@ distributed training configuration from SLURM environment variables.
 """
 
 import os
+import re
 import warnings
 
 from megatron.core._slurm_utils import (
@@ -112,10 +113,5 @@ def _parse_slurm_nodelist(nodelist: str) -> str:
             break
     first = nodelist[:end].strip()
 
-    # If the first entry itself uses bracket expansion, expand to the first node.
-    if "[" in first:
-        base, _, rest = first.partition("[")
-        inside = rest.split("]")[0]
-        first_element = inside.split(",")[0].split("-")[0]
-        return f"{base}{first_element}"
-    return first
+    # Expand the first member of every range in the first host expression.
+    return re.sub(r"\[([^\[\]]+)\]", lambda match: match.group(1).split(",")[0].split("-")[0], first)
