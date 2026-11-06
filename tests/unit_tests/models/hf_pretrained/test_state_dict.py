@@ -665,10 +665,10 @@ class TestSafeTensorsStateSourceCache:
         for _ in range(3):
             assert source.load_tensors(["w.scale"])["w.scale"].item() == 2.0
         opens_after_scales = calls["n"]
-        if reuse_handles == "1":
+        if cache_small == "1":
+            assert opens_after_scales == 2  # the second read opens a fresh handle and caches, the third is a hit
+        elif reuse_handles == "1":
             assert opens_after_scales == 1  # one handle, reused for all three reads
-        elif cache_small == "1":
-            assert opens_after_scales == 2  # the first two reads open the shard, the third is a cache hit
         else:
             assert opens_after_scales == 3  # baseline behaviour: one safe_open per load_tensors
 
@@ -677,7 +677,7 @@ class TestSafeTensorsStateSourceCache:
         for _ in range(3):
             assert source.load_tensors(["w.weight"]).keys() == {"w.weight"}
         extra_opens = calls["n"] - opens_after_scales
-        expected = {("1", "1"): 0, ("1", "0"): 2, ("0", "1"): 0, ("0", "0"): 3}
+        expected = {("1", "1"): 1, ("1", "0"): 2, ("0", "1"): 0, ("0", "0"): 3}
         assert extra_opens == expected[(cache_small, reuse_handles)]
 
     def test_cache_threshold_and_instance_isolation(self, tmp_path, monkeypatch):
