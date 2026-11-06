@@ -342,6 +342,7 @@ jobs:
           pip install pre-commit==3.6.0
           pre-commit install
           pre-commit run --all-files --show-diff-on-failure --color=always
+          python3 .github/scripts/test_coverage_config.py
 
   cicd-wait-in-queue:
     needs: [pre-flight, lint-check, configure]
@@ -1380,7 +1381,7 @@ jobs:
           verbose: true
           flags: ${{ matrix.flag }}
           override_pr: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
-          override_commit: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.sha || github.sha }}
+          override_commit: ${{ needs.configure.outputs.pr_head_sha }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
