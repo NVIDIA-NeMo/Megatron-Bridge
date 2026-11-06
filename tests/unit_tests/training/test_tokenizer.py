@@ -15,7 +15,7 @@
 from unittest.mock import patch, sentinel
 
 import pytest
-from transformers import AutoTokenizer
+from transformers import BertTokenizer
 
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
@@ -233,19 +233,18 @@ class TestTokenizers:
         # Cover the user case where a user has made a local path object of a WIP tokenizer and wants
         #  to use that in some megatron model at train time.
 
-        # First as a proxy download a tokenizer from HF and save it to a local path. A user would
-        #  do this differently by exporting their WIP tokenizer to a local path.
+        # First build a tokenizer in-process and save it to a local path, as a user would export
+        #  their WIP tokenizer. Building it here, instead of downloading one, keeps the test off the Hub.
 
-        # 1. Download a common, small tokenizer from the Hub
-        # "bert-base-uncased" is a safe choice as it's small and standard.
-        model_id = "bert-base-uncased"
-        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        # 1. Build a tiny BERT WordPiece tokenizer
+        vocab_tokens = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "unit", "test", "##ing", "is", "important", "."]
+        tokenizer = BertTokenizer(vocab={token: index for index, token in enumerate(vocab_tokens)})
 
         # 2. Define a local path in the temporary directory
         local_model_path = tmp_path / "my_local_tokenizer"
 
         # 3. Save the tokenizer to disk
-        # This creates tokenizer_config.json, vocab.txt, special_tokens_map.json, etc.
+        # This creates tokenizer_config.json and tokenizer.json.
         tokenizer.save_pretrained(str(local_model_path))
 
         # 4. Load it back using the local path
@@ -266,6 +265,8 @@ class TestTokenizers:
         original_tokens = tokenizer.encode(test_text)
         reloaded_tokens = loaded_tokenizer.tokenize(test_text)
 
+        # The vocabulary covers the text, so the comparison checks real WordPiece pieces, not [UNK].
+        assert tokenizer.unk_token_id not in original_tokens
         assert original_tokens == reloaded_tokens
         assert loaded_tokenizer.vocab_size == tokenizer.vocab_size
 
