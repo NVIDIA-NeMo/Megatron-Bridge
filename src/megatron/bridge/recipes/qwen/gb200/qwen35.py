@@ -616,9 +616,9 @@ def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config() -> ConfigCo
     for its longest sequence. Offline packing decides which samples share a step; dynamic CP still re-bins them.
     Steps therefore carry a nearly constant number of tokens instead of 32 samples of varying total length.
 
-    On these full rows static CP4 (``model.dynamic_context_parallel=false``) is faster than dynamic CP: static CP4 runs
-    each row as one balanced CP4 bin, while dynamic CP re-bins a step's sequences into about one more microbatch, and
-    the extra time is spent waiting at the expert-parallel dispatch of the MoE layers. See
+    On these full rows dynamic CP brings no throughput gain over static CP4
+    (``model.dynamic_context_parallel=false``), which runs each row as one balanced CP4 bin: after its longer warmup,
+    while each new group size compiles, dynamic CP runs about as fast. See
     ``docs/training/dynamic-context-parallel.md``.
     """
     cfg = qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config()

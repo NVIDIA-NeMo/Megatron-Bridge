@@ -160,8 +160,8 @@ CP4 on identical samples: 10.7% more throughput (95% bootstrap interval +7.5%
 to +14.0%), with a 13.3% faster median step.
 
 `qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config` runs the same
-model on the same mock samples packed offline, first-fit decreasing, into 64K
-rows, with a global batch of eight rows:
+model on the same mock samples packed offline, first-fit decreasing in chunks
+of 4,096 samples, into 64K rows, with a global batch of eight rows:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
@@ -174,16 +174,15 @@ first 10 dropped:
 
 | Packing | Static CP4 tokens/s | Dynamic CP tokens/s |
 |---|---:|---:|
-| Online, 32 samples per step | 12,157 | 13,301 |
-| Offline, eight 64K rows per step | 14,450 | 12,463 |
+| Online, 32 samples per step | 12,253 | 13,564 |
+| Offline, eight 64K rows per step | 13,271 | 12,536 |
 
-First-fit decreasing fills each row to its 64K capacity, so static CP4 packs a
-step into eight full bins, the fastest setup here. Dynamic CP re-bins the same
-sequences into about nine microbatches and is 13.8% slower than static CP4 on
-identical rows. Its gain on online data comes from re-binning microbatches that
-the order-preserving static packer leaves partly empty, and offline rows leave
-no such gap. Dynamic CP also takes longer to warm up, because each new group
-size compiles on first use.
+First-fit decreasing fills each row to nearly its 64K capacity, so static CP4
+runs a step as eight full, balanced CP4 bins, and offline packing makes it 8.3%
+faster than on online data. On these rows dynamic CP brings no gain: it is 5.5%
+slower over steps 11–200, almost all of it in steps 11–48, while each new group
+size compiles on first use, and 1.2% slower over steps 41–200 (95% bootstrap
+interval −3.9% to +1.6%). Online dynamic CP is the fastest of the four setups.
 
 `examples/agentic_sft` describes the setup and has a script that compares two
 runs' logs, by runtime tokens per second when they process different work.

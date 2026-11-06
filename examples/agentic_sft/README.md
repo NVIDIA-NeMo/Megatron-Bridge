@@ -109,23 +109,25 @@ give +12.5%).
 
 ### Offline packing
 
-Same model, samples, node type and container. The offline runs pack the samples into 1,600 rows of 64K tokens and take
-eight rows per step (524K runtime tokens per step, against 682K on average for 32 online samples). Steps 1–10 are
-excluded:
+Same model, mock data, node type, container and Megatron-Core. The offline runs pack the samples first-fit decreasing,
+in chunks of 4,096 samples, into rows of 64K tokens and take eight rows per step (524K runtime tokens per step, against
+679K on average for 32 online samples). Steps 1–10 are excluded:
 
 | Packing | Mode | Mean s/step | Runtime tokens/s | Median model TFLOP/s per GPU |
 | --- | --- | ---: | ---: | ---: |
-| Online, GBS 32 samples | Static CP4 | 55.98 | 12,157 | 96 |
-| Online, GBS 32 samples | Dynamic CP | 51.16 | 13,301 | 106 |
-| Offline, GBS 8 rows | Static CP4 | 36.27 | 14,450 | 113 |
-| Offline, GBS 8 rows | Dynamic CP | 42.05 | 12,463 | 101 |
+| Online, GBS 32 samples | Static CP4 | 55.43 | 12,253 | 95 |
+| Online, GBS 32 samples | Dynamic CP | 50.07 | 13,564 | 109 |
+| Offline, GBS 8 rows | Static CP4 | 39.49 | 13,271 | 103 |
+| Offline, GBS 8 rows | Dynamic CP | 41.80 | 12,536 | 104 |
 
-* **Offline static CP4 is the fastest setup: +18.9% over online static CP4, +8.6% over online dynamic CP.**
-* On identical offline rows, dynamic CP is 13.8% slower than static CP4 (95% bootstrap interval −16.5% to −10.9%; it
-  wins 8 of 190 paired steps; −9.7% after its longer warmup, steps 41–200).
-* First-fit decreasing fills each row to its 64K capacity, and static CP4 keeps them as eight full CP4 bins per step.
-  Dynamic CP re-bins the same sequences into about nine microbatches (simulated with Megatron-Core's scheduler: 9.05
-  against 8.00; online it is the reverse, 11.3 against 13.7), with the same per-rank critical path.
-* The online dynamic CP run on this branch matches the earlier one (13,301 against 13,069 tokens/s).
+* **Online dynamic CP is the fastest setup here.** Offline packing speeds up static CP4 by 8.3% (95% bootstrap
+  interval +5.3% to +11.3%), but offline static CP4 stays 2.2% behind online dynamic CP.
+* On identical offline rows, dynamic CP brings no gain over static CP4. Over steps 11–200 it is 5.5% slower (95%
+  bootstrap interval −8.5% to −2.4%), almost all of it in its longer warmup: by consecutive 38-step blocks it is
+  −22.6%, +0.7%, −2.4%, +1.9% and −0.9%. Over steps 41–200 it is 1.2% slower (−3.9% to +1.6%), with a 1.9% faster
+  median step, and it is faster on 92 of those 160 paired steps.
+* First-fit decreasing fills each row to nearly its 64K capacity, and static CP4 runs each row as one balanced CP4
+  bin. Dynamic CP re-bins a step's sequences into about one more microbatch (simulated with Megatron-Core's
+  scheduler: 9.03 against 8.00; online it is the reverse, 11.33 against 13.64).
 * The original example reports offline dynamic CP at 14,925 tokens/s against 14,342 online on its own mixed data; it
   did not measure offline static CP4.
