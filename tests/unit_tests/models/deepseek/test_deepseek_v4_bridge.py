@@ -574,17 +574,17 @@ class TestDeepSeekV4HardwareCapabilities:
 
 
 class TestDeepSeekV4HardwareDefaults:
-    """DSv4 defaults cuDNN CSA on Hopper+ while fused mHC remains Blackwell-only."""
+    """DSv4 defaults cuDNN CSA on Hopper+ and maps the unfused mHC path on every GPU."""
 
     @pytest.mark.parametrize(
-        ("capability", "expected_dsa_backend", "expected_fused_mhc"),
+        ("capability", "expected_dsa_backend"),
         [
-            ((8, 0), "none", False),
-            ((9, 0), "cudnn", False),
-            ((10, 0), "cudnn", True),
+            ((8, 0), "none"),
+            ((9, 0), "cudnn"),
+            ((10, 0), "cudnn"),
         ],
     )
-    def test_model_config_gates_fusions_by_hardware(self, capability, expected_dsa_backend, expected_fused_mhc):
+    def test_model_config_gates_fusions_by_hardware(self, capability, expected_dsa_backend):
         hf_config = _deepseek_v4_hf_config()
 
         with (
@@ -600,7 +600,8 @@ class TestDeepSeekV4HardwareDefaults:
         assert out.dsa_kernel_backend == expected_dsa_backend
         assert out.enable_mhc_connections is True
         assert out.mhc_num_residual_streams == hf_config.hc_mult
-        assert out.use_fused_mhc is expected_fused_mhc
+        assert out.use_fused_mhc is False
+        assert out.mhc_norm_eps_inside_sqrt is True
 
     def test_model_config_disables_fusions_without_cuda(self):
         with patch.object(torch.cuda, "is_available", return_value=False):
@@ -609,6 +610,7 @@ class TestDeepSeekV4HardwareDefaults:
         assert out.dsa_kernel_backend == "none"
         assert out.enable_mhc_connections is True
         assert out.use_fused_mhc is False
+        assert out.mhc_norm_eps_inside_sqrt is True
 
     def test_model_config_disables_dsa_fusion_when_optional_kernels_are_missing(self):
         with (
@@ -623,7 +625,33 @@ class TestDeepSeekV4HardwareDefaults:
 
         assert out.dsa_kernel_backend == "none"
         assert out.enable_mhc_connections is True
-        assert out.use_fused_mhc is True
+        assert out.use_fused_mhc is False
+        assert out.mhc_norm_eps_inside_sqrt is True
+
+
+class TestDeepSeekV4MhcNormalization:
+    """mHC mappings must use DeepSeek-V4's ``x * rsqrt(mean(x**2) + rms_norm_eps)`` normalization."""
+
+    def test_model_config_places_mhc_norm_eps_inside_sqrt_on_blackwell(self):
+        hf_config = _native_deepseek_v4_config()
+
+        # Blackwell used to select fused mHC, which Megatron Core rejects with mhc_norm_eps_inside_sqrt.
+        with (
+            patch.object(torch.cuda, "is_available", return_value=True),
+            patch.object(torch.cuda, "get_device_capability", return_value=(10, 0)),
+        ):
+            model_config = DeepSeekV4Bridge().hf_config_to_model_config(hf_config)
+        # finalize() runs Megatron Core's config validation, including its fused-mHC checks.
+        model_config.finalize()
+
+        transformer = model_config.transformer
+        assert transformer.enable_mhc_connections is True
+        assert transformer.mhc_norm_eps_inside_sqrt is True
+        assert transformer.use_fused_mhc is False
+        assert transformer.layernorm_epsilon == hf_config.rms_norm_eps
+        # BF16 mappings and stream mixing. DeepSeek's inference code keeps both in FP32, which differs
+        # from this path only by rounding.
+        assert transformer.mhc_keep_mappings_in_fp32 is False
 
 
 class TestDeepSeekV4ExportWeightDtype:

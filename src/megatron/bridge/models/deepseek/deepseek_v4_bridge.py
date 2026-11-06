@@ -445,7 +445,6 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         configuration.
         """
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
-        use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
         use_dsa_kernel_fusion = (
             torch.cuda.is_available()
             and torch.cuda.get_device_capability()[0] >= 9
@@ -546,7 +545,11 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             # ---- Hyper-Connections (mHC) ----
             enable_mhc_connections=True,
             mhc_num_residual_streams=hf_config.hc_mult,  # 4
-            use_fused_mhc=use_blackwell_fused_kernels,
+            # DeepSeek-V4 adds rms_norm_eps inside the square root of the mHC mapping norm.
+            # Only the unfused mHC path supports that, so the bridge maps it on every GPU;
+            # recipes that enable fused mHC also set mhc_norm_eps_inside_sqrt=False.
+            mhc_norm_eps_inside_sqrt=True,
+            use_fused_mhc=False,
             mhc_sinkhorn_iterations=hf_config.hc_sinkhorn_iters,  # 20
             # ---- MoE ----
             gated_linear_unit=True,
