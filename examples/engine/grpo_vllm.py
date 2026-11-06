@@ -262,11 +262,14 @@ def one_engine_at_a_time(engines: dict[str, TrainingEngine], action) -> dict[str
                 other.cpu()
         engine.cuda()
         results[name] = action(name, engine)
+    # Restore in two passes: everything that belongs on the host leaves first, so an engine coming
+    # back never sits next to the last one acted on.
+    for name, engine in engines.items():
+        if not was_resident[name] and engine.device == "cuda":
+            engine.cpu()
     for name, engine in engines.items():
         if was_resident[name] and engine.device == "cpu":
             engine.cuda()
-        elif not was_resident[name] and engine.device == "cuda":
-            engine.cpu()
     return results
 
 
