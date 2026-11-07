@@ -213,10 +213,10 @@ def hf_config():
 class TestQwen3VLModel:
     """Test suite for Qwen3VL Model."""
 
-    @classmethod
-    def setup_class(cls):
-        """Setup distributed process group once for all tests in this class."""
-        if not dist.is_initialized():
+    def setup_method(self):
+        """Create a process group per test so subgroups do not accumulate across tests."""
+        self._owns_process_group = not dist.is_initialized()
+        if self._owns_process_group:
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29500"
             os.environ["RANK"] = "0"
@@ -233,12 +233,6 @@ class TestQwen3VLModel:
                 rank=0,
                 timeout=datetime.timedelta(minutes=30),
             )
-
-    @classmethod
-    def teardown_class(cls):
-        """Teardown distributed process group once after all tests in this class."""
-        if dist.is_initialized():
-            dist.destroy_process_group()
 
     def _setup_parallel_state(self, tp_size=1, ep_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state with specified parallelism configuration.
@@ -265,8 +259,12 @@ class TestQwen3VLModel:
         model_parallel_cuda_manual_seed(123)
 
     def teardown_method(self):
-        """Teardown Megatron parallel state after each test method."""
-        parallel_state.destroy_model_parallel()
+        """Release this test's parallel state and owned process groups."""
+        try:
+            parallel_state.destroy_model_parallel()
+        finally:
+            if self._owns_process_group and dist.is_initialized():
+                dist.destroy_process_group()
 
     @staticmethod
     def get_vision_transformer_config(hf_config):
