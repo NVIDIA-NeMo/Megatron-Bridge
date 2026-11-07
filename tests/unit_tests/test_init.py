@@ -17,6 +17,7 @@ import importlib.abc
 import importlib.util
 import os
 import sys
+from unittest import mock
 
 import pytest
 
@@ -44,10 +45,12 @@ class _ModeloptSettingTritonEnv(importlib.abc.MetaPathFinder, importlib.abc.Load
 
 @pytest.fixture
 def reload_bridge(monkeypatch):
-    monkeypatch.delitem(sys.modules, "modelopt", raising=False)
-    monkeypatch.delitem(sys.modules, "modelopt.torch", raising=False)
+    monkeypatch.setattr(megatron.bridge, "modelopt", getattr(megatron.bridge, "modelopt", None), raising=False)
     monkeypatch.setattr(sys, "meta_path", [_ModeloptSettingTritonEnv(), *sys.meta_path])
-    return lambda: importlib.reload(megatron.bridge)
+    with mock.patch.dict(sys.modules):
+        sys.modules.pop("modelopt", None)
+        sys.modules.pop("modelopt.torch", None)
+        yield lambda: importlib.reload(megatron.bridge)
 
 
 def test_import_does_not_leak_triton_cache_autotuning(monkeypatch, reload_bridge):
