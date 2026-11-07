@@ -4800,6 +4800,28 @@ class TestCheckpointIterationResolution:
         assert iteration == 1000
         assert release is False
 
+    @pytest.mark.parametrize("metadata,expected", [("0", (0, False)), ("12", (12, False)), ("release", (0, True))])
+    def test_resolve_legacy_tracker_contents(self, tmp_path, metadata, expected):
+        """Legacy roots include untrained iteration-zero and release checkpoints."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        tracker = tmp_path / "latest_checkpointed_iteration.txt"
+        tracker.write_text(metadata)
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            assert _resolve_checkpoint_iteration(str(tmp_path), None) == expected
+
+    @pytest.mark.parametrize("metadata,error", [("-1", AssertionError), ("invalid", SystemExit)])
+    def test_reject_invalid_legacy_tracker_contents(self, tmp_path, metadata, error):
+        """Accepting iteration zero must not admit negative or malformed selectors."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        tracker = tmp_path / "latest_checkpointed_iteration.txt"
+        tracker.write_text(metadata)
+
+        with patch("torch.distributed.is_initialized", return_value=False), pytest.raises(error):
+            _resolve_checkpoint_iteration(str(tmp_path), None)
+
     @patch("megatron.bridge.training.checkpointing.file_exists")
     @patch("megatron.bridge.training.checkpointing.read_metadata")
     def test_fallback_to_legacy_tracker(self, mock_read_metadata, mock_file_exists):
