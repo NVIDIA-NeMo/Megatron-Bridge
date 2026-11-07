@@ -16,6 +16,7 @@
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.b300.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
 )
@@ -62,6 +63,27 @@ def deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_config() -> ConfigContainer:
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+    return cfg
+
+
+def deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_ncclep_config() -> ConfigContainer:
+    """DeepSeek V4 Flash pretrain: 128× B200, MXFP8, NCCL-EP dispatcher, TE partial CG."""
+    cfg = deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config()
+    _apply_deepseek_v4_b200_overrides(cfg)
+    _enable_ncclep(cfg)
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
