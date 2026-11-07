@@ -28,12 +28,19 @@ import torch.nn.functional as F
 from torch import nn
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
-from transformers.modeling_attn_mask_utils import (
-    AttentionMaskConverter,
-    _prepare_4d_attention_mask,
-    _prepare_4d_causal_attention_mask,
-    _prepare_4d_causal_attention_mask_for_sdpa,
-)
+try:
+    from transformers.modeling_attn_mask_utils import (
+        AttentionMaskConverter,
+        _prepare_4d_attention_mask,
+        _prepare_4d_causal_attention_mask,
+        _prepare_4d_causal_attention_mask_for_sdpa,
+    )
+except ImportError:
+    # transformers >= 4.44 removed modeling_attn_mask_utils; not used during Megatron training
+    AttentionMaskConverter = None  # type: ignore[assignment,misc]
+    _prepare_4d_attention_mask = None  # type: ignore[assignment]
+    _prepare_4d_causal_attention_mask = None  # type: ignore[assignment]
+    _prepare_4d_causal_attention_mask_for_sdpa = None  # type: ignore[assignment]
 from transformers.modeling_outputs import MoeModelOutputWithPast
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from transformers.modeling_utils import PreTrainedModel
