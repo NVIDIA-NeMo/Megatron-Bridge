@@ -93,6 +93,24 @@ def _apply_one_gpu_per_rank(recipe) -> None:
         )
 
 
+def _resolve_hf_home() -> None:
+    """Set HF_HOME if not already in the environment.
+
+    Walks up from this file looking for a .cache/huggingface directory so the
+    recipe's AutoBridge.from_hf_pretrained() calls can find the model configs
+    even when the container does not propagate HF_HOME via --container-env.
+    """
+    if "HF_HOME" in os.environ:
+        return
+    candidate = Path(__file__).resolve()
+    for _ in range(8):
+        candidate = candidate.parent
+        hf_cache = candidate / ".cache" / "huggingface"
+        if hf_cache.is_dir():
+            os.environ["HF_HOME"] = str(hf_cache)
+            return
+
+
 def _prepend_local_src_to_pythonpath() -> None:
     """Prepend this repo's src/ directory to PYTHONPATH before execvpe.
 
@@ -118,6 +136,7 @@ def main() -> None:
     """Prepare process settings, then execute one training entrypoint."""
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
+    _resolve_hf_home()
     recipe, target_name = _prepare_recipe_and_target(args, cli_overrides)
     _apply_recipe_environment(recipe)
     _apply_one_gpu_per_rank(recipe)
