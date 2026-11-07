@@ -346,6 +346,14 @@ def setup(
     if hasattr(cfg.dataset, "tokenizer"):
         cfg.dataset.tokenizer = tokenizer
 
+    # Older dev stores this field; newer MCore derives it from the tokenizer.
+    if hasattr(cfg.dataset, "token_dtype_code") and cfg.dataset.token_dtype_code is None:
+        vocab_size = getattr(tokenizer, "vocab_size", None)
+        if vocab_size is not None:
+            import numpy
+
+            cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
+
     if cfg.train.num_epochs is not None:
         if should_fire(callback_manager, "on_data_init_start"):
             raise ValueError("num_epochs is not supported with on_data_init_start callbacks")
