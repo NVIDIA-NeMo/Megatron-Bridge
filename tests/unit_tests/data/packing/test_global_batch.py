@@ -22,11 +22,13 @@ import torch
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.datasets.gpt_sft import GPTSFTDataset
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.packing.global_batch import (
     REQUIRED_SAMPLE_KEYS,
     build_unpacked_sequence_sample,
     fold_alignment_padding,
 )
+from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 
 
 pytestmark = pytest.mark.unit
@@ -130,3 +132,64 @@ def test_gpt_sft_dataset_config_declares_capability_and_exclusivity():
             seq_length=4096, dataset_root="/tmp/x", enable_global_batch_packing=True, dataloader_type="batch"
         ).validate()
     assert GPTSFTDatasetConfig(seq_length=4096, dataset_root="/tmp/x").yields_unpacked_samples is False
+
+
+def _packed_dataset(*, offline_pad_to: int = 1, fold: bool = False) -> GPTSFTPackedDataset:
+    dataset = GPTSFTPackedDataset.__new__(GPTSFTPackedDataset)
+    dataset.enable_global_batch_packing = True
+    dataset.global_batch_packing_pad_to_multiple_of = 8
+    dataset.fold_alignment_padding = fold
+    dataset.answer_only_loss = True
+    dataset._pad_seq_to_mult = offline_pad_to
+    dataset.tokenizer = SimpleNamespace(eos_id=2)
+    return dataset
+
+
+def test_offline_packed_rows_split_into_one_sample_per_sequence():
+    dataset = _packed_dataset()
+    row = {
+        "input_ids": [10, 11, 12, 20, 21, 22, 23],
+        "seq_boundaries": [0, 3, 7],
+        "loss_mask": [0, 1, 0, 0, 1, 1, 0],
+    }
+    first, second = dataset.collate_fn([row])
+    # Labels shift inside each sequence; the mask covers [start, end - 1) of the row, as in offline THD collation.
+    assert first["tokens"].tolist()[:2] == [10, 11] and first["labels"].tolist()[:2] == [11, 12]
+    assert first["loss_mask"].tolist() == [0.0, 1.0] + [0.0] * 6
+    assert second["tokens"].tolist()[:3] == [20, 21, 22] and second["labels"].tolist()[:3] == [21, 22, 23]
+    assert second["loss_mask"].tolist() == [0.0, 1.0, 1.0] + [0.0] * 5
+    assert [s["original_seq_len"].item() for s in (first, second)] == [2, 3]
+    assert [s["padded_seq_len"].item() for s in (first, second)] == [8, 8]
+    assert set(first) == set(REQUIRED_SAMPLE_KEYS)
+
+
+def test_offline_packed_rows_of_a_batch_are_flattened():
+    dataset = _packed_dataset()
+    rows = [
+        {"input_ids": [10, 11, 12], "seq_boundaries": [0, 3], "loss_mask": [1, 1, 1]},
+        {"input_ids": [20, 21, 30, 31, 32], "seq_boundaries": [0, 2, 5], "loss_mask": [1] * 5},
+    ]
+    assert [s["original_seq_len"].item() for s in dataset.collate_fn(rows)] == [2, 1, 2]
+
+
+def test_offline_alignment_padding_is_replaced_by_the_runtime_multiple():
+    dataset = _packed_dataset(offline_pad_to=4, fold=True)
+    # Three real tokens, then zero-loss EOS padding written by offline packing.
+    row = {"input_ids": [30, 31, 32, 2, 2, 9], "seq_boundaries": [0, 5, 6], "loss_mask": [1, 1, 1, 0, 0, 0]}
+    [sample] = dataset.collate_fn([row])  # the one-token second sequence has no input token and is dropped
+    assert sample["tokens"].tolist()[:3] == [30, 31, 32]
+    assert sample["loss_mask"].tolist() == [1.0, 1.0, 1.0] + [0.0] * 5
+    assert sample["original_seq_len"].item() == 8 == sample["padded_seq_len"].item()
+
+
+def test_offline_packed_global_batch_config_is_accepted():
+    config = GPTSFTDatasetConfig(
+        seq_length=4096,
+        dataset_root="/tmp/x",
+        enable_global_batch_packing=True,
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=4096),
+        dataloader_type="single",
+    )
+    config.validate()
+    assert config.yields_unpacked_samples is True
