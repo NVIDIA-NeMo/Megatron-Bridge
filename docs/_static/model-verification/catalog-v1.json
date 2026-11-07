@@ -3172,7 +3172,7 @@
     },
     {
       "architecture": "KimiK3ForConditionalGeneration",
-      "base_container": "nvcr.io/nvidia/nemo:26.06",
+      "base_container": "nvcr.io/nvidia/nemo:26.10",
       "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
       "entries": [
         {
@@ -3193,7 +3193,7 @@
           "workflow": "hf_to_megatron_cpu"
         },
         {
-          "bridge_commit": "cec012e568c55a6c0906622d8a5b0986a79f40cf",
+          "bridge_commit": "fbce9ac37bafd9e48453823cab75a95c20f7f6fd",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -3211,9 +3211,9 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "kimi-k3-hf-to-megatron-gpu",
-          "expected_result": "On 48x GB200, the pinned complete checkpoint imports at TP2/PP3/EP8/ETP2 and exits successfully in 27:01. Published MXFP4 routed-expert weights are dequantized to BF16, and iter_0000000 is persisted with 48 distributed-checkpoint shards, metadata, and the recorded 93-layer run configuration. Exact Hugging Face round-trip parity is tracked separately by megatron_to_hf_gpu.\n",
+          "expected_result": "On 48x GB200, the pinned complete checkpoint imports at TP2/PP3/EP8/ETP2 and exits successfully. Published MXFP4 routed-expert weights are dequantized to BF16, and iter_0000000 is persisted with 48 distributed-checkpoint shards, metadata, and the recorded 93-layer run configuration. Exact Hugging Face round-trip parity is tracked separately by megatron_to_hf_gpu.\n",
           "hardware": null,
-          "last_verified": "2026-07-28",
+          "last_verified": "2026-11-06",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.hf_to_megatron_gpu",
@@ -3273,24 +3273,27 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "eb91f8be86e5f88771bfa020b33cd74dd3de80ad",
+          "bridge_commit": "fbce9ac37bafd9e48453823cab75a95c20f7f6fd",
           "command_topologies": [
             {
               "expert_parallel": "8",
               "expert_tensor_parallel": "1",
+              "gpus_per_node": "3",
+              "nodes": "8",
               "pipeline_parallel": "3",
-              "tensor_parallel": "1"
+              "tensor_parallel": "1",
+              "total_gpus": 24
             }
           ],
           "commands": [
-            "uv run python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path moonshotai/Kimi-K3 --trust-remote-code --apply-chat-template --thinking-mode disabled --prompt \"What is 15% of 240? Answer in one short sentence.\" --max_new_tokens 32 --tp 1 --pp 3 --ep 8 --etp 1"
+            "./scripts/inference/infer.sh --nodes 8 --gpus-per-node 3 --task legacy-full-prefix-generation --legacy-full-prefix --hf_model_path moonshotai/Kimi-K3 --trust-remote-code --hf-revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569 --apply-chat-template --thinking-mode disabled --prompt \"What is 15% of 240? Answer in one short sentence.\" --max_new_tokens 32 --tp 1 --pp 3 --ep 8 --etp 1"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "kimi-k3-inference",
-          "expected_result": "On 24x GB300, the pinned complete language backbone imports directly into Megatron at TP1/PP3/EP8/ETP1. The command exits successfully in 22:59 after exactly 32 new greedy tokens and prints this completion, represented with JSON Unicode escapes for the model control-token brackets: \"15% of 240 = 0.15 \u00d7 240 = 36.\\u003c|close|\\u003ethink\\u003c|sep|\\u003e\\u003c|open|\\u003eresponse\\u003c|sep|\\u003e15% of 240 is 36.\".",
+          "expected_result": "On 24x GB300 across eight nodes, the pinned complete language backbone imports directly into Megatron at TP1/PP3/EP8/ETP1 and the launcher's full-prefix decoding path runs one deterministic greedy generation. The command exits successfully after exactly 32 new tokens, without an earlier EOS, and prints this completion, represented with JSON Unicode escapes for the model control-token brackets: \"15% of 240 = 0.15 \u00d7 240 = 36.\\u003c|close|\\u003ethink\\u003c|sep|\\u003e\\u003c|open|\\u003eresponse\\u003c|sep|\\u003e15% of 240 is 36.\".",
           "hardware": null,
-          "last_verified": "2026-07-27",
+          "last_verified": "2026-11-06",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.inference",
