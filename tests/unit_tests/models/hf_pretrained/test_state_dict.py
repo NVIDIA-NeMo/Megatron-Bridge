@@ -625,8 +625,10 @@ class TestSafeTensorsStateSourceCache:
         monkeypatch.setattr(safetensors, "safe_open", counting)
         return calls
 
-    def test_small_cache_returns_independent_tensors(self, tmp_path):
+    @pytest.mark.parametrize("reuse_handles", ["1", "0"])
+    def test_small_cache_returns_independent_tensors(self, tmp_path, monkeypatch, reuse_handles):
         self._write_checkpoint(tmp_path, {"w.scale": torch.tensor([1.0]), "w.weight": torch.ones(4, 4)})
+        monkeypatch.setenv("MBRIDGE_STATE_REUSE_HANDLES", reuse_handles)
         source = SafeTensorsStateSource(tmp_path)
 
         first = source.load_tensors(["w.scale"])["w.scale"]

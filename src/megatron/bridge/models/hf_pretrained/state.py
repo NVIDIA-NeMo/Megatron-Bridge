@@ -779,7 +779,7 @@ class SafeTensorsStateSource(StateSource):
                             for key in keys_in_file:
                                 source_key = (self.key_prefix or "") + key
                                 if source_key in file_keys and key not in loaded_tensors:
-                                    if self._cache_small and key in self._read_once_keys:
+                                    if self._reuse_handles and self._cache_small and key in self._read_once_keys:
                                         # reused handles share pages that callers may have modified in place
                                         with safe_open(file_path, framework="pt", device="cpu") as fresh:
                                             loaded_tensors[key] = fresh.get_tensor(source_key)
