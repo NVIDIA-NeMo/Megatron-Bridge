@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1780" height="520" viewBox="0 0 1780 520" role="img" aria-labelledby="title desc">
+<title id="title">TrainingEngine: loose and strict data contracts</title>
+<desc id="desc">User input and output sit outside the engine.forward_only or engine.forward_backward call. Inside the call are preprocess, MCore, and postprocess. Blue regions indicate loose, customizable data pipelines; the green region indicates the strict prepared-input and model-output contracts.</desc>
+<rect width="1780" height="520" fill="white"/>
+<path d="M 284 85 Q 885.0 84 1486 85 Q 1501 85 1500 99 L 1500.5 476 Q 1500 491 1486 490 Q 885.0 491 284 490 Q 269 490 270 476 L 269.5 99 Q 270 84 284 85 Z" fill="#ffffff" stroke="#626b73" stroke-width="2"/>
+<text x="885.0" y="136.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="28">engine.forward_only(...)  /  engine.forward_backward(...)</text>
+<path d="M 304 175 Q 420.0 174 536 175 Q 551 175 550 189 L 550.5 441 Q 550 456 536 455 Q 420.0 456 304 455 Q 289 455 290 441 L 289.5 189 Q 290 174 304 175 Z" fill="#edf5ff" stroke="transparent" stroke-width="2"/>
+<path d="M 564 175 Q 890.0 174 1216 175 Q 1231 175 1230 189 L 1230.5 441 Q 1230 456 1216 455 Q 890.0 456 564 455 Q 549 455 550 441 L 549.5 189 Q 550 174 564 175 Z" fill="#edf7ed" stroke="transparent" stroke-width="2"/>
+<path d="M 1244 175 Q 1355.0 174 1466 175 Q 1481 175 1480 189 L 1480.5 441 Q 1480 456 1466 455 Q 1355.0 456 1244 455 Q 1229 455 1230 441 L 1229.5 189 Q 1230 174 1244 175 Z" fill="#edf5ff" stroke="transparent" stroke-width="2"/>
+<path d="M 44 250 Q 120.0 249 196 250 Q 211 250 210 264 L 210.5 341 Q 210 356 196 355 Q 120.0 356 44 355 Q 29 355 30 341 L 29.5 264 Q 30 249 44 250 Z" fill="#edf5ff" stroke="#5c88b3" stroke-width="2"/>
+<text x="120.0" y="292.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="25">User input</text>
+<text x="120.0" y="330.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="18">Global Datum list</text>
+<path d="M 329 250 Q 417.5 249 506 250 Q 521 250 520 264 L 520.5 341 Q 520 356 506 355 Q 417.5 356 329 355 Q 314 355 315 341 L 314.5 264 Q 315 249 329 250 Z" fill="#ffffff" stroke="#5c88b3" stroke-width="2"/>
+<text x="417.5" y="292.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="25">Preprocess</text>
+<text x="417.5" y="330.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="18">Pack and shard</text>
+<path d="M 804 250 Q 900.0 249 996 250 Q 1011 250 1010 264 L 1010.5 341 Q 1010 356 996 355 Q 900.0 356 804 355 Q 789 355 790 341 L 789.5 264 Q 790 249 804 250 Z" fill="#ffffff" stroke="#4d8054" stroke-width="2"/>
+<text x="900.0" y="292.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="25">MCore</text>
+<text x="900.0" y="330.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="18">Model execution</text>
+<path d="M 1264 250 Q 1355.0 249 1446 250 Q 1461 250 1460 264 L 1460.5 341 Q 1460 356 1446 355 Q 1355.0 356 1264 355 Q 1249 355 1250 341 L 1249.5 264 Q 1250 249 1264 250 Z" fill="#ffffff" stroke="#5c88b3" stroke-width="2"/>
+<text x="1355.0" y="292.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="25">Postprocess</text>
+<text x="1355.0" y="330.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="18">Gather or reduce</text>
+<path d="M 1574 250 Q 1650.0 249 1726 250 Q 1741 250 1740 264 L 1740.5 341 Q 1740 356 1726 355 Q 1650.0 356 1574 355 Q 1559 355 1560 341 L 1559.5 264 Q 1560 249 1574 250 Z" fill="#edf5ff" stroke="#5c88b3" stroke-width="2"/>
+<text x="1650.0" y="292.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="25">User output</text>
+<text x="1650.0" y="330.0" text-anchor="middle" fill="#263238" font-family="Comic Sans MS, Chalkboard, cursive" font-size="18">Scores / summary</text>
+<path d="M 220 303 Q 262.5 302 305 303" fill="none" stroke="#263238" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M 294 297 L 305 303 L 294 310" fill="none" stroke="#263238" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 530 303 Q 655.0 302 780 303" fill="none" stroke="#263238" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M 769 297 L 780 303 L 769 310" fill="none" stroke="#263238" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1020 303 Q 1130.0 302 1240 303" fill="none" stroke="#263238" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M 1229 297 L 1240 303 L 1229 310" fill="none" stroke="#263238" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1470 303 Q 1510.0 302 1550 303" fill="none" stroke="#263238" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M 1539 297 L 1550 303 L 1539 310" fill="none" stroke="#263238" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="670.0" y="394.0" text-anchor="middle" fill="#326139" font-family="Comic Sans MS, Chalkboard, cursive" font-size="21">PreparedMicrobatch</text>
+<text x="1115.0" y="394.0" text-anchor="middle" fill="#326139" font-family="Comic Sans MS, Chalkboard, cursive" font-size="21">ModelOutput</text>
+</svg>
