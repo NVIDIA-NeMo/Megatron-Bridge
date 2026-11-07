@@ -37,7 +37,7 @@ permissions:
 
 jobs:
   code-freeze:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_code_freeze.yml@61445a177938967f70c94094b98402e979452151 # github app authentication
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_code_freeze.yml@9804c761eea4e3afad5e98cca0234d9e46c78adf # github app authentication
     with:
       app-id: ${{ vars.BOT_ID }}
       environment-name: main
@@ -47,6 +47,7 @@ jobs:
       release-type: ${{ inputs.release-type }}
       freeze-commit: ${{ inputs.freeze-commit }}
       dry-run: ${{ inputs.dry-run }}
+      update-release-docs: true
       next-pre-release: ""
       next-dev: ""
     secrets:
@@ -56,10 +57,10 @@ jobs:
 
   bump-docs-versions:
     needs: [code-freeze]
+    if: ${{ !inputs.dry-run }}
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.code-freeze.outputs.release-branch }}
-      DRY_RUN: ${{ inputs.dry-run }}
     steps:
       - name: Generate GitHub App token
         id: app-token
@@ -83,52 +84,16 @@ jobs:
 
       - name: Update versions1.json
         run: |
-          version_number=$(echo ${VERSION} | sed 's/^r//')
+          version_number="${VERSION#r}"
 
           jq --arg ver "$version_number" \
-            '. += [{"version": $ver, "url": "https://docs.nvidia.com/nemo/megatron-bridge/\($ver)/"}] | sort_by(.version) | reverse' \
+            'if any(.[]; .version == $ver) then . else .[0:1] + [{"version": $ver, "url": "https://docs.nvidia.com/nemo/megatron-bridge/\($ver)/"}] + .[1:] end' \
             docs/versions1.json > tmp.json && mv tmp.json docs/versions1.json
 
       - name: Commit changes
-        id: commit-versions1
         run: |
           git add docs/versions1.json
-          git commit -m "[🤖]: Update docs-versions after code-freeze for ${VERSION}"
-          commit_hash=$(git rev-parse HEAD)
-          echo "commit_hash=${commit_hash}" | tee -a $GITHUB_OUTPUT
-
-          if [[ "$DRY_RUN" != "true" ]]; then
-            git push
-          fi
-
-      - name: Switch to release branch
-        run: |
-          git fetch origin ${{ needs.code-freeze.outputs.release-branch }}
-          git checkout ${{ needs.code-freeze.outputs.release-branch }}
-
-      - name: Cherry-pick docs-versions commit
-        run: |
-          git cherry-pick ${{ steps.commit-versions1.outputs.commit_hash }}
-
-      - name: Update project.json
-        run: |
-          version_number=$(echo ${VERSION} | sed 's/^r//')
-
-          jq --arg ver "$version_number" \
-            '. = {"version": $ver, "name": "megatron-bridge"}' \
-            docs/project.json > tmp.json && mv tmp.json docs/project.json
-
-      - name: Update conf.py
-        run: |
-          version_number=$(echo ${VERSION} | sed 's/^r//')
-          sed -i "s/release = .*/release = \"${version_number}\"/" docs/conf.py
-
-      - name: Commit changes
-        run: |
-          git add docs/project.json
-          git add docs/conf.py
-          git commit -m "Bump docs version to ${VERSION}"
-
-          if [[ "$DRY_RUN" != "true" ]]; then
+          if ! git diff --cached --quiet; then
+            git commit -s -m "[🤖]: Update docs-versions after code-freeze for ${VERSION}"
             git push
           fi
