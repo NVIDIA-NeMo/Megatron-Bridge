@@ -32,6 +32,7 @@ from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinea
 from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
+    PackedPerExpertLinear,
     ParallelLinearAdapter,
     SharedOuterGroupedExpertAdapter,
     all2all_hp2sp,
@@ -1597,7 +1598,7 @@ class TestExpertParallelReplicatedGradSync:
         """The init handed to the TP-sharded shared side and to the per-expert pack must not depend on the shard shape."""
         in_features, dim, out_features = 1024, 16, 512
         mock_config = MockModelParallelConfig()
-        mock_config._pg_collection = make_mock_pg_collection(ep_size=2)
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=1)
         shared = Mock()
         shared.weight = nn.Parameter(torch.ones(2, 2))
         per_expert = Mock()
@@ -1624,6 +1625,8 @@ class TestExpertParallelReplicatedGradSync:
 
         column_init = mock_col_linear.call_args.kwargs["init_method"]
         row_init = mock_packed.call_args.kwargs["init_method"]
+        # The per-expert pack needs its EP slot to draw each global expert's own init.
+        assert (mock_packed.call_args.kwargs["ep_rank"], mock_packed.call_args.kwargs["ep_size"]) == (1, 2)
         # The tensor-derived xavier reads its fan off whatever shard Megatron hands it; the resolved init does not.
         assert column_init is not nn.init.xavier_normal_
         expected_std = math.sqrt(2.0 / (in_features + dim))
@@ -1730,6 +1733,70 @@ class TestGroupedExpertLinearAdapter:
         expected_std = math.sqrt(2.0 / (in_features + dim))
         for etp, std in stds.items():
             assert std == pytest.approx(expected_std, rel=0.05), (etp, std, expected_std)
+
+    @pytest.mark.parametrize(
+        ("ep_size", "etp_size", "input_is_parallel"),
+        [
+            pytest.param(2, 1, True, id="ep2-fc2"),
+            pytest.param(4, 1, True, id="ep4-fc2"),
+            pytest.param(2, 2, True, id="ep2-etp2-fc2"),
+            pytest.param(2, 2, False, id="ep2-etp2-fc1"),
+        ],
+    )
+    def test_grouped_expert_linear_adapter_init_is_invariant_to_expert_parallel_layout(
+        self, ep_size, etp_size, input_is_parallel
+    ):
+        """Every EP rank seeds the same; stacking all ranks' shards must reproduce the EP=1 init expert for expert."""
+        in_features, dim, out_features, num_experts = 64, 8, 32, 8
+
+        def build(ep_rank: int, etp_rank: int, ep: int, etp: int) -> GroupedExpertLinearAdapter:
+            cfg = MockModelParallelConfig()
+            cfg.expert_model_parallel_size = ep
+            cfg.expert_tensor_parallel_size = etp
+            torch.manual_seed(0)
+            return GroupedExpertLinearAdapter(
+                in_features=in_features,
+                out_features=out_features,
+                dim=dim,
+                num_local_experts=num_experts // ep,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+                activation="identity",
+                row_init_method="normal",
+                input_is_parallel=input_is_parallel,
+                model_parallel_config=cfg,
+                pg_collection=make_mock_pg_collection(ep_size=ep, ep_rank=ep_rank, etp_size=etp, etp_rank=etp_rank),
+            )
+
+        reference = build(0, 0, 1, 1)
+        shards = [
+            [build(ep_rank, etp_rank, ep_size, etp_size) for etp_rank in range(etp_size)] for ep_rank in range(ep_size)
+        ]
+        for side in ("linear_in", "linear_out"):
+            tp_axis = getattr(shards[0][0], f"_{side}_tp_axis")
+            stacked = torch.cat(
+                [torch.cat([getattr(s, side).weight for s in row], dim=tp_axis) for row in shards],
+                dim=0,
+            )
+            torch.testing.assert_close(stacked, getattr(reference, side).weight, rtol=0, atol=0, msg=side)
+
+    @pytest.mark.parametrize("ep_size", [2, 4])
+    def test_packed_per_expert_linear_init_is_invariant_to_expert_parallel_size(self, ep_size):
+        """Stacking every EP rank's packed experts must reproduce the EP=1 init expert for expert."""
+        num_experts, in_features, out_features = 8, 32, 4
+
+        def build(ep_rank: int, ep: int) -> torch.Tensor:
+            torch.manual_seed(0)
+            return PackedPerExpertLinear(
+                num_experts // ep,
+                in_features,
+                out_features,
+                init_method=init_method_normal(0.02),
+                ep_rank=ep_rank,
+                ep_size=ep,
+            ).weight
+
+        stacked = torch.cat([build(ep_rank, ep_size) for ep_rank in range(ep_size)], dim=0)
+        torch.testing.assert_close(stacked, build(0, 1), rtol=0, atol=0)
 
     def test_grouped_expert_linear_adapter_kaiming_init_is_per_expert_scale(self):
         """kaiming on the stacked tensor would use fan_in = dim * in_features; the per-expert bound is 1/sqrt(in_features)."""
