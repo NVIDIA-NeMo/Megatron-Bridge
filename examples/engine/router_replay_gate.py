@@ -129,11 +129,13 @@ def main() -> None:
     """Entry point."""
     logging.basicConfig(level=logging.INFO)
     args = parse_args(_gate_arguments, description=__doc__)
+    if args.recipe is None:
+        raise SystemExit("router_replay_gate.py needs --recipe; it edits the recipe before building the engines")
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
     recipe.router_replay = True
     if args.aux_loss_coeff >= 0.0:
         recipe.model.moe_aux_loss_coeff = args.aux_loss_coeff
-    prompts, _ = load_data(args, recipe)
+    prompts, _ = load_data(args, recipe.hf_path)
     prompts = prompts[: args.prompts_per_round]
 
     policy = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint)
