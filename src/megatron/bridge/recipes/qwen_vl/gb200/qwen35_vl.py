@@ -143,6 +143,8 @@ def _apply_qwen35_vl_35b_a3b_gb200_functional_defaults(cfg: ConfigContainer) -> 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
+    # HybridEP fused permute requires identical chunk sizes; combine uses 128 below.
+    cfg.model.moe_permute_fusion_into_hybridep = False
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.high_priority_a2a_comm_stream = True
