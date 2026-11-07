@@ -2306,6 +2306,34 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
+        "cp, mbs, eval_mbs, eval_cp, message",
+        [
+            (2, 1, None, None, "context_parallel_size=1"),
+            (1, 2, None, None, "micro_batch_size=1"),
+            (1, 1, 2, None, "validation.eval_micro_batch_size=1"),
+            (1, 1, None, 2, "dist.eval_context_parallel_size=1"),
+        ],
+    )
+    def test_inter_document_masking_constraints(self, cp, mbs, eval_mbs, eval_cp, message):
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=max(cp, eval_cp or 1),
+            model_config=create_test_gpt_config(context_parallel_size=cp),
+            train_config=create_test_training_config(micro_batch_size=mbs),
+            validation_config=ValidationConfig(eval_micro_batch_size=eval_mbs),
+            dist_config=create_test_distributed_init_config(
+                eval_context_parallel_size=eval_cp,
+                use_decentralized_pg=eval_cp is not None,
+                use_gloo_process_groups=eval_cp is None,
+            ),
+        )
+        container.dataset.inter_document_masking = True
+        try:
+            with pytest.raises(AssertionError, match=message):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
         "seq_length, context_parallel_size, expect_assertion_error",
         [
             (512, 2, False),  # 512 % (2 * 2) == 0, valid
