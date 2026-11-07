@@ -154,6 +154,11 @@ def _distributed_session() -> Iterator[None]:
 @pytest.fixture
 def reset_distributed(monkeypatch: pytest.MonkeyPatch, _distributed_session: None) -> Iterator[None]:
     """Release per-test subgroups while preserving the default group's rendezvous state."""
+    from megatron.core.pipeline_parallel.bridge_communicator import BridgeCommunicator
+
+    # MIMO communicator caches must share the lifetime of their test-owned groups.
+    monkeypatch.setattr(BridgeCommunicator, "_broadcast_pg_cache", {})
+    monkeypatch.setattr(BridgeCommunicator, "_bridge_pg_cache", {})
     groups: list[torch.distributed.ProcessGroup] = []
     new_group = torch.distributed.new_group
     destroy_group = torch.distributed.destroy_process_group
@@ -176,6 +181,8 @@ def reset_distributed(monkeypatch: pytest.MonkeyPatch, _distributed_session: Non
 
     monkeypatch.setattr(torch.distributed, "new_group", tracked_new_group)
     monkeypatch.setattr(torch.distributed, "destroy_process_group", tracked_destroy_group)
+    monkeypatch.setattr(torch.distributed.distributed_c10d, "new_group", tracked_new_group)
+    monkeypatch.setattr(torch.distributed.distributed_c10d, "destroy_process_group", tracked_destroy_group)
     yield
     from torch.distributed.tensor import DTensor
 
