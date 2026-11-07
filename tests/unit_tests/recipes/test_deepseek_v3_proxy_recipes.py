@@ -61,8 +61,17 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-@pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
-def test_proxy_preserves_parent_except_depth_layout_and_kernel_policy(precision: str) -> None:
+@pytest.mark.parametrize(
+    ("precision", "parent_pipeline", "parent_mesh"),
+    [
+        # The MXFP8 recipes follow the MLPerf execution settings, including PP=4 x VP=4.
+        ("fp8mx", (4, 4), (64, 2, 64)),
+        ("nvfp4", (2, 8), (128, 4, 32)),
+    ],
+)
+def test_proxy_preserves_parent_except_depth_and_layout(
+    precision: str, parent_pipeline: tuple[int, int], parent_mesh: tuple[int, int, int]
+) -> None:
     parent_fn: Callable[[], ConfigContainer] = getattr(
         deepseek, f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config"
     )
@@ -90,11 +99,7 @@ def test_proxy_preserves_parent_except_depth_layout_and_kernel_policy(precision:
     for field in fields(parent):
         if field.name not in {"model", "env_vars"}:
             assert getattr(proxy, field.name) == getattr(parent, field.name), field.name
-    expected_env = dict(parent.env_vars)
-    if precision == "fp8mx":
-        # The matched 64-GPU MXFP8 proxies allow the fused SwiGLU dprob atomic reduction.
-        expected_env["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = 1
-    assert proxy.env_vars == expected_env
+    assert proxy.env_vars == parent.env_vars
 
     model = proxy.model
     assert model.num_layers == 13
@@ -102,9 +107,12 @@ def test_proxy_preserves_parent_except_depth_layout_and_kernel_policy(precision:
     assert (model.tensor_model_parallel_size, model.context_parallel_size) == (1, 1)
     assert (model.pipeline_model_parallel_size, model.virtual_pipeline_model_parallel_size) == (1, None)
     assert model.pipeline_model_parallel_layout is None
-    assert (parent.model.pipeline_model_parallel_size, parent.model.virtual_pipeline_model_parallel_size) == (2, 8)
+    assert (
+        parent.model.pipeline_model_parallel_size,
+        parent.model.virtual_pipeline_model_parallel_size,
+    ) == parent_pipeline
     assert (model.expert_model_parallel_size, model.expert_tensor_parallel_size) == (32, 1)
-    for cfg, world, expected_dp, expected_edp, microbatches in ((proxy, 64, 64, 2, 64), (parent, 256, 128, 4, 32)):
+    for cfg, world, expected_dp, expected_edp, microbatches in ((proxy, 64, 64, 2, 64), (parent, 256, *parent_mesh)):
         mesh_model = cfg.model
         dense_mesh = (
             mesh_model.tensor_model_parallel_size
@@ -141,14 +149,10 @@ def test_proxy_preserves_parent_except_depth_layout_and_kernel_policy(precision:
     )
 
 
-def test_gb300_mxfp8_proxy_matches_vrnvl72() -> None:
+def test_gb300_mxfp8_proxy_uses_nccl_ep() -> None:
+    # The GB300 proxy shrinks its NCCL EP parent. It no longer matches the VRNVL72 MXFP8 proxy, which follows
+    # the MLPerf execution settings.
     gb300 = deepseek.deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config()
-    vrnvl72 = deepseek.deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config()
-
-    assert vars(gb300.model) == vars(vrnvl72.model)
-    for field in fields(vrnvl72):
-        if field.name != "model":
-            assert getattr(gb300, field.name) == getattr(vrnvl72, field.name), field.name
 
     assert gb300.model.moe_token_dispatcher_type == "flex"
     assert gb300.model.moe_flex_dispatcher_backend == "ncclep"
@@ -160,7 +164,12 @@ def test_gb300_mxfp8_proxy_matches_vrnvl72() -> None:
 
 @pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
 def test_4gpu_proxy_only_resizes_its_parent(precision: str) -> None:
-    parent = getattr(deepseek, f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config")()
+    # The MXFP8 proxy resizes the 256-GPU GB300 MXFP8 recipe, which shares the VRNVL72 model without the
+    # MLPerf execution settings that the 256-GPU VRNVL72 MXFP8 recipe adds.
+    if precision == "fp8mx":
+        parent = deepseek.deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+    else:
+        parent = deepseek.deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config()
     proxy = getattr(deepseek, f"deepseek_v3_pretrain_4gpu_vrnvl72_{precision}_proxy_config")()
 
     assert {key: value for key, value in vars(proxy.model).items() if key not in _4GPU_PROXY_MODEL_FIELDS} == {
