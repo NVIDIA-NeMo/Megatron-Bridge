@@ -21,6 +21,7 @@ application loop and are deliberately absent.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Literal
@@ -101,16 +102,38 @@ SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")
 SUPPORTED_MTP_TARGET_SCOPES = ("primary", "all_valid")
 
 
+def _model_parallel_sizes(recipe: TrainingRecipe) -> tuple[int, int]:
+    """(TP x PP x CP, ETP x EP x PP): the two rank grids Megatron's ``initialize_model_parallel`` needs
+    the world size to be divisible by."""
+    model = recipe.model
+    tp = model.tensor_model_parallel_size
+    pp = model.pipeline_model_parallel_size
+    cp = model.context_parallel_size or 1
+    ep = getattr(model, "expert_model_parallel_size", 1) or 1
+    etp = getattr(model, "expert_tensor_parallel_size", None) or tp
+    return tp * pp * cp, etp * ep * pp
+
+
+def min_gpus(recipe: TrainingRecipe) -> int:
+    """Smallest world size the recipe runs on (one data-parallel replica of both rank grids).
+
+    Any multiple of it is accepted; the extra GPUs become data parallelism.
+    """
+    dense, expert = _model_parallel_sizes(recipe)
+    return math.lcm(dense, expert)
+
+
 def data_parallel_size(recipe: TrainingRecipe) -> int:
     """Data-parallel degree implied by the recipe's model parallelism and the job's world size."""
-    model = recipe.model
-    model_parallel_size = (
-        model.tensor_model_parallel_size * model.pipeline_model_parallel_size * (model.context_parallel_size or 1)
-    )
+    dense, expert = _model_parallel_sizes(recipe)
+    unit = min_gpus(recipe)
     world_size = get_world_size_safe()
-    if world_size % model_parallel_size:
-        raise ValueError(f"world size {world_size} is not divisible by TP x PP x CP = {model_parallel_size}.")
-    return world_size // model_parallel_size
+    if world_size % unit:
+        raise ValueError(
+            f"world size {world_size} is not a multiple of the recipe's minimum GPU count {unit} "
+            f"(TP x PP x CP = {dense}, ETP x EP x PP = {expert})."
+        )
+    return world_size // dense
 
 
 def check_supported(recipe: TrainingRecipe) -> None:

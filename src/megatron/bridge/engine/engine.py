@@ -69,6 +69,7 @@ from megatron.bridge.engine.export import ExportState, export_hf_weights, make_e
 from megatron.bridge.engine.offload import HostState, check_movable, offload_to_cpu, reload_to_cuda
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
+from megatron.bridge.engine.recipes.registry import apply_recipe_overrides, resolve_recipe
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
@@ -229,15 +230,43 @@ class TrainingEngine:
         self,
         model: str,
         *,
+        seq_length: int,
         checkpoint_path: str | None = None,
+        hardware: str | None = None,
+        hf_revision: str | None = None,
+        overrides: dict[str, Any] | None = None,
         output_head: str = "lm",
         trainable: bool = True,
         lora: LoraConfig | None = None,
         hooks: list[PreWrapHook] | None = None,
-        overrides: dict[str, Any] | None = None,
+        spawn_async_save_worker: bool = True,
     ) -> None:
-        raise NotImplementedError(
-            "Construction by model name (recipe lookup) is phase D; use TrainingEngine.from_recipe(recipe)."
+        """Build an engine for an HF model from the registered recipe for this hardware and context.
+
+        Resolution reads the model's HF config, keeps the recipes verified on ``hardware`` and takes the
+        smallest context bucket covering ``seq_length`` (``recipes.resolve_recipe``). The recipe fixes the
+        minimum GPU count; the world size must be a multiple of it and the rest becomes data parallelism.
+
+        Args:
+            model: HF model ID or local directory with the model config.
+            seq_length: Packed token budget per microbatch.
+            checkpoint_path: Megatron or HF checkpoint whose weights initialize the model, or ``None``
+                for the provider's initialization.
+            hardware: GPU family (``"GB300"``, ...), or ``None`` to detect it from the local device.
+            hf_revision: HF revision when ``model`` is a model ID.
+            overrides: Recipe fields to change, by dotted path (``{"optimizer.lr": 1e-6}``).
+            output_head, trainable, lora, hooks, spawn_async_save_worker: As in ``from_recipe``.
+        """
+        recipe = resolve_recipe(model, seq_length=seq_length, hardware=hardware, hf_revision=hf_revision)
+        apply_recipe_overrides(recipe, overrides or {})
+        self._init_from_recipe(
+            recipe,
+            checkpoint_path=checkpoint_path,
+            output_head=output_head,
+            trainable=trainable,
+            lora=lora,
+            hooks=hooks,
+            spawn_async_save_worker=spawn_async_save_worker,
         )
 
     # ---- construction -------------------------------------------------------------------------
@@ -256,7 +285,9 @@ class TrainingEngine:
     ) -> TrainingEngine:
         """Build an engine from a ``TrainingRecipe``.
 
-        The recipe is deep-copied so several engines can be built from one recipe object.
+        The recipe is deep-copied so several engines can be built from one recipe object. The world size
+        must be a multiple of the recipe's minimum GPU count (``recipes.min_gpus``); extra GPUs scale
+        data parallelism.
 
         Args:
             recipe: Model and execution configuration.
@@ -277,11 +308,34 @@ class TrainingEngine:
         Returns:
             A constructed engine attached to the shared runtime.
         """
+        engine = cls.__new__(cls)
+        engine._init_from_recipe(
+            copy.deepcopy(recipe),
+            checkpoint_path=checkpoint_path,
+            output_head=output_head,
+            trainable=trainable,
+            lora=lora,
+            hooks=hooks,
+            spawn_async_save_worker=spawn_async_save_worker,
+        )
+        return engine
+
+    def _init_from_recipe(
+        self,
+        recipe: TrainingRecipe,
+        *,
+        checkpoint_path: str | None,
+        output_head: str,
+        trainable: bool,
+        lora: LoraConfig | None,
+        hooks: list[PreWrapHook] | None,
+        spawn_async_save_worker: bool,
+    ) -> None:
+        """Validate the options, finalize the recipe (owned by this engine) and build."""
         if output_head not in ("lm", "value"):
             raise ValueError(f"output_head must be 'lm' or 'value', got {output_head!r}.")
         if lora is not None:
             raise NotImplementedError("LoRA engines are phase C3.")
-        recipe = copy.deepcopy(recipe)
         if output_head == "value":
             apply_value_head_model_settings(recipe.model)
         finalize_recipe(recipe)
@@ -290,8 +344,7 @@ class TrainingEngine:
             # Loads the checkpoint into the bare model, then swaps the head; _build skips its own load.
             hooks.append(make_value_head_hook(recipe, checkpoint_path))
         runtime = _acquire_runtime(recipe)
-        engine = cls.__new__(cls)
-        engine._build(
+        self._build(
             recipe,
             runtime,
             checkpoint_path=checkpoint_path,
@@ -300,7 +353,6 @@ class TrainingEngine:
             hooks=hooks,
             spawn_async_save_worker=spawn_async_save_worker,
         )
-        return engine
 
     def _build(
         self,

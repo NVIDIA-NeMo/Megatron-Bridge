@@ -13,14 +13,35 @@
 # limitations under the License.
 """TrainingEngine recipes: model and execution configuration per supported model and hardware."""
 
-from megatron.bridge.engine.recipes.base import TrainingRecipe, check_supported, data_parallel_size, finalize_recipe
+from megatron.bridge.engine.recipes.base import (
+    TrainingRecipe,
+    check_supported,
+    data_parallel_size,
+    finalize_recipe,
+    min_gpus,
+)
 from megatron.bridge.engine.recipes.qwen35 import qwen35_text_35b_a3b_rl_16gpu_gb200_bf16
+from megatron.bridge.engine.recipes.registry import (
+    KNOWN_HARDWARE,
+    REGISTRY,
+    RecipeEntry,
+    apply_recipe_overrides,
+    detect_hardware,
+    resolve_recipe,
+)
 
 
 __all__ = [
+    "KNOWN_HARDWARE",
+    "REGISTRY",
+    "RecipeEntry",
     "TrainingRecipe",
+    "apply_recipe_overrides",
     "check_supported",
     "data_parallel_size",
+    "detect_hardware",
     "finalize_recipe",
+    "min_gpus",
     "qwen35_text_35b_a3b_rl_16gpu_gb200_bf16",
+    "resolve_recipe",
 ]

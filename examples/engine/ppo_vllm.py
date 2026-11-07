@@ -20,7 +20,6 @@ reference scores the samples (``reference_logprobs`` for the k3 penalty); the cr
 the policy is updated with ``ppo_clip`` (clip, KL penalty, truncated importance sampling).
 """
 
-import json
 import logging
 import time
 
@@ -28,6 +27,7 @@ import torch
 from dapo_math import Sample, gae, response_slice, to_datum, without_routing
 from grpo_vllm import (
     RunLogger,
+    build_engine,
     chunks,
     eval_prompts_for,
     load_data,
@@ -41,7 +41,6 @@ from grpo_vllm import (
 from grpo_vllm import parse_args as parse_grpo_args
 from vllm_rollout import VllmRollout
 
-import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import AdamParams, Datum, TrainingEngine
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -99,18 +98,17 @@ def main() -> None:
     """Entry point."""
     logging.basicConfig(level=logging.INFO)
     args = parse_grpo_args(_ppo_arguments, description=__doc__)
-    recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
-    recipe.router_replay = args.router_replay  # only the policy receives Datums with routing
-    prompts, eval_prompts = load_data(args, recipe)
+    policy = build_engine(args)
+    hf_path = policy.recipe.hf_path
+    prompts, eval_prompts = load_data(args, hf_path)
 
-    policy = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint)
     policy.cpu()
-    reference = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=False)
+    reference = build_engine(args, trainable=False)
     reference.cpu()
-    critic = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, output_head="value")
+    critic = build_engine(args, output_head="value")
     critic.cpu()
     rollout = VllmRollout(
-        recipe.hf_path,
+        hf_path,
         gpu_memory_utilization=args.gpu_memory_utilization,
         max_model_len=args.max_prompt_tokens + args.max_tokens + 64,
         enforce_eager=not args.vllm_cuda_graphs,

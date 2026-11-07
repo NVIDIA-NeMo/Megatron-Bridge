@@ -103,13 +103,40 @@ def test_data_parallel_size_and_topology(monkeypatch):
     recipe.model.context_parallel_size = 4
     assert topology_from_recipe(recipe) != topology_from_recipe(_recipe_like())
     recipe.model.context_parallel_size = 3
-    with pytest.raises(ValueError, match="not divisible"):
+    with pytest.raises(ValueError, match="not a multiple of the recipe's minimum GPU count 48"):
         data_parallel_size(recipe)
 
 
-def test_constructor_by_name_is_not_implemented():
-    with pytest.raises(NotImplementedError, match="from_recipe"):
-        TrainingEngine("Qwen/Qwen3.5-35B-A3B")
+def test_constructor_by_name_resolves_applies_overrides_then_initializes(monkeypatch):
+    import megatron.bridge.engine.engine as engine_module
+
+    resolved = SimpleNamespace(optimizer=SimpleNamespace(lr=2e-5), router_replay=False)
+    seen = {}
+    monkeypatch.setattr(
+        engine_module,
+        "resolve_recipe",
+        lambda model, **kwargs: seen.update(model=model, **kwargs) or resolved,
+    )
+    monkeypatch.setattr(
+        TrainingEngine, "_init_from_recipe", lambda self, recipe, **kwargs: seen.update(recipe=recipe, init=kwargs)
+    )
+
+    TrainingEngine(
+        "/models/qwen35",
+        seq_length=32768,
+        checkpoint_path="/ckpt",
+        hardware="GB300",
+        overrides={"optimizer.lr": 1e-6, "router_replay": True},
+        trainable=False,
+    )
+
+    assert seen["model"] == "/models/qwen35"
+    assert (seen["seq_length"], seen["hardware"], seen["hf_revision"]) == (32768, "GB300", None)
+    assert seen["recipe"] is resolved
+    assert (resolved.optimizer.lr, resolved.router_replay) == (1e-6, True)
+    assert seen["init"]["checkpoint_path"] == "/ckpt"
+    assert seen["init"]["trainable"] is False
+    assert seen["init"]["output_head"] == "lm"
 
 
 def test_loss_dispatch_resolves_predefined_and_subclass_methods():

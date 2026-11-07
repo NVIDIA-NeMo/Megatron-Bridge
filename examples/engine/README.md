@@ -10,6 +10,16 @@ size (16 ranks for the Qwen3.5-35B-A3B recipe used below) and share three argume
 | `--recipe-kwargs` | JSON for the recipe function, e.g. `'{"hf_path": "/models/qwen35-text-35b-a3b"}'` (a local HF directory with config, tokenizer and safetensors) |
 | `--checkpoint` | Megatron checkpoint to load the model weights from |
 
+The construction gate and the two RL examples also accept `--model <hf dir or id> --seq-length <tokens>
+[--hardware GB300]` instead of `--recipe`/`--recipe-kwargs`. They then build every engine directly with
+`TrainingEngine(model, seq_length=..., checkpoint_path=..., overrides=...)`: the recipe is resolved from the
+model's HF config, the GPU family (detected from the device name unless given) and the context length,
+taking the smallest registered context bucket that covers `--seq-length`
+(`megatron.bridge.engine.recipes.resolve_recipe`; the registry currently holds the Qwen3.5-35B-A3B recipe
+on GB300 up to 131072 tokens). `TrainingEngine.from_recipe` is used only on the `--recipe` path. Either
+way the world size must be a multiple of the recipe's minimum GPU count (`recipes.min_gpus`: TP x PP x CP
+and ETP x EP x PP both have to divide it; 16 for this recipe), and the extra GPUs become data parallelism.
+
 The SFT, scoring and gate examples read an offline-packed parquet (`input_ids`, `seq_start_id`,
 `loss_mask` per row); the RL examples read the DAPO-Math-17k parquet (`prompt`, `reward_model`).
 
@@ -40,7 +50,9 @@ srun --nodes=4 --ntasks-per-node=4 --gpus-per-node=4 \
 Builds a trainable actor and a frozen reference from the same recipe, prints parallel info,
 parameter counts and memory, closes the actor and checks the reference still works and the actor's
 memory was released. Extra: `--skip-reference`; trailing `key=value` pairs are recipe overrides
-(`model.context_parallel_size=4`).
+(`model.context_parallel_size=4`). With `--model` both engines are built through
+`TrainingEngine(model, seq_length=..., overrides=...)`, the `key=value` pairs becoming the constructor's
+`overrides` dict.
 
 ### `score_packed_parquet.py` (`forward_only` contract)
 

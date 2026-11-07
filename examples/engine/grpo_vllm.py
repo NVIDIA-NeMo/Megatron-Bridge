@@ -42,8 +42,11 @@ def parse_args(add_arguments=None, description: str = __doc__) -> argparse.Names
     parser = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     if add_arguments is not None:
         add_arguments(parser)
-    parser.add_argument("--recipe", required=True)
-    parser.add_argument("--recipe-kwargs", default="{}")
+    parser.add_argument("--recipe", default=None, help="Recipe function name in megatron.bridge.engine.recipes")
+    parser.add_argument("--recipe-kwargs", default="{}", help="JSON keyword arguments for --recipe")
+    parser.add_argument("--model", default=None, help="HF model ID or directory; resolves the recipe (not --recipe)")
+    parser.add_argument("--seq-length", type=int, default=None, help="Packed tokens per microbatch, with --model")
+    parser.add_argument("--hardware", default=None, help="GPU family for --model, e.g. GB300 (default: detect)")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--parquet", required=True, help="DAPO-Math-17k parquet")
     parser.add_argument("--rounds", type=int, default=3)
@@ -85,6 +88,30 @@ def parse_args(add_arguments=None, description: str = __doc__) -> argparse.Names
         help="Stop before this much wall time has passed since launch: save to --save-dir and exit (0: never)",
     )
     return parser.parse_args()
+
+
+def build_engine(args: argparse.Namespace, **kwargs) -> TrainingEngine:
+    """An engine on ``--checkpoint``: ``TrainingEngine(model, ...)`` for ``--model``, ``from_recipe`` for ``--recipe``.
+
+    ``kwargs`` are the per-engine options (``trainable``, ``output_head``). Only the policy's Datums carry
+    routing, so ``router_replay`` is set on every engine without effect on the others.
+    """
+    if (args.model is None) == (args.recipe is None):
+        raise SystemExit("pass exactly one of --model or --recipe")
+    if args.model is not None:
+        if args.seq_length is None:
+            raise SystemExit("--seq-length is required with --model")
+        return TrainingEngine(
+            args.model,
+            seq_length=args.seq_length,
+            hardware=args.hardware,
+            checkpoint_path=args.checkpoint,
+            overrides={"router_replay": args.router_replay},
+            **kwargs,
+        )
+    recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    recipe.router_replay = args.router_replay
+    return TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, **kwargs)
 
 
 def chunks(items: list, n: int) -> list[list]:
@@ -229,9 +256,9 @@ class RunLogger:
             self.run.finish()
 
 
-def load_data(args, recipe) -> tuple[list, list]:
+def load_data(args, hf_path: str) -> tuple[list, list]:
     """Training prompts for all rounds plus the held-out set (disjoint from the training prompts)."""
-    tokenizer = AutoTokenizer.from_pretrained(recipe.hf_path)
+    tokenizer = AutoTokenizer.from_pretrained(hf_path)
     prompts = load_prompts(
         args.parquet,
         tokenizer,
@@ -321,14 +348,13 @@ def main() -> None:
     """Entry point."""
     logging.basicConfig(level=logging.INFO)
     args = parse_args()
-    recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
-    recipe.router_replay = args.router_replay
-    prompts, eval_prompts = load_data(args, recipe)
+    policy = build_engine(args)
+    hf_path = policy.recipe.hf_path  # tokenizer and vllm weights; the same for both construction paths
+    prompts, eval_prompts = load_data(args, hf_path)
 
-    policy = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint)
     policy.cpu()  # vllm measures free memory at construction
     rollout = VllmRollout(
-        recipe.hf_path,
+        hf_path,
         gpu_memory_utilization=args.gpu_memory_utilization,
         max_model_len=args.max_prompt_tokens + args.max_tokens + 64,
         enforce_eager=not args.vllm_cuda_graphs,

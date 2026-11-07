@@ -22,6 +22,13 @@ actor's model was actually released. Run under torchrun / srun with the recipe's
         --recipe-kwargs '{"hf_path": "/path/to/local/hf_text_model"}' \
         --checkpoint /path/to/megatron_ckpt \
         [key=value ...]   # optional Hydra-style recipe overrides, e.g. model.context_parallel_size=4
+
+or by model, through ``TrainingEngine(model, seq_length=...)`` (the recipe is resolved from the HF config,
+the detected GPU family and the context length; ``key=value`` pairs become constructor overrides)::
+
+    python examples/engine/construct_from_recipe.py \
+        --model /path/to/local/hf_text_model --seq-length 32768 \
+        --checkpoint /path/to/megatron_ckpt [optimizer.lr=1e-6 ...]
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ import time
 import weakref
 
 import torch
+import yaml
 
 import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import TrainingEngine
@@ -46,8 +54,11 @@ logger = logging.getLogger(__name__)
 
 def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--recipe", required=True, help="Recipe function name in megatron.bridge.engine.recipes")
+    parser.add_argument("--recipe", default=None, help="Recipe function name in megatron.bridge.engine.recipes")
     parser.add_argument("--recipe-kwargs", default="{}", help="JSON dict of keyword arguments for the recipe function")
+    parser.add_argument("--model", default=None, help="HF model ID or directory; builds via TrainingEngine(model)")
+    parser.add_argument("--seq-length", type=int, default=None, help="Packed tokens per microbatch, with --model")
+    parser.add_argument("--hardware", default=None, help="GPU family for --model, e.g. GB300 (default: detect)")
     parser.add_argument("--checkpoint", default=None, help="Pretrained Megatron/HF checkpoint for both engines")
     parser.add_argument("--skip-reference", action="store_true", help="Only build the trainable actor")
     args, overrides = parser.parse_known_args()
@@ -86,16 +97,51 @@ def _param_checksum(model: list[torch.nn.Module]) -> float:
     return local.item()
 
 
+def _override_dict(overrides: list[str]) -> dict:
+    """``key=value`` pairs as a dotted-path dict for ``TrainingEngine(overrides=...)``; YAML scalar values."""
+    result = {}
+    for item in overrides:
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise SystemExit(f"override {item!r} is not key=value")
+        result[key] = yaml.safe_load(value)
+    return result
+
+
+def _make_builder(args: argparse.Namespace, overrides: list[str]):
+    """Return ``build(trainable)`` for the chosen construction path."""
+    if (args.model is None) == (args.recipe is None):
+        raise SystemExit("pass exactly one of --model or --recipe")
+    if args.model is not None:
+        if args.seq_length is None:
+            raise SystemExit("--seq-length is required with --model")
+        override_dict = _override_dict(overrides)
+
+        def build(trainable: bool) -> TrainingEngine:
+            return TrainingEngine(
+                args.model,
+                seq_length=args.seq_length,
+                hardware=args.hardware,
+                checkpoint_path=args.checkpoint,
+                overrides=override_dict,
+                trainable=trainable,
+            )
+
+        return build
+    recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    if overrides:
+        recipe = process_config_with_overrides(recipe, cli_overrides=overrides)
+    return lambda trainable: TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=trainable)
+
+
 def main() -> None:
     """Build an actor and a frozen reference engine, close the actor, and verify the reference survives."""
     logging.basicConfig(level=logging.INFO)
     args, overrides = _parse_args()
-    recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
-    if overrides:
-        recipe = process_config_with_overrides(recipe, cli_overrides=overrides)
+    build = _make_builder(args, overrides)
 
     start = time.time()
-    actor = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
+    actor = build(trainable=True)
     torch.distributed.barrier()
     total, trainable = _count_params(actor.model)
     print_rank_0(f"[actor] built in {time.time() - start:.1f}s; parallel_info={actor.parallel_info}")
@@ -114,7 +160,7 @@ def main() -> None:
         return
 
     start = time.time()
-    reference = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=False)
+    reference = build(trainable=False)
     torch.distributed.barrier()
     total, trainable = _count_params(reference.model)
     print_rank_0(
