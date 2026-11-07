@@ -347,7 +347,8 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
                 self.sequences_per_dataset = json.load(f)
 
         # Run MCore's checks that do not need the tokenizer.
-        MCoreGPTDatasetConfig.validate_without_tokenizer(self)
+        if hasattr(MCoreGPTDatasetConfig, 'validate_without_tokenizer'):
+            MCoreGPTDatasetConfig.validate_without_tokenizer(self)
 
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
