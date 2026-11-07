@@ -21,20 +21,12 @@ import torch
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
+    AutoProcessor,
     AutoTokenizer,
     GenerationConfig,
     PreTrainedTokenizer,
+    ProcessorMixin,
 )
-
-try:
-    from transformers import AutoProcessor
-except (ImportError, AttributeError):
-    AutoProcessor = None  # type: ignore[assignment,misc]
-
-try:
-    from transformers import ProcessorMixin
-except (ImportError, AttributeError):
-    ProcessorMixin = None  # type: ignore[assignment,misc]
 
 try:
     from transformers import AutoImageProcessor
