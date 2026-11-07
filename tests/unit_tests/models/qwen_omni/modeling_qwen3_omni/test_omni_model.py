@@ -27,6 +27,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
 )
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
@@ -35,7 +36,10 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
 
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import get_rope_index
-from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import _trim_feature_sequence
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import (
+    Qwen3OmniThinkerModel,
+    _trim_feature_sequence,
+)
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
@@ -454,6 +458,122 @@ class TestQwen3OmniModel:
         assert rope_calls["attention_mask"] is None
         assert fake_language_model.forward_kwargs["attention_mask"] is attention_mask
 
+    def test_packed_forward_resets_rotary_thd_state(self):
+        class _MockProcessGroup:
+            def size(self):
+                return 1
+
+            def rank(self):
+                return 0
+
+        class _FakeLanguageModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.forward_kwargs = []
+
+            def forward(self, **kwargs):
+                self.forward_kwargs.append(kwargs)
+                return torch.tensor(0.0)
+
+        fake_language_model = _FakeLanguageModel()
+        thinker = SimpleNamespace(
+            pg_collection=SimpleNamespace(cp=_MockProcessGroup(), tp=_MockProcessGroup()),
+            config=SimpleNamespace(sequence_parallel=False),
+            pre_process=False,
+            language_model=fake_language_model,
+        )
+
+        input_ids = torch.tensor([[1, 2, 3, 4]])
+        position_ids = torch.arange(input_ids.size(1)).view(1, 1, -1).expand(3, input_ids.size(0), -1)
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+        Qwen3OmniThinkerModel.forward(
+            thinker,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            packed_seq_params=object(),
+        )
+        assert fake_language_model.rotary_pos_emb.is_thd_format is True
+
+        Qwen3OmniThinkerModel.forward(
+            thinker,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=None,
+            packed_seq_params=None,
+        )
+        assert fake_language_model.rotary_pos_emb.is_thd_format is False
+
+    def test_direct_thd_packed_cp_slices_language_tensors_in_model(self, monkeypatch):
+        class _MockProcessGroup:
+            def __init__(self, size=1, rank=0):
+                self._size = size
+                self._rank = rank
+
+            def size(self):
+                return self._size
+
+            def rank(self):
+                return self._rank
+
+        class _FakeLanguageModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.forward_kwargs = None
+
+            def forward(self, **kwargs):
+                self.forward_kwargs = kwargs
+                return torch.tensor(0.0)
+
+        fake_language_model = _FakeLanguageModel()
+        thinker = SimpleNamespace(
+            pg_collection=SimpleNamespace(
+                cp=_MockProcessGroup(size=2, rank=0),
+                tp=_MockProcessGroup(size=1, rank=0),
+            ),
+            config=SimpleNamespace(sequence_parallel=False),
+            pre_process=False,
+            language_model=fake_language_model,
+        )
+        cp_index = torch.tensor([0, 1, 6, 7], dtype=torch.long)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model.get_packed_seq_cp_partition_indices",
+            lambda *args, **kwargs: cp_index,
+        )
+
+        input_ids = torch.tensor([[10, 11, 12, 0, 20, 21, 0, 0]])
+        labels = torch.tensor([[11, 12, -100, -100, 21, -100, -100, -100]])
+        loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]])
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=torch.tensor([0, 3, 5], dtype=torch.int32),
+            cu_seqlens_kv=torch.tensor([0, 3, 5], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 4, 8], dtype=torch.int32),
+            cu_seqlens_kv_padded=torch.tensor([0, 4, 8], dtype=torch.int32),
+            max_seqlen_q=4,
+            max_seqlen_kv=4,
+        )
+
+        output, local_loss_mask = Qwen3OmniThinkerModel.forward(
+            thinker,
+            input_ids=input_ids,
+            labels=labels,
+            loss_mask=loss_mask,
+            packed_seq_params=packed_seq_params,
+        )
+
+        assert torch.equal(output, torch.tensor(0.0))
+        assert fake_language_model.rotary_pos_emb.is_thd_format is True
+        assert fake_language_model.forward_kwargs["input_ids"].tolist() == [[10, 11, 0, 0]]
+        assert fake_language_model.forward_kwargs["position_ids"].shape == (3, 1, 4)
+        assert fake_language_model.forward_kwargs["labels"].tolist() == [[11, 12, -100, -100]]
+        assert local_loss_mask.tolist() == [[1.0, 1.0, 0.0, 0.0]]
+        assert fake_language_model.forward_kwargs["padding_mask"].tolist() == [[False, False, True, True]]
+
     def test_audio_forward(self, thinker_config):
         model = self._build_model(thinker_config)
         if torch.cuda.is_available():
@@ -477,6 +597,31 @@ class TestQwen3OmniModel:
             feature_attention_mask=feature_attention_mask,
         )
         assert output is not None
+
+    def test_audio_feature_trim_handles_multiple_audio_samples(self):
+        class _FakeAudioModel:
+            dtype = torch.float32
+            config = SimpleNamespace(n_window=50)
+
+            def __call__(self, input_features, feature_lens):
+                assert input_features.shape == (8, 3648)
+                assert feature_lens.tolist() == [3000, 648]
+                return SimpleNamespace(last_hidden_state=torch.arange(474 * 2, dtype=torch.float32).view(474, 2))
+
+        thinker = SimpleNamespace(audio_model=_FakeAudioModel())
+        input_features = torch.randn(2, 8, 3000)
+        feature_attention_mask = torch.zeros(2, 3000, dtype=torch.long)
+        feature_attention_mask[0, :3000] = 1
+        feature_attention_mask[1, :648] = 1
+
+        audio_embeds = Qwen3OmniThinkerModel.get_audio_features(
+            thinker,
+            input_features,
+            feature_attention_mask=feature_attention_mask,
+            expected_audio_token_counts=torch.tensor([390, 84]),
+        )
+
+        assert audio_embeds.shape == (474, 2)
 
     def test_audio_only_rope_index(self):
         input_ids = torch.tensor([[AUDIO_START_TOKEN_ID, AUDIO_TOKEN_ID, AUDIO_TOKEN_ID, 17, 18]])
