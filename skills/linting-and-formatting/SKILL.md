@@ -1,7 +1,6 @@
 ---
 name: linting-and-formatting
-description: Code style and quality rules for Megatron Bridge — ruff configuration, naming conventions, type hints, mypy rules, docstrings, copyright headers, logging, and the code review checklist.
-when_to_use: Writing or reviewing code for style compliance, fixing ruff or mypy errors, pre-commit hook failures, copyright header questions, naming or docstring conventions.
+description: Code style and quality rules for Megatron Bridge — ruff configuration, naming conventions, type hints, mypy rules, docstrings, copyright headers, logging, and the code review checklist. Use when writing or reviewing code for style compliance, fixing ruff or mypy errors, pre-commit hook failures, copyright header questions, naming or docstring conventions.
 ---
 
 # Linting and Formatting

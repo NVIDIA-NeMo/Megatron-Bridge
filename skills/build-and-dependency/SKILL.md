@@ -1,7 +1,6 @@
 ---
 name: build-and-dependency
-description: Dev environment setup for Megatron Bridge — container-based development, uv package management, lockfile regeneration, adding dependencies, Slurm container usage, and common build pitfalls.
-when_to_use: Setting up a dev environment, adding or removing dependencies, regenerating uv.lock, running inside containers, Slurm container setup, 'uv sync fails', 'ModuleNotFoundError', 'lockfile conflict'.
+description: Dev environment setup for Megatron Bridge — container-based development, uv package management, lockfile regeneration, adding dependencies, Slurm container usage, and common build pitfalls. Use when setting up a dev environment, adding or removing dependencies, regenerating uv.lock, running inside containers, Slurm container setup, 'uv sync fails', 'ModuleNotFoundError', 'lockfile conflict'.
 ---
 
 # Build and Dependency

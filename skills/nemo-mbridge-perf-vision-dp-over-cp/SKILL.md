@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-vision-dp-over-cp
-description: Operational guide for sharding a VLM vision encoder across the language model's context-parallel ranks in Megatron-Bridge, including config knobs, code anchors, load-balance pitfalls, and measured impact.
+description: Operational guide for sharding a VLM vision encoder across the language model's context-parallel ranks in Megatron-Bridge, including config knobs, code anchors, load-balance pitfalls, and measured impact. Use when the vision tower replicates work and activations on every CP rank while the language model is already sharded, or a VLM run at CP>1 OOMs in the encoder; 'vision_dp_over_cp', 'vision CP', 'vision DP over CP', 'image sharding across CP ranks', 'encoder replicated across CP'.
 license: Apache-2.0
-when_to_use: The vision tower replicates work and activations on every CP rank while the language model is already sharded, or a VLM run at CP>1 OOMs in the encoder; 'vision_dp_over_cp', 'vision CP', 'vision DP over CP', 'image sharding across CP ranks', 'encoder replicated across CP'.
 ---
 
 # Vision DP Over CP Skill
