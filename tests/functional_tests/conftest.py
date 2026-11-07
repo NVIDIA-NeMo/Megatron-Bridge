@@ -177,6 +177,13 @@ def reset_distributed(monkeypatch: pytest.MonkeyPatch, _distributed_session: Non
     monkeypatch.setattr(torch.distributed, "new_group", tracked_new_group)
     monkeypatch.setattr(torch.distributed, "destroy_process_group", tracked_destroy_group)
     yield
+    from torch.distributed.tensor import DTensor
+
+    # DTensor caches specs by mesh layout, so recreated groups can reuse stale meshes.
+    DTensor._op_dispatcher.sharding_propagator.propagate_op_sharding.cache_clear()
+    clear_native_cache = getattr(torch._C, "_clear_DTensor_sharding_propagator_cache", None)
+    if clear_native_cache is not None:
+        clear_native_cache()
     # Megatron clears its group references but leaves NCCL subgroups registered in PyTorch.
     # Destroy them in the same reverse creation order on every participating rank.
     for group in reversed(groups):
