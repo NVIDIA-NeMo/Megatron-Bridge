@@ -572,6 +572,7 @@ class TestErnie45DecoderBlockSpec:
         )
         router.is_hash_layer = False
         router.qb_beta = None
+        router.routing_type = router.config.moe_router_load_balancing_type
         router.topk = 2
         router.score_function = "sigmoid"
         router.expert_bias = bias
