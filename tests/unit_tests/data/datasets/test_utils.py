@@ -181,3 +181,16 @@ def test_build_index_from_memdata_matches_previous_behavior_for_jsonl(
     )
 
     np.testing.assert_array_equal(actual, expected)
+
+
+def test_safe_map_limits_workers_to_input_items(mocker):
+    """Avoid starting workers without a corresponding input item."""
+    context = utils.mp.get_context("fork")
+    process = mocker.spy(context, "Process")
+
+    assert utils.safe_map(lambda value: value, [42], workers=96) == [42]
+    assert process.call_count == 1
+
+    process.reset_mock()
+    assert utils.safe_map(lambda value: value, [], workers=96) == []
+    process.assert_not_called()
