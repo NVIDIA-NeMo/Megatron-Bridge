@@ -26,6 +26,58 @@ from megatron.bridge.training.state import GlobalState
 class TestInProcessRestart:
     """Test cases for the inprocess_restart function."""
 
+    @pytest.mark.parametrize("empty_cuda_cache", [False, True])
+    @pytest.mark.parametrize("failure_site", [None, "destroy_global_state", "reset_for_restart"])
+    def test_finalize_propagates_cleanup_errors(self, empty_cuda_cache, failure_site):
+        """Use native threaded finalization to surface incomplete cleanup to NVRx."""
+        from nvidia_resiliency_ext.inprocess.state import State
+
+        config = InProcessRestartConfig(
+            enabled=True,
+            active_world_size=1,
+            granularity="rank",
+            empty_cuda_cache=empty_cuda_cache,
+        )
+        global_state = MagicMock(spec=GlobalState)
+        cleanup_error = RuntimeError("incomplete restart cleanup")
+        state = State(rank=0, world_size=1, active_rank=0, active_world_size=1).freeze()
+
+        with (
+            patch.dict(os.environ, {"MASTER_PORT": "29500"}),
+            patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+            patch("nvidia_resiliency_ext.inprocess.Wrapper") as wrapper,
+            patch("megatron.bridge.training.initialize.destroy_global_state") as destroy_global_state,
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.is_initialized", return_value=True),
+            patch("torch.cuda.current_device", return_value=0),
+            patch("torch.cuda.set_device"),
+            patch("torch.cuda.empty_cache") as empty_cache,
+        ):
+            inprocess_restart(MagicMock(), config, global_state)
+            finalize = wrapper.call_args.kwargs["finalize"]
+            if failure_site == "destroy_global_state":
+                destroy_global_state.side_effect = cleanup_error
+            elif failure_site == "reset_for_restart":
+                global_state.reset_for_restart.side_effect = cleanup_error
+
+            if failure_site is None:
+                assert finalize(state) is state
+            else:
+                with pytest.raises(RuntimeError, match="incomplete restart cleanup") as raised:
+                    finalize(state)
+                assert raised.value is cleanup_error
+                if failure_site == "destroy_global_state":
+                    global_state.reset_for_restart.assert_not_called()
+
+                # A later successful cleanup must not replay an earlier error.
+                destroy_global_state.side_effect = None
+                global_state.reset_for_restart.side_effect = None
+                assert finalize(state) is state
+
+            destroy_global_state.assert_called()
+            global_state.reset_for_restart.assert_called()
+            assert empty_cache.call_count == (1 if failure_site is None else 2) * empty_cuda_cache
+
     def test_inprocess_restart_honors_max_iterations(self):
         """Test that a finite retry limit aborts before the next attempt."""
         from nvidia_resiliency_ext.inprocess.exception import RestartAbort
