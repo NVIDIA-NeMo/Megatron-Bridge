@@ -2440,3 +2440,32 @@ def test_mapping_reads_partial_rotary_factor_from_hf_config():
     kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
 
     assert kwargs["rotary_percent"] == 0.5
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("cuda_available", "expected_calls"), [(True, ["empty_cache", "gather"]), (False, ["gather"])]
+)
+def test_global_param_names_releases_cuda_cache_before_gather(monkeypatch, cuda_available, expected_calls):
+    """The CUDA caching allocator is released before the pipeline-parallel name gather."""
+    calls = []
+    model = torch.nn.Module()
+    model.config = SimpleNamespace()
+    model.register_parameter("weight", torch.nn.Parameter(torch.zeros(1)))
+    _patch(monkeypatch, "_get_pp_group", lambda *_a, **_kw: SimpleNamespace(size=lambda: 1))
+    _patch(monkeypatch, "unwrap_model", lambda models: models)
+    _patch(monkeypatch, "persistent_buffers", lambda *_a, **_kw: [])
+    _patch(monkeypatch, "_megatron_local_name_to_global", lambda _models, _config, name, _vp_stage: name)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: calls.append("empty_cache"))
+
+    def all_gather_object(output, obj, group=None):
+        calls.append("gather")
+        output[0] = obj
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", all_gather_object)
+
+    names = DummyBridge()._megatron_global_param_names_all_pp_ranks([model])
+
+    assert calls == expected_calls
+    assert names == ["weight"]

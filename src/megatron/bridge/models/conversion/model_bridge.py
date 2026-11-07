@@ -1197,6 +1197,9 @@ class MegatronModelBridge(
                 global_param_names.append(global_param_name)
 
         gathered_global_param_names = [None] * pp_group.size()
+        # Return cached allocator blocks so NCCL can allocate its communicator buffers.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
 
         # Record the lowest PP rank that physically owns every parameter. Some
