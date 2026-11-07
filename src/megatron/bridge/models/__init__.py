@@ -25,9 +25,12 @@ if (
 
     _BAGEL_EXPORTS = ["BagelBridge", "BagelConfig", "BagelModelProvider"]
 
-from megatron.bridge.models.bailing import (
-    BailingMoeV2Bridge,
-)
+try:
+    from megatron.bridge.models.bailing import (
+        BailingMoeV2Bridge,
+    )
+except (ImportError, ModuleNotFoundError):
+    BailingMoeV2Bridge = None  # type: ignore[assignment,misc]
 from megatron.bridge.models.beam import (
     BeamBridge,
     BeamModelBuilder,
