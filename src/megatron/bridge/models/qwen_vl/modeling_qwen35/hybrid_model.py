@@ -38,11 +38,17 @@ _POSITION_IDS: ContextVar[torch.Tensor | None] = ContextVar("qwen35_hybrid_posit
 
 
 class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
-    def forward(self, max_seq_len: int, *, packed_seq: bool = False) -> torch.Tensor:
+    def forward(
+        self,
+        max_seq_len: int,
+        *,
+        packed_seq: bool = False,
+        cp_group: torch.distributed.ProcessGroup | None = None,
+    ) -> torch.Tensor:
         position_ids = _POSITION_IDS.get()
         if position_ids is None:
             raise RuntimeError("Qwen3.5 Hybrid mRoPE requires the current forward's position_ids.")
-        return super().forward(position_ids, self.mrope_section)
+        return super().forward(position_ids, self.mrope_section, cp_group=cp_group)
 
 
 class Qwen35VLHybridAttentionLayer(Qwen3VLRotaryTransformerLayer):
