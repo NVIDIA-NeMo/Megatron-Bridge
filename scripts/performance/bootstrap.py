@@ -93,6 +93,17 @@ def _apply_one_gpu_per_rank(recipe) -> None:
         )
 
 
+def _prepend_local_src_to_pythonpath() -> None:
+    """Prepend this repo's src/ directory to PYTHONPATH before execvpe.
+
+    Ensures the local source tree shadows any editable-install copy that may be
+    installed at a different path inside the container (e.g. /opt/Megatron-Bridge/).
+    """
+    src_dir = str(Path(__file__).resolve().parent.parent.parent / "src")
+    existing = os.environ.get("PYTHONPATH", "")
+    os.environ["PYTHONPATH"] = f"{src_dir}:{existing}" if existing else src_dir
+
+
 def _exec_training(target_name: str) -> None:
     """Replace the bootstrap process with the selected training entrypoint."""
     target_path = Path(__file__).resolve().parent / target_name
@@ -110,6 +121,7 @@ def main() -> None:
     recipe, target_name = _prepare_recipe_and_target(args, cli_overrides)
     _apply_recipe_environment(recipe)
     _apply_one_gpu_per_rank(recipe)
+    _prepend_local_src_to_pythonpath()
     _exec_training(target_name)
 
 
