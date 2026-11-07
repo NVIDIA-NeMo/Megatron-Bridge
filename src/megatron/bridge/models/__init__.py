@@ -29,19 +29,29 @@ try:
     from megatron.bridge.models.bailing import (
         BailingMoeV2Bridge,
     )
-except (ImportError, ModuleNotFoundError):
+except (ImportError, ModuleNotFoundError, Exception):
     BailingMoeV2Bridge = None  # type: ignore[assignment,misc]
-from megatron.bridge.models.beam import (
-    BeamBridge,
-    BeamModelBuilder,
-    BeamModelConfig,
-    BeamModelProvider,
-    BeamQKVGateMapping,
-    BeamTransformerConfig,
-)
-from megatron.bridge.models.bert import (
-    BertModelProvider,
-)
+
+try:
+    from megatron.bridge.models.beam import (
+        BeamBridge,
+        BeamModelBuilder,
+        BeamModelConfig,
+        BeamModelProvider,
+        BeamQKVGateMapping,
+        BeamTransformerConfig,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    BeamBridge = BeamModelBuilder = BeamModelConfig = BeamModelProvider = None  # type: ignore[assignment,misc]
+    BeamQKVGateMapping = BeamTransformerConfig = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.bert import (
+        BertModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    BertModelProvider = None  # type: ignore[assignment,misc]
+
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -57,207 +67,389 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.deepseek import (
     DeepSeekV3Bridge,
 )
-from megatron.bridge.models.diffusion_gemma import (
-    DiffusionGemmaBridge,
-    DiffusionGemmaModel,
-    DiffusionGemmaModelProvider,
-)
-from megatron.bridge.models.ernie import (
-    Ernie45Bridge,
-    Ernie55Bridge,
-    Ernie55Config,
-    Ernie55ModelBuilder,
-    Ernie55ModelConfig,
-    Ernie55TransformerConfig,
-)
-from megatron.bridge.models.ernie_vl import (
-    Ernie45VLBridge,
-    Ernie45VLModel,
-    Ernie45VLModelProvider,
-)
-from megatron.bridge.models.exaone.exaone4 import (
-    Exaone4Bridge,
-)
-from megatron.bridge.models.exaone.exaone45 import (
-    Exaone45Bridge,
-    Exaone45Model,
-    Exaone45ModelBuilder,
-    Exaone45ModelConfig,
-    Exaone45ModelProvider,
-)
-from megatron.bridge.models.exaone.exaone_moe import (
-    ExaoneMoeBridge,
-    ExaoneMoeModelProvider,
-)
-from megatron.bridge.models.falcon_h1 import (
-    FalconH1Bridge,
-    FalconH1ModelProvider,
-)
-from megatron.bridge.models.gemma import (
-    Gemma3ModelProvider,
-)
-from megatron.bridge.models.gemma_vl import (
-    Gemma3VLBridge,
-    Gemma3VLModel,
-    Gemma3VLModelProvider,
-    Gemma4DenseVLModelConfig,
-    Gemma4VLBridge,
-    Gemma4VLModel,
-    Gemma4VLModelConfig,
-    Gemma4VLModelProvider,
-)
-from megatron.bridge.models.glm import (
-    GLM45Bridge,
-    GLM47FlashBridge,
-)
-from megatron.bridge.models.glm5next import (
-    GLM53FlashBridge,
-    GLM53FlashModel,
-    GLM53FlashModelBuilder,
-    GLM53FlashModelConfig,
-    GLM53FlashModelProvider,
-)
-from megatron.bridge.models.glm_moe_dsa import (
-    GLM5Bridge,
-)
-from megatron.bridge.models.glm_vl import (
-    GLM45VBridge,
-    GLM45VModelProvider,
-)
-from megatron.bridge.models.gpt_oss import (
-    GPTOSSBridge,
-)
-from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hy_v3 import (
-    HYV3Bridge,
-)
-from megatron.bridge.models.hybrid import (
-    HybridModelBuilder,
-    HybridModelConfig,
-    HybridModelProvider,
-)
-from megatron.bridge.models.kimi import (
-    KimiK2Bridge,
-    KimiK3Bridge,
-    KimiK3ModelProvider,
-)
-from megatron.bridge.models.kimi_vl import (
-    KimiK25VLBridge,
-    KimiK25VLModel,
-    KimiK25VLModelConfig,
-    KimiK25VLModelProvider,
-)
-from megatron.bridge.models.llama import (
-    LlamaBridge,
-)
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
-from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
-from megatron.bridge.models.mimo_v2_flash import (
-    MiMoV2FlashBridge,
-    MiMoV2FlashModelProvider,
-)
-from megatron.bridge.models.minicpmo import MiniCPMOBridge, MiniCPMOModelConfig
-from megatron.bridge.models.minimax_m2 import (
-    MiniMaxM2Bridge,
-)
-from megatron.bridge.models.minimax_m3 import (
-    MiniMaxM3Bridge,
-    MiniMaxM3ModelConfig,
-    MiniMaxM3VLModel,
-    MiniMaxM3VLModelConfig,
-    MiniMaxM3VLModelProvider,
-)
-from megatron.bridge.models.ministral3 import (
-    Ministral3Bridge,
-    Ministral3Model,
-    Ministral3ModelProvider,
-)
-from megatron.bridge.models.mistral import (
-    MistralModelProvider,
-)
-from megatron.bridge.models.muse_glimmer import (
-    MuseGlimmerBridge,
-    MuseGlimmerModel,
-    MuseGlimmerModelBuilder,
-    MuseGlimmerModelConfig,
-)
-from megatron.bridge.models.muse_spark_open import (
-    MuseSparkBridge,
-    MuseSparkModel,
-    MuseSparkModelBuilder,
-    MuseSparkModelConfig,
-)
-from megatron.bridge.models.nemotron_omni import (
-    Nemotron35SuperVLBridge,
-    NemotronOmniBridge,
-    NemotronOmniModel,
-    NemotronOmniModelBuilder,
-    NemotronOmniModelConfig,
-)
-from megatron.bridge.models.nemotron_vl import (
-    NemotronVLBridge,
-    NemotronVLModel,
-)
-from megatron.bridge.models.nemotronh import (
-    NemotronHBridge,
-)
-from megatron.bridge.models.olmoe import (
-    OlMoEBridge,
-    OlMoEModelProvider,
-)
-from megatron.bridge.models.qwen3_asr import (
-    Qwen3ASRBridge,
-    Qwen3ASRModel,
-    Qwen3ASRModelProvider,
-)
-from megatron.bridge.models.qwen_audio import (
-    Qwen2AudioBridge,
-    Qwen2AudioModel,
-    Qwen2AudioModelProvider,
-)
-from megatron.bridge.models.qwen_omni import (
-    Qwen3OmniBridge,
-    Qwen3OmniModel,
-    Qwen3OmniModelProvider,
-    Qwen25OmniBridge,
-    Qwen25OmniModel,
-    Qwen25OmniModelProvider,
-)
-from megatron.bridge.models.qwen_vl import (
-    Qwen25VLBridge,
-    Qwen25VLModel,
-    Qwen25VLModelProvider,
-    Qwen35TokenClassificationBridge,
-    Qwen35TokenClassificationModelProvider,
-    Qwen35VLBridge,
-    Qwen35VLModelBuilder,
-    Qwen35VLModelConfig,
-    Qwen35VLModelProvider,
-    Qwen35VLMoEBridge,
-    Qwen35VLMoEModelProvider,
-    Qwen35VLTransformerConfig,
-)
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
-    Qwen3VLBridge,
-    Qwen3VLForTokenClassification,
-    Qwen3VLModel,
-    Qwen3VLModelProvider,
-    Qwen3VLMoEBridge,
-    Qwen3VLMoEModelProvider,
-)
-from megatron.bridge.models.sarvam import (
-    SarvamMLABridge,
-    SarvamMoEBridge,
-)
-from megatron.bridge.models.stepfun import (
-    Step35Bridge,
-    Step37Bridge,
-    Step37Model,
-    Step37ModelBuilder,
-    Step37ModelConfig,
-    Step37ModelProvider,
-)
-from megatron.bridge.models.t5_provider import T5ModelProvider
+
+try:
+    from megatron.bridge.models.diffusion_gemma import (
+        DiffusionGemmaBridge,
+        DiffusionGemmaModel,
+        DiffusionGemmaModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    DiffusionGemmaBridge = DiffusionGemmaModel = DiffusionGemmaModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.ernie import (
+        Ernie45Bridge,
+        Ernie55Bridge,
+        Ernie55Config,
+        Ernie55ModelBuilder,
+        Ernie55ModelConfig,
+        Ernie55TransformerConfig,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Ernie45Bridge = Ernie55Bridge = Ernie55Config = None  # type: ignore[assignment,misc]
+    Ernie55ModelBuilder = Ernie55ModelConfig = Ernie55TransformerConfig = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.ernie_vl import (
+        Ernie45VLBridge,
+        Ernie45VLModel,
+        Ernie45VLModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Ernie45VLBridge = Ernie45VLModel = Ernie45VLModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.exaone.exaone4 import (
+        Exaone4Bridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Exaone4Bridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.exaone.exaone45 import (
+        Exaone45Bridge,
+        Exaone45Model,
+        Exaone45ModelBuilder,
+        Exaone45ModelConfig,
+        Exaone45ModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Exaone45Bridge = Exaone45Model = Exaone45ModelBuilder = None  # type: ignore[assignment,misc]
+    Exaone45ModelConfig = Exaone45ModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.exaone.exaone_moe import (
+        ExaoneMoeBridge,
+        ExaoneMoeModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    ExaoneMoeBridge = ExaoneMoeModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.falcon_h1 import (
+        FalconH1Bridge,
+        FalconH1ModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    FalconH1Bridge = FalconH1ModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.gemma import (
+        Gemma3ModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Gemma3ModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.gemma_vl import (
+        Gemma3VLBridge,
+        Gemma3VLModel,
+        Gemma3VLModelProvider,
+        Gemma4DenseVLModelConfig,
+        Gemma4VLBridge,
+        Gemma4VLModel,
+        Gemma4VLModelConfig,
+        Gemma4VLModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Gemma3VLBridge = Gemma3VLModel = Gemma3VLModelProvider = None  # type: ignore[assignment,misc]
+    Gemma4DenseVLModelConfig = Gemma4VLBridge = Gemma4VLModel = None  # type: ignore[assignment,misc]
+    Gemma4VLModelConfig = Gemma4VLModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.glm import (
+        GLM45Bridge,
+        GLM47FlashBridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    GLM45Bridge = GLM47FlashBridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.glm5next import (
+        GLM53FlashBridge,
+        GLM53FlashModel,
+        GLM53FlashModelBuilder,
+        GLM53FlashModelConfig,
+        GLM53FlashModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    GLM53FlashBridge = GLM53FlashModel = GLM53FlashModelBuilder = None  # type: ignore[assignment,misc]
+    GLM53FlashModelConfig = GLM53FlashModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.glm_moe_dsa import (
+        GLM5Bridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    GLM5Bridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.glm_vl import (
+        GLM45VBridge,
+        GLM45VModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    GLM45VBridge = GLM45VModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.gpt_oss import (
+        GPTOSSBridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    GPTOSSBridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.gpt_provider import GPTModelProvider
+except (ImportError, ModuleNotFoundError, Exception):
+    GPTModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.hy_v3 import (
+        HYV3Bridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    HYV3Bridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.hybrid import (
+        HybridModelBuilder,
+        HybridModelConfig,
+        HybridModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    HybridModelBuilder = HybridModelConfig = HybridModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.kimi import (
+        KimiK2Bridge,
+        KimiK3Bridge,
+        KimiK3ModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    KimiK2Bridge = KimiK3Bridge = KimiK3ModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.kimi_vl import (
+        KimiK25VLBridge,
+        KimiK25VLModel,
+        KimiK25VLModelConfig,
+        KimiK25VLModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    KimiK25VLBridge = KimiK25VLModel = KimiK25VLModelConfig = KimiK25VLModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.llama import (
+        LlamaBridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    LlamaBridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+except (ImportError, ModuleNotFoundError, Exception):
+    MambaModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
+except (ImportError, ModuleNotFoundError, Exception):
+    MimoBridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.mimo_v2_flash import (
+        MiMoV2FlashBridge,
+        MiMoV2FlashModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    MiMoV2FlashBridge = MiMoV2FlashModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.minicpmo import MiniCPMOBridge, MiniCPMOModelConfig
+except (ImportError, ModuleNotFoundError, Exception):
+    MiniCPMOBridge = MiniCPMOModelConfig = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.minimax_m2 import (
+        MiniMaxM2Bridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    MiniMaxM2Bridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.minimax_m3 import (
+        MiniMaxM3Bridge,
+        MiniMaxM3ModelConfig,
+        MiniMaxM3VLModel,
+        MiniMaxM3VLModelConfig,
+        MiniMaxM3VLModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    MiniMaxM3Bridge = MiniMaxM3ModelConfig = MiniMaxM3VLModel = None  # type: ignore[assignment,misc]
+    MiniMaxM3VLModelConfig = MiniMaxM3VLModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.ministral3 import (
+        Ministral3Bridge,
+        Ministral3Model,
+        Ministral3ModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Ministral3Bridge = Ministral3Model = Ministral3ModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.mistral import (
+        MistralModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    MistralModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.muse_glimmer import (
+        MuseGlimmerBridge,
+        MuseGlimmerModel,
+        MuseGlimmerModelBuilder,
+        MuseGlimmerModelConfig,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    MuseGlimmerBridge = MuseGlimmerModel = MuseGlimmerModelBuilder = MuseGlimmerModelConfig = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.muse_spark_open import (
+        MuseSparkBridge,
+        MuseSparkModel,
+        MuseSparkModelBuilder,
+        MuseSparkModelConfig,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    MuseSparkBridge = MuseSparkModel = MuseSparkModelBuilder = MuseSparkModelConfig = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.nemotron_omni import (
+        Nemotron35SuperVLBridge,
+        NemotronOmniBridge,
+        NemotronOmniModel,
+        NemotronOmniModelBuilder,
+        NemotronOmniModelConfig,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Nemotron35SuperVLBridge = NemotronOmniBridge = NemotronOmniModel = None  # type: ignore[assignment,misc]
+    NemotronOmniModelBuilder = NemotronOmniModelConfig = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.nemotron_vl import (
+        NemotronVLBridge,
+        NemotronVLModel,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    NemotronVLBridge = NemotronVLModel = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.nemotronh import (
+        NemotronHBridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    NemotronHBridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.olmoe import (
+        OlMoEBridge,
+        OlMoEModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    OlMoEBridge = OlMoEModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.qwen3_asr import (
+        Qwen3ASRBridge,
+        Qwen3ASRModel,
+        Qwen3ASRModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Qwen3ASRBridge = Qwen3ASRModel = Qwen3ASRModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.qwen_audio import (
+        Qwen2AudioBridge,
+        Qwen2AudioModel,
+        Qwen2AudioModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Qwen2AudioBridge = Qwen2AudioModel = Qwen2AudioModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.qwen_omni import (
+        Qwen3OmniBridge,
+        Qwen3OmniModel,
+        Qwen3OmniModelProvider,
+        Qwen25OmniBridge,
+        Qwen25OmniModel,
+        Qwen25OmniModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Qwen3OmniBridge = Qwen3OmniModel = Qwen3OmniModelProvider = None  # type: ignore[assignment,misc]
+    Qwen25OmniBridge = Qwen25OmniModel = Qwen25OmniModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.qwen_vl import (
+        Qwen25VLBridge,
+        Qwen25VLModel,
+        Qwen25VLModelProvider,
+        Qwen35TokenClassificationBridge,
+        Qwen35TokenClassificationModelProvider,
+        Qwen35VLBridge,
+        Qwen35VLModelBuilder,
+        Qwen35VLModelConfig,
+        Qwen35VLModelProvider,
+        Qwen35VLMoEBridge,
+        Qwen35VLMoEModelProvider,
+        Qwen35VLTransformerConfig,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Qwen25VLBridge = Qwen25VLModel = Qwen25VLModelProvider = None  # type: ignore[assignment,misc]
+    Qwen35TokenClassificationBridge = Qwen35TokenClassificationModelProvider = None  # type: ignore[assignment,misc]
+    Qwen35VLBridge = Qwen35VLModelBuilder = Qwen35VLModelConfig = None  # type: ignore[assignment,misc]
+    Qwen35VLModelProvider = Qwen35VLMoEBridge = Qwen35VLMoEModelProvider = None  # type: ignore[assignment,misc]
+    Qwen35VLTransformerConfig = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
+        Qwen3VLBridge,
+        Qwen3VLForTokenClassification,
+        Qwen3VLModel,
+        Qwen3VLModelProvider,
+        Qwen3VLMoEBridge,
+        Qwen3VLMoEModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Qwen3VLBridge = Qwen3VLForTokenClassification = Qwen3VLModel = None  # type: ignore[assignment,misc]
+    Qwen3VLModelProvider = Qwen3VLMoEBridge = Qwen3VLMoEModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.sarvam import (
+        SarvamMLABridge,
+        SarvamMoEBridge,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    SarvamMLABridge = SarvamMoEBridge = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.stepfun import (
+        Step35Bridge,
+        Step37Bridge,
+        Step37Model,
+        Step37ModelBuilder,
+        Step37ModelConfig,
+        Step37ModelProvider,
+    )
+except (ImportError, ModuleNotFoundError, Exception):
+    Step35Bridge = Step37Bridge = Step37Model = None  # type: ignore[assignment,misc]
+    Step37ModelBuilder = Step37ModelConfig = Step37ModelProvider = None  # type: ignore[assignment,misc]
+
+try:
+    from megatron.bridge.models.t5_provider import T5ModelProvider
+except (ImportError, ModuleNotFoundError, Exception):
+    T5ModelProvider = None  # type: ignore[assignment,misc]
 
 
 __all__ = [
