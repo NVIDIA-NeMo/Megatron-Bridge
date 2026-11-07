@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Phase B1 gate: score packed SFT data with ``TrainingEngine.forward_only`` and check the output contract.
+"""Scoring gate: score packed SFT data with ``TrainingEngine.forward_only`` and check the output contract.
 
 Reads the first ``--num-packs`` rows of an offline-packed parquet file (columns ``input_ids``,
 ``seq_start_id``, ``loss_mask``), expands every pack into one Datum per sequence (inputs are the
@@ -97,7 +97,7 @@ def _mean_nll(datums: list[Datum], output: ForwardOutput) -> tuple[float, float]
 
 
 def main() -> None:
-    """Run the B1 scoring checks on every rank."""
+    """Run the scoring checks on every rank."""
     logging.basicConfig(level=logging.INFO)
     args = _parse_args()
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
@@ -147,7 +147,7 @@ def main() -> None:
     else:
         engine.close()
     torch.distributed.barrier()
-    print_rank_0("PHASE B1 GATE PASSED")
+    print_rank_0("SCORING GATE PASSED")
     torch.distributed.destroy_process_group()
 
 

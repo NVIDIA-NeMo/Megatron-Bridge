@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Phase B2 demo: SFT through ``TrainingEngine`` on offline-packed data, logged to W&B for the baseline comparison.
+"""SFT demo: SFT through ``TrainingEngine`` on offline-packed data, logged to W&B for the baseline comparison.
 
 Each iteration reads ``--packs-per-step`` packed rows (in file order), expands them to Datums, runs
 ``forward_backward`` in ``--calls-per-step`` chunks, and calls ``optim_step`` with the learning rate from

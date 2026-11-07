@@ -14,6 +14,8 @@ In practice:
 - The default engine pipeline handles packing, DP/CP partitioning, Megatron execution, gradient synchronization, and reconstruction of scoring outputs.
 - Users can replace preprocessing, postprocessing, and loss methods without changing the public training loop. Custom pipelines must still satisfy the strict execution contract.
 
+Functionality that is not implemented yet is listed in [TODO.md](TODO.md); the engine rejects those modes explicitly instead of silently ignoring them.
+
 ## API walkthrough
 
 ### Construct, score, accumulate, update

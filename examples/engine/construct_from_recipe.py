@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Phase A gate: construct TrainingEngines from an engine recipe on every rank.
+"""Construction gate: construct TrainingEngines from an engine recipe on every rank.
 
 Builds a trainable actor and a frozen reference from the same recipe, prints parallel info,
 parameter counts and memory, closes the actor, verifies the reference still works and that the
@@ -185,7 +185,7 @@ def main() -> None:
     reference.close()
     _assert_released(reference_chunk_ref, "reference")
     torch.distributed.barrier()
-    print_rank_0(f"[reference] closed and released; {_memory_gb()}; PHASE A GATE PASSED")
+    print_rank_0(f"[reference] closed and released; {_memory_gb()}; CONSTRUCTION GATE PASSED")
     torch.distributed.destroy_process_group()
 
 

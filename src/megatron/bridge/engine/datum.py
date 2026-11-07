@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Data contracts for the TrainingEngine (see ``trainingengine-data-contract.md``).
+"""Data contracts for the TrainingEngine (see the "Data contract" section of README.md in this package).
 
 Boundaries: the caller hands the engine loose input (default: a global ``list[Datum]``); preprocessing
 produces strict ``PreparedMicrobatch`` tensors for Megatron; the model adapter returns ``ModelOutput``

@@ -13,9 +13,9 @@
 # limitations under the License.
 """TrainingEngine: an in-process, every-rank training object built from a ``TrainingRecipe``.
 
-Phase A implements construction (``from_recipe``), shared-runtime ownership, ``parallel_info``,
-engine-local ``close()`` and named-loss dispatch. Compute, state and placement APIs raise
-``NotImplementedError`` until their phase lands.
+Construction (by model name or from a recipe), scoring, gradient accumulation, optimizer steps,
+checkpoints, export and CPU/GPU placement are implemented. Modes that are not supported yet raise
+``NotImplementedError`` with a ``TODO`` comment at the raise site; TODO.md in this package lists them.
 """
 
 from __future__ import annotations
@@ -299,7 +299,7 @@ class TrainingEngine:
                 off on the recipe copy, ``forward_only`` returns values and ``forward_backward`` defaults
                 to ``value_loss``. One recipe serves the actor and the critic.
             trainable: Build the optimizer and gradient buffers. ``False`` yields a frozen scoring engine.
-            lora: LoRA settings (phase C3).
+            lora: LoRA settings (not implemented yet).
             hooks: Extra pre-wrap hooks run after the Bridge-registered ones.
             spawn_async_save_worker: Spawn the asynchronous-save worker (one process per rank with its own
                 CUDA context, alive until ``close``) before the model is built. ``False`` saves that cost
@@ -335,7 +335,8 @@ class TrainingEngine:
         if output_head not in ("lm", "value"):
             raise ValueError(f"output_head must be 'lm' or 'value', got {output_head!r}.")
         if lora is not None:
-            raise NotImplementedError("LoRA engines are phase C3.")
+            # TODO(lora): Bridge LoRA through a pre-wrap hook; see TODO.md.
+            raise NotImplementedError("LoRA engines are not implemented yet.")
         if output_head == "value":
             apply_value_head_model_settings(recipe.model)
         finalize_recipe(recipe)
@@ -463,7 +464,8 @@ class TrainingEngine:
             # TODO(logits): entropy needs the model called without labels and a chunked TP-aware reduction.
             raise NotImplementedError("return_entropy needs the full-logits path, which is not implemented yet.")
         if disable_adapters:
-            raise NotImplementedError("disable_adapters is implemented in phase C3 (LoRA).")
+            # TODO(lora): run the forward under PEFT.disable_adapter(model).
+            raise NotImplementedError("disable_adapters needs LoRA, which is not implemented yet.")
         if self._runtime.topology.pp > 1:
             raise NotImplementedError(
                 "forward_only with pipeline parallelism (broadcast_output) is not supported yet."
@@ -547,7 +549,7 @@ class TrainingEngine:
     # ---- data pipeline extension points (override in a subclass) -------------------------------
 
     def preprocess(self, data: Any, *, training: bool) -> list[PreparedMicrobatch]:
-        """Turn caller input into this rank's strict microbatches (boundary B1 -> B2).
+        """Turn caller input into this rank's strict microbatches.
 
         Default: ``data`` is the same global ``list[Datum]`` on every rank; it is grouped, dealt to DP
         replicas, packed or padded per the recipe's ``batch_layout``, and CP-sharded. Override to read
@@ -571,7 +573,7 @@ class TrainingEngine:
     def postprocess_forward_only(
         self, microbatches: list[PreparedMicrobatch], logprobs: list[torch.Tensor], *, gather_output: bool
     ) -> ForwardOutput:
-        """Turn per-microbatch ``[T_local]`` scores into the ``forward_only`` result (boundary B3 -> B5).
+        """Turn per-microbatch ``[T_local]`` scores into the ``forward_only`` result.
 
         Default: drop padding, reassemble across CP, collect across DP when ``gather_output`` is set, and
         restore the caller's sample order. Override together with ``preprocess`` when the mapping or the
@@ -594,7 +596,7 @@ class TrainingEngine:
         num_loss_tokens: torch.Tensor,
         metrics: dict[str, torch.Tensor],
     ) -> ForwardBackwardOutput:
-        """Turn this rank's raw call results into the ``forward_backward`` summary (boundary B3 -> B6).
+        """Turn this rank's raw call results into the ``forward_backward`` summary.
 
         The summary is what the caller receives and what the engine adds to its accumulation window, so
         this method owns the normalization inputs: ``loss_sum``, ``num_loss_tokens`` and ``metrics`` are
