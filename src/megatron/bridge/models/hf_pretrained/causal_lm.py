@@ -20,7 +20,6 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 import torch
 from transformers import (
     AutoConfig,
-    AutoImageProcessor,
     AutoModelForCausalLM,
     AutoProcessor,
     AutoTokenizer,
@@ -28,6 +27,11 @@ from transformers import (
     PreTrainedTokenizer,
     ProcessorMixin,
 )
+
+try:
+    from transformers import AutoImageProcessor
+except (ImportError, AttributeError):
+    AutoImageProcessor = None  # type: ignore[assignment,misc]
 from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.utils import GenerateOutput
 

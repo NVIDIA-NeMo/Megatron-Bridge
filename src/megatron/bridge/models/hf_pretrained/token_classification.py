@@ -17,12 +17,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from transformers import (
-    AutoImageProcessor,
     AutoModelForTokenClassification,
     AutoProcessor,
     PreTrainedModel,
     ProcessorMixin,
 )
+
+try:
+    from transformers import AutoImageProcessor
+except (ImportError, AttributeError):
+    AutoImageProcessor = None  # type: ignore[assignment,misc]
 
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 
