@@ -131,14 +131,12 @@ def test_pretrain_recipes_pin_base_model_revisions(builder_only: None, monkeypat
     assert moe.tokenizer.hf_tokenizer_kwargs == {"revision": qwen35._QWEN35_35B_A3B_BASE_REVISION}
 
 
-def test_35b_a3b_pretrain_keeps_hybridep_on_one_nvlink_domain(builder_only: None):
-    """EP8 over two four-GPU GB200 nodes runs HybridEP across one multi-node NVLink domain."""
+def test_35b_a3b_pretrain_uses_ncclep_on_one_nvlink_domain(builder_only: None):
+    """EP8 over two four-GPU GB200 nodes runs NCCL EP across one multi-node NVLink domain."""
     cfg = qwen35.qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config()
 
     assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.env_vars == {
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
-    }
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is True
+    # NCCL EP needs no HybridEP NVLink-domain variables; only its dispatcher mode is declared.
+    assert cfg.env_vars == {"NCCL_EP_HT_EM_PULL_PUSH": 1}
