@@ -10076,7 +10076,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-6-35b-a3b-hf-to-megatron-cpu",
-          "expected_result": "The pinned-revision import exited successfully in 14m39s and created iter_0000000. Model weights remained on CPU; exactly one shared runtime GPU was required because Transformer Engine constructs the Qwen vision modules through CUDA even for CPU-weight conversion. The resulting checkpoint was reloadable by the subsequent verified CPU export.\n",
+          "expected_result": "The pinned-revision import exited successfully in 14m39s and created iter_0000000. Model weights remained on CPU; exactly one shared runtime GPU was required because Transformer Engine constructs the Qwen vision modules through CUDA even for CPU-weight conversion. The resulting checkpoint was reloadable by the subsequent verified CPU export.\n\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 4 --mem 512G --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/cpu-megatron\n\nImported the complete pinned checkpoint with model weights on CPU in one process and saved iter_0000000. Transformer Engine vision-module construction required one runtime GPU; four GB300 GPUs were allocated to satisfy the minimum allocation. The subsequent CPU export reloaded the checkpoint successfully. The complete BF16 roundtrip preserves all 1,811 keys and shapes, with precision changes documented in megatron_to_hf_cpu; it is not a lossless mixed-dtype roundtrip.\n",
           "hardware": null,
           "last_verified": "2026-07-23",
           "metrics": {},
@@ -10103,7 +10103,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-6-35b-a3b-hf-to-megatron-gpu",
-          "expected_result": "The 16-H100 pinned-revision import exited successfully at TP2/PP1/EP8/ETP1 and created a 16-shard iter_0000000 distributed checkpoint. Subsequent verified GPU export and inference workloads reloaded this checkpoint successfully.\n",
+          "expected_result": "The 16-H100 pinned-revision import exited successfully at TP2/PP1/EP8/ETP1 and created a 16-shard iter_0000000 distributed checkpoint. Subsequent verified GPU export and inference workloads reloaded this checkpoint successfully.\n\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --ep 4 --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/gpu-megatron\n\nImported the complete pinned checkpoint on four GB300 GPUs at TP1/PP1/EP4/ETP1 and saved iter_0000000 with four distributed shards. Subsequent GPU export, forward comparison, inference, SFT, and PEFT successfully reloaded the checkpoint. The BF16 roundtrip preserves all 1,811 tensor keys and shapes, with the precision changes documented in megatron_to_hf_gpu; it is not a lossless mixed-dtype roundtrip.\n",
           "hardware": null,
           "last_verified": "2026-07-23",
           "metrics": {},
@@ -10128,7 +10128,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-6-35b-a3b-megatron-to-hf-cpu",
-          "expected_result": "Export exited successfully in 6m42s with weights on CPU and exactly one shared runtime GPU for Transformer Engine vision-module construction. Transformers strictly reloaded all 1,045 BF16 tensors in 26 indexed shards as Qwen3_5MoeForConditionalGeneration. The exported config preserves 40 language layers, 256 experts, top-8 routing, 27 vision layers, and one MTP layer with dedicated embeddings disabled.\n",
+          "expected_result": "Export exited successfully in 6m42s with weights on CPU and exactly one shared runtime GPU for Transformer Engine vision-module construction. Transformers strictly reloaded all 1,045 BF16 tensors in 26 indexed shards as Qwen3_5MoeForConditionalGeneration. The exported config preserves 40 language layers, 256 experts, top-8 routing, 27 vision layers, and one MTP layer with dedicated embeddings disabled.\n\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 4 --mem 512G --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/cpu-megatron/iter_0000000 --hf-path work/model-verification/qwen3.5-35b-a3b/cpu-hf-export\n\nExport completed with weights on CPU in one process and one runtime GPU from a four-GB300 allocation. Transformers independently reloaded the complete export with no missing, unexpected, mismatched, or error entries. All 1,811 keys and shapes match the pinned source. The source's 30 GDN A_log tensors and 30 GDN output norm tensors change from FP32 to BF16; all other dtypes are preserved. Values of 1,781 tensors match exactly, including A_log. The 30 norm tensors exactly match BF16(FP32_source - 1) + BF16(1). Their maximum absolute source difference is 0.00390625, within an absolute tolerance of 1/256; no other tensor values differ. This verifies BF16 conversion, not lossless retention of the source's mixed dtypes.\n",
           "hardware": null,
           "last_verified": "2026-07-23",
           "metrics": {},
@@ -10155,7 +10155,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-6-35b-a3b-megatron-to-hf-gpu",
-          "expected_result": "The 16-H100 distributed export exited successfully and wrote 26 indexed shards containing 1,045 BF16 tensors and 71,903,645,408 serialized tensor bytes. Transformers independently reloaded the persisted export as Qwen3_5MoeForConditionalGeneration with empty missing, unexpected, mismatched, and error sets.\n",
+          "expected_result": "The 16-H100 distributed export exited successfully and wrote 26 indexed shards containing 1,045 BF16 tensors and 71,903,645,408 serialized tensor bytes. Transformers independently reloaded the persisted export as Qwen3_5MoeForConditionalGeneration with empty missing, unexpected, mismatched, and error sets.\n\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --ep 4 --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --hf-path work/model-verification/qwen3.5-35b-a3b/gpu-hf-export\n\nGPU export completed on four GB300 GPUs at TP1/PP1/EP4/ETP1. All 1,811 keys and shapes match the pinned source. Transformers strictly reloaded the complete export with no missing, unexpected, mismatched, or error entries. The source's 30 GDN A_log tensors and 30 GDN output norm tensors change from FP32 to BF16; all other dtypes are preserved. Values of 1,781 tensors match exactly, including A_log. The 30 norm tensors exactly match BF16(FP32_source - 1) + BF16(1), the implemented zero-centered norm roundtrip. Their maximum absolute source difference is 0.00390625, within an absolute tolerance of 1/256; no other tensor values differ. This verifies the BF16 conversion, not lossless retention of the source's mixed dtypes.\n",
           "hardware": null,
           "last_verified": "2026-07-23",
           "metrics": {},
@@ -10181,7 +10181,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-6-35b-a3b-manual-forward-pass",
-          "expected_result": "The input was MedPix-VQA revision 69eb219d477ab8699296da1fd6b89beb768042d3, validation row 0, case MPX1095. Its 256-by-256 source image has SHA-256 d5852239309244feb646739dfe7460048c596380abe89def0a84d8a62778b7b1. The Qwen processor produced 83 input tokens and a 256-by-1536 pixel tensor. The pinned HF model and imported Megatron checkpoint had next-token predictions that matched at token 760 ('The'). Cosine similarity: 0.999156; maximum and mean absolute logit differences were 0.484375 and 0.082185, respectively.\n",
+          "expected_result": "The input was MedPix-VQA revision 69eb219d477ab8699296da1fd6b89beb768042d3, validation row 0, case MPX1095. Its 256-by-256 source image has SHA-256 d5852239309244feb646739dfe7460048c596380abe89def0a84d8a62778b7b1. The Qwen processor produced 83 input tokens and a 256-by-1536 pixel tensor. The pinned HF model and imported Megatron checkpoint had next-token predictions that matched at token 760 ('The'). Cosine similarity: 0.999156; maximum and mean absolute logit differences were 0.484375 and 0.082185, respectively.\n\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4 --task model-comparison --hf_model_path Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --model_class Qwen3_5MoeForConditionalGeneration --megatron_model_path work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --ep 4 --image_path work/data/medpix/verification.png --prompt \"What was observed in the imaging?\"\n\nOn four GB300 GPUs at TP1/PP1/EP4/ETP1, the pinned HF model and reloaded Hybrid checkpoint had a next-token match: 760 ('The'). Cosine similarity: 0.999113; maximum and mean absolute logit differences were 0.808105 and 0.086526. All processes exited successfully. The input was MedPix-VQA revision 69eb219d477ab8699296da1fd6b89beb768042d3, validation row 0, case MPX1095, yielding 83 prompt tokens. The RGB PNG verification image has SHA-256 f5210fcff6dad525c80fcd0f462b274c9da4d634ccd4f1cc76578f1bfe13646d.\n",
           "hardware": null,
           "last_verified": "2026-07-23",
           "metrics": {},
@@ -10207,7 +10207,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-6-35b-a3b-inference",
-          "expected_result": "Two independent runs used greedy decoding, loaded the imported checkpoint, consumed MedPix-VQA revision 69eb219d477ab8699296da1fd6b89beb768042d3 validation row 0 (case MPX1095; source-image SHA-256 d5852239309244feb646739dfe7460048c596380abe89def0a84d8a62778b7b1) and its question through the Qwen processor, and exited successfully with byte-identical 32-token completions. Neither run emitted EOS before the safety bound. The exact completion, represented with JSON newline escapes, was \"The user wants me to identify the findings in the provided MRI image.\\n\\n1.  **Analyze the image:**\\n    *   **Modality:**\".\n",
+          "expected_result": "Two independent runs used greedy decoding, loaded the imported checkpoint, consumed MedPix-VQA revision 69eb219d477ab8699296da1fd6b89beb768042d3 validation row 0 (case MPX1095; source-image SHA-256 d5852239309244feb646739dfe7460048c596380abe89def0a84d8a62778b7b1) and its question through the Qwen processor, and exited successfully with byte-identical 32-token completions. Neither run emitted EOS before the safety bound. The exact completion, represented with JSON newline escapes, was \"The user wants me to identify the findings in the provided MRI image.\\n\\n1.  **Analyze the image:**\\n    *   **Modality:**\".\n\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4 --task vlm-generation --hf_model_path Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron_model_path work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --ep 4 --image_path work/data/medpix/verification.png --prompt \"What was observed in the imaging?\" --max_new_tokens 32\n\nGreedy multimodal generation on four GB300 GPUs at TP1/PP1/EP4/ETP1 completed successfully using the same pinned MedPix validation image as manual_forward_pass. It generated exactly 32 new tokens, reaching the maximum bound without EOS. The literal completion, represented as a JSON string, was \"The user wants me to identify what is observed in the provided medical image.\\n\\n1.  **Analyze the image:**\\n    *   **Modality\".\n",
           "hardware": null,
           "last_verified": "2026-07-23",
           "metrics": {},
@@ -10304,6 +10304,48 @@
           "workflow": "pretrain"
         },
         {
+          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "4",
+              "recipe": "qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config",
+              "total_gpus": 16
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config --mode pretrain --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 40 --lr 3e-4 --min_lr 3e-5 dataset.path=work/data/medpix/energon-pinned dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=100 checkpoint.load=null --save_dir work/model-verification/qwen3.6-35b-a3b/pretrain/checkpoints --save_interval 50 validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/pretrain/resolved-config.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {
+            "cuda_graph": {
+              "implementation": "transformer_engine",
+              "scopes": [
+                "attn",
+                "moe_router",
+                "moe_preprocess"
+              ]
+            },
+            "moe_dispatcher": "hybridep"
+          },
+          "entry_id": "qwen3-6-35b-a3b-pretrain-gb300",
+          "expected_result": "Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: ad196b9a6d14ef62979fc8532af62a7d6ea0fe66. Verified on 2026-11-04.\nExecuted Qwen3.5 command(s):\n./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config --mode pretrain --dataset energon --pretrained_checkpoint work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 40 --lr 3e-4 --min_lr 3e-5 dataset.path=work/data/medpix/energon-pinned dataset.task_encoder.hf_processor_path=Qwen/Qwen3.5-35B-A3B dataset.task_encoder.hf_processor_revision=59d61f3ce65a6d9863b86d2e96597125219dc754 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=100 checkpoint.load=null --save_dir work/model-verification/qwen3.5-35b-a3b/pretrain/checkpoints --save_interval 50 validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/pretrain/resolved-config.yaml\n\nCompleted all 100 full-model continuation steps on 16 GB300 GPUs, warm-started from the pinned published weights, with finite losses and zero skipped or NaN iterations. The Energon input contains all 17,420 training rows of mmoukouba/MedPix-VQA revision 69eb219d477ab8699296da1fd6b89beb768042d3, reused for 204,800 consumed examples. This is a bounded VQA continuation cohort, not the RedPajama2 or DataComp pretraining cohorts and not full convergence. The saved runtime config records TP1/PP1/CP1/EP4/ETP1, MBS4/GBS2048, sequence length 4096, natural routing, FLA GDN, FP32 optimizer master parameters and gradients, BF16 Adam moments, selective core_attn and gdn_norm_out recompute, and separate vision attn/mlp CUDA graphs. Learning rate warms up for 40 steps to 3e-4 and decays to 3e-5 at step 100. Metrics average steps 91-100. Both step-50 and step-100 checkpoints saved all 16 distributed shards, optimizer/RNG state, and per-rank Energon data positions. A separate continuation successfully restored step 50; its loss-consistency result is tracked in checkpoint_resume.\n\nQwen3.5 observed metrics: {\"final_loss\": 0.03088333, \"initial_loss\": 1.997142, \"last_10_steps_model_tflops_per_gpu_avg\": 420.7, \"last_10_steps_step_time_ms_avg\": 28666.45, \"last_10_steps_tokens_per_second_per_gpu_avg\": 18289.255}.",
+          "hardware": "GB300",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain.GB300",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "pretrain"
+        },
+        {
           "bridge_commit": "7f9b59730d17a255d46ff02e3795546f0284f748",
           "command_topologies": [
             {
@@ -10372,6 +10414,40 @@
           "workflow": "sft"
         },
         {
+          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "2",
+              "recipe": "qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}' 'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}' dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B 'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}' env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.6-35b-a3b/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/sft/resolved-config.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {
+            "moe_dispatcher": "hybridep"
+          },
+          "entry_id": "qwen3-6-35b-a3b-sft-gb300",
+          "expected_result": "Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}' 'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}' dataset.hf_processor_path=Qwen/Qwen3.5-35B-A3B 'dataset.hf_processor_kwargs={revision:59d61f3ce65a6d9863b86d2e96597125219dc754}' env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.5-35b-a3b/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/sft/resolved-config.yaml\n\nCompleted all 100 full-model MedPix-VQA SFT steps on eight GB300 GPUs, including language, vision, projection, and one MTP layer, with finite losses and zero skipped or NaN iterations. The persisted runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096, MBS1/GBS32, natural routing, no CUDA graphs, FP32 optimizer states, and assistant-only loss. Adam learning rate warms up for 10 steps to 2e-5 and decays to 2e-6 at step 100. The combine chunk is explicitly 64 to match HybridEP fused dispatch and preprocessing; the inherited 128 fails its runtime check. Step 100 saved all eight distributed shards, optimizer and RNG state, and the checkpoint tracker selects iteration 100. These are bounded support-verification observations, not full convergence or optimized performance results.\n\nQwen3.5 observed metrics: {\"final_loss\": 0.9914345, \"initial_loss\": 2.151638, \"last_10_steps_model_tflops_per_gpu_avg\": 72.28, \"last_10_steps_step_time_ms_avg\": 5216.92, \"last_10_steps_tokens_per_second_per_gpu_avg\": 3140.55}.",
+          "hardware": "GB300",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft.GB300",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft"
+        },
+        {
           "bridge_commit": "7f9b59730d17a255d46ff02e3795546f0284f748",
           "command_topologies": [
             {
@@ -10399,6 +10475,38 @@
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.H100",
           "status": "verified",
+          "variant": null,
+          "workflow": "sft_export_inference"
+        },
+        {
+          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "command_topologies": [
+            {
+              "expert_parallel": "8",
+              "gpus_per_node": "4",
+              "nodes": "2",
+              "total_gpus": 8
+            },
+            {
+              "gpus_per_node": "4",
+              "nodes": "1",
+              "total_gpus": 4
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --ep 8 --hf-model Qwen/Qwen3.6-35B-A3B --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0 --megatron-path work/model-verification/qwen3.6-35b-a3b/sft/checkpoints/iter_0000100 --hf-path work/model-verification/qwen3.6-35b-a3b/sft-hf-export",
+            "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4 --tasks-per-node 1 --task hf-inference --hf-model work/model-verification/qwen3.6-35b-a3b/sft-hf-export --image work/data/medpix/verification.png --chat-template --prompt \"What was observed in the imaging?\" --max-new-tokens 32 --dtype bfloat16"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-6-35b-a3b-sft-export-inference-gb300",
+          "expected_result": "Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --ep 8 --hf-model Qwen/Qwen3.5-35B-A3B --hf-revision 59d61f3ce65a6d9863b86d2e96597125219dc754 --megatron-path work/model-verification/qwen3.5-35b-a3b/sft/checkpoints/iter_0000100 --hf-path work/model-verification/qwen3.5-35b-a3b/sft-hf-export\n\n./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4 --tasks-per-node 1 --task hf-inference --hf-model work/model-verification/qwen3.5-35b-a3b/sft-hf-export --image work/data/medpix/verification.png --chat-template --prompt \"What was observed in the imaging?\" --max-new-tokens 32 --dtype bfloat16\n\nExported the final step-100 full-SFT checkpoint into 14 HF shards with 1,811 tensors. Transformers independently reloaded the exported model with no missing, unexpected, mismatched, or error entries. Greedy generation used one runtime GPU from a four-GB300 allocation, the same MedPix validation image as the inference item, and do_sample=False. It generated 32 tokens at the maximum of 32. The literal completion, represented as a JSON string, was \"</think>\\n\\nThe imaging shows \u2022  CT:  Hyperdense mass in the posterior fossa, with hydrocephalus.\\n\\n\u2022  MRI:  Extraax\". This checks export and inference execution, not medical answer accuracy.\n",
+          "hardware": "GB300",
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.sft_export_inference.GB300",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft_export_inference"
         },
@@ -10434,6 +10542,42 @@
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.H100",
           "status": "verified",
+          "variant": null,
+          "workflow": "sft_long_context"
+        },
+        {
+          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "2",
+              "pipeline_parallel": "1",
+              "recipe": "qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 scheduler.lr_decay_iters=20 model.pipeline_model_parallel_size=1 'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}' 'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}' dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B 'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}' dataset.do_validation=false dataset.seq_length=8192 dataset.enable_in_batch_packing=true dataset.defer_in_batch_packing_to_step=true dataset.in_batch_packing_pad_to_multiple_of=4 checkpoint.load=null checkpoint.save=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/long_context/resolved-config.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {
+            "context_parallel_size": 2,
+            "sequence_packing": "in_batch"
+          },
+          "entry_id": "qwen3-6-35b-a3b-sft-long-context-gb300",
+          "expected_result": "Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 scheduler.lr_decay_iters=20 model.pipeline_model_parallel_size=1 'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}' 'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}' dataset.hf_processor_path=Qwen/Qwen3.5-35B-A3B 'dataset.hf_processor_kwargs={revision:59d61f3ce65a6d9863b86d2e96597125219dc754}' dataset.do_validation=false dataset.seq_length=8192 dataset.enable_in_batch_packing=true dataset.defer_in_batch_packing_to_step=true dataset.in_batch_packing_pad_to_multiple_of=4 checkpoint.load=null checkpoint.save=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/long_context/resolved-config.yaml\n\nCompleted all 20 MedPix-VQA SFT steps on eight GB300 GPUs with finite losses and zero skipped or NaN iterations. The H100 long-context recipe was resized to PP1 while retaining its MBS2/GBS512; the persisted runtime config records TP1/PP1/CP2/EP8/ETP1, alltoall dispatch, no CUDA graphs, one-layer full-uniform recompute, and learning rate 2e-5 to 2e-6 with two warmup steps. Qwen's step-time THD packing pads each example to 8192 slots and preserves separate attention boundaries; CP2 was active throughout. Token-slot throughput uses 8192 times GBS512 per step. Metrics average steps 11-20. This verifies padded 8K execution with packing and CP, not long-document answer quality or full convergence; no checkpoint was requested for this item.\n\nQwen3.5 observed metrics: {\"final_loss\": 1.024277, \"initial_loss\": 1.966061, \"last_10_steps_model_tflops_per_gpu_avg\": 108.65, \"last_10_steps_step_time_ms_avg\": 115083.29, \"last_10_steps_tokens_per_second_per_gpu_avg\": 4555.727}.",
+          "hardware": "GB300",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft_long_context.GB300",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft_long_context"
         },
@@ -10516,6 +10660,40 @@
         },
         {
           "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "2",
+              "recipe": "qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config --mode lora --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}' 'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}' dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B 'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}' env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.6-35b-a3b/peft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/peft/resolved-config.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {
+            "moe_dispatcher": "hybridep"
+          },
+          "entry_id": "qwen3-6-35b-a3b-peft-gb300",
+          "expected_result": "Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.\nExecuted Qwen3.5 command(s):\n./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config --mode lora --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.5-35b-a3b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}' 'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}' dataset.hf_processor_path=Qwen/Qwen3.5-35B-A3B 'dataset.hf_processor_kwargs={revision:59d61f3ce65a6d9863b86d2e96597125219dc754}' env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.5-35b-a3b/peft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/peft/resolved-config.yaml\n\nCompleted all 100 MedPix-VQA LoRA steps on eight GB300 GPUs with finite losses and zero skipped or NaN iterations. The persisted runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096, MBS1/GBS32, natural routing, no CUDA graphs, rank 32, alpha 32, and targets linear_qkv, linear_proj, linear_fc1, and linear_fc2. Learning rate warms up for 10 steps to 2e-4 and decays to 3e-5 at step 100. Step 100 saved all eight distributed adapter/optimizer shards and the checkpoint tracker selects iteration 100. This verifies bounded adapter training, not full convergence.\n\nQwen3.5 observed metrics: {\"final_loss\": 1.313625, \"initial_loss\": 2.151638, \"last_10_steps_model_tflops_per_gpu_avg\": 77.2, \"last_10_steps_step_time_ms_avg\": 4884.42, \"last_10_steps_tokens_per_second_per_gpu_avg\": 3354.339}.",
+          "hardware": "GB300",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.peft.GB300",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "peft"
+        },
+        {
+          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10536,6 +10714,38 @@
           "status": "unverified",
           "variant": null,
           "workflow": "checkpoint_resume"
+        },
+        {
+          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "4",
+              "recipe": "qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config",
+              "total_gpus": 16
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config --mode pretrain --dataset energon --max_steps 100 --warmup_iters 40 --lr 3e-4 --min_lr 3e-5 dataset.path=work/data/medpix/energon-pinned dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=100 --load_dir work/model-verification/qwen3.6-35b-a3b/pretrain/checkpoints checkpoint.ckpt_step=50 --save_dir work/model-verification/qwen3.6-35b-a3b/resume/checkpoints --save_interval 50 validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/resume/resolved-config.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-6-35b-a3b-checkpoint-resume-gb300",
+          "expected_result": "Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.\n\nSupplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: ad196b9a6d14ef62979fc8532af62a7d6ea0fe66. Verified on 2026-11-04.\nExecuted Qwen3.5 command(s):\n./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config --mode pretrain --dataset energon --max_steps 100 --warmup_iters 40 --lr 3e-4 --min_lr 3e-5 dataset.path=work/data/medpix/energon-pinned dataset.task_encoder.hf_processor_path=Qwen/Qwen3.5-35B-A3B dataset.task_encoder.hf_processor_revision=59d61f3ce65a6d9863b86d2e96597125219dc754 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=100 --load_dir work/model-verification/qwen3.5-35b-a3b/pretrain/checkpoints checkpoint.ckpt_step=50 --save_dir work/model-verification/qwen3.5-35b-a3b/resume/checkpoints --save_interval 50 validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/resume/resolved-config.yaml\n\nCompleted steps 51-100 on 16 GB300 GPUs after restoring the pretrain step-50 model, optimizer, RNG, and per-rank Energon data positions. All losses were finite with zero skipped or NaN iterations; the final checkpoint saved all 16 distributed shards. Post-setup model, data, optimizer, scheduler, RNG, precision, and parallelism settings match the uninterrupted reference. Metrics average steps 91-100. Both runs use native training with deterministic mode disabled. At step 51, reference and resumed LM losses both equal 0.07358543 at logged precision. At step 100, reference loss 0.03088333 and resumed loss 0.03086583 differ by approximately 0.057 percent, satisfying the declared relative-plus-absolute tolerance. Both declared sentinels pass, but 8 of the 50 shared steps exceed that bound; this does not establish step-by-step numerical parity.\n\nQwen3.5 observed metrics: {\"final_loss\": 0.03086583, \"initial_loss\": 0.07358543, \"last_10_steps_model_tflops_per_gpu_avg\": 424.59, \"last_10_steps_step_time_ms_avg\": 28403.31, \"last_10_steps_tokens_per_second_per_gpu_avg\": 18458.694}.\nQwen3.5 resume acceptance: {\"loss_absolute_tolerance\": 1e-06, \"loss_relative_tolerance\": 0.01, \"reference_item\": \"pretrain\", \"sentinel_steps\": [51, 100], \"sentinels_match\": true}.",
+          "hardware": "GB300",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.checkpoint_resume.GB300",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "checkpoint_resume"
         }
       ],
       "hf_id": "Qwen/Qwen3.6-35B-A3B",
@@ -10543,7 +10753,7 @@
       "min_transformers_version": "5.8.1",
       "slug": "qwen3.6-35b-a3b",
       "source_card": "examples/model_verification_cards/qwen3.6-35b-a3b/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Full-model H100 DataComp pretraining reaches 132.830 model TFLOP/s/GPU, approximately 133, with natural routing. On GB200, language-only RedPajama2 pretraining through the early, unoptimized Qwen3.5 text 35B-A3B library recipe, warm-started from this model's language weights, reaches 240.070 model TFLOP/s/GPU against a roughly 400 TFLOP/s/GPU BF16 readiness target. Checkpoint resume is explicitly unverified pending a full-model rerun. This card otherwise verifies conversion, inference, SFT, long-context SFT, and PEFT.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Full-model H100 DataComp pretraining reaches 132.830 model TFLOP/s/GPU, approximately 133, with natural routing. On GB200, language-only RedPajama2 pretraining through the early, unoptimized Qwen3.5 text 35B-A3B library recipe, warm-started from this model's language weights, reaches 240.070 model TFLOP/s/GPU against a roughly 400 TFLOP/s/GPU BF16 readiness target. Checkpoint resume is explicitly unverified pending a full-model rerun. This card otherwise verifies conversion, inference, SFT, long-context SFT, and PEFT.\nSupplementary Qwen3.5-35B-A3B validation of the shared Hybrid implementation is retained below: conversion, forward correlation, inference, 100-step training and checkpoint resume on GB300 with NeMo 26.10. Qwen3.6 statuses and its NeMo 26.06 verification provenance are unchanged; GB300 verification of Qwen3.6 remains pending. Canonical performance after the rotary graph fix remains unverified.\n",
       "title": "qwen3_6_35b_a3b"
     },
     {

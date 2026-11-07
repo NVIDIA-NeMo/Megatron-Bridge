@@ -45,11 +45,16 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hf_layer_config, qwen35_hybrid_mappings
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import (
+    Qwen35HybridForTokenClassification,
+    Qwen35VLHybridModel,
+    qwen35_vl_hybrid_stack_spec,
+)
 from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35TokenClassificationModelProvider,
@@ -86,6 +91,7 @@ def _qwen35_vl_config_kwargs(
         # text_config inherits PretrainedConfig's default of True which is wrong for 9B/27B.
         share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
         position_embedding_type="mrope",
+        hybrid_stack_spec=qwen35_vl_hybrid_stack_spec,
         # Qwen3.5/3.6 use mRoPE with [11, 11, 10] sections (Qwen3-VL uses [24, 20, 20]).
         # The sections correspond to [temporal, height, width] dimensions.
         # With partial_rotary_factor=0.25 and head_dim=256, rotary_dim=64,
@@ -182,7 +188,7 @@ def _get_vision_mappings():
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_MOE_HF_CLASS_NAME,
-    target=Qwen3VLModel,
+    target=Qwen35VLHybridModel,
     provider=Qwen35VLMoEModelProvider,
     model_type="qwen3_5_moe",
 )
@@ -230,7 +236,24 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
 
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Adapt the canonical builder mapping to the deprecated provider path."""
-        return self.hf_config_to_model_config_kwargs(hf_config)
+        kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        for name in ("hybrid_layer_pattern", "hybrid_stack_spec", "mtp_hybrid_override_pattern"):
+            kwargs.pop(name, None)
+        kwargs.update(
+            num_layers=hf_config.text_config.num_hidden_layers,
+            is_hybrid_model=False,
+            linear_attention_freq=full_attention_interval_from_hf(hf_config.text_config),
+            moe_layer_freq=1,
+        )
+        return kwargs
+
+    @classmethod
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Preserve the HF language block count when exporting a Hybrid config."""
+        config = super().megatron_to_hf_config(model_config)
+        if getattr(model_config, "hybrid_layer_pattern", None):
+            config.update(qwen35_hf_layer_config(model_config.hybrid_layer_pattern))
+        return config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -281,13 +304,14 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
                 megatron_prefix="language_model.", mtp_experts_packed=mtp_experts_packed
             )
         )
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         return MegatronMappingRegistry(*mapping_list)
 
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_DENSE_HF_CLASS_NAME,
-    target=Qwen3VLModel,
+    target=Qwen35VLHybridModel,
     provider=Qwen35VLModelProvider,
     model_type="qwen3_5",
 )
@@ -332,7 +356,24 @@ class Qwen35VLBridge(MegatronModelBridge):
 
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Adapt the canonical builder mapping to the deprecated provider path."""
-        return self.hf_config_to_model_config_kwargs(hf_config)
+        kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        for name in ("hybrid_layer_pattern", "hybrid_stack_spec", "mtp_hybrid_override_pattern"):
+            kwargs.pop(name, None)
+        kwargs.update(
+            num_layers=hf_config.text_config.num_hidden_layers,
+            is_hybrid_model=False,
+            linear_attention_freq=full_attention_interval_from_hf(hf_config.text_config),
+            moe_layer_freq=1,
+        )
+        return kwargs
+
+    @classmethod
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Preserve the HF language block count when exporting a Hybrid config."""
+        config = super().megatron_to_hf_config(model_config)
+        if getattr(model_config, "hybrid_layer_pattern", None):
+            config.update(qwen35_hf_layer_config(model_config.hybrid_layer_pattern))
+        return config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -350,13 +391,14 @@ class Qwen35VLBridge(MegatronModelBridge):
             Qwen35Bridge._get_dense_lm_mappings(hf_prefix="model.language_model.", megatron_prefix="language_model.")
         )
         mapping_list.extend(Qwen35Bridge._get_dense_mtp_mappings(megatron_prefix="language_model."))
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         return MegatronMappingRegistry(*mapping_list)
 
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_TOKEN_CLASSIFICATION_HF_CLASS_NAME,
-    target=Qwen3VLForTokenClassification,
+    target=Qwen35HybridForTokenClassification,
     provider=Qwen35TokenClassificationModelProvider,
     model_type="qwen3_5",
 )
@@ -375,7 +417,16 @@ class Qwen35TokenClassificationBridge(Qwen35VLBridge):
 
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Map the base Qwen3.5-VL fields for the classification provider."""
-        return super().hf_config_to_model_config_kwargs(hf_config)
+        kwargs = Qwen35VLBridge.hf_config_to_model_config_kwargs(self, hf_config)
+        for name in ("hybrid_layer_pattern", "hybrid_stack_spec", "mtp_hybrid_override_pattern"):
+            kwargs.pop(name, None)
+        kwargs.update(
+            num_layers=hf_config.text_config.num_hidden_layers,
+            is_hybrid_model=False,
+            linear_attention_freq=full_attention_interval_from_hf(hf_config.text_config),
+            moe_layer_freq=1,
+        )
+        return kwargs
 
     def provider_bridge(
         self,
@@ -413,6 +464,7 @@ class Qwen35TokenClassificationBridge(Qwen35VLBridge):
             megatron_prefix="language_model.",
             output_layer_hf_param=None,
         )
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         mapping_list.append(
             ReplicatedMapping(
