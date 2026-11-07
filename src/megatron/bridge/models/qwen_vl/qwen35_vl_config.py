@@ -87,6 +87,12 @@ class Qwen35VLModelConfig(BridgeGPTModelConfig):
     vision_cuda_graph_impl: str = "none"
     vision_cuda_graph_scope: list[str] = field(default_factory=list)
     max_vision_cuda_graph_seq_length: int | None = None
+    # Opt-in static-shape vision path for full-iteration CUDA graphs (megatron.bridge.models.qwen_vl.static_vision):
+    # per-image THD vision attention with a fixed patch cap; the data pipeline builds every vision tensor on the CPU.
+    vision_static_shapes: bool = False
+    vision_patch_cap: int | None = None  # vision patches per microbatch (before the merge), multiple of 4
+    vision_max_images: int = 1  # image slots per microbatch
+    vision_over_cap_policy: str = "downscale"  # images over the per-image patch budget: "downscale" | "error"
 
     @property
     def special_token_ids(self) -> dict[str, int]:

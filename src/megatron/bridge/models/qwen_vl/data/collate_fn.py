@@ -33,6 +33,11 @@ from megatron.bridge.data.conversation_processing import (
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.data.token_utils import extract_skipped_token_ids
+from megatron.bridge.models.qwen_vl.static_vision import (
+    QwenVLStaticVisionSpec,
+    build_static_vision_batch,
+    fit_example_images_to_static_budget,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -288,8 +293,16 @@ def qwen2_5_collate_fn(
     pad_to_multiple_of: int = 128,
     enable_in_batch_packing: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
+    static_vision: QwenVLStaticVisionSpec | None = None,
+    static_vision_convert: bool = True,
 ) -> dict[str, torch.Tensor]:
-    """Collate function for Qwen2.5 VL model."""
+    """Collate function for Qwen2.5 VL model.
+
+    ``static_vision`` (opt-in, ``model.vision_static_shapes``) pre-checks every image against the static patch
+    budget before the processor runs and, when ``static_vision_convert`` is set, converts the padded batch to the
+    static vision contract (``static_vision.build_static_vision_batch``). Callers that add fields after the
+    collate (the energon task encoder) convert later themselves and pass ``static_vision_convert=False``.
+    """
     del visual_keys
 
     if not HAVE_QWEN_VL_UTILS:
@@ -333,6 +346,18 @@ def qwen2_5_collate_fn(
         per_example_images.append(imgs)
         per_example_videos.append(videos)
         has_media.append(len(imgs) > 0 or len(videos) > 0)
+
+    if static_vision is not None:
+        if enable_in_batch_packing:
+            raise ValueError("static vision (model.vision_static_shapes) does not support in-batch packing")
+        per_example_images = fit_example_images_to_static_budget(
+            per_example_images,
+            per_example_videos,
+            processor,
+            static_vision,
+            min_pixels=min_pixels,
+            max_pixels=max_pixels,
+        )
 
     if enable_in_batch_packing:
         prepared_sequences = []
@@ -491,4 +516,6 @@ def qwen2_5_collate_fn(
         ignore_index=IGNORE_INDEX,
         sequence_tensor_pad_values={"mm_token_type_ids": 0},
     )
+    if static_vision is not None and static_vision_convert:
+        batch = build_static_vision_batch(batch, static_vision)
     return batch

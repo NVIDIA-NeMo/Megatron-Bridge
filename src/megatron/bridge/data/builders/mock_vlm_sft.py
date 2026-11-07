@@ -57,6 +57,9 @@ class MockVLMSFTDatasetConfig(DataloaderConfig):
     pad_to_max_length: bool = False
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
+    static_vision: Any = None
+    """Static vision layout (``QwenVLStaticVisionSpec``). Set by ``ConfigContainer.validate`` from the model config
+    when ``model.vision_static_shapes`` is on; never set it by hand."""
 
     def validate(self) -> None:
         """Validate synthetic data settings."""
@@ -136,6 +139,7 @@ def build_mock_vlm_sft_split(
         enable_in_batch_packing=config.enable_in_batch_packing,
         defer_in_batch_packing_to_step=config.defer_in_batch_packing_to_step,
         in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
+        static_vision=config.static_vision,
     )
 
 

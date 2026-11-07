@@ -173,6 +173,9 @@ class Qwen3VLVisionModel(VisionModule):
             )
 
         self.input_tensor = None
+        # Patch cap P of the opt-in static-shape path (forward_static); set by Qwen3VLModel when
+        # vision_static_shapes is on. A Python int, so no tensor is read on the host.
+        self.static_patch_cap: Optional[int] = None
 
     def set_input_tensor(self, input_tensor: torch.Tensor) -> None:
         """Sets input tensor to the model.
@@ -384,6 +387,65 @@ class Qwen3VLVisionModel(VisionModule):
         hidden_states = torch.split(hidden_states, split_sizes)
         hidden_states = torch.cat(hidden_states, dim=0)
         return hidden_states, deepstack_feature_lists
+
+    def forward_static(
+        self,
+        pixel_values: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        patch_is_real: torch.Tensor,
+        pos_embed_idx: torch.Tensor,
+        pos_embed_w: torch.Tensor,
+        rope_pos_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """Static-shape vision forward (``vision_static_shapes``), capturable in a full-iteration CUDA graph.
+
+        Every input has a fixed shape for the whole run and was built on the CPU by the data pipeline
+        (``megatron.bridge.models.qwen_vl.static_vision.build_static_vision_batch``), so nothing is read on the host:
+
+        - ``pixel_values`` ``[P, C*T*p*p]``: the real patches first, zero rows after.
+        - ``cu_seqlens`` ``[N + 2]`` int32: one segment per image slot plus one trailing padding segment.
+        - ``patch_is_real`` ``[P]`` bool.
+        - ``pos_embed_idx`` / ``pos_embed_w`` ``[4, P]``: bilinear position-embedding corners and weights in merge
+          order (the index math of :meth:`fast_pos_embed_interpolate`).
+        - ``rope_pos_ids`` ``[P, 2]``: (row, col) per patch in merge order (the id loop of :meth:`rot_pos_emb`).
+
+        Attention is per image: THD with the static ``cu_seqlens`` and ``max_seqlen`` = P as a Python int. Padded
+        rows form their own segment; they are zeroed before the merger and no image token reads their output, so
+        they contribute no gradient.
+
+        Returns:
+            ``[P / spatial_merge_size**2, out_hidden_size]`` merged embeddings (padded rows last) and the deepstack
+            feature list.
+        """
+        patch_cap = self.static_patch_cap
+        if patch_cap is None:
+            raise RuntimeError("forward_static needs static_patch_cap (set by Qwen3VLModel with vision_static_shapes)")
+        assert self.input_tensor is None
+
+        hidden_states = self.patch_embed(pixel_values)
+        # Same products and summation order as fast_pos_embed_interpolate.
+        pos_embeds = self.pos_embed(pos_embed_idx) * pos_embed_w.to(self.pos_embed.weight.dtype)[:, :, None]
+        hidden_states = hidden_states + (pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3])
+
+        # Row i of the frequency table does not depend on the table size, and every row/col index is < P.
+        rotary_pos_emb = self.rotary_pos_emb(patch_cap)[rope_pos_ids].flatten(1)
+        rotary_pos_emb = rotary_pos_emb.reshape(patch_cap, 1, 1, -1).repeat(1, 1, 1, 2)
+
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            max_seqlen_q=patch_cap,
+            max_seqlen_kv=patch_cap,
+        )
+        hidden_states, deepstack_feature_lists = self.decoder(
+            hidden_states=hidden_states[:, None],
+            attention_mask=None,
+            rotary_pos_emb=rotary_pos_emb,
+            packed_seq_params=packed_seq_params,
+        )
+        hidden_states = hidden_states.masked_fill(~patch_is_real[:, None, None], 0.0)
+        return self.merger(hidden_states), deepstack_feature_lists
 
     def build_packed_seq_params(
         self,

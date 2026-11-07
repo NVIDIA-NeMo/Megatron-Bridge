@@ -68,6 +68,7 @@ class DirectSFTDataset(torch.utils.data.Dataset):
         enable_in_batch_packing: bool = False,
         defer_in_batch_packing_to_step: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
+        static_vision: Any = None,
     ) -> None:
         assert isinstance(base_examples, Sequence) and len(base_examples) > 0, (
             "base_examples must be a non-empty sequence"
@@ -93,11 +94,18 @@ class DirectSFTDataset(torch.utils.data.Dataset):
             "enable_in_batch_packing": enable_in_batch_packing and not defer_in_batch_packing_to_step,
             "in_batch_packing_pad_to_multiple_of": in_batch_packing_pad_to_multiple_of,
         }
+        if static_vision is not None:
+            # Opt-in static vision layout (model.vision_static_shapes); only Qwen-VL collates accept it.
+            collate_kwargs["static_vision"] = static_vision
         if explicit_collate_impl:
             collate_kwargs = _collate_kwargs_for_impl(
                 collate_impl,
                 collate_kwargs,
                 require_packing_support=bool(collate_kwargs["enable_in_batch_packing"]),
+            )
+        if static_vision is not None and "static_vision" not in collate_kwargs:
+            raise ValueError(
+                f"Collate function {getattr(collate_impl, '__name__', collate_impl)} does not support static vision"
             )
 
         def _bound_collate(batch: list) -> dict[str, torch.Tensor]:

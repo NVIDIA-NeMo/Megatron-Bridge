@@ -102,6 +102,10 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             returns one, it is derived from the collate's 2D ``attention_mask``.
     """
 
+    # Opt-in static vision layout, set by ``__init__``. The class default keeps the default vision path for encoders
+    # created without ``__init__``.
+    static_vision: Any = None
+
     def __init__(
         self,
         processor,
@@ -115,6 +119,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         enable_in_batch_packing: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
         return_padding_mask: bool = False,
+        static_vision: Any = None,
     ):
         super().__init__()
         self.processor = processor
@@ -127,6 +132,9 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         self.enable_in_batch_packing = enable_in_batch_packing
         self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
         self.return_padding_mask = return_padding_mask
+        # Opt-in static vision layout (model.vision_static_shapes). The collate only pre-checks images against the
+        # patch budget; the conversion runs once in encode_batch, after padding_mask is derived.
+        self.static_vision = static_vision
         collate_key = type(processor).__name__ if processor is not None else "default"
         if collate_fn is not None:
             self._collate_impl = collate_fn
@@ -178,6 +186,9 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             collate_kwargs["min_pixels"] = self.min_pixels
         if self.max_pixels is not None:
             collate_kwargs["max_pixels"] = self.max_pixels
+        if self.static_vision is not None:
+            collate_kwargs["static_vision"] = self.static_vision
+            collate_kwargs["static_vision_convert"] = False
         return self._collate_impl(examples, self.processor, **collate_kwargs)
 
     # ------------------------------------------------------------------
@@ -251,4 +262,8 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         for meta_key in ("__key__", "__keys__", "__restore_key__", "__subflavors__", "__sources__"):
             raw.pop(meta_key, None)
 
+        if self.static_vision is not None:
+            from megatron.bridge.models.qwen_vl.static_vision import build_static_vision_batch
+
+            raw = build_static_vision_batch(raw, self.static_vision)
         return raw
