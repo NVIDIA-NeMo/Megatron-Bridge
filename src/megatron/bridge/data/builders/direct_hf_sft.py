@@ -22,7 +22,11 @@ from typing import Any, Literal
 
 import torch
 from megatron.core.process_groups_config import ProcessGroupCollection
-from transformers import AutoProcessor, AutoTokenizer
+from transformers import AutoTokenizer
+try:
+    from transformers import AutoProcessor
+except (ImportError, AttributeError, ModuleNotFoundError):
+    AutoProcessor = None  # type: ignore[assignment]
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, validate_declarative_mapping
 from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn

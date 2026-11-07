@@ -21,10 +21,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
-import datasets
+try:
+    import datasets
+    from datasets import load_dataset
+except ImportError:
+    datasets = None  # type: ignore[assignment]
+    load_dataset = None  # type: ignore[assignment]
 import numpy as np
 import torch
-from datasets import load_dataset
 from torch.utils.data import Dataset
 
 from megatron.bridge.data.datasets.utils import (
