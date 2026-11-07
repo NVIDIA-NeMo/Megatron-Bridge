@@ -12,6 +12,22 @@ Qwen 3.5/3.6 models are supported via Megatron Bridge with auto-detected configu
 Use `transformers` >= 5.2.0 for Qwen3.5 and >= 5.8.1 for Qwen3.6.
 ```
 
+## Migrating GPT-based Megatron checkpoints
+
+Qwen3.5 and Qwen3.6 now use Megatron Core's `HybridModel`. Existing Hugging Face
+checkpoints remain supported, but Megatron checkpoints saved by the previous
+GPT-based implementation are not directly compatible. Hybrid stores each
+attention/GDN and feed-forward pair as two separate layers and uses different
+parameter names. Old optimizer state cannot be resumed directly either.
+
+To continue an existing run without conversion, keep using the Bridge and Core
+versions that created its checkpoint. For a weight-only migration, export the
+checkpoint to Hugging Face format with those old versions, then import the HF
+weights with the Hybrid implementation and start a new optimizer and scheduler.
+This export/import migration has not yet been validated end to end; check the
+converted model's outputs before starting a new training run. Do not use
+non-strict checkpoint loading to bypass the format mismatch.
+
 {/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations

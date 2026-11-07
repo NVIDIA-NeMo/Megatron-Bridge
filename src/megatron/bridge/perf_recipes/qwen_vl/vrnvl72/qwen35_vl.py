@@ -247,9 +247,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-    # The GB300 base selects the cuDNN GDN kernel. On VRNVL72 it was measured only with MXFP8 (against FLA
-    # at 35B), so this precision keeps FLA until it is measured too.
-    _select_gdn_kernel_backend(cfg, "fla")
+    _select_gdn_kernel_backend(cfg, "transformer_engine")
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

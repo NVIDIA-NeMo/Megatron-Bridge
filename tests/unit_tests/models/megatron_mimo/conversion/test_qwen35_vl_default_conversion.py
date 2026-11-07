@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.conversion.auto_bridge import _model_omits_mtp
 from megatron.bridge.models.megatron_mimo.conversion import (
     MIMOComponent,
     get_mimo_conversion_spec,
@@ -77,6 +78,12 @@ def _patch_language_spec(monkeypatch, language_provider: Qwen35VLModelProvider) 
         "build_language_spec",
         lambda vp_stage=None, pp_rank=None: ModuleSpec(module=object),
     )
+
+
+def _patch_mtp_spec(monkeypatch, language_provider: Qwen35VLModelProvider) -> ModuleSpec:
+    mtp_spec = ModuleSpec(module=object)
+    monkeypatch.setattr(language_provider, "build_mtp_spec", lambda vp_stage=None, pp_rank=None: mtp_spec)
+    return mtp_spec
 
 
 def _make_moe_language_provider() -> Qwen35VLMoEModelProvider:
@@ -142,16 +149,19 @@ class TestQwen35VLDefaultMIMOConversion:
         assert len(routes) == 2
         assert all(isinstance(r, MIMOComponent) for r in routes)
 
-    def test_forces_mtp_off(self, monkeypatch):
-        """MIMO conversion disables MTP for the standard provider."""
+    def test_keeps_mtp(self, monkeypatch):
+        """MIMO conversion keeps MTP, so the MTP weights are imported and exported."""
         language_provider = _make_language_provider()
         _patch_language_spec(monkeypatch, language_provider)
+        mtp_spec = _patch_mtp_spec(monkeypatch, language_provider)
         language_provider.mtp_num_layers = 4
         parallelism_config = _make_parallelism_config()
 
         provider, _, _, _ = _run_qwen35_conversion_spec(monkeypatch, language_provider, parallelism_config)
         assert isinstance(provider, MegatronMIMOProvider)
-        assert language_provider.mtp_num_layers is None
+        assert language_provider.mtp_num_layers == 4
+        assert provider.language_model_spec.params["mtp_block_spec"] is mtp_spec
+        assert not _model_omits_mtp(language_provider)
 
     def test_route_table_contents(self, monkeypatch):
         """Routes match the parameter prefixes used by Qwen35VLBridge.mapping_registry.
@@ -245,20 +255,23 @@ class TestQwen35VLMoEDefaultMIMOConversion:
         assert names["images"].source_prefix == "vision_model."
         assert names["images"].target_module_path == "modality_submodules.images.encoders.qwen_visual"
 
-    def test_forces_mtp_off(self, monkeypatch):
-        """MoE variants ship MTP layers; MIMO conversion does not import/export them."""
+    def test_keeps_mtp(self, monkeypatch):
+        """MoE variants ship MTP layers; MIMO conversion imports and exports them."""
         language_provider = _make_moe_language_provider()
         _patch_language_spec(monkeypatch, language_provider)
+        mtp_spec = _patch_mtp_spec(monkeypatch, language_provider)
         language_provider.mtp_num_layers = 1
 
-        _run_qwen35_conversion_spec(
+        provider, _, _, _ = _run_qwen35_conversion_spec(
             monkeypatch,
             language_provider,
             _make_parallelism_config(),
             bridge_cls=Qwen35VLMoEBridge,
         )
 
-        assert language_provider.mtp_num_layers is None
+        assert language_provider.mtp_num_layers == 1
+        assert provider.language_model_spec.params["mtp_block_spec"] is mtp_spec
+        assert not _model_omits_mtp(language_provider)
 
     def test_route_table_validates_against_parallelism_config(self, monkeypatch):
         parallelism_config = _make_parallelism_config()

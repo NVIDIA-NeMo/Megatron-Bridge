@@ -239,8 +239,7 @@ class TestQwen35VLModelProvider:
         assert provider.special_token_ids == {"images": provider.image_token_id}
 
     def test_build_mtp_spec_returns_none_when_mtp_disabled(self):
-        """MIMO conversion v1 disables MTP at config time. Verify the helper
-        returns None so the MIMO model is built without an MTP submodule."""
+        """Without MTP layers the helper returns None, so no MTP submodule is built."""
         provider = Qwen35VLModelProvider(
             num_layers=64,
             hidden_size=5120,
