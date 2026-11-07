@@ -18,10 +18,18 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 from transformers import (
     AutoModelForTokenClassification,
-    AutoProcessor,
     PreTrainedModel,
-    ProcessorMixin,
 )
+
+try:
+    from transformers import AutoProcessor
+except (ImportError, AttributeError):
+    AutoProcessor = None  # type: ignore[assignment,misc]
+
+try:
+    from transformers import ProcessorMixin
+except (ImportError, AttributeError):
+    ProcessorMixin = None  # type: ignore[assignment,misc]
 
 try:
     from transformers import AutoImageProcessor
