@@ -293,6 +293,14 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_fullcg_config() -> ConfigC
     return cfg
 
 
+def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=16, NCCL-EP, full-iteration CUDA graph."""
+    cfg = deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_fullcg_config()
+    cfg.model.expert_model_parallel_size = 16
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=8, NCCL-EP, partial TE CUDA graph."""
     cfg = deepseek_v3_pretrain_config()
