@@ -298,6 +298,9 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config() -> Config
     cfg = deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_fullcg_config()
     cfg.model.expert_model_parallel_size = 16
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+    # EP=16 spans 2 NVLink domains (rdma_team_size=2); NCCL_EP_HT_EM_PULL_PUSH requires
+    # single-LSA-team (EP≤8), so disable it for inter-domain EP.
+    cfg.env_vars = {**cfg.env_vars, "NCCL_EP_HT_EM_PULL_PUSH": 0}
     return cfg
 
 
