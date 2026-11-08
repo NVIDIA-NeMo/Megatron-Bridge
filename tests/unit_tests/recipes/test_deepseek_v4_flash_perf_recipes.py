@@ -147,7 +147,7 @@ def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> 
     assert vrnvl72_cfg.model.use_transformer_engine_op_fuser is True
     assert vrnvl72_cfg.model.moe_use_grouped_tensor is True
     assert vrnvl72_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert vrnvl72_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+    assert vrnvl72_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
     assert is_full_iteration_cuda_graph(vrnvl72_cfg.model)
     # VRNVL72 dispatches through NCCL EP; the GB300 recipe stays on the shared HybridEP base.
     assert vrnvl72_cfg.model.moe_flex_dispatcher_backend == "ncclep"
