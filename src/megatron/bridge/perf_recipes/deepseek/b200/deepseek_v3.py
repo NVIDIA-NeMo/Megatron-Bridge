@@ -302,6 +302,8 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config() -> Config
     # single-LSA-team (EP≤8), so disable it for inter-domain EP.
     # graph_capture_record_stream_reuse allows the CG capture to reuse expandable-segment
     # mappings, reducing peak memory before capture at iter 4.
+    # Lower capacity factor from 1.5→1.2 to reduce expert token buffer memory.
+    cfg.model.moe_expert_rank_capacity_factor = 1.2
     cfg.env_vars = {
         **cfg.env_vars,
         "NCCL_EP_HT_EM_PULL_PUSH": 0,
