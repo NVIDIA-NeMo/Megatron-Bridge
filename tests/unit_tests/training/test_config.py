@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
@@ -5230,6 +5231,26 @@ class TestMegatronFSDPGradDtypePolicy:
         ddp.finalize()
 
         assert ddp.grad_reduce_in_fp32 is True
+
+    def test_validate_applies_policy_to_mcore_ddp_config(self):
+        """Recipes may construct Megatron Core's DDP config, whose post-init validate() re-runs."""
+        ddp = MCoreDistributedDataParallelConfig(grad_reduce_in_fp32=True, use_distributed_optimizer=True)
+        ddp.use_megatron_fsdp = True
+        ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=create_test_training_config(train_iters=500, global_batch_size=16),
+            scheduler_config=create_test_scheduler_config(),
+            ddp_config=ddp,
+        )
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.ddp is ddp
+        assert ddp.grad_reduce_in_fp32 is False
 
 
 class TestDatasetSequenceLengthValidation:
