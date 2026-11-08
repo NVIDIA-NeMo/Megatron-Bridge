@@ -18,6 +18,7 @@ from megatron.bridge.perf_recipes.deepseek.b300.deepseek_v3 import (
 )
 from megatron.bridge.perf_recipes.deepseek.b300.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
+    deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_ncclep_config,
 )
 from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3 import (
     deepseek_v3_pretrain_256gpu_gb200_bf16_config,
