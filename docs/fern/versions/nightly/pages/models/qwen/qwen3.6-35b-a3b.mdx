@@ -238,30 +238,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-05</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-03</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>3.604611</dd>
+            <dd>3.600145</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>3.458849</dd>
+            <dd>3.062526</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>22,271.220 ms</dd>
+            <dd>22,738.330 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>135.610 TFLOP/s/GPU</dd>
+            <dd>132.830 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>5,885.264 tokens/s/GPU</dd>
+            <dd>5,764.364 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -272,12 +272,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_config --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 50 --warmup_iters 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=50 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_config --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 50 --warmup_iters 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=50 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 checkpoint.load=null checkpoint.save=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 16-H100 command completed all 50 full-model DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the immutable imported checkpoint for natural routing. Loss remained finite from 3.604611 to 3.458849 with zero skipped or NaN iterations. The 519,827/5,173 train/validation split was prepared with the official DataComp downloader at commit 4a8df1992566, DataComp-1B metadata revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest 6e273a96a756. This verifies bounded full-model training, not canonical DataComp/CLIP convergence or checkpoint resume.</p>
+        <p>The 16-H100 command completed all 50 full-model DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the immutable imported checkpoint for natural routing. Loss remained finite from 3.600145 to 3.062526 with zero skipped or NaN iterations, and the run saved no checkpoint. The 519,827/5,173 train/validation split was prepared with the official DataComp downloader at commit 4a8df1992566, DataComp-1B metadata revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest 6e273a96a756. This verifies bounded full-model training, not canonical DataComp/CLIP convergence or checkpoint resume.</p>
       </section>
     </article>
     <article id="qwen3-6-35b-a3b-pretrain-gb200" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-pretrain-gb200" tabindex="-1">

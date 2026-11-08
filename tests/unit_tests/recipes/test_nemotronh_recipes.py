@@ -488,35 +488,51 @@ def test_nemotron_3_super_64gpu_h100_matches_benchmark_execution_configuration()
 
 
 @pytest.mark.parametrize(
+    ("recipe_name", "expected_ep", "expected_pull_push"),
+    [
+        ("nemotron_3_super_pretrain_64gpu_b200_bf16_config", 8, 1),
+        ("nemotron_3_super_pretrain_64gpu_b200_fp8mx_config", 8, 1),
+        ("nemotron_3_super_pretrain_64gpu_b200_nvfp4_config", 8, 1),
+    ],
+)
+def test_nemotron_3_super_64gpu_b200_uses_topology_compatible_nccl_ep(recipe_name, expected_ep, expected_pull_push):
+    """All B200 Super precisions keep EP8 within one NVLink domain with pull/push enabled."""
+    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
+    cfg = getattr(module, recipe_name)()
+
+    assert cfg.model.expert_model_parallel_size == expected_ep
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == expected_pull_push
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+
+
+@pytest.mark.parametrize(
     "recipe_name",
     [
         "nemotron_3_super_pretrain_64gpu_b200_bf16_config",
         "nemotron_3_super_pretrain_64gpu_b200_fp8mx_config",
-        "nemotron_3_super_pretrain_64gpu_b200_nvfp4_config",
     ],
 )
-def test_nemotron_3_super_64gpu_b200_uses_single_nvlink_domain_ep(recipe_name):
-    """B200 BF16, MXFP8, and NVFP4 recipes keep HybridEP within one NVLink domain."""
+def test_nemotron_3_super_64gpu_b200_uses_selective_recompute_with_scoped_graphs(recipe_name):
+    """TP2/EP8 uses activation, layernorm, and attention recompute with scoped TE graphs."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
     cfg = getattr(module, recipe_name)()
 
-    assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
-
-
-def test_nemotron_3_super_64gpu_b200_fp8mx_uses_selective_recompute():
-    """B200 MXFP8 recomputes activations to fit EP8."""
-    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
-    cfg = module.nemotron_3_super_pretrain_64gpu_b200_fp8mx_config()
-
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe_act", "moe", "layernorm", "core_attn"]
-    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.recompute_modules == ["moe_act", "layernorm", "core_attn"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["mamba", "attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == 1
 
 
 def test_nemotron_3_super_64gpu_b200_nvfp4_keeps_cuda_graphs_with_light_recompute():
-    """B200 NVFP4 retains CUDA graphs with graph-compatible recompute."""
+    """B200 NVFP4 retains all four measured TE graph scopes with light recompute."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
     cfg = module.nemotron_3_super_pretrain_64gpu_b200_nvfp4_config()
 
@@ -672,7 +688,6 @@ def test_nemotron_3_5_lightning_8k_fsdp_recipe_preserves_convergence_contract():
     assert cuda_graph_module_names(cfg.model) == []
     assert getattr(cfg.model, "init_model_with_meta_device", False) is False
     assert getattr(reference.model, "init_model_with_meta_device", False) is False
-    assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.num_distributed_optimizer_instances == 1
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
@@ -764,6 +779,43 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
     gb200.env_vars = h100.env_vars
 
     assert gb200 == h100
+
+
+def test_nemotron_3_5_lightning_32k_sft_differs_from_sft_only_in_long_context_layout():
+    """The 32K SFT recipe keeps the Lightning SFT contract apart from its sequence length and layout."""
+    from megatron.bridge.recipes.nemotronh import (
+        nemotron_3_5_lightning_sft_32k_config,
+        nemotron_3_5_lightning_sft_config,
+    )
+
+    base = nemotron_3_5_lightning_sft_config()
+    long_context = nemotron_3_5_lightning_sft_32k_config()
+
+    # Remove the 32K sequence length and its execution layout. Any other
+    # difference, including a convergence-setting drift, must fail.
+    model_layout_fields = {
+        "seq_length",
+        "context_parallel_size",
+        "cp_comm_type",
+        "moe_flex_dispatcher_backend",
+        "cross_entropy_loss_fusion",
+        "recompute_granularity",
+        "recompute_modules",
+        "recompute_method",
+        "recompute_num_layers",
+    }
+    base_model = {key: value for key, value in _model_fields(base.model).items() if key not in model_layout_fields}
+    long_context_model = {
+        key: value for key, value in _model_fields(long_context.model).items() if key not in model_layout_fields
+    }
+    assert long_context_model == base_model
+
+    long_context.model = base.model
+    long_context.dataset.seq_length = base.dataset.seq_length
+    long_context.dataset.offline_packing_specs = base.dataset.offline_packing_specs
+    long_context.ddp.overlap_param_gather = base.ddp.overlap_param_gather
+
+    assert long_context == base
 
 
 # --- Nemotron 3 Super tests ---

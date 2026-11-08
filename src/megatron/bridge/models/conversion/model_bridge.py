@@ -573,6 +573,11 @@ class MegatronModelBridge(
     # changing how its checkpoints are constructed. Requires MODEL_CONFIG_CLASS to be set.
     USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
 
+    # Source modules intentionally absent from every target of this bridge.
+    # Strict export still requires all other source tensors. Prefixes must name
+    # complete modules (nonempty, ending in a dot), never a wildcard or all keys.
+    HF_EXPORT_IGNORED_SOURCE_PREFIXES: ClassVar[tuple[str, ...]] = ()
+
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
@@ -2766,6 +2771,9 @@ class MegatronModelBridge(
         if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
+        # Some registries read the source checkpoint's names, so attach it first as build_conversion_tasks does.
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
         mapping_registry = self.mapping_registry()
         pg_collection = _get_pg_collection_from_model(megatron_model)
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)
