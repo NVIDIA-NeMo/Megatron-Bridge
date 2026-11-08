@@ -5182,6 +5182,56 @@ class TestEpochBasedTraining:
         assert cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
 
 
+class TestMegatronFSDPGradDtypePolicy:
+    """Megatron-FSDP gradient precision follows its explicit dtype fields."""
+
+    @staticmethod
+    def _fsdp_ddp_config(**kwargs) -> DistributedDataParallelConfig:
+        base = {
+            "grad_reduce_in_fp32": True,
+            "use_distributed_optimizer": True,
+            "use_megatron_fsdp": True,
+            "data_parallel_sharding_strategy": "optim_grads_params",
+            "average_in_collective": False,
+        }
+        base.update(kwargs)
+        return DistributedDataParallelConfig(**base)
+
+    @pytest.mark.parametrize(
+        ("main_grads_dtype", "grad_comm_dtype"),
+        [(None, None), (torch.bfloat16, torch.bfloat16), (torch.float32, torch.bfloat16)],
+    )
+    def test_finalize_clears_flag_when_fsdp_dtypes_do_not_request_fp32(self, main_grads_dtype, grad_comm_dtype):
+        ddp = self._fsdp_ddp_config(
+            megatron_fsdp_main_grads_dtype=main_grads_dtype,
+            megatron_fsdp_grad_comm_dtype=grad_comm_dtype,
+        )
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is False
+        assert ddp.megatron_fsdp_main_grads_dtype == main_grads_dtype
+        assert ddp.megatron_fsdp_grad_comm_dtype == grad_comm_dtype
+
+    @pytest.mark.parametrize("grad_comm_dtype", [None, torch.float32])
+    def test_finalize_keeps_flag_when_fsdp_dtypes_request_fp32(self, grad_comm_dtype):
+        ddp = self._fsdp_ddp_config(
+            megatron_fsdp_main_grads_dtype=torch.float32,
+            megatron_fsdp_grad_comm_dtype=grad_comm_dtype,
+        )
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is True
+
+    def test_finalize_keeps_flag_without_megatron_fsdp(self):
+        ddp = DistributedDataParallelConfig(grad_reduce_in_fp32=True, use_distributed_optimizer=True)
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is True
+
+
 class TestDatasetSequenceLengthValidation:
     """Tests for dataset sequence length validation with different dataset types."""
 

@@ -21,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
+import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
@@ -123,7 +124,32 @@ class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
         This method calls the original Megatron Core DistributedDataParallelConfig.__post_init__()
         to compute derived fields based on the current field values.
         """
+        self._apply_megatron_fsdp_grad_dtype_policy()
         super().__post_init__()
+
+    def _apply_megatron_fsdp_grad_dtype_policy(self) -> None:
+        """Keep Megatron-FSDP gradient precision governed by its explicit dtype fields.
+
+        ``grad_reduce_in_fp32`` sizes the gradient buffers of the standard DDP wrapper.
+        Megatron-FSDP takes gradient precision from ``megatron_fsdp_main_grads_dtype`` and
+        ``megatron_fsdp_grad_comm_dtype`` instead, and Megatron Core rejects the legacy flag
+        unless those fields request FP32. Bridge precision recipes enable the flag by default,
+        so clear it when the FSDP dtypes do not request FP32; the configured FSDP precision
+        policy is unchanged. Set ``megatron_fsdp_main_grads_dtype=torch.float32`` to
+        accumulate FSDP gradients in FP32.
+        """
+        if not (self.use_megatron_fsdp and self.grad_reduce_in_fp32):
+            return
+        main_grads_dtype = self.megatron_fsdp_main_grads_dtype
+        grad_comm_dtype = self.megatron_fsdp_grad_comm_dtype
+        if main_grads_dtype == torch.float32 and grad_comm_dtype in (None, torch.float32):
+            return
+        print_rank_0(
+            "grad_reduce_in_fp32 does not apply to Megatron-FSDP gradients "
+            f"(megatron_fsdp_main_grads_dtype={main_grads_dtype}, "
+            f"megatron_fsdp_grad_comm_dtype={grad_comm_dtype}). Deactivating..."
+        )
+        self.grad_reduce_in_fp32 = False
 
 
 @dataclass
