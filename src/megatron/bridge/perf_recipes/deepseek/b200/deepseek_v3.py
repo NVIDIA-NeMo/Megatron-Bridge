@@ -300,7 +300,13 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config() -> Config
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
     # EP=16 spans 2 NVLink domains (rdma_team_size=2); NCCL_EP_HT_EM_PULL_PUSH requires
     # single-LSA-team (EP≤8), so disable it for inter-domain EP.
-    cfg.env_vars = {**cfg.env_vars, "NCCL_EP_HT_EM_PULL_PUSH": 0}
+    # graph_capture_record_stream_reuse allows the CG capture to reuse expandable-segment
+    # mappings, reducing peak memory before capture at iter 4.
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "NCCL_EP_HT_EM_PULL_PUSH": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+    }
     return cfg
 
 
