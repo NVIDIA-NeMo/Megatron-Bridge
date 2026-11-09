@@ -220,7 +220,6 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.model.mlp_chunks_for_training = 64
     cfg.model.mamba_chunk_size = 256
 
-    cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.keep_fp8_transpose_cache = False

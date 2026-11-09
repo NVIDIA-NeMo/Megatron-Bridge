@@ -2771,6 +2771,9 @@ class MegatronModelBridge(
         if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
+        # Some registries read the source checkpoint's names, so attach it first as build_conversion_tasks does.
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
         mapping_registry = self.mapping_registry()
         pg_collection = _get_pg_collection_from_model(megatron_model)
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)

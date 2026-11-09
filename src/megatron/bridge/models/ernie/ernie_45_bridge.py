@@ -34,34 +34,14 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.ernie.ernie_router import ernie45_decoder_block_spec
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
-def _ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None = None):
-    """Create a decoder block spec that respects ``moe_layer_freq``.
+# Provider-era checkpoints serialized this private name as their transformer_layer_spec target.
+_ernie45_decoder_block_spec = ernie45_decoder_block_spec
 
-    The default ``GPTModelProvider.transformer_layer_spec`` calls
-    ``get_gpt_layer_with_transformer_engine_spec`` which returns a single
-    MoE layer spec applied uniformly to ALL layers, ignoring
-    ``moe_layer_freq``.
-
-    ERNIE 4.5 has mixed dense/MoE layers (layer 0 is dense, layers 1-N
-    are MoE).  This function uses ``get_gpt_decoder_block_spec`` which
-    calls ``get_gpt_decoder_layer_specs`` — the code path that parses
-    ``config.moe_layer_freq`` and creates per-layer specs (dense for
-    pattern=0, MoE for pattern=1).
-    """
-    from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-
-    return get_gpt_decoder_block_spec(
-        config=config,
-        use_transformer_engine=True,
-        vp_stage=vp_stage,
-    )
-
-
-# HF class name string; avoids requiring the HF modeling module at import time.
 _ERNIE45_MOE_HF_CLASS_NAME = "Ernie4_5_MoeForCausalLM"
 
 
@@ -152,7 +132,7 @@ class Ernie45Bridge(MegatronModelBridge):
 
     Key architectural features:
     - Single-pool MoE: 64 experts, top-6 routing, shared experts
-    - Softmax routing with expert bias for aux-free load balancing
+    - Softmax routing with expert bias for aux-free load balancing (Ernie45TopKRouter)
     - Interleaved RoPE (base=500000)
     - GQA with 20 query heads, 4 KV heads, kv_channels=128
     - RMSNorm, SiLU-gated MLP
@@ -160,7 +140,7 @@ class Ernie45Bridge(MegatronModelBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("baidu/ERNIE-4.5-0.3B-PT")
+        >>> bridge = AutoBridge.from_hf_pretrained("baidu/ERNIE-4.5-21B-A3B-PT")
         >>> model_config = bridge.get_model_config()
     """
 
@@ -217,7 +197,10 @@ class Ernie45Bridge(MegatronModelBridge):
             moe_shared_expert_intermediate_size=moe_ffn_hidden_size * getattr(hf_config, "moe_num_shared_experts", 2),
             moe_router_load_balancing_type="aux_loss",
             moe_aux_loss_coeff=getattr(hf_config, "router_aux_loss_coef", 0.001),
-            # Same MoE runtime settings as DeepSeek V3 (sigmoid routing + expert bias)
+            # ERNIE routes with softmax probabilities plus an expert-bias selection correction.
+            # Ernie45TopKRouter turns the gate logits into softmax log-odds, so Megatron Core's
+            # sigmoid path (biased top-k, then renormalization) reproduces that routing exactly.
+            transformer_layer_spec=ernie45_decoder_block_spec,
             moe_grouped_gemm=True,
             moe_router_pre_softmax=False,
             moe_router_score_function="sigmoid",
@@ -246,15 +229,8 @@ class Ernie45Bridge(MegatronModelBridge):
         return config_kwargs
 
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Adapt the canonical builder mapping to the deprecated provider path.
-
-        The builder's default MoE spec already honors ``moe_layer_freq``; the
-        provider's default spec does not, so the provider path keeps the
-        decoder block spec explicitly.
-        """
-        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
-        provider_kwargs["transformer_layer_spec"] = _ernie45_decoder_block_spec
-        return provider_kwargs
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry with parameter mappings for ERNIE 4.5 MoE."""

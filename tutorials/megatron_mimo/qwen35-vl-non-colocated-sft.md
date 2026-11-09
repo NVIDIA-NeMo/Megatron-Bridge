@@ -345,7 +345,10 @@ two-component, non-colocated full-parameter SFT. The following are not yet
 supported or tested, so you can avoid paths that are not expected to work:
 
 - **MoE variants** — only dense Qwen3.5-VL is wired up.
-- **MTP** — the example disables Multi-Token Prediction layers.
+- **MTP** — Multi-Token Prediction is off by default, and the results above were
+  measured without it. `--enable-mtp` trains the MTP layer from a checkpoint
+  converted with MTP weights; see the
+  [example README](../../examples/megatron_mimo/qwen35_vl/README.md#mtp-training).
 - **Packed sequences** — MIMO packed-sequence behavior is untested.
 - **Energon datasets** — use the direct HF SFT Config + Builder path.
 - **Colocated layouts** — only non-colocated (disjoint ranks) is covered here.

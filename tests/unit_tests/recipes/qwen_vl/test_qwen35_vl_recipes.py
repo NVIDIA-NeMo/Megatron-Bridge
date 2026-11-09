@@ -1098,6 +1098,7 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_permute_fusion_into_hybridep is False
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.high_priority_a2a_comm_stream is True
 
