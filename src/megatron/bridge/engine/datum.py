@@ -294,20 +294,25 @@ class NormalizationPolicy(str, Enum):
 
 @dataclass
 class LoraConfig:
-    """LoRA adapter settings for a trainable engine. Not supported yet: ``from_recipe(lora=...)`` raises.
+    """LoRA adapter settings for a trainable language-model engine (``from_recipe(lora=...)``).
+
+    Lowered to Bridge's ``LoRA`` by ``megatron.bridge.engine.lora.build_lora``: ``rank`` becomes its
+    ``dim`` and the adapter output is scaled by ``alpha / rank``. The base model is frozen, so the
+    gradient buffers, the optimizer and ``save_state`` hold the adapters only;
+    ``forward_only(disable_adapters=True)`` scores the base model, and ``export`` merges the adapters
+    into the base weights unless ``adapter_only=True``.
 
     Attributes:
         rank: strict. Adapter rank.
-        alpha: strict. Adapter scaling.
-        target_modules: strict. Megatron linear-module names the adapters attach to.
-        dropout: strict. Adapter dropout.
+        alpha: strict. Adapter scaling numerator; the adapter output is scaled by ``alpha / rank``.
+        target_modules: strict. Megatron module names the adapters attach to, or ``None`` for the
+            recipe's ``lora_target_modules``. The MoE router cannot be a target.
+        dropout: strict. Adapter dropout probability, in ``[0, 1)``.
     """
 
     rank: int
     alpha: float
-    target_modules: list[str] = field(
-        default_factory=lambda: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
-    )
+    target_modules: list[str] | None = None
     dropout: float = 0.0
 
 

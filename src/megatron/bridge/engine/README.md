@@ -89,17 +89,19 @@ Each engine owns its recipe, model, and training state; engines in one process s
 |---|---|
 | `TrainingEngine(model, seq_length=..., ...)` | Select a registered recipe using the model config, hardware, and context length, then build the engine. |
 | `TrainingEngine.from_recipe(recipe, ...)` | Build from an explicitly supplied recipe, deep-copied for this engine. |
-| `forward_only(data, gather_output=True)` | Return a detached `ForwardOutput` with target logprobs or critic values. Preserve pending gradients. |
+| `forward_only(data, gather_output=True)` | Return a detached `ForwardOutput` with target logprobs or critic values. Preserve pending gradients. `disable_adapters=True` scores a LoRA engine's frozen base model. |
 | `forward_backward(data, loss_fn=None, loss_kwargs=None)` | Compute the selected loss and accumulate gradients. Return a `ForwardBackwardOutput` for this call; do not update weights. |
 | `optim_step(adam_params, normalize_gradients=True)` | Apply the selected update-wide normalization, finalize distributed gradients, and step the optimizer. Clear the accumulation window afterward. |
 | `zero_grad()` | Discard pending gradients and reset the accumulation window. |
 | `cpu()` / `cuda()` | Offload and restore model parameters, optimizer state, and pending accumulation gradients. Calls are idempotent. |
 | `save_state(path, user_state=None, async_save=False)` | Save resumable training state at a closed accumulation window; return a `CheckpointHandle`. |
 | `load_state(path)` | Restore training state from a checkpoint root or iteration directory; return this rank's saved `user_state`. |
-| `export(path=...)` / `export(streaming=True)` | Export language-model weights in the recipe's HF layout, to a directory or an iterator of `(name, tensor)` pairs. |
+| `export(path=...)` / `export(streaming=True)` | Export language-model weights in the recipe's HF layout, to a directory or an iterator of `(name, tensor)` pairs. LoRA adapters are merged in; `adapter_only=True` exports them alone in the HF PEFT layout. |
 | `close()` | Wait for any pending save and release the engine. Other engines and the shared runtime remain available. |
 
 `AdamParams` supplies the learning rate, betas, epsilon, and weight decay for that step. The learning-rate schedule belongs to the application. Recipe parameter-group multipliers still apply.
+
+`lora=LoraConfig(rank=..., alpha=...)` at construction trains LoRA adapters on a frozen base loaded from `checkpoint_path`: the gradient buffers, the optimizer and `save_state` hold the adapters only, and `forward_only(disable_adapters=True)` replaces a separate reference engine. `target_modules=None` uses the recipe's `lora_target_modules` (Qwen3.5 adds its GatedDeltaNet `in_proj` and `out_proj` to Bridge's four default linears).
 
 Predefined loss methods are additive over active token positions:
 

@@ -40,6 +40,7 @@ from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.engine.datum import CheckpointHandle
 from megatron.bridge.engine.recipes.base import TrainingRecipe
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.checkpointing import (
     CheckpointLoadContext,
     CheckpointSaveContext,
@@ -97,7 +98,9 @@ class _CheckpointConfigView:
     dist: DistributedInitConfig
     rng: RNGConfig
     checkpoint: CheckpointConfig
-    peft: None = None
+    # A LoRA engine's LoRA: Bridge then saves only the adapters (and MoE router expert biases) and resumes
+    # them non-strictly into a model that already holds the base weights. None for full-weight engines.
+    peft: PEFT | None = None
     train: None = None  # GlobalState installs a signal handler only when train.exit_signal_handler is set
     ft: None = None  # fault-tolerance hooks around save/load are no-ops when unset
     dataset: None = None  # no dataloader state to save
@@ -127,7 +130,9 @@ def _engine_checkpoint_config(pretrained_checkpoint: str | None) -> CheckpointCo
     )
 
 
-def _checkpoint_state(recipe: TrainingRecipe, checkpoint_config: CheckpointConfig) -> GlobalState:
+def _checkpoint_state(
+    recipe: TrainingRecipe, checkpoint_config: CheckpointConfig, *, peft: PEFT | None = None
+) -> GlobalState:
     state = GlobalState()
     state.cfg = _CheckpointConfigView(
         model=recipe.model,
@@ -136,6 +141,7 @@ def _checkpoint_state(recipe: TrainingRecipe, checkpoint_config: CheckpointConfi
         dist=recipe.dist,
         rng=recipe.rng,
         checkpoint=checkpoint_config,
+        peft=peft,
     )
     return state
 
@@ -256,6 +262,7 @@ def save_engine_state(
     async_save: bool,
     async_state: GlobalState | None,
     pg_collection: ProcessGroupCollection,
+    peft: PEFT | None = None,
 ) -> CheckpointHandle:
     """Save model, optimizer (when present), RNG, progress and user state as ``<root>/iter_<step>``.
 
@@ -264,7 +271,8 @@ def save_engine_state(
     otherwise), so a step marked complete has everything. ``async_save`` needs the worker from
     ``start_async_checkpoint_worker`` (``async_state``; ``None`` when the engine was built with
     ``spawn_async_save_worker=False``) and stages through CPU shared memory; the returned handle's
-    ``wait()`` then blocks until the finalize steps ran on every rank.
+    ``wait()`` then blocks until the finalize steps ran on every rank. With ``peft`` (a LoRA engine)
+    the model section holds only the adapters and the MoE router expert biases.
     """
     if async_save and async_state is None:
         raise ValueError(
@@ -282,9 +290,9 @@ def save_engine_state(
     checkpoint_config.finalize()
     if async_save:
         state = async_state
-        state.cfg = _checkpoint_state(recipe, checkpoint_config).cfg
+        state.cfg = _checkpoint_state(recipe, checkpoint_config, peft=peft).cfg
     else:
-        state = _checkpoint_state(recipe, checkpoint_config)
+        state = _checkpoint_state(recipe, checkpoint_config, peft=peft)
     state.train_state.step = step
     write_user_state(root, step, torch.distributed.get_rank(), user_state)
     manager = create_checkpoint_manager(checkpoint_config)
@@ -311,13 +319,20 @@ def save_engine_state(
 
 
 def load_engine_state(
-    recipe: TrainingRecipe, model: list[MegatronModule], optimizer: Any | None, *, path: str
+    recipe: TrainingRecipe,
+    model: list[MegatronModule],
+    optimizer: Any | None,
+    *,
+    path: str,
+    peft: PEFT | None = None,
 ) -> tuple[int, Any | None]:
     """Restore a checkpoint written by ``save_engine_state``; returns ``(step, this rank's user state)``.
 
     ``path`` is the save root (latest complete step) or one ``iter_<step>`` directory. Optimizer state
     is restored when this engine has an optimizer and the checkpoint holds one; RNG state when the
-    parallel layout matches.
+    parallel layout matches. With ``peft`` (a LoRA engine) only the adapters and router expert biases
+    are read, non-strictly (Bridge's PEFT resume): the base weights are the ones the engine loaded at
+    construction, so it must have been built from the same base checkpoint.
     """
     root = checkpoint_root(path)
     if not (os.path.exists(os.path.join(root, "latest_train_state.pt")) or is_checkpoint_iteration_directory(path)):
@@ -332,7 +347,7 @@ def load_engine_state(
         fully_parallel_save=True,
     )
     checkpoint_config.finalize()
-    state = _checkpoint_state(recipe, checkpoint_config)
+    state = _checkpoint_state(recipe, checkpoint_config, peft=peft)
     manager = create_checkpoint_manager(checkpoint_config)
     step, _ = manager.load(
         CheckpointLoadContext(state=state, model=model, optimizer=optimizer, opt_param_scheduler=None)

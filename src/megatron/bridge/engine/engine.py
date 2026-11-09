@@ -20,6 +20,7 @@ checkpoints, export and CPU/GPU placement are implemented. Modes that are not su
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import functools
 import gc
@@ -65,7 +66,8 @@ from megatron.bridge.engine.datum import (
     PreparedMicrobatch,
     check_datums,
 )
-from megatron.bridge.engine.export import ExportState, export_hf_weights, make_export_state
+from megatron.bridge.engine.export import ExportState, export_hf_adapter, export_hf_weights, make_export_state
+from megatron.bridge.engine.lora import build_lora, make_lora_hook
 from megatron.bridge.engine.offload import HostState, check_movable, offload_to_cpu, reload_to_cuda
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
@@ -74,6 +76,7 @@ from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import RerunStateMachineConfig
 from megatron.bridge.training.initialize import init_rerun_state, torch_dist_init
 from megatron.bridge.training.setup import (
@@ -299,7 +302,12 @@ class TrainingEngine:
                 off on the recipe copy, ``forward_only`` returns values and ``forward_backward`` defaults
                 to ``value_loss``. One recipe serves the actor and the critic.
             trainable: Build the optimizer and gradient buffers. ``False`` yields a frozen scoring engine.
-            lora: LoRA settings (not implemented yet).
+            lora: Train LoRA adapters on a frozen base instead of the full model (``output_head="lm"``,
+                ``trainable=True`` and a ``checkpoint_path`` with the base weights are required). The base
+                is loaded and LoRA applied before DDP and the optimizer are built, so both hold the
+                adapters only. ``forward_only(disable_adapters=True)`` then scores the base model (the
+                usual RL reference, with no second engine), ``save_state`` saves the adapters only, and
+                ``export`` merges them into the base weights unless ``adapter_only=True``.
             hooks: Extra pre-wrap hooks run after the Bridge-registered ones.
             spawn_async_save_worker: Spawn the asynchronous-save worker (one process per rank with its own
                 CUDA context, alive until ``close``) before the model is built. ``False`` saves that cost
@@ -334,9 +342,15 @@ class TrainingEngine:
         """Validate the options, finalize the recipe (owned by this engine) and build."""
         if output_head not in ("lm", "value"):
             raise ValueError(f"output_head must be 'lm' or 'value', got {output_head!r}.")
+        peft = None
         if lora is not None:
-            # TODO(lora): Bridge LoRA through a pre-wrap hook; see TODO.md.
-            raise NotImplementedError("LoRA engines are not implemented yet.")
+            if output_head != "lm":
+                raise ValueError("lora needs output_head='lm'; LoRA on a value head is not supported.")
+            if not trainable:
+                raise ValueError("lora needs trainable=True; a frozen engine already scores the base model.")
+            if checkpoint_path is None:
+                raise ValueError("lora needs checkpoint_path: the pretrained base weights the adapters train on.")
+            peft = build_lora(lora, recipe)
         if output_head == "value":
             apply_value_head_model_settings(recipe.model)
         finalize_recipe(recipe)
@@ -344,6 +358,10 @@ class TrainingEngine:
         if output_head == "value":
             # Loads the checkpoint into the bare model, then swaps the head; _build skips its own load.
             hooks.append(make_value_head_hook(recipe, checkpoint_path))
+        if peft is not None:
+            # Loads the base into the bare model, then applies LoRA before DDP and the optimizer exist;
+            # _build skips its own load.
+            hooks.append(make_lora_hook(recipe, peft, checkpoint_path))
         runtime = _acquire_runtime(recipe)
         self._build(
             recipe,
@@ -351,6 +369,7 @@ class TrainingEngine:
             checkpoint_path=checkpoint_path,
             output_head=output_head,
             trainable=trainable,
+            peft=peft,
             hooks=hooks,
             spawn_async_save_worker=spawn_async_save_worker,
         )
@@ -363,6 +382,7 @@ class TrainingEngine:
         checkpoint_path: str | None,
         output_head: str,
         trainable: bool,
+        peft: LoRA | None,
         hooks: list[PreWrapHook],
         spawn_async_save_worker: bool,
     ) -> None:
@@ -370,6 +390,7 @@ class TrainingEngine:
         self._runtime = runtime
         self._output_head = output_head
         self._trainable = trainable
+        self._peft = peft
         self._closed = False
         self._step = 0
         self._window = AccumulationWindow()
@@ -415,13 +436,15 @@ class TrainingEngine:
             sequence_parallel=runtime.topology.tp > 1 and bool(getattr(recipe.model, "sequence_parallel", False)),
         )
 
-        if checkpoint_path is not None and output_head != "value":
-            # value model loads the checkpoint during the make_value_head_hook
+        if checkpoint_path is not None and output_head != "value" and peft is None:
+            # The value-head and LoRA pre-wrap hooks load the checkpoint into the bare model instead.
             load_pretrained_weights(recipe, self._model, self._optimizer, checkpoint_path)
 
         # Bridge installs the schedule hooks on the model config (finalize_model_grads_func, grad_scale_func,
         # and the overlap hooks). The engine keeps only the finalizer: run_forward_backward suppresses it
-        # per call, and optim_step invokes it once per update (see schedule.py / optim.py).
+        # per call, and optim_step invokes it once per update (see schedule.py / optim.py). With LoRA the
+        # finalizer also sums, across expert-parallel ranks, the gradients of expert adapters replicated
+        # there (share_expert_adapters), and the per-layer fallback hooks for that sum are removed.
         self._finalize_model_grads_func: Callable[..., None] | None = None
         if trainable:
             model_config = get_model_config(self._model[0])
@@ -432,7 +455,7 @@ class TrainingEngine:
                 self._optimizer,
                 align_grad_reduce=recipe.dist.align_grad_reduce,
                 pg_collection=pg_collection,
-                peft_enabled=False,
+                peft_enabled=peft is not None,
             )
             self._finalize_model_grads_func = model_config.finalize_model_grads_func
         runtime.attach(self)
@@ -456,6 +479,8 @@ class TrainingEngine:
         samples, its CP positions) with ``sample_indices`` and ``token_positions``. Gradients and any
         open accumulation window are untouched. Microbatches carrying ``routed_experts`` are scored
         with those expert choices replayed in the MoE routers (recipe ``router_replay``).
+        ``disable_adapters=True`` scores a LoRA engine's base model (the adapters are switched off for
+        this call only); it raises on an engine without LoRA rather than return the full model's scores.
         """
         self._require_open()
         self._require_resident("forward_only")
@@ -463,23 +488,24 @@ class TrainingEngine:
         if return_entropy:
             # TODO(logits): entropy needs the model called without labels and a chunked TP-aware reduction.
             raise NotImplementedError("return_entropy needs the full-logits path, which is not implemented yet.")
-        if disable_adapters:
-            # TODO(lora): run the forward under PEFT.disable_adapter(model).
-            raise NotImplementedError("disable_adapters needs LoRA, which is not implemented yet.")
+        if disable_adapters and self._peft is None:
+            raise ValueError("disable_adapters=True needs an engine built with lora=...; this engine has no adapters.")
         if self._runtime.topology.pp > 1:
             raise NotImplementedError(
                 "forward_only with pipeline parallelism (broadcast_output) is not supported yet."
             )
         microbatches = self.preprocess(data, training=False)
         self.check_microbatches(microbatches)
-        scores = run_forward_only(
-            self._model,
-            microbatches,
-            pg_collection=self._runtime.pg_collection,
-            mtp_target_scope=self._recipe.mtp_target_scope,
-            output_head=self._output_head,
-            router_replay=self._router_replay,
-        )
+        adapters_off = self._peft.disable_adapter(self._model) if disable_adapters else contextlib.nullcontext()
+        with adapters_off:
+            scores = run_forward_only(
+                self._model,
+                microbatches,
+                pg_collection=self._runtime.pg_collection,
+                mtp_target_scope=self._recipe.mtp_target_scope,
+                output_head=self._output_head,
+                router_replay=self._router_replay,
+            )
         return self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
 
     def forward_backward(
@@ -824,6 +850,7 @@ class TrainingEngine:
             async_save=async_save,
             async_state=self._async_checkpoint_state,
             pg_collection=self._runtime.pg_collection,
+            peft=self._peft,
         )
         if async_save:
             self._pending_save = handle
@@ -833,13 +860,15 @@ class TrainingEngine:
         """Restore a ``save_state`` checkpoint (the save root's latest step, or one ``iter_<step>`` directory).
 
         Collective. Restores weights, optimizer state when this engine is trainable, RNG state and the
-        update count; returns this rank's ``user_state`` or ``None``. Only between updates.
+        update count; returns this rank's ``user_state`` or ``None``. Only between updates. A LoRA
+        engine's checkpoint holds the adapters only; they are restored over the base weights the engine
+        was built with, so build it from the same base ``checkpoint_path`` as the engine that saved.
         """
         self._require_open()
         self._require_resident("load_state")
         self._require_closed_window("load_state")
         self._wait_pending_save()
-        step, user_state = load_engine_state(self._recipe, self._model, self._optimizer, path=path)
+        step, user_state = load_engine_state(self._recipe, self._model, self._optimizer, path=path, peft=self._peft)
         self._step = step
         return user_state
 
@@ -862,21 +891,36 @@ class TrainingEngine:
             self._pending_save.wait()
             self._pending_save = None
 
-    def export(self, *, path: str | None = None, streaming: bool = False) -> Iterator[tuple[str, torch.Tensor]] | None:
+    def export(
+        self, *, path: str | None = None, streaming: bool = False, adapter_only: bool = False
+    ) -> Iterator[tuple[str, torch.Tensor]] | None:
         """Export the current weights in the HF layout of ``recipe.hf_path``.
 
         Collective. ``path`` writes a complete HF checkpoint directory (config, tokenizer files,
         safetensors; rank 0 writes). ``streaming=True`` instead returns an iterator of
         ``(hf_name, tensor)`` with full tensors on every rank; every rank must drain it, since the
-        TP/EP/PP gathers run inside. Adapter weights, when present, are merged into the export.
+        TP/EP/PP gathers run inside. A LoRA engine's adapters are merged into the base weights (in fp32,
+        then cast to the base dtype); ``adapter_only=True`` exports the adapters alone, unmerged, in the
+        HF PEFT layout (a PEFT directory with ``path``, ``lora_A`` / ``lora_B`` tensors when streaming).
         """
         self._require_open()
         self._require_resident("export")
         if self._output_head == "value":
             # TODO(value-export): the HF causal-LM layout has no slot for value_head; define a critic layout.
             raise NotImplementedError("export of a value-head engine is not supported yet.")
+        if adapter_only and self._peft is None:
+            raise ValueError("adapter_only=True needs an engine built with lora=...; this engine has no adapters.")
         if self._export_state is None:
             self._export_state = make_export_state(self._recipe)
+        if adapter_only:
+            return export_hf_adapter(
+                self._export_state,
+                self._model,
+                self._peft,
+                path=path,
+                streaming=streaming,
+                base_model_name_or_path=self._recipe.hf_path,
+            )
         return export_hf_weights(self._export_state, self._model, path=path, streaming=streaming)
 
     # ---- placement ----------------------------------------------------------------------------
@@ -1011,6 +1055,7 @@ class TrainingEngine:
                     setattr(model_config, name, None)
         self._router_replay.release()
         self._optimizer = None
+        self._peft = None
         self._finalize_model_grads_func = None
         self._export_state = None
         self._model = []

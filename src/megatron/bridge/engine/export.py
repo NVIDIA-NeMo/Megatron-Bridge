@@ -31,6 +31,7 @@ from transformers import AutoConfig
 
 from megatron.bridge.engine.recipes.base import TrainingRecipe
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.peft.base import PEFT
 
 
 @dataclass
@@ -71,11 +72,15 @@ def export_hf_weights(
 
     Both modes are collective: every rank calls this, and in streaming mode every rank must drain the
     iterator because the TP/EP/PP gathers happen inside it. The conversion plan is built once per
-    engine and reused by later streaming calls.
+    engine and reused by later streaming calls. LoRA adapters are merged into their base tensors: Bridge
+    computes ``W + (alpha / rank) * B @ A`` in fp32 and casts the sum back to the base dtype, and it
+    plans the adapter gathers again on every call (only the base plan is cached).
     """
     if streaming:
         if state.tasks is None:
             state.tasks = state.bridge.get_conversion_tasks(model)
+        # TODO(lora-refit): a merged refit rounds W + s * B @ A to bf16, which the trainer (adapters kept
+        # apart) never does; measure the train/inference gap before choosing it over adapter-only refit.
         return (
             (item.param_name, item.weight)
             for item in state.bridge.export_hf_weights(
@@ -85,4 +90,33 @@ def export_hf_weights(
     if path is None:
         raise ValueError("export needs a path unless streaming=True.")
     state.bridge.save_hf_pretrained(model, path, show_progress=False)
+    return None
+
+
+def export_hf_adapter(
+    state: ExportState,
+    model: list[MegatronModule],
+    peft: PEFT,
+    *,
+    path: str | None,
+    streaming: bool,
+    base_model_name_or_path: str | None,
+) -> Iterator[tuple[str, torch.Tensor]] | None:
+    """Export the LoRA adapters alone, unmerged, in the HF PEFT layout of the recipe's model.
+
+    Streaming yields ``(hf_name, tensor)`` for every ``lora_A`` / ``lora_B`` with full tensors on every
+    rank; like the merged stream it is collective and every rank must drain it. ``path`` writes a PEFT
+    directory (``adapter_config.json`` + ``adapter_model.safetensors``) that
+    ``peft.PeftModel.from_pretrained`` loads over ``base_model_name_or_path``.
+    """
+    if streaming:
+        return (
+            (item.param_name, item.weight)
+            for item in state.bridge.export_adapter_weights(model, cpu=False, show_progress=False)
+        )
+    if path is None:
+        raise ValueError("export needs a path unless streaming=True.")
+    state.bridge.save_hf_adapter(
+        model, path, peft_config=peft, base_model_name_or_path=base_model_name_or_path, show_progress=False
+    )
     return None

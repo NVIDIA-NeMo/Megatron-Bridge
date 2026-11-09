@@ -42,12 +42,25 @@ models, several engines sharing one runtime.
 
 ## LoRA
 
-- `lora=` on construction and `forward_only(disable_adapters=True)` raise (`TODO(lora)`). Agreed design:
-  Bridge `LoRA` applied through a pre-wrap hook after the base weights load, targets = Bridge's default
-  four linears plus the GDN `in_proj`/`out_proj`, router excluded, default rank 32 / alpha 64, the
-  expert-adapter gradient sync for expert parallelism, adapter-only checkpoints, merged weights in the
-  streaming export, and the reference model in the examples becoming the policy with adapters off.
-  Adapter-only refit of the inference engine is a follow-up.
+- Implemented as agreed: Bridge `LoRA` applied through a pre-wrap hook after the base weights load,
+  targets = the recipe's `lora_target_modules` (Qwen3.5: Bridge's default four linears plus the GDN
+  `in_proj`/`out_proj`), router rejected as a target, the expert-adapter gradient sync for expert
+  parallelism, adapter-only checkpoints, merged weights in the streaming export plus
+  `export(adapter_only=True)`, and `forward_only(disable_adapters=True)` replacing the reference engine in
+  `ppo_vllm.py`. Rank 32 / alpha 64 is the examples' setting (`--lora-rank 32`, `--lora-alpha` defaults
+  to 64), not a library default.
+- Not validated on GPUs yet: construction on the Qwen3.5 recipe, N-call accumulation and movement gates
+  with LoRA, merged-stream vs written-files export parity, and an RL run.
+- **Merged refit and train/inference agreement** (`TODO(lora-refit)`): the trainer computes
+  `W x + s B(A x)` with the update kept apart, while the merged refit sends vllm `bf16(W + s B A)`, so
+  update elements below half a bf16 step of W are lost to the sampler. Measure it (trainer with adapters,
+  a frozen engine on the merged weights, and vllm, on the same rollout tokens) before choosing between
+  merged and adapter-only refit. Adapter-only refit needs vllm LoRA support for the GDN projections and
+  the shared expert adapters (`share_expert_adapters=True`), and its decode cost measured.
+- **Adapter conversion planning** is redone on every merged streaming export (Bridge rebuilds the
+  adapter tasks; only the base conversion tasks are cached).
+- **LoRA+** (a per-group `max_lr` ratio on `lora_B`) is not reachable from the engine, and
+  `apply_adam_params` scales by `lr_mult` only, so wiring it needs the ratio rule too.
 
 ## State, export and placement
 

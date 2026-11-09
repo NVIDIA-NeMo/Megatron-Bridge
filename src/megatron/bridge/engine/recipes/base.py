@@ -45,6 +45,10 @@ from megatron.bridge.utils.cuda_graph import validate_cuda_graph_configuration
 from megatron.bridge.utils.gdn_utils import validate_cudnn_gdn_stack
 
 
+# Bridge's ``LoRA.target_modules`` default: attention QKV and output projections, MLP (and expert) FC1/FC2.
+BRIDGE_LORA_TARGET_MODULES = ("linear_qkv", "linear_proj", "linear_fc1", "linear_fc2")
+
+
 @dataclass
 class TrainingRecipe:
     """Validated model and execution configuration for one supported model on one hardware target.
@@ -80,6 +84,9 @@ class TrainingRecipe:
             ``moe_enable_routing_replay`` and turns the fused router off (the fused top-k ignores
             replay); the engine then replays ``routed_experts`` whenever a prepared microbatch carries
             it (the default pipeline fills it from ``Datum.routed_experts``). ``False`` rejects the field.
+        lora_target_modules: Megatron module names a ``LoraConfig`` without ``target_modules`` attaches
+            adapters to. Bridge's four default linears, extended by a recipe whose model has other
+            linears worth adapting (Qwen3.5 adds its GatedDeltaNet ``in_proj`` and ``out_proj``).
     """
 
     model: ModelProviderMixin
@@ -96,6 +103,7 @@ class TrainingRecipe:
     hf_path: str | None = None
     hf_revision: str | None = None
     router_replay: bool = False
+    lora_target_modules: list[str] = field(default_factory=lambda: list(BRIDGE_LORA_TARGET_MODULES))
 
 
 SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")
