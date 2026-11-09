@@ -33,7 +33,7 @@ from transformers import AutoTokenizer
 from vllm_rollout import VllmRollout
 
 import megatron.bridge.engine.recipes as recipes
-from megatron.bridge.engine import AdamParams, Datum, TrainingEngine
+from megatron.bridge.engine import AdamParams, Datum, LoraConfig, TrainingEngine
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -58,6 +58,13 @@ def parse_args(add_arguments=None, description: str = __doc__) -> argparse.Names
     parser.add_argument("--steps-per-round", type=int, default=2)
     parser.add_argument("--calls-per-step", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-6)
+    parser.add_argument(
+        "--lora-rank",
+        type=int,
+        default=0,
+        help="Train LoRA adapters of this rank on the frozen policy instead of full weights (0: full fine-tuning)",
+    )
+    parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
     parser.add_argument("--clip-low", type=float, default=0.2)
     parser.add_argument("--clip-high", type=float, default=0.28)
     parser.add_argument("--tis-coef", type=float, default=2.0)
@@ -94,10 +101,14 @@ def build_engine(args: argparse.Namespace, **kwargs) -> TrainingEngine:
     """An engine on ``--checkpoint``: ``TrainingEngine(model, ...)`` for ``--model``, ``from_recipe`` for ``--recipe``.
 
     ``kwargs`` are the per-engine options (``trainable``, ``output_head``). Only the policy's Datums carry
-    routing, so ``router_replay`` is set on every engine without effect on the others.
+    routing, so ``router_replay`` is set on every engine without effect on the others. ``--lora-rank``
+    gives the trainable language-model engine (the policy) LoRA adapters; frozen and value-head engines
+    keep full weights.
     """
     if (args.model is None) == (args.recipe is None):
         raise SystemExit("pass exactly one of --model or --recipe")
+    if args.lora_rank and kwargs.get("trainable", True) and kwargs.get("output_head", "lm") == "lm":
+        kwargs["lora"] = LoraConfig(rank=args.lora_rank, alpha=args.lora_alpha)
     if args.model is not None:
         if args.seq_length is None:
             raise SystemExit("--seq-length is required with --model")

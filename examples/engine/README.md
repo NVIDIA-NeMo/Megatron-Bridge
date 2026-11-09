@@ -176,6 +176,11 @@ Takes every `grpo_vllm.py` argument plus:
 Round lines are `[ppo] {...}` and add `value_abs_error`, `value_clipped_fraction`,
 `critic_grad_norms` and `kl_per_token`.
 
+`--lora-rank R --lora-alpha A` (both RL examples) trains LoRA adapters on the frozen policy instead of
+its full weights; the agreed setting is rank 32 with alpha 64. The weight refresh still sends vllm full
+tensors, with the adapters merged in. In `ppo_vllm.py` no reference engine is built: the policy scores
+the reference with `forward_only(disable_adapters=True)`, after the critic's update.
+
 ## Shared modules
 
 - `dapo_math.py`: DAPO-Math prompt loading with the chat template, the +1/-1 reward, GRPO group

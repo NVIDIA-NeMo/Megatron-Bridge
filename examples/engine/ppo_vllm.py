@@ -18,6 +18,10 @@ take turns on the GPUs with vllm. Per round: refresh vllm from the policy, gener
 reference scores the samples (``reference_logprobs`` for the k3 penalty); the critic scores them
 (GAE advantages and returns from the terminal reward) and is updated with the clipped value loss;
 the policy is updated with ``ppo_clip`` (clip, KL penalty, truncated importance sampling).
+
+With ``--lora-rank`` the policy trains LoRA adapters on its frozen weights and no reference engine is
+built: the policy scores the reference itself with ``forward_only(disable_adapters=True)``, after the
+critic's update so that it moves to the GPU once per round.
 """
 
 import logging
@@ -103,8 +107,10 @@ def main() -> None:
     prompts, eval_prompts = load_data(args, hf_path)
 
     policy.cpu()
-    reference = build_engine(args, trainable=False)
-    reference.cpu()
+    # A LoRA policy is its own reference: forward_only(disable_adapters=True) scores the frozen base.
+    reference = None if args.lora_rank else build_engine(args, trainable=False)
+    if reference is not None:
+        reference.cpu()
     critic = build_engine(args, output_head="value")
     critic.cpu()
     rollout = VllmRollout(
@@ -136,13 +142,20 @@ def main() -> None:
         stats.update(eval_stats)
         datums = [to_datum(s) for s in samples]
 
-        reference.cuda()
-        ref_logprobs = reference.forward_only(without_routing(datums)).logprobs
-        reference.cpu()
+        if reference is None:
+            # LoRA: update the critic first, so the policy comes back once and stays for its own update.
+            stats.update(critic_round(critic, samples, datums, args))
+            policy.cuda()
+            ref_logprobs = policy.forward_only(without_routing(datums), disable_adapters=True).logprobs
+        else:
+            reference.cuda()
+            ref_logprobs = reference.forward_only(without_routing(datums)).logprobs
+            reference.cpu()
         for datum, lp in zip(datums, ref_logprobs):
             datum.reference_logprobs = lp.cpu()
 
-        stats.update(critic_round(critic, samples, datums, args))
+        if reference is not None:
+            stats.update(critic_round(critic, samples, datums, args))
         stats.update(train_round(policy, datums, args, kl_beta=args.kl_beta))
         last_round_seconds = time.perf_counter() - start
         stats["round_seconds"] = last_round_seconds
@@ -151,7 +164,8 @@ def main() -> None:
             save_round(engines, args, round_index + 1)
     logger.finish()
     for engine in (policy, reference, critic):
-        engine.close()
+        if engine is not None:
+            engine.close()
     print_rank_0("PPO EXAMPLE PASSED")
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()
