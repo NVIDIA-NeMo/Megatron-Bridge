@@ -52,10 +52,23 @@ class _SharingModel(_PlainModel):
 
 
 class _GeneratorModel(_SharingModel):
-    """Declares the paths through a one-shot iterator."""
+    """Declares the paths through a fresh generator on every call."""
 
     def peft_excluded_module_paths(self):
         return (path for path in ("linear_a", "block.linear_a"))
+
+
+class _StoredIteratorModel(_SharingModel):
+    """Declares the paths through one stored iterator, which can be consumed only once, and counts the reads."""
+
+    def __init__(self):
+        super().__init__()
+        self._paths = iter(("linear_a", "block.linear_a"))
+        self.reads = 0
+
+    def peft_excluded_module_paths(self):
+        self.reads += 1
+        return self._paths
 
 
 class _BrokenModel(_PlainModel):
@@ -105,6 +118,26 @@ def test_a_generator_declaration_is_honoured():
     model = _lora()(_GeneratorModel(), training=True)
     assert type(model.linear_a) is nn.Linear and type(model.block.linear_a) is nn.Linear
     assert isinstance(model.linear_b, LoRALinear) and isinstance(model.block.linear_b, LoRALinear)
+
+
+@pytest.mark.unit
+def test_a_cached_iterator_declaration_is_honoured(caplog):
+    # PEFT.__call__ reads the declaration once per root and reuses it for the validation and transform walks,
+    # so an iterator that is exhausted by its first consumer still protects both shared modules.
+    model = _lora()(_StoredIteratorModel(), training=True)
+    assert model.reads == 1
+    assert type(model.linear_a) is nn.Linear and type(model.block.linear_a) is nn.Linear
+    assert model.block.linear_a.weight is model.linear_a.weight and not model.linear_a.weight.requires_grad
+    assert isinstance(model.linear_b, LoRALinear) and isinstance(model.block.linear_b, LoRALinear)
+    # A target that exists only behind the exclusions is still reported as unmatched and adapts nothing.
+    lora = LoRA(target_modules=["linear_a"], dim=4, alpha=8, dropout=0.0)
+    with caplog.at_level("WARNING", logger="megatron.bridge.peft.module_matcher"):
+        model = lora(_StoredIteratorModel(), training=True)
+    assert model.reads == 1
+    assert not any(isinstance(module, LoRALinear) for module in model.modules())
+    assert any(
+        "No modules matched" in record.getMessage() and "linear_a" in record.getMessage() for record in caplog.records
+    )
 
 
 @pytest.mark.unit
