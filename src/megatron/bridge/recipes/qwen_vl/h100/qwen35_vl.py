@@ -64,8 +64,9 @@ def _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg: ConfigContainer) -
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.num_layers_in_first_pipeline_stage = 17
-    cfg.model.num_layers_in_last_pipeline_stage = 23
+    # Hybrid counts the attention/GDN and MLP positions separately for each HF block.
+    cfg.model.num_layers_in_first_pipeline_stage = 34
+    cfg.model.num_layers_in_last_pipeline_stage = 46
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
@@ -315,8 +316,8 @@ def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
     # The first pipeline stage also owns the vision encoder. Move one language
     # layer to the loss stage to retain activation headroom for variable-shape
     # DataComp images without checkpointing the complete MoE forward.
-    cfg.model.num_layers_in_first_pipeline_stage = 16
-    cfg.model.num_layers_in_last_pipeline_stage = 24
+    cfg.model.num_layers_in_first_pipeline_stage = 32
+    cfg.model.num_layers_in_last_pipeline_stage = 48
     # Variable-shape DataComp images retain more activation memory than the
     # fixed-shape benchmark. Recompute only the measured activation-heavy
     # outputs while retaining the leader's scoped language CUDA graphs.

@@ -143,7 +143,7 @@ class TestQwen35VLDefaultMIMOConversion:
 
         source_bridge.provider_bridge.assert_called_once_with(hf_pretrained)
         assert isinstance(provider, MegatronMIMOProvider)
-        assert provider.language_model_spec.params["config"] is language_provider
+        assert provider.language_model_spec.params["config"].num_layers == 2 * language_provider.num_layers
         assert provider.megatron_mimo_parallelism_config is parallelism_config
 
         assert len(routes) == 2
@@ -231,7 +231,7 @@ class TestQwen35VLMoEDefaultMIMOConversion:
 
         source_bridge.provider_bridge.assert_called_once_with(hf_pretrained)
         assert isinstance(provider, MegatronMIMOProvider)
-        assert provider.language_model_spec.params["config"] is language_provider
+        assert provider.language_model_spec.params["config"].num_layers == 2 * language_provider.num_layers
         assert provider.megatron_mimo_parallelism_config is parallelism_config
         assert len(routes) == 2
 
