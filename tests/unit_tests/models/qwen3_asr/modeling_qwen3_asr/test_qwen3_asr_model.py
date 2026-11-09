@@ -88,6 +88,7 @@ def thinker_config():
 class TestQwen3ASRModel:
     """Test suite for Qwen3-ASR Model."""
 
+    _original_env: dict[str, str | None] = {}
     _owns_process_group: bool = False
 
     @classmethod
@@ -95,6 +96,10 @@ class TestQwen3ASRModel:
         """Setup distributed process group once for all tests in this class."""
         cls._owns_process_group = False
         if not dist.is_initialized():
+            cls._original_env = {
+                key: os.environ.get(key) for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE")
+            }
+
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29501"
             os.environ["RANK"] = "0"
@@ -119,6 +124,11 @@ class TestQwen3ASRModel:
         if dist.is_initialized() and cls._owns_process_group:
             dist.destroy_process_group()
             cls._owns_process_group = False
+        for key, value in cls._original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     def _setup_parallel_state(self, tp_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state."""
