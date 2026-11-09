@@ -68,10 +68,16 @@ An engine can also represent a frozen reference or a trainable critic:
 
 ```python
 reference = TrainingEngine(
-    model, seq_length=32768, checkpoint_path=initial_checkpoint, trainable=False,
+    model,
+    seq_length=32768,
+    checkpoint_path=initial_checkpoint,
+    trainable=False,
 )
 critic = TrainingEngine(
-    model, seq_length=32768, checkpoint_path=initial_checkpoint, output_head="value",
+    model,
+    seq_length=32768,
+    checkpoint_path=initial_checkpoint,
+    output_head="value",
 )
 ```
 
@@ -171,9 +177,7 @@ from megatron.bridge.engine import ModelOutput, PreparedMicrobatch, TrainingEngi
 
 
 class MyEngine(TrainingEngine):
-    def policy_gradient(
-        self, batch: PreparedMicrobatch, output: ModelOutput
-    ) -> torch.Tensor:
+    def policy_gradient(self, batch: PreparedMicrobatch, output: ModelOutput) -> torch.Tensor:
         active = batch.active_mask  # loss_mask excluding padding
         return -(output.logprobs[active].float() * batch.advantages[active].float()).sum()
 
