@@ -112,6 +112,24 @@ class Ernie55HybridModel(HybridModel):
                 return super().forward(*args, **kwargs)
         return super().forward(*args, **kwargs)
 
+    def peft_excluded_module_paths(self) -> frozenset[str]:
+        """Modules PEFT leaves untouched: the SD-MTP body and the decoder layers it aliases.
+
+        With ``ernie_mtp_shared_last_layer`` the MTP body holds the decoder's last-layer ``nn.Parameter`` objects in
+        its own modules (:func:`~megatron.bridge.models.ernie.modeling_ernie55.mtp.share_mtp_body_with_last_layer`).
+        A PEFT method that wraps modules one by one (``LoRALinear`` and friends) would give every shared weight two
+        adapters, one per path, and move the parameters behind wrapper attributes, which
+        :func:`~megatron.bridge.models.ernie.modeling_ernie55.mtp.check_ernie55_mtp_aliases` then rejects.
+        :class:`~megatron.bridge.peft.base.PEFT` skips the paths returned here, so the shared body stays frozen and
+        adapters go on every other targeted module. Stages without the MTP return an empty set.
+
+        Returns:
+            Dotted module paths, relative to this model, of both sides of every SD-MTP alias.
+        """
+        return frozenset(
+            name.rpartition(".")[0] for alias, source in self.ernie55_mtp_aliases.items() for name in (alias, source)
+        )
+
     def sharded_state_dict(
         self, prefix: str = "", sharded_offsets: tuple = (), metadata: dict | None = None
     ) -> ShardedStateDict:

@@ -161,6 +161,16 @@ Logged losses: `lm loss` is the mean over micro-batches of each row's supervised
 `loss`); the MTP loss follows the same convention before the 0.1 scaling; the indexer loss is the sum over D layers
 divided by the number of decoder layers (H and D) plus MTP depths; the z loss is divided by the number of MoE layers.
 
+### PEFT
+
+LoRA works through Megatron-Bridge's PEFT (`peft=LoRA(...)` on the config, a `pretrained_checkpoint` for the base
+weights). With `ernie_mtp_shared_last_layer` the MTP body shares the decoder's last-layer parameters by aliasing, so
+`Ernie55HybridModel.peft_excluded_module_paths()` names both sides of every alias and the PEFT walk leaves them as they
+are: the shared body and the decoder's last ERNIE layer stay frozen (their targets get no adapter), adapters go on every
+other targeted module (`linear_q_down_proj`, `linear_q_up_proj`, `linear_kv_proj`, `linear_proj`, `linear_fc1`,
+`linear_fc2` and so on). Only the pipeline stage that holds the MTP excludes anything; an adapter-only checkpoint holds
+the adapters of the adapted modules.
+
 ## Hardware
 
 The recipes are validated on NVIDIA Blackwell (GB200 at SM100, GB300 at SM103). Every component also supports
