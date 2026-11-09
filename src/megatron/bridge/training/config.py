@@ -159,8 +159,11 @@ class OptimizerConfig(MCoreOptimizerConfig):
         resolve dtypes and derived fields based on the current field values.
         """
         normalize_optimizer_config(self)
-        self.validate()
-        self.finalize_optimizer_config()
+        if hasattr(MCoreOptimizerConfig, "finalize_optimizer_config"):
+            self.validate()
+            self.finalize_optimizer_config()
+        else:
+            super().__post_init__()
 
 
 @dataclass(kw_only=True)
@@ -347,7 +350,11 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
                 self.sequences_per_dataset = json.load(f)
 
         # Run MCore's checks that do not need the tokenizer.
-        MCoreGPTDatasetConfig.validate_without_tokenizer(self)
+        if hasattr(MCoreGPTDatasetConfig, "validate_without_tokenizer"):
+            MCoreGPTDatasetConfig.validate_without_tokenizer(self)
+        else:
+            # Older dev validates the blend before the tokenizer is available.
+            super(MCoreGPTDatasetConfig, self).__post_init__()
 
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."

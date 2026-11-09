@@ -34,12 +34,14 @@ the direct MLA field names.
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
+from megatron.bridge.models.common.dsa_metrics import register_dsa_metric_hook
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -136,7 +138,8 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
 
     All configuration is supplied by :class:`DeepSeekV4Bridge.provider_bridge`;
     this class combines the MLA config and hybrid builder and keeps native
-    pipeline segments aligned with public runner topology overrides, as
+    pipeline segments aligned with public runner topology overrides. It also registers DSA
+    metric setup after model wrapping, as
     :class:`~megatron.bridge.models.deepseek.deepseek_v4_config.DeepSeekV4ModelConfig` does.
     """
 
@@ -152,3 +155,10 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
         """Finalize the hybrid provider and reject stale native pipeline segments."""
         super().finalize()
         validate_deepseek_v4_pipeline_segments(self)
+
+    @property
+    def post_wrap_hook(self) -> Callable[[list[MegatronModule]], list[MegatronModule]] | None:
+        """Include DSA metric setup after distributed construction binds the process groups."""
+        if hasattr(self, "_pg_collection"):
+            register_dsa_metric_hook(self, self._pg_collection)
+        return super().post_wrap_hook
