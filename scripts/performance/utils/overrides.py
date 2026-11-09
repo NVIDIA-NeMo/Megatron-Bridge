@@ -327,26 +327,6 @@ def _apply_flat_cli_environment_compatibility(
     return recipe
 
 
-def _set_benchmark_gloo_default(recipe: ConfigContainer, cli_overrides: list[str]) -> ConfigContainer:
-    """Skip auxiliary Gloo groups for benchmarks that do not save or load checkpoints."""
-    if any(override.lstrip("+").partition("=")[0] == "dist.use_gloo_process_groups" for override in cli_overrides):
-        return recipe
-
-    # Apply after checkpoint overrides so save/load runs retain the recipe's Gloo setting.
-    # Keep Gloo for memory-efficient optimizer checkpoint configs, which validation requires
-    # even when no save/load directory is configured.
-    if (
-        recipe.checkpoint.save is None
-        and recipe.checkpoint.load is None
-        and not (
-            recipe.checkpoint.dist_ckpt_optim_fully_reshardable
-            and recipe.checkpoint.distrib_optim_fully_reshardable_mem_efficient
-        )
-    ):
-        recipe.dist.use_gloo_process_groups = False
-    return recipe
-
-
 def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set checkpoint save/load configuration."""
     # When save_interval is provided, enable checkpointing

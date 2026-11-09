@@ -171,8 +171,7 @@ uv run python scripts/performance/setup_experiment.py \
 - `--most_recent_k`: Number of latest checkpoints to keep.
 
 The flat performance launcher skips auxiliary Gloo process groups when both checkpoint save and load paths are unset.
-Checkpoint runs retain the recipe's Gloo setting, as do memory-efficient fully reshardable optimizer checkpoint configs.
-An explicit `dist.use_gloo_process_groups=true` or `false` override takes precedence over this benchmark default.
+The check runs after all overrides; runs with a checkpoint save or load path retain their configured Gloo setting.
 
 ##### Data arguments
 

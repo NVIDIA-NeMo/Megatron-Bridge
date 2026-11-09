@@ -25,7 +25,7 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
 from argument_parser import parse_cli_args
-from utils.overrides import _set_benchmark_gloo_default, apply_one_gpu_per_rank_device_mapping, set_user_overrides
+from utils.overrides import apply_one_gpu_per_rank_device_mapping, set_user_overrides
 from utils.utils import apply_argparse_overrides, finalize_config_overrides
 
 from megatron.bridge.recipes.gpt.h100.vanilla_gpt import vanilla_gpt_pretrain_1gpu_h100_bf16_config
@@ -73,62 +73,28 @@ def test_mock_dataset_keeps_recipe_attention_mask_setting(tmp_path, create_atten
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("initial_gloo", [True, False])
-@pytest.mark.parametrize(("save", "load"), [(None, None), ("save", None), (None, "load"), ("save", "load")])
-def test_benchmark_gloo_default_preserves_checkpoint_runs(initial_gloo, save, load):
-    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
-    recipe.dist.use_gloo_process_groups = initial_gloo
-    recipe.checkpoint.save = save
-    recipe.checkpoint.load = load
-
-    updated = _set_benchmark_gloo_default(recipe, [])
-
-    assert updated.dist.use_gloo_process_groups is (initial_gloo if save or load else False)
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("prefix", ["", "+", "++"])
-@pytest.mark.parametrize("explicit_gloo", [True, False])
-def test_benchmark_gloo_default_preserves_explicit_override(prefix, explicit_gloo):
-    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
-    recipe.checkpoint.save = recipe.checkpoint.load = None
-    recipe.dist.use_gloo_process_groups = explicit_gloo
-
-    updated = _set_benchmark_gloo_default(recipe, [f"{prefix}dist.use_gloo_process_groups={explicit_gloo}"])
-
-    assert updated.dist.use_gloo_process_groups is explicit_gloo
-
-
-@pytest.mark.unit
-def test_benchmark_gloo_default_preserves_memory_efficient_checkpoint_config():
-    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
-    recipe.checkpoint.save = recipe.checkpoint.load = None
-    recipe.dist.use_gloo_process_groups = True
-    recipe.checkpoint.dist_ckpt_optim_fully_reshardable = True
-    recipe.checkpoint.distrib_optim_fully_reshardable_mem_efficient = True
-
-    updated = _set_benchmark_gloo_default(recipe, [])
-
-    assert updated.dist.use_gloo_process_groups is True
-
-
-@pytest.mark.unit
 @pytest.mark.parametrize(
-    ("flags", "cli_overrides", "expected_gloo"),
+    ("save", "load", "flags", "cli_overrides", "expected_gloo"),
     [
-        ([], [], False),
-        (["--save_dir", "checkpoints"], [], True),
-        (["--load_dir", "checkpoints"], [], True),
-        (["--save_interval", "10"], [], True),
-        ([], ["checkpoint.save=checkpoints"], True),
-        ([], ["dist.use_gloo_process_groups=true"], True),
+        (None, None, [], [], False),
+        ("checkpoints", None, [], [], True),
+        (None, "checkpoints", [], [], True),
+        (None, None, ["--save_dir", "checkpoints"], [], True),
+        (None, None, ["--load_dir", "checkpoints"], [], True),
+        (None, None, ["--save_interval", "10"], [], True),
+        (None, None, [], ["checkpoint.save=checkpoints"], True),
+        (None, None, [], ["checkpoint.load=checkpoints"], True),
+        (None, None, [], ["dist.use_gloo_process_groups=true"], False),
     ],
 )
-def test_flat_runner_applies_gloo_default_after_user_overrides(tmp_path, flags, cli_overrides, expected_gloo):
+def test_flat_runner_applies_gloo_default_after_user_overrides(
+    tmp_path, save, load, flags, cli_overrides, expected_gloo
+):
     from run_script import _apply_perf_recipe_overrides
 
     recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
-    recipe.checkpoint.save = recipe.checkpoint.load = None
+    recipe.checkpoint.save = save
+    recipe.checkpoint.load = load
     recipe.dist.use_gloo_process_groups = True
 
     updated = _apply_perf_recipe_overrides(recipe, cli_overrides, _parse_args(tmp_path, *flags))

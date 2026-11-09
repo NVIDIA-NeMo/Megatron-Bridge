@@ -60,7 +60,6 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     """Apply Hydra and argparse overrides to a flat performance recipe."""
     from utils.overrides import (
         _apply_flat_cli_environment_compatibility,
-        _set_benchmark_gloo_default,
         apply_one_gpu_per_rank_device_mapping,
         set_cli_overrides,
         set_user_overrides,
@@ -105,8 +104,11 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
             gpu=args.gpu,
             protected_env_names=protected_env_names,
         )
-    recipe = _set_benchmark_gloo_default(recipe, cli_overrides)
-    return apply_one_gpu_per_rank_device_mapping(recipe)
+    recipe = apply_one_gpu_per_rank_device_mapping(recipe)
+    # Auxiliary Gloo groups are unused when the benchmark neither saves nor loads checkpoints.
+    if not recipe.checkpoint.save and not recipe.checkpoint.load:
+        recipe.dist.use_gloo_process_groups = False
+    return recipe
 
 
 def _prepare_perf_recipe(args, cli_overrides: list[str]):
