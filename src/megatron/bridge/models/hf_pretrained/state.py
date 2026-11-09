@@ -925,6 +925,11 @@ class SafeTensorsStateSource(StateSource):
             Relative paths of safetensors artifacts written by this call.
 
         """
+        # The ignore filters are applied more than once below; materialize one-shot iterables.
+        ignored_source_key_prefixes = tuple(ignored_source_key_prefixes or ()) or None
+        ignored_source_key_suffixes = tuple(ignored_source_key_suffixes or ()) or None
+        ignored_source_keys = tuple(ignored_source_keys or ()) or None
+
         if distributed_save:
             return self._save_generator_distributed(
                 generator,
@@ -940,6 +945,28 @@ class SafeTensorsStateSource(StateSource):
         # Other ranks must still exhaust the generator to participate in collectives.
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         rank = torch.distributed.get_rank() if is_distributed else 0
+
+        if (
+            is_distributed
+            and self.key_to_filename_map
+            and not self._filter_source_keys(
+                self.key_to_filename_map,
+                ignored_source_key_prefixes,
+                ignored_source_key_suffixes,
+                ignored_source_keys,
+            )
+        ):
+            # Every source tensor is ignored: nothing is written, but the outcome (strict failure or empty
+            # success) must be the same on every rank before the caller's barrier, so take the coordinated
+            # path instead of letting rank 0 decide alone while the other ranks return early.
+            return self._save_generator_distributed(
+                generator,
+                output_path,
+                strict,
+                ignored_source_key_prefixes=ignored_source_key_prefixes,
+                ignored_source_key_suffixes=ignored_source_key_suffixes,
+                ignored_source_keys=ignored_source_keys,
+            )
 
         if rank != 0:
             # Other ranks must exhaust the generator to avoid hangs in collectives.
