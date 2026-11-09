@@ -451,6 +451,11 @@ def test_muse_spark_pretrain_proxy_keeps_the_first_six_blocks_on_one_rack() -> N
     assert cfg.train.global_batch_size == 256
     assert cfg.train.global_batch_size % _data_parallel_size(cfg, 16) == 0
     assert cfg.model.recompute_granularity is None
+    # The cut model relearns its output layer; see the recipe docstring for the 3e-4 peak.
+    assert cfg.optimizer.lr == pytest.approx(3e-4)
+    assert cfg.optimizer.min_lr == pytest.approx(3e-5)
+    assert cfg.scheduler.lr_warmup_iters == 40
+    assert cfg.scheduler.lr_decay_iters == 100
     # Deterministic mode, with the kernels and collectives it requires.
     assert cfg.model.deterministic_mode is True
     assert cfg.model.cross_entropy_loss_fusion is False
@@ -466,7 +471,7 @@ def _changed_fields(cfg: object, reference: object) -> set[str]:
     return {field.name for field in fields(cfg) if getattr(cfg, field.name) != getattr(reference, field.name)}
 
 
-def test_muse_spark_pretrain_proxy_differs_from_the_192gpu_recipe_only_in_scale_and_determinism() -> None:
+def test_muse_spark_pretrain_proxy_differs_from_the_192gpu_recipe_only_in_scale_lr_and_determinism() -> None:
     reference = muse_spark_open_pretrain_192gpu_gb200_bf16_config()
     cfg = muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config()
 
@@ -494,8 +499,8 @@ def test_muse_spark_pretrain_proxy_differs_from_the_192gpu_recipe_only_in_scale_
         "moe_router_aux_loss_fusion",
     }
     assert _changed_fields(cfg.train, reference.train) == {"global_batch_size"}
+    assert _changed_fields(cfg.optimizer, reference.optimizer) == {"lr", "min_lr"}
     for section in (
-        "optimizer",
         "scheduler",
         "dataset",
         "tokenizer",

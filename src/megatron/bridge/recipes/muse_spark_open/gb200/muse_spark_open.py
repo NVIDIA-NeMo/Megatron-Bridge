@@ -258,7 +258,12 @@ def muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config() -> ConfigContainer:
 
     Megatron-Core deterministic mode with the unfused cross-entropy loss and NCCL Ring makes reruns on one software
     stack repeat the same losses. Pass a checkpoint cut to the first six blocks with ``--pretrained_checkpoint`` to
-    start from natural expert routing; the recipe leaves it unset. Every other setting matches the 192-GPU recipe.
+    start from natural expert routing; the recipe leaves it unset.
+
+    The peak learning rate is 3e-4, decaying to 3e-5, instead of the 192-GPU recipe's 3e-5. The cut model starts
+    above the loss of a uniform guess because its output layer was trained on the last block's output: at 3e-5 the
+    loss is still above 5 when warmup ends at step 40, while at 3e-4 it falls below 5 by step 20 and keeps falling
+    without spikes. Every other setting matches the 192-GPU recipe.
     """
     cfg = _pretrain_common()
 
@@ -329,8 +334,8 @@ def muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 10
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=40,
-        max_lr=3e-5,
-        min_lr=3e-6,
+        max_lr=3e-4,
+        min_lr=3e-5,
     )
     cfg.scheduler.lr_decay_iters = 100
     cfg.checkpoint.save_interval = 50
