@@ -67,7 +67,7 @@ override-dependencies = [
     # datasets 4.8.5 needs >=21, overriding export-deploy's <21 cap.
     # PyArrow 26 requires NumPy 2; preserve MBridge's NumPy 1 runtime.
     "pyarrow>=21.0.0,<26",
-    "fsspec[http]>=2023.1.0,<=2024.9.0",
+    "fsspec[http]>=2026.6.0",                     # GHSA-27vj-qcqg-25rc
     "transformers; sys_platform == 'never'",    # Defer to transformers in MBridge install
     "packaging>=25.0",
     "nvidia-pytriton>=0.7.0",
