@@ -12,12 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
 import torch
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.enums import AttnMaskType
+from megatron.core.utils import get_batch_on_this_cp_rank
+from transformers.models.ministral3.modeling_ministral3 import get_llama_4_attn_scale
 
+from megatron.bridge.models.ministral3 import ministral3_provider
 from megatron.bridge.models.ministral3.ministral3_provider import (
     Ministral3ModelProvider,
     MinistralTEDotProductAttention,
+    get_llama_4_scaling_positions,
 )
 
 
@@ -340,3 +349,183 @@ class TestGetLlama4AttnScale:
         # The scaling result will be float due to log operation
         assert scaling_32.dtype == torch.float32
         assert scaling_64.dtype == torch.float64
+
+
+# Ministral-3 2512: llama_4_scaling_beta and original_max_position_embeddings.
+_BETA = 0.1
+_ORIGINAL_MAX_POSITIONS = 16384
+
+
+class _FakeCPGroup:
+    def __init__(self, rank: int, size: int):
+        self._rank = rank
+        self._size = size
+
+    def rank(self) -> int:
+        return self._rank
+
+    def size(self) -> int:
+        return self._size
+
+
+def _packed_seq_params(cu_seqlens, cu_seqlens_padded=None):
+    cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32)
+    cu_seqlens_padded = cu_seqlens if cu_seqlens_padded is None else torch.tensor(cu_seqlens_padded, dtype=torch.int32)
+    return PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+    )
+
+
+def _zigzag(sequence_length: int, cp_rank: int, cp_size: int) -> torch.Tensor:
+    """Global positions that rank cp_rank holds after the zigzag CP split of one sequence."""
+    chunk = sequence_length // (2 * cp_size)
+    return torch.cat(
+        [
+            torch.arange(cp_rank * chunk, (cp_rank + 1) * chunk),
+            torch.arange((2 * cp_size - 1 - cp_rank) * chunk, (2 * cp_size - cp_rank) * chunk),
+        ]
+    )
+
+
+def _hf_scale(true_positions: torch.Tensor) -> torch.Tensor:
+    return get_llama_4_attn_scale(true_positions[None].float(), _BETA, _ORIGINAL_MAX_POSITIONS).flatten()
+
+
+def _bridge_scale(positions: torch.Tensor) -> torch.Tensor:
+    return MinistralTEDotProductAttention._get_llama_4_attn_scale(
+        positions, _BETA, _ORIGINAL_MAX_POSITIONS, (positions.numel(),)
+    )
+
+
+class TestLlama4ScalingPositions:
+    """The Llama 4 scale must use each token's position in its own sequence, as Hugging Face does."""
+
+    def test_unpacked_without_cp_is_local_index(self):
+        positions = get_llama_4_scaling_positions(
+            32768, packed_seq_params=None, cp_group=None, device=torch.device("cpu")
+        )
+        assert torch.equal(positions, torch.arange(32768))
+        torch.testing.assert_close(_bridge_scale(positions), _hf_scale(torch.arange(32768)))
+
+    def test_packed_without_cp_restarts_per_sequence(self):
+        true_positions = torch.cat([torch.arange(10000), torch.arange(10000)])
+        positions = get_llama_4_scaling_positions(
+            20000,
+            packed_seq_params=_packed_seq_params([0, 10000, 20000]),
+            cp_group=None,
+            device=torch.device("cpu"),
+        )
+        assert torch.equal(positions, true_positions)
+        torch.testing.assert_close(_bridge_scale(positions), _hf_scale(true_positions))
+
+    def test_packed_uses_padded_sequence_starts(self):
+        # Two 9998-token sequences, each padded to 10000 tokens.
+        positions = get_llama_4_scaling_positions(
+            20000,
+            packed_seq_params=_packed_seq_params([0, 9998, 19996], [0, 10000, 20000]),
+            cp_group=None,
+            device=torch.device("cpu"),
+        )
+        assert torch.equal(positions[:9998], torch.arange(9998))
+        assert torch.equal(positions[10000:19998], torch.arange(9998))
+
+    @pytest.mark.parametrize("cp_rank", [0, 1])
+    def test_unpacked_with_cp_uses_zigzag_chunks(self, cp_rank):
+        true_positions = _zigzag(32768, cp_rank, cp_size=2)
+        positions = get_llama_4_scaling_positions(
+            16384, packed_seq_params=None, cp_group=_FakeCPGroup(cp_rank, 2), device=torch.device("cpu")
+        )
+        assert torch.equal(positions, true_positions)
+        torch.testing.assert_close(_bridge_scale(positions), _hf_scale(true_positions))
+
+    @pytest.mark.parametrize("cp_size", [2, 4])
+    def test_unpacked_with_cp_matches_mcore_cp_split(self, cp_size, monkeypatch):
+        # The model slices its inputs with get_batch_on_this_cp_rank; the positions must follow the same split.
+        monkeypatch.setattr(torch.distributed, "get_world_size", lambda group=None: group.size())
+        monkeypatch.setattr(torch.distributed, "get_rank", lambda group=None: group.rank())
+        for cp_rank in range(cp_size):
+            cp_group = _FakeCPGroup(cp_rank, cp_size)
+            batch = {"position_ids": torch.arange(64).unsqueeze(0), "cu_seqlens": None}
+            sliced = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)
+            positions = get_llama_4_scaling_positions(
+                64 // cp_size, packed_seq_params=None, cp_group=cp_group, device=torch.device("cpu")
+            )
+            assert torch.equal(positions, sliced["position_ids"].squeeze(0))
+
+    @pytest.mark.parametrize("cp_rank", [0, 1])
+    def test_packed_with_cp_maps_stream_indices_to_sequence_positions(self, cp_rank):
+        # MCore's THD partitioner needs Transformer Engine; stand in with its per-sequence zigzag layout.
+        cu_seqlens = [0, 32768, 40960]
+        stream_indices = torch.cat([_zigzag(32768, cp_rank, 2), 32768 + _zigzag(8192, cp_rank, 2)])
+        true_positions = torch.cat([_zigzag(32768, cp_rank, 2), _zigzag(8192, cp_rank, 2)])
+        with patch.object(
+            ministral3_provider, "get_packed_seq_cp_partition_indices", return_value=stream_indices
+        ) as partition:
+            positions = get_llama_4_scaling_positions(
+                20480,
+                packed_seq_params=_packed_seq_params(cu_seqlens),
+                cp_group=_FakeCPGroup(cp_rank, 2),
+                device=torch.device("cpu"),
+            )
+        assert partition.call_args.kwargs["total_tokens"] == 40960
+        assert torch.equal(positions, true_positions)
+        torch.testing.assert_close(_bridge_scale(positions), _hf_scale(true_positions))
+
+
+class TestMinistralTEDotProductAttentionScale:
+    """forward() scales each query token by the Llama 4 factor of its true position."""
+
+    @staticmethod
+    def _attention(context_parallel_size: int = 1, pg_collection=None) -> MinistralTEDotProductAttention:
+        def fake_init(self, config, *args, **kwargs):
+            if isinstance(self, torch.nn.Module):
+                torch.nn.Module.__init__(self)
+            self.config = config
+
+        rope_parameters = {"llama_4_scaling_beta": _BETA, "original_max_position_embeddings": _ORIGINAL_MAX_POSITIONS}
+        config = SimpleNamespace(
+            hf_config=SimpleNamespace(text_config=SimpleNamespace(rope_parameters=rope_parameters)),
+            context_parallel_size=context_parallel_size,
+        )
+        with patch.object(ministral3_provider.MCoreTEDotProductAttention, "__init__", fake_init):
+            return MinistralTEDotProductAttention(
+                config=config,
+                layer_number=1,
+                attn_mask_type=AttnMaskType.causal,
+                attention_type="self",
+                pg_collection=pg_collection,
+            )
+
+    @staticmethod
+    def _scaled_query(attention, query, **kwargs) -> torch.Tensor:
+        with patch.object(
+            ministral3_provider.MCoreTEDotProductAttention, "forward", lambda self, query, *args, **kw: query
+        ):
+            return attention.forward(query, query, query, None, AttnMaskType.causal, **kwargs)
+
+    def test_packed_forward_matches_hf_scale(self):
+        true_positions = torch.cat([torch.arange(10000), torch.arange(10000)])
+        query = torch.ones(20000, 2, 4)
+        out = self._scaled_query(self._attention(), query, packed_seq_params=_packed_seq_params([0, 10000, 20000]))
+        torch.testing.assert_close(out[:, 0, 0], _hf_scale(true_positions))
+
+    @pytest.mark.parametrize("cp_rank", [0, 1])
+    def test_context_parallel_forward_matches_hf_scale(self, cp_rank):
+        attention = self._attention(
+            context_parallel_size=2, pg_collection=SimpleNamespace(cp=_FakeCPGroup(cp_rank, 2))
+        )
+        query = torch.ones(16384, 1, 2, 4)
+        out = self._scaled_query(attention, query)
+        torch.testing.assert_close(out[:, 0, 0, 0], _hf_scale(_zigzag(32768, cp_rank, cp_size=2)))
+
+    def test_unpacked_forward_without_cp_is_unchanged(self):
+        query = torch.randn(32768, 1, 2, 4)
+        expected = query * MinistralTEDotProductAttention._get_llama_4_attn_scale(
+            torch.arange(32768), _BETA, _ORIGINAL_MAX_POSITIONS, query.shape
+        )
+        out = self._scaled_query(self._attention(), query.clone())
+        assert torch.equal(out, expected)
