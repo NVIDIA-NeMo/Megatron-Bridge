@@ -403,30 +403,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-30</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-09</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>2.212866</dd>
+            <dd>2.209864</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.9978729</dd>
+            <dd>0.9722831</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>9,899.640 ms</dd>
+            <dd>5,580.560 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>38.180 TFLOP/s/GPU</dd>
+            <dd>67.550 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,655.010 tokens/s/GPU</dd>
+            <dd>2,935.906 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -442,7 +442,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 8x GB200, the shared Qwen3.5/Qwen3.6-VL functional recipe completed exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32, natural routing, HybridEP, no activation recompute, and BF16 gradient reduction. Loss was finite from 2.212866 to 0.9978729 with zero skipped or NaN iterations. Steps 91-100 averaged 9,899.640 ms and 38.180 model TFLOP/s/GPU. The recipe intentionally disables checkpoint output for this bounded functional run; reload/export coverage remains represented by the H100 SFT and sft_export_inference items.
+        <p>On 8x GB200, run in the NeMo nightly container pulled 2026-11-06 with Bridge at this item&#x27;s commit, the shared Qwen3.5/Qwen3.6-VL functional recipe completed exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32, natural routing, HybridEP, no activation recompute, and BF16 gradient reduction. Loss was finite from 2.209864 to 0.9722831 with zero skipped or NaN iterations. Steps 91-100 averaged 5,580.560 ms and 67.550 model TFLOP/s/GPU. The recipe intentionally disables checkpoint output for this bounded functional run; reload/export coverage remains represented by the H100 SFT and sft_export_inference items.
 </p>
       </section>
     </article>
