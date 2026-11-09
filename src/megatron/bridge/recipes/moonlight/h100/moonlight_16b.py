@@ -20,7 +20,8 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
-from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS, DETERMINISM_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -380,6 +381,29 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "USE_MNNVL": 0,
+    }
+    return cfg
+
+
+def moonlight_16b_pretrain_16gpu_h100_bf16_deterministic_config() -> ConfigContainer:
+    """Return a deterministic bounded-convergence pre-training config for Moonlight-16B.
+
+    Wraps :func:`moonlight_16b_pretrain_16gpu_h100_bf16_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    """
+    cfg = moonlight_16b_pretrain_16gpu_h100_bf16_config()
+    apply_determinism_overrides(cfg)
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        **DETERMINISM_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
@@ -912,6 +936,7 @@ __all__ = [
     "moonlight_16b_peft_2gpu_h100_bf16_config",
     "moonlight_16b_peft_4gpu_h100_bf16_config",
     "moonlight_16b_pretrain_16gpu_h100_bf16_config",
+    "moonlight_16b_pretrain_16gpu_h100_bf16_deterministic_config",
     "moonlight_16b_pretrain_8gpu_h100_bf16_config",
     "moonlight_16b_sft_8gpu_h100_bf16_8k_config",
     "moonlight_16b_sft_8gpu_h100_bf16_config",

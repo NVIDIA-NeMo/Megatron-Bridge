@@ -53,9 +53,13 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import (
+    CudaGraphManager,
     TECudaGraphHelper,
     VisionTECudaGraphHelper,
     get_vision_cuda_graph_seq_length,
+)
+from megatron.core.transformer.cuda_graphs import (
+    delete_cuda_graphs as delete_local_cuda_graphs,
 )
 from megatron.core.utils import (
     check_param_hashes_across_dp_replicas,
@@ -101,6 +105,7 @@ from megatron.bridge.training.tensor_inspect import (
 from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
 from megatron.bridge.training.utils.mlflow_utils import end_active_mlflow_run
+from megatron.bridge.training.utils.optimizer_utils import uses_distributed_optimizer
 from megatron.bridge.training.utils.train_utils import (
     accumulate_zero_token_step,
     calc_params_l2_norm,
@@ -266,7 +271,7 @@ def train(
     # Megatron FSDP and FSDP2 does not have this hook
     should_toggle_forward_pre_hook = should_disable_forward_pre_hook(
         config.ddp.use_megatron_fsdp,
-        config.optimizer.use_distributed_optimizer,
+        uses_distributed_optimizer(config.optimizer),
         config.ddp.overlap_param_gather,
     )
     # Also, check weight hash across DP replicas to be very pedantic.
@@ -662,7 +667,7 @@ def train(
             params_norm = None
 
             if config.logger.log_params_norm:
-                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
+                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.ddp.use_megatron_fsdp)
 
             learning_rate = None
             decoupled_learning_rate = None
@@ -810,7 +815,7 @@ def train(
                 callback_manager=callback_manager,
             )
 
-    _delete_cuda_graphs(cuda_graph_helper)
+    _delete_cuda_graphs(cuda_graph_helper, model, optimizer)
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -1242,17 +1247,16 @@ def disable_forward_pre_hook(
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
-def force_param_sync(model: list[DDP], optimizer: Optional[MegatronOptimizer] = None) -> None:
+def force_param_sync(model: list[MegatronModule], optimizer: Optional[MegatronOptimizer] = None) -> None:
     """Force parameter synchronization for all model chunks.
 
     Args:
-        model: list of model chunks wrapped in DDP.
+        model: Model chunks implementing start_param_sync, directly or through a wrapper.
         optimizer: Optional optimizer used to stage params before forced sync.
     """
     if optimizer is not None:
         optimizer.prepare_model_params_for_param_sync()
     for model_chunk in model:
-        assert isinstance(model_chunk, DDP)
         model_chunk.start_param_sync(force_sync=True)
 
 
@@ -1397,7 +1401,7 @@ def save_checkpoint_and_time(
 
     should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
-        state.cfg.optimizer.use_distributed_optimizer,
+        uses_distributed_optimizer(state.cfg.optimizer),
         state.cfg.ddp.overlap_param_gather,
     )
     if should_force_param_sync:
@@ -1748,19 +1752,30 @@ def _handle_mxfp8_param_buffer_copy(
             child._copy_main_params_to_param_buffer()
 
 
-def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
-    """
-    Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
-    process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
+def _delete_local_cuda_graph_runners(model: list[MegatronModule]) -> None:
+    torch.cuda.synchronize()
+    for model_chunk in model:
+        for module in model_chunk.modules():
+            if isinstance(module, CudaGraphManager):
+                for runner in module.cudagraph_runners:
+                    runner.fwd_graph = None
+                    runner.bwd_graph = None
+                    runner.mempool = None
+                module.cudagraph_runners.clear()
+                module.custom_cudagraphs_lookup_table.clear()
 
-    TODO: Move this method to MCore.
 
-    Args:
-        cuda_graph_helper: The TECudaGraphHelper object.
-
-    """
-
-    print_rank_0("Deleting CUDA graphs")
+def _release_cuda_graph_references(optimizer: MegatronOptimizer | None) -> None:
+    """Release full-iteration graph references without synchronizing CUDA."""
+    # MCore's gradient-conversion graph retains the forward/backward graph and
+    # its NCCL buffers independently of FullCudaGraphWrapper's global handles.
+    pending = [optimizer]
+    while pending:
+        opt = pending.pop()
+        if hasattr(opt, "_cudagraphed_grad_copy"):
+            opt._cudagraphed_grad_copy = None
+        # Layer-wise optimizers can themselves be children of ChainedOptimizer.
+        pending.extend(getattr(opt, "chained_optimizers", []))
 
     # Explicitly delete full CUDA graphs because of
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
@@ -1779,12 +1794,40 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
         OptimizerCudaGraphWrapper.result = None
         OptimizerCudaGraphWrapper.curr_iteration = 0
 
+
+def _delete_cuda_graphs(
+    cuda_graph_helper: TECudaGraphHelper | None,
+    model: list[MegatronModule] | None = None,
+    optimizer: MegatronOptimizer | None = None,
+):
+    """
+    Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
+    process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
+
+    TODO: Move this method to MCore.
+
+    Args:
+        cuda_graph_helper: The TECudaGraphHelper object.
+        model: The list of model chunks (MegatronModule instances).
+        optimizer: Optimizer whose gradient conversion may retain the training graph.
+    """
+
+    print_rank_0("Deleting CUDA graphs")
+
+    _release_cuda_graph_references(optimizer)
+
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
     # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper
     # may finish its capture phase without actually producing any graphs, in which case
     # delete_cuda_graphs() asserts. Mirrors the guard in upstream mcore training.py.
     if cuda_graph_helper is not None and cuda_graph_helper.graphs_created():
         cuda_graph_helper.delete_cuda_graphs()
+
+    # Cleanup per-layer CUDA graphs owned by MCore CudaGraphManager (cuda_graph_impl="local").
+    # TODO: Ideally, we should fix the delete_cuda_graphs() in MCore to maintain the recorded runners and clean them up properly.
+    if model is not None:
+        _delete_local_cuda_graph_runners(model)
+    delete_local_cuda_graphs()
 
     # Run GC to collect the freshed object
     gc.collect()

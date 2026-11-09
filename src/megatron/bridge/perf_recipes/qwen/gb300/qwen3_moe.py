@@ -192,7 +192,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def _build_qwen3_30b_a3b_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Qwen3 30B-A3B 8-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP BF16 base for the Qwen3 30B-A3B 8-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
@@ -308,7 +308,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def _build_qwen3_30b_a3b_gb300_fp8mx() -> ConfigContainer:
-    """Shared HybridEP MXFP8 base for the Qwen3 30B-A3B 8-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP MXFP8 base for the Qwen3 30B-A3B 8-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
@@ -368,7 +368,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def _build_qwen3_235b_a22b_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Qwen3 235B-A22B 256-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP BF16 base for the Qwen3 235B-A22B 256-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
@@ -488,7 +488,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def _build_qwen3_235b_a22b_gb300_fp8mx() -> ConfigContainer:
-    """Shared HybridEP MXFP8 base for the Qwen3 235B-A22B 256-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP MXFP8 base for the Qwen3 235B-A22B 256-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
@@ -629,7 +629,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config() -> Config
 
 
 def _build_qwen3_235b_a22b_gb300_nvfp4() -> ConfigContainer:
-    """Shared HybridEP NVFP4 base (full-iteration CG, A2A overlap) for the GB300 recipe and its VR200 alias."""
+    """Shared HybridEP NVFP4 base (full-iteration CG, A2A overlap) for the GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.comm_overlap.tp_comm_overlap = False

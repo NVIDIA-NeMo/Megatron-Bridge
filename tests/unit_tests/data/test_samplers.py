@@ -144,6 +144,27 @@ def test_dataloader_worker_releases_gpu_fds_before_caller_initialization(monkeyp
     assert caller_calls.value == 1
 
 
+@pytest.mark.parametrize(
+    ("num_workers", "prefetch_factor", "expected"),
+    [(0, None, None), (0, 4, None), (2, None, 2), (2, 8, 8)],
+)
+def test_prefetch_factor_applies_only_to_worker_loaders(
+    num_workers: int, prefetch_factor: int | None, expected: int | None
+) -> None:
+    """prefetch_factor reaches worker-backed loaders; PyTorch rejects it without workers."""
+    dataloader = build_pretraining_data_loader(
+        dataset=_RandomValueDataset(),
+        consumed_samples=0,
+        dataloader_type="single",
+        micro_batch_size=1,
+        num_workers=num_workers,
+        data_sharding=False,
+        prefetch_factor=prefetch_factor,
+    )
+
+    assert dataloader.prefetch_factor == expected
+
+
 def test_cyclic_sampler_non_sharded_tail_keeps_data_parallel_epochs_aligned() -> None:
     """Every DP rank must cross a truncated cyclic epoch on the same step."""
 
@@ -169,3 +190,44 @@ def test_cyclic_sampler_non_sharded_tail_keeps_data_parallel_epochs_aligned() ->
 
     assert len({index for batch in second_step for index in batch}) == 6
     assert second_step == resumed_step
+
+
+def _small_loader(dataloader_type: str):
+    return build_pretraining_data_loader(
+        dataset=list(range(8)),
+        consumed_samples=0,
+        dataloader_type=dataloader_type,
+        micro_batch_size=2,
+        num_workers=0,
+        data_sharding=True,
+        global_batch_size=2,
+    )
+
+
+@pytest.mark.parametrize("dataloader_type", ["single", "cyclic", "batch"])
+def test_loader_iterators_leave_global_rng_untouched(dataloader_type: str) -> None:
+    """Creating and exhausting loader iterators must not draw from the global CPU RNG.
+
+    On resume, the checkpoint has already restored that RNG before the iterators are created,
+    so a draw here would leave the resumed run one draw ahead of an uninterrupted run. The
+    second pass is what cyclic_iter does at an epoch boundary.
+    """
+    torch.manual_seed(1234)
+    rng_state = torch.get_rng_state()
+    dataloader = _small_loader(dataloader_type)
+
+    for _ in range(2):
+        for _batch in dataloader:
+            pass
+
+    assert torch.equal(torch.get_rng_state(), rng_state)
+
+
+def test_loader_base_seed_does_not_depend_on_restored_rng_state() -> None:
+    """A loader built on resume gives its workers the same base seed as one built at step 0."""
+    torch.manual_seed(1234)
+    fresh_base_seed = iter(_small_loader("single"))._base_seed
+    # Training advances the global RNG before the checkpoint that a resume restores.
+    torch.rand(16)
+
+    assert iter(_small_loader("single"))._base_seed == fresh_base_seed

@@ -299,7 +299,10 @@ def test_cuda_graph_helper_discovers_nested_language_layers(single_rank_model_pa
         micro_batch_size=1,
     )
 
-    assert helper.chunks_with_decoder == [model]
+    # MCore locates the exposed root ``decoder`` and then unwraps multimodal
+    # roots to their nested language model for layer discovery.
+    assert helper.chunks_with_decoder == [model.language_model]
+    assert helper.chunks_with_decoder[0].decoder is model.decoder
     assert helper.num_layers_per_chunk[0] > 0
 
 
@@ -857,6 +860,21 @@ def test_audio_forward_replaces_expanded_placeholders_without_changing_length():
     assert torch.equal(output[3, 0], torch.tensor([9.0, 9.0, 9.0]))
 
 
+def test_image_only_forward_preserves_ordinary_sound_token():
+    image_features = torch.tensor([[101.0, 102.0, 103.0]])
+    model = _BoundaryModel(image_features)
+    input_ids = torch.tensor([[7, 18, 19, 9]])
+
+    output = model(
+        input_ids=input_ids,
+        attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+        images=torch.ones(1),
+    )
+
+    assert torch.equal(output[1, 0], image_features[0])
+    assert torch.equal(output[2, 0], torch.tensor([19.0, 19.0, 19.0]))
+
+
 def test_sound_encoder_drops_padded_rows_and_preserves_sample_order():
     model = _SoundEncoderBoundaryModel()
 
@@ -1261,6 +1279,8 @@ def test_real_radio_image_forward_with_collator_owned_cp1_packing(
     assert torch.isfinite(output).all()
 
 
+# Dump all Python thread stacks before the CI wrapper terminates a stalled backward pass.
+@pytest.mark.timeout(300, method="thread")
 @pytest.mark.run_only_on("GPU")
 def test_real_packed_multimodal_optimizer_step(single_rank_model_parallel):
     del single_rank_model_parallel

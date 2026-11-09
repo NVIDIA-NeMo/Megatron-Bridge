@@ -193,6 +193,7 @@ class TestForwardStep:
         mock_role.is_first_stage.return_value = False
         mock_role.is_last_stage.return_value = False
         mock_model.role = mock_role
+        mock_model.language_model.mtp_process = False
         mock_model.return_value = (torch.tensor([1.0]), None)
         mock_unwrap.return_value = mock_model
 
@@ -216,6 +217,63 @@ class TestForwardStep:
         assert call_kwargs["labels"] is None
         assert call_kwargs["loss_mask"] is None
         assert call_kwargs["modality_inputs"] is None
+
+    @pytest.mark.parametrize("mtp_process", [True, False])
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_language_last_stage_keeps_input_ids_only_for_mtp(
+        self, mock_unwrap, mock_get_batch, mtp_process
+    ):
+        """A non-first language stage keeps input_ids only when it runs the MTP block."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = False
+        mock_role.is_last_stage.return_value = True
+        mock_model.role = mock_role
+        mock_model.language_model = SimpleNamespace(mtp_process=mtp_process)
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+
+        input_ids = torch.tensor([[1, 2, 3, 4]])
+        mock_get_batch.return_value = {
+            "input_ids": input_ids,
+            "position_ids": torch.arange(4).unsqueeze(0),
+            "attention_mask": None,
+            "labels": torch.tensor([[2, 3, 4, 5]]),
+            "loss_mask": torch.ones(1, 4),
+            "modality_inputs": {"images": {"pixel_values": torch.randn(1, 3)}},
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        call_kwargs = mock_model.call_args.kwargs
+        if mtp_process:
+            assert torch.equal(call_kwargs["input_ids"], input_ids)
+        else:
+            assert call_kwargs["input_ids"] is None
+        assert call_kwargs["modality_inputs"] is None
+        assert torch.equal(call_kwargs["labels"], torch.tensor([[2, 3, 4, 5]]))
+
+    @pytest.mark.parametrize(
+        "language_model, expected",
+        [
+            (None, False),
+            (SimpleNamespace(), False),
+            (SimpleNamespace(mtp_process=False), False),
+            (SimpleNamespace(mtp_process=True), True),
+        ],
+    )
+    def test_language_stage_owns_mtp(self, language_model, expected):
+        from megatron.bridge.training.megatron_mimo_step import _language_stage_owns_mtp
+
+        assert _language_stage_owns_mtp(SimpleNamespace(language_model=language_model)) is expected
 
     @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
     def test_forward_step_rejects_dict_at_last_stage(self, mock_unwrap):
@@ -269,6 +327,7 @@ class TestForwardStep:
         mock_role.is_first_stage.return_value = False
         mock_role.is_last_stage.return_value = False
         mock_model.role = mock_role
+        mock_model.language_model.mtp_process = False
         mock_model.return_value = (torch.tensor([1.0]), None)
         mock_unwrap.return_value = mock_model
 
@@ -289,6 +348,43 @@ class TestForwardStep:
         assert call_kwargs["packing_kwargs"]["cu_seqlens_q"].tolist() == [0, 3, 5]
         assert call_kwargs["position_ids"].tolist() == [[0, 1, 2, 0, 1]]
         assert call_kwargs["attention_mask"] is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_nulls_attention_mask_before_model(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """The tokenizer padding mask is a data-path length source only; the model must get None."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(
+            enable_in_batch_packing=False,
+            defer_in_batch_packing_to_step=False,
+            megatron_mimo_scalable_dp=True,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 1)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": torch.ones(4, 4, dtype=torch.long),
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        assert mock_model.call_args.kwargs["attention_mask"] is None
 
     @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
     @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
@@ -610,3 +706,102 @@ def test_mimo_logging_rank_receives_source_zero_token_flag(zero_token):
         assert not hasattr(state, "_zero_token_iters")
     else:
         assert state._zero_token_iters.item() == int(zero_token)
+
+
+def _mtp_tracker(loss_values: list[float], **extra) -> dict:
+    """An MCore MTP metrics tracker as ``process_mtp_loss`` leaves it after a step."""
+    num_layers = len(loss_values)
+    return {
+        "loss_values": torch.tensor(loss_values),
+        "correct_values": torch.ones(num_layers),
+        "total_values": torch.full((num_layers,), 2.0),
+        "reduce_group": None,
+        "avg_group": None,
+        **extra,
+    }
+
+
+class TestCollectMTPLosses:
+    """MTP losses are reduced on the language last stage and returned for loss_dict."""
+
+    def test_scales_per_microbatch_losses_and_clears_tracker(self, monkeypatch):
+        from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
+
+        from megatron.bridge.training.train_megatron_mimo import _collect_mtp_losses
+
+        tracker = _mtp_tracker([6.0, 4.0])
+        monkeypatch.setattr(MTPLossLoggingHelper, "tracker", tracker)
+
+        losses = _collect_mtp_losses(num_microbatches=2)
+
+        assert set(losses) == {"mtp_1 loss", "mtp_2 loss"}
+        assert losses["mtp_1 loss"].item() == pytest.approx(3.0)
+        assert losses["mtp_2 loss"].item() == pytest.approx(2.0)
+        assert torch.count_nonzero(tracker["loss_values"]) == 0
+
+    def test_per_token_tracker_is_not_rescaled(self, monkeypatch):
+        from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
+
+        from megatron.bridge.training.train_megatron_mimo import _collect_mtp_losses
+
+        monkeypatch.setattr(MTPLossLoggingHelper, "tracker", _mtp_tracker([6.0], calculate_per_token_loss=True))
+
+        assert _collect_mtp_losses(num_microbatches=4)["mtp_1 loss"].item() == pytest.approx(6.0)
+
+    def test_without_mtp_returns_nothing(self, monkeypatch):
+        from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
+
+        from megatron.bridge.training.train_megatron_mimo import _collect_mtp_losses
+
+        monkeypatch.setattr(MTPLossLoggingHelper, "tracker", {})
+
+        assert _collect_mtp_losses(num_microbatches=2) == {}
+
+
+def test_mimo_train_step_reports_mtp_loss(monkeypatch):
+    """The language last stage ships MTP losses with ``lm loss`` to the logging rank."""
+    from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
+
+    import megatron.bridge.training.train_megatron_mimo as training
+
+    real_tensor = torch.tensor
+
+    def cpu_tensor(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_tensor(*args, **kwargs)
+
+    monkeypatch.setattr(MTPLossLoggingHelper, "tracker", _mtp_tracker([1.5]))
+    optimizer = MagicMock()
+    optimizer.step.return_value = (True, 1.0, 0)
+    state = SimpleNamespace(timers=MagicMock(), cfg=SimpleNamespace(data_parallel_size=1))
+    with (
+        patch.object(training, "zero_grad_buffer_for_multimodule"),
+        patch.object(
+            training,
+            "forward_backward_pipelining_without_interleaving",
+            return_value=[{"lm loss": real_tensor([6.0, 2.0])}] * 3,
+        ),
+        patch.object(training, "unwrap_megatron_mimo_model", return_value=SimpleNamespace(role=None)),
+        patch.object(training.dist, "get_world_size", return_value=1),
+        patch.object(training.dist, "get_rank", return_value=0),
+        patch.object(training.dist, "all_reduce"),
+        patch.object(training.torch, "tensor", side_effect=cpu_tensor),
+    ):
+        loss_dict, *_ = training.train_step_megatron_mimo(
+            MagicMock(),
+            iter([]),
+            MagicMock(),
+            optimizer,
+            {},
+            state,
+            None,
+            None,
+            SimpleNamespace(pg_collections={"language": SimpleNamespace(dp_cp=None)}),
+            [],
+            3,
+            8,
+            1,
+        )
+
+    assert loss_dict["lm loss"].item() == pytest.approx(3.0)
+    assert loss_dict["mtp_1 loss"].item() == pytest.approx(0.5)

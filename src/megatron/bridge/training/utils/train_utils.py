@@ -674,6 +674,82 @@ def _get_num_moe_layers(model_config: Any) -> int:
     return main_moe_layers + mtp_moe_layers
 
 
+def _dsa_indexer_metric_num_layers(model_config: Any) -> Optional[int]:
+    """Divisor of the logged DSA indexer loss, or ``None`` for Megatron-Core's (the tracker size).
+
+    A model config may define ``dsa_indexer_metric_num_layers()`` to choose its convention; ERNIE 5.5
+    divides the sum over its indexer layers by its layer count plus MTP depths, as its reference does.
+    """
+    divisor = getattr(model_config, "dsa_indexer_metric_num_layers", None)
+    return divisor() if callable(divisor) else None
+
+
+def initialize_dsa_indexer_metric_tracker(model_config: Any, model: list[MegatronModule], pg_collection: Any) -> int:
+    """Fix the DSA indexer-loss tracker's capacity for a new model, before its first forward.
+
+    Megatron-Core's training setup does the same (``initialize_dsa_metric_tracker``): the capacity is agreed over the
+    pipeline stages once, so no stage grows (rebinds) the tracker later, when :func:`_track_dsa_indexer_metrics`
+    first reduces it, and CUDA graphs captured before that keep writing into the tensor that is logged. Only models
+    that train an indexer loss (``dsa_indexer_loss_coeff > 0``) are affected. The tracker is process-wide, so what an
+    earlier model in this process left in it is cleared first. Megatron-Core builds without the function (main)
+    keep their lazily sized tracker.
+
+    Args:
+        model_config: The run's model config (``dsa_indexer_loss_coeff``), the one the logging reads.
+        model: This rank's model chunks, wrapped or not.
+        pg_collection: The model's process groups.
+
+    Returns:
+        The tracker capacity, or 0 when nothing was initialized.
+    """
+    if (getattr(model_config, "dsa_indexer_loss_coeff", None) or 0.0) <= 0:
+        return 0
+    try:
+        from megatron.core.transformer.experimental_attention_variant.dsa_logging import (
+            DSAIndexerLossLoggingHelper,
+            initialize_dsa_metric_tracker,
+        )
+    except ImportError:
+        return 0
+    DSAIndexerLossLoggingHelper.tracker.clear()
+    return initialize_dsa_metric_tracker(model, pg_collection)
+
+
+def _track_dsa_indexer_metrics(
+    config: ConfigContainer,
+    global_state: GlobalState,
+    iteration: int,
+    writer: Optional[Any],
+    wandb_writer: Optional[Any],
+    total_loss_dict: dict[str, Any],
+    pg_collection: Optional[Any],
+) -> None:
+    """Log the DSA indexer loss of models that train one (``dsa_indexer_loss_coeff > 0``).
+
+    Megatron-Core's DSA layers record their indexer losses in ``DSAIndexerLossLoggingHelper``'s tracker; this
+    reduces them over the pipeline and data-parallel ranks and logs ``indexer loss`` (and ``indexer raw loss``,
+    before the coefficient), averaged over the step's micro-batches. Dynamic context parallelism needs its
+    physical DP x CP group for the reduction and is left out.
+    """
+    if (getattr(config.model, "dsa_indexer_loss_coeff", None) or 0.0) <= 0:
+        return
+    if getattr(config.model, "dynamic_context_parallel", False):
+        return
+    from megatron.core.process_groups_config import ProcessGroupCollection
+    from megatron.core.transformer.experimental_attention_variant.dsa import DSAIndexerLossLoggingHelper
+
+    DSAIndexerLossLoggingHelper.track_indexer_metrics(
+        loss_scale=1 / _step_num_microbatches(global_state),
+        iteration=iteration,
+        writer=writer,
+        pg_collection=pg_collection if pg_collection is not None else ProcessGroupCollection.use_mpu_process_groups(),
+        wandb_writer=wandb_writer,
+        total_loss_dict=total_loss_dict,
+        num_indexer_layers=_dsa_indexer_metric_num_layers(config.model),
+        preserve_groups=getattr(config.model, "cuda_graph_impl", "none") not in (None, "none"),
+    )
+
+
 # Attribute on GlobalState holding the running count of steps whose global token
 # count was zero. GlobalState clears it when restarting an interrupted attempt.
 ZERO_TOKEN_ITERS_ATTR = "_zero_token_iters"
@@ -1137,6 +1213,15 @@ def training_log(
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
         )
+    _track_dsa_indexer_metrics(
+        config,
+        global_state,
+        iteration,
+        _build_moe_metric_writer(writer, comet_logger, mlflow_logger),
+        wandb_writer,
+        total_loss_dict,
+        pg_collection,
+    )
 
     if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)
@@ -1290,7 +1375,7 @@ def training_log(
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
             cuda_graphs_enabled = (
-                config.model.cuda_graph_impl != "none"
+                getattr(config.model, "cuda_graph_impl", "none") != "none"
                 or config.optimizer.optimizer_cuda_graph
                 or getattr(config.model, "vision_cuda_graph_impl", None) == "transformer_engine"
             )
@@ -1300,7 +1385,7 @@ def training_log(
                 # after that step, so warmup_steps + 1 is the post-capture iteration.
                 memory_reporting_iterations = max(
                     memory_reporting_iterations,
-                    config.model.cuda_graph_warmup_steps + 1,
+                    getattr(config.model, "cuda_graph_warmup_steps", 0) + 1,
                 )
             if iteration >= loaded_iteration + memory_reporting_iterations:
                 # Always include optimizer state memory and, when enabled, CUDA graph

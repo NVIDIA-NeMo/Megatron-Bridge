@@ -47,6 +47,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 
@@ -354,6 +355,7 @@ class NemotronOmniModel(MegatronModule):
         sound_token_index: int = 0,
         pg_collection: Optional[ProcessGroupCollection] = None,
         vp_stage: Optional[int] = None,
+        model_config: Optional[ModelConfig] = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -380,13 +382,16 @@ class NemotronOmniModel(MegatronModule):
 
         self.language_model = None
         if add_decoder:
+            # A builder-backed model config owns logit_dtype, which a provider carries on
+            # language_transformer_config.
+            logit_dtype = (language_transformer_config if model_config is None else model_config).logit_dtype
             self.language_model = HybridModel(
                 config=language_transformer_config,
                 hybrid_stack_spec=language_transformer_layer_spec,
                 vocab_size=language_vocab_size,
                 max_sequence_length=language_max_sequence_length,
                 parallel_output=parallel_output,
-                **logit_dtype_kwarg(HybridModel, language_transformer_config.logit_dtype),
+                **logit_dtype_kwarg(HybridModel, logit_dtype),
                 position_embedding_type=language_position_embedding_type,
                 pre_process=pre_process,
                 hybrid_layer_pattern=hybrid_layer_pattern,
@@ -971,9 +976,12 @@ class NemotronOmniModel(MegatronModule):
                 media_token_validity_mask,
             )
 
-            if self.sound_token_index > 0:
-                if sound_embeddings is None:
-                    sound_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
+            # ``sound_token_index`` is an ordinary vocabulary id.  In an
+            # image-only/text-only batch it may therefore occur in generated
+            # prose without denoting an audio anchor.  Audio provenance, not
+            # the token id alone, decides whether sound insertion runs.
+            if self.sound_token_index > 0 and has_sound_inputs:
+                assert sound_embeddings is not None
                 combined_embeddings = self._merge_projected_media(
                     combined_embeddings,
                     input_ids,

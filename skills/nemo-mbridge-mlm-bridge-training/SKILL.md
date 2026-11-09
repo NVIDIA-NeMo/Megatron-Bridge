@@ -115,7 +115,6 @@ Common recipes (use with `--recipe`):
 - `llama32_1b_pretrain_config` — Llama 3.2 1B (16L, 2048H, GBS=512, seq=8192)
 - `llama3_8b_pretrain_config` — Llama 3 8B
 - `qwen3_8b_pretrain_config` — Qwen3 8B
-- `deepseek_v2_lite_pretrain_config` — DeepSeek-V2-Lite 16B MoE
 
 SFT/PEFT variants use `_sft_config` / `_peft_config` suffix.
 

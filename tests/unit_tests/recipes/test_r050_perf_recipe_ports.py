@@ -43,8 +43,10 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: bool = True) -> None:
-    """Check the normalized r0.5.0 full-iteration HybridEP settings."""
+def _assert_full_iteration_hybridep_mxfp8(
+    cfg, *, fp8_dot_product_attention: bool = True, dispatcher_backend: str = "hybridep"
+) -> None:
+    """Check the normalized r0.5.0 full-iteration settings; NCCL EP recipes keep the rest of the stack."""
     assert cfg.model.cuda_graph_impl == "full_iteration"
     assert cfg.model.cuda_graph_scope == []
     assert cfg.model.use_te_rng_tracker is True
@@ -56,7 +58,7 @@ def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: boo
     assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
     assert cfg.model.moe_shared_expert_overlap is False
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == dispatcher_backend
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.high_priority_a2a_comm_stream is True
@@ -78,9 +80,9 @@ def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: boo
 def test_qwen_mxfp8_recipes_match_r050_full_iteration_settings(recipe, expected_vpp) -> None:
     cfg = recipe()
 
-    _assert_full_iteration_hybridep_mxfp8(cfg)
+    _assert_full_iteration_hybridep_mxfp8(cfg, dispatcher_backend="ncclep")
     assert cfg.model.virtual_pipeline_model_parallel_size == expected_vpp
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
@@ -89,20 +91,19 @@ def test_qwen_mxfp8_recipes_match_r050_full_iteration_settings(recipe, expected_
 
 def test_qwen_30b_a3b_b200_fp8mx_uses_partial_cuda_graph() -> None:
     """B200's 180 GB cannot hold the full-iteration graph, so the 8-GPU MXFP8 recipe uses
-    partial (TE-scoped) CUDA graph plus explicit HybridEP a2a/wgrad overlap instead."""
+    partial (TE-scoped) CUDA graph plus explicit NCCL EP a2a/wgrad overlap instead."""
     cfg = qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config()
 
     # Partial (TE-scoped) CUDA graph, not full-iteration.
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
 
-    # Explicit HybridEP expert-parallel overlap + swept SM tuning.
+    # Explicit expert-parallel overlap is retained with the NCCL EP backend.
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert cfg.comm_overlap.delay_wgrad_compute is True
-    assert cfg.model.moe_hybridep_num_sms == 64
-    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
 
     # Partial-CG allocator / env: the full-iteration extras are removed.
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
@@ -122,7 +123,7 @@ def test_qwen_30b_a3b_b200_fp8mx_uses_partial_cuda_graph() -> None:
 def test_qwen_large_scale_recipes_only_override_global_batch_size(recipe) -> None:
     cfg = recipe()
 
-    _assert_full_iteration_hybridep_mxfp8(cfg)
+    _assert_full_iteration_hybridep_mxfp8(cfg, dispatcher_backend="ncclep")
     assert cfg.train.global_batch_size == 512
     assert cfg.model.virtual_pipeline_model_parallel_size == 3
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
@@ -131,7 +132,11 @@ def test_qwen_large_scale_recipes_only_override_global_batch_size(recipe) -> Non
 def test_deepseek_v3_gb200_large_scale_matches_r050_fp8mx_base() -> None:
     cfg = deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config()
 
-    _assert_full_iteration_hybridep_mxfp8(cfg, fp8_dot_product_attention=False)
+    # GB200 keeps the r0.5.0 full-iteration MXFP8 stack but dispatches through NCCL EP.
+    _assert_full_iteration_hybridep_mxfp8(cfg, fp8_dot_product_attention=False, dispatcher_backend="ncclep")
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     assert cfg.train.global_batch_size == 256
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.virtual_pipeline_model_parallel_size == 4

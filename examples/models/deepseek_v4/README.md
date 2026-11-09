@@ -50,6 +50,18 @@ The Flash library recipe uses PP4/VPP4; the 128-GPU Flash benchmark uses PP1.
 The Pro benchmark also combines mHC CUDA graphs with recompute and activation
 offload, which remains unsupported by the main-based runtime above.
 
+When `train.sh` overrides `model.pipeline_model_parallel_size` or
+`model.virtual_pipeline_model_parallel_size`, the pattern segments and layout
+are rebuilt with the default split of attention/MoE pairs: even, except that the
+first stage grows to hold the hash-routed MoE layers. This replaces a recipe's
+uneven split and keeps the MTP suffix. If the command also sets
+`model.pipeline_model_parallel_layout`, nothing is rebuilt, so pass a matching
+`model.hybrid_layer_pattern` as well. Python code that changes PP or VPP on a
+recipe should call `set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)`.
+Training rejects `|` segments that do not match PP x VPP or the explicit layout.
+With VPP unset, an explicit layout sets it, as in Megatron Core: an eight-stage
+PP4 layout means VPP2.
+
 `fast-hadamard-transform` is required by DSA and is installed from the pinned
 source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
 Bridge container; see the
@@ -157,7 +169,8 @@ support remains a work in progress and is not supported on `main`:
 | `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | Offline-packed THD (WIP) | On | 32-GPU GB200 |
 
 The recipes select fused mHC only when the runtime supports the Blackwell
-kernel; Hopper uses the unfused fallback. The GB200 packed recipe additionally
+kernel; Hopper uses the unfused path, which matches DeepSeek-V4's mHC
+normalization (see Known Limitations). The GB200 packed recipe additionally
 enables HybridEP, uneven-dispatch padding, DSA fusion, grouped GEMM, selective
 recompute, and attention activation offload.
 
@@ -249,6 +262,19 @@ required storage and validate checkpoint resume explicitly.
   [`inference.sh`](inference.sh) example uses legacy full-prefix generation and
   is not a verified KV-cache path. HF-native inference is the target after a
   verified Megatron-to-HF export.
+- [`inference.sh`](inference.sh) needs `PP * EP` GPUs (32 for the Pro
+  defaults `PP=4`, `EP=8`) and, like the other examples, runs from the
+  repository root. On 4-GPU nodes such as GB200 NVL72 spread the ranks over
+  several nodes with one task per node:
+  `srun --ntasks-per-node=1 bash -c 'NNODES=$SLURM_JOB_NUM_NODES NODE_RANK=$SLURM_NODEID MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1) examples/models/deepseek_v4/inference.sh'`.
+  With the variables unset the script launches all ranks on the current node.
 - Fused mHC requires Blackwell (`sm_100`). Hopper uses the unfused path.
+- DeepSeek-V4 normalizes the mHC mapping input as
+  `x * rsqrt(mean(x^2) + rms_norm_eps)`. Only the unfused mHC path computes
+  this (`mhc_norm_eps_inside_sqrt=True`); the fused kernels add epsilon outside
+  the square root. The bridge's model config therefore uses the unfused path
+  on every GPU. Recipes enable fused mHC on Blackwell for speed; for exact
+  reference numerics there, override
+  `model.use_fused_mhc=False model.mhc_norm_eps_inside_sqrt=True`.
 - CPU import and export require enough RAM for the full BF16 model plus
   conversion workspace and remain unverified in the current card.

@@ -25,6 +25,7 @@ from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.spec_utils import build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.gpt import gpt_builder
 from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_spec
 
 
@@ -38,9 +39,16 @@ except ImportError:
     SplitAlongDim = None
 
 
-def olmoe_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
-    """Layer spec for OlMoE models."""
-    layer_spec = default_layer_spec(config)
+def olmoe_layer_spec(config: "GPTModelProvider | gpt_builder.GPTModelConfig") -> ModuleSpec:
+    """Layer spec for OlMoE models.
+
+    Accepts the legacy provider or a builder-backed GPT model config, whose
+    transformer fields live on ``config.transformer``.
+    """
+    if isinstance(config, GPTModelProvider):
+        layer_spec = default_layer_spec(config)
+    else:
+        layer_spec = gpt_builder.transformer_engine_layer_spec(config)
     layer_spec.submodules.self_attention.module = OLMoESelfAttention
     return layer_spec
 

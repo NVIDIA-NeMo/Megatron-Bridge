@@ -64,7 +64,7 @@ class MockMegatronMIMOProvider(MegatronMIMODatasetProvider):
         >>> provider = MockMegatronMIMOProvider(
         ...     seq_length=2048,
         ...     processor_paths={"vision": "openai/clip-vit-large-patch14"},
-        ...     tokenizer_path="meta-llama/Llama-2-7b-hf",
+        ...     tokenizer_path="meta-llama/Meta-Llama-3-8B",
         ...     special_token_ids={"vision": 32000},
         ...     encoder_seq_lengths={"vision": 577},  # CLIP ViT-L/14 output tokens
         ...     modality_configs={"vision": {"type": "image", "width": 224, "height": 224}},
@@ -119,7 +119,7 @@ class MockMegatronMIMOProvider(MegatronMIMODatasetProvider):
         if not self.tokenizer_path:
             raise ValueError(
                 "tokenizer_path must be set for MockMegatronMIMOProvider. "
-                "Provide a valid HuggingFace tokenizer path (e.g., 'gpt2', 'meta-llama/Llama-2-7b-hf')."
+                "Provide a valid HuggingFace tokenizer path (e.g., 'gpt2', 'meta-llama/Meta-Llama-3-8B')."
             )
 
         from transformers import AutoTokenizer

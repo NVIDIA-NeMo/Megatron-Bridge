@@ -329,6 +329,27 @@ def _assert_finetuning_optimizer_contract(cfg, *, precision_aware: bool):
     assert cfg.ddp.grad_reduce_in_fp32 is reduce_in_fp32
 
 
+def test_moonlight_16b_pretrain_deterministic_applies_determinism(monkeypatch: pytest.MonkeyPatch):
+    """The deterministic wrapper keeps the 16-GPU layout and sets the determinism env."""
+    from megatron.bridge.recipes.moonlight import h100 as moonlight_h100
+    from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
+
+    base_fn = moonlight_h100.moonlight_16b_pretrain_16gpu_h100_bf16_config
+    deterministic_fn = moonlight_h100.moonlight_16b_pretrain_16gpu_h100_bf16_deterministic_config
+    patch_recipe_module_global(monkeypatch, base_fn, "AutoBridge", _FakeBridge)
+
+    base = base_fn()
+    cfg = deterministic_fn()
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size == 8
+    assert cfg.train.global_batch_size == base.train.global_batch_size
+    for key, value in DETERMINISM_ENV_VARS.items():
+        assert cfg.env_vars[key] == value
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+
+
 def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyPatch):
     """Test the exact 16-GPU pretrain convergence contract."""
     from megatron.bridge.recipes.moonlight import moonlight_16b_pretrain_config

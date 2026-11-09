@@ -976,6 +976,8 @@ class TestTrainingLog:
             pytest.param("none", True, None, 4, False, id="optimizer-after-capture"),
             pytest.param("none", False, "transformer_engine", 2, True, id="vision-before-capture"),
             pytest.param("none", False, "transformer_engine", 4, False, id="vision-after-capture"),
+            # MegatronMIMOProvider has no cuda_graph_* fields; optimizer graphs must still report.
+            pytest.param(None, True, None, 2, False, id="mimo-provider-optimizer-graph"),
         ],
     )
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
@@ -1011,7 +1013,11 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 32
         mock_get_rank.return_value = 0
 
-        mock_config.model.cuda_graph_impl = cuda_graph_impl
+        if cuda_graph_impl is None:
+            del mock_config.model.cuda_graph_impl
+            del mock_config.model.cuda_graph_warmup_steps
+        else:
+            mock_config.model.cuda_graph_impl = cuda_graph_impl
         mock_config.model.vision_cuda_graph_impl = vision_cuda_graph_impl
         mock_config.optimizer.optimizer_cuda_graph = optimizer_cuda_graph
         mock_global_state.train_state.step = iteration

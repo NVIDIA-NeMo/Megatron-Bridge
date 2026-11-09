@@ -22,16 +22,23 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from megatron.core import tensor_parallel
+from megatron.core import parallel_state, tensor_parallel
 from megatron.core.models.common.embeddings.rotary_pos_embedding import apply_rotary_pos_emb
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.enums import AttnMaskType
+from megatron.core.transformer.torch_norm import WrappedTorchNorm
 from megatron.core.transformer.transformer_layer import TransformerLayer
 from megatron.training.config.instantiate_utils import instantiate
+from transformers import Gemma4TextConfig
 
+from megatron.bridge.models.gemma.gemma4_bridge import Gemma4Bridge
+from megatron.bridge.models.gemma.gemma4_builder import Gemma4DenseModelBuilder
 from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4DenseMLP,
     Gemma4DenseRotaryEmbedding,
     Gemma4DenseSelfAttention,
     Gemma4DenseTransformerLayer,
+    Gemma4DotProductAttention,
     Gemma4MoEExperts,
     Gemma4MoELayer,
     Gemma4MoERouter,
@@ -76,6 +83,20 @@ def _config(**kwargs):
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
+
+
+def _use_cpu_checkpoint_rng(monkeypatch):
+    """Let MCore's real CheckpointFunction run on CPU without touching the global RNG tracker."""
+    monkeypatch.setattr(
+        tensor_parallel.random, "_get_cuda_rng_state", lambda *args, **kwargs: torch.empty(0, dtype=torch.uint8)
+    )
+    monkeypatch.setattr(tensor_parallel.random, "_set_cuda_rng_state", lambda *args, **kwargs: None)
+    # CheckpointFunction calls set_states() on the tracker, which marks it initialized. Left on the global
+    # tracker, that makes later TE modules fork RNG states that were never added.
+    monkeypatch.setattr(
+        tensor_parallel.random, "_CUDA_RNG_STATE_TRACKER", tensor_parallel.random.CudaRNGStatesTracker()
+    )
+    monkeypatch.setattr(tensor_parallel.random, "_CUDA_RNG_STATE_TRACKER_INITIALIZED", True)
 
 
 class TestGemma4RMSNorm:
@@ -170,6 +191,7 @@ class TestGemma4LayerSpec:
 
         assert layer_spec.module is Gemma4DenseTransformerLayer
         assert layer_spec.submodules.self_attention.module is Gemma4DenseSelfAttention
+        assert layer_spec.submodules.self_attention.submodules.core_attention is Gemma4DotProductAttention
         assert layer_spec.submodules.post_self_attn_layernorm is Gemma4RMSNorm
         assert layer_spec.submodules.post_mlp_layernorm is Gemma4RMSNorm
 
@@ -477,6 +499,39 @@ class TestGemma4DenseSelfAttention:
         torch.testing.assert_close(out_key, source_key)
         torch.testing.assert_close(out_value, source_value)
 
+    def test_shared_layer_gives_unused_key_norm_a_zero_gradient(self, monkeypatch):
+        query = torch.randn(2, 1, 1, 2, requires_grad=True)
+
+        def fake_get_qkv(self, hidden_states, key_value_states=None, output_gate=False, split_qkv=True):
+            del hidden_states, key_value_states, output_gate, split_qkv
+            own_key = self.k_layernorm(torch.ones_like(query))
+            return query, own_key, torch.ones_like(query)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors",
+            fake_get_qkv,
+        )
+        attn = self._make_attention_for_methods()
+        attn.is_kv_shared_layer = True
+        object.__setattr__(attn, "k_layernorm", Gemma4RMSNorm(_config(), hidden_size=2))
+
+        class Source:
+            pass
+
+        source = Source()
+        source._stored_kv = (torch.ones_like(query), torch.ones_like(query))
+        attn._kv_source_ref = weakref.ref(source)
+
+        out_query, _, _ = Gemma4DenseSelfAttention.get_query_key_value_tensors(
+            attn, hidden_states=torch.zeros(2, 1, 4)
+        )
+        upstream = torch.randn_like(query)
+        out_query.backward(upstream)
+
+        torch.testing.assert_close(out_query, query, rtol=0, atol=0)
+        torch.testing.assert_close(query.grad, upstream, rtol=0, atol=0)
+        torch.testing.assert_close(attn.k_layernorm.weight.grad, torch.zeros(2), rtol=0, atol=0)
+
     def test_shared_layer_normalizes_fallback_kv_when_source_missing(self, monkeypatch):
         query = torch.ones(2, 1, 1, 2)
         fallback_key = torch.full_like(query, 2.0)
@@ -607,6 +662,180 @@ class TestGemma4DenseSelfAttention:
         assert out is hidden_states
         assert bias is None
         assert calls[0] is sliding_mask
+
+
+class TestGemma4DotProductAttention:
+    """Dense core attention: Hugging Face's per-layer image masks on top of Megatron Core's softmax."""
+
+    @staticmethod
+    def _vision_config(**kwargs):
+        return _config(text_config=SimpleNamespace(use_bidirectional_attention="vision"), **kwargs)
+
+    @staticmethod
+    def _capture_init(monkeypatch):
+        calls = []
+
+        def fake_init(self, **kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.__init__", fake_init)
+        return calls
+
+    @staticmethod
+    def _capture_forward(monkeypatch):
+        calls = {}
+
+        def fake_forward(self, query, key, value, attention_mask, attn_mask_type=None, **kwargs):
+            calls.update(mask=attention_mask, mask_type=attn_mask_type, **kwargs)
+            return value
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.forward", fake_forward)
+        return calls
+
+    def test_sliding_image_layer_moves_window_into_explicit_mask(self, monkeypatch):
+        calls = self._capture_init(monkeypatch)
+        cfg = self._vision_config(window_size=(3, 0))
+
+        attention = Gemma4DotProductAttention(
+            config=cfg, layer_number=1, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+
+        assert calls[0]["config"].window_size is None
+        assert calls[0]["attn_mask_type"] == AttnMaskType.arbitrary
+        assert cfg.window_size == (3, 0)
+        assert attention._image_bidirectional_attention is True
+        assert attention._causal_image_attention is False
+        assert attention._image_attention_window == 4
+
+    def test_global_image_layer_keeps_causal_mask_type(self, monkeypatch):
+        calls = self._capture_init(monkeypatch)
+        cfg = self._vision_config()
+
+        attention = Gemma4DotProductAttention(
+            config=cfg, layer_number=2, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+
+        assert calls[0]["config"] is cfg
+        assert calls[0]["attn_mask_type"] == AttnMaskType.causal
+        assert attention._image_bidirectional_attention is False
+        assert attention._causal_image_attention is True
+        assert attention._image_attention_window is None
+
+    @pytest.mark.parametrize("layer_number", [1, 2])
+    @pytest.mark.parametrize("text_config", [None, SimpleNamespace(use_bidirectional_attention=None)])
+    def test_layers_without_image_bidirectional_attention_are_unchanged(self, monkeypatch, layer_number, text_config):
+        calls = self._capture_init(monkeypatch)
+        cfg = _config(text_config=text_config)
+
+        attention = Gemma4DotProductAttention(
+            config=cfg, layer_number=layer_number, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+        calls_forward = self._capture_forward(monkeypatch)
+        value = torch.ones(2, 1, 1, 4)
+        mask = torch.zeros(1, 1, 2, 2, dtype=torch.bool)
+        attention.forward(value, value, value, mask, AttnMaskType.causal, attention_bias=None)
+
+        assert calls[0]["config"] is cfg
+        assert calls[0]["attn_mask_type"] == AttnMaskType.causal
+        assert calls_forward["mask"] is mask
+        assert calls_forward["attention_bias"] is None
+
+    @pytest.mark.parametrize("with_image_mask", [True, False])
+    def test_sliding_image_layer_applies_left_window_and_keeps_future_image_tokens(self, monkeypatch, with_image_mask):
+        self._capture_init(monkeypatch)
+        attention = Gemma4DotProductAttention(
+            config=self._vision_config(window_size=(1, 0)),
+            layer_number=1,
+            attn_mask_type=AttnMaskType.causal,
+            attention_type="self",
+        )
+        calls = self._capture_forward(monkeypatch)
+        value = torch.ones(4, 1, 1, 4)
+        mask = torch.zeros(1, 1, 4, 4, dtype=torch.bool) if with_image_mask else None
+
+        attention.forward(value, value, value, mask, AttnMaskType.causal)
+
+        assert calls["mask"][0, 0, 3, 1].item() is True
+        assert calls["mask"][0, 0, 3, 2].item() is False
+        assert calls["mask"][0, 0, 0, 1].item() is (not with_image_mask)
+
+    def test_global_image_layer_masks_future_image_tokens(self, monkeypatch):
+        self._capture_init(monkeypatch)
+        attention = Gemma4DotProductAttention(
+            config=self._vision_config(), layer_number=2, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+        calls = self._capture_forward(monkeypatch)
+        value = torch.ones(3, 1, 1, 4)
+        image_block_mask = torch.zeros(1, 1, 3, 3, dtype=torch.bool)
+
+        attention.forward(value, value, value, image_block_mask, AttnMaskType.causal)
+
+        torch.testing.assert_close(calls["mask"][0, 0], torch.ones(3, 3, dtype=torch.bool).triu(diagonal=1))
+        assert calls["mask_type"] == AttnMaskType.causal
+
+    def test_decode_step_offsets_query_positions(self, monkeypatch):
+        self._capture_init(monkeypatch)
+        attention = Gemma4DotProductAttention(
+            config=self._vision_config(window_size=(1, 0)),
+            layer_number=1,
+            attn_mask_type=AttnMaskType.causal,
+            attention_type="self",
+        )
+        calls = self._capture_forward(monkeypatch)
+        query = torch.ones(1, 1, 1, 4)
+        key = torch.ones(4, 1, 1, 4)
+
+        attention.forward(query, key, key, None, AttnMaskType.causal)
+
+        assert calls["mask"][0, 0, 0].tolist() == [True, True, False, False]
+
+    def test_real_softmax_keeps_image_block_in_sliding_layers_only(self):
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        cfg = TransformerConfig(
+            num_layers=2,
+            hidden_size=8,
+            num_attention_heads=2,
+            window_size=(1, 0),
+            window_attn_skip_freq=[1, 0],
+            masked_softmax_fusion=False,
+        )
+        cfg.text_config = SimpleNamespace(use_bidirectional_attention="vision")
+        pg_collection = SimpleNamespace(tp=SimpleNamespace(size=lambda: 1))
+        # Text, a three-token image, text. The VL model's mask opens the image block in every layer.
+        image = torch.tensor([False, True, True, True, False])
+        causal = torch.ones(5, 5, dtype=torch.bool).tril()
+        image_block_mask = ~(causal | (image[:, None] & image[None, :]))[None, None]
+        qkv = torch.zeros(5, 1, 2, 4)
+
+        probs = {}
+        for layer_number in (1, 2):
+            attention = Gemma4DotProductAttention(
+                config=cfg,
+                layer_number=layer_number,
+                attn_mask_type=AttnMaskType.causal,
+                attention_type="self",
+                pg_collection=pg_collection,
+            )
+            captured = {}
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(
+                    "megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.forward",
+                    lambda self, q, k, v, mask, *args, **kwargs: captured.setdefault("mask", mask),
+                )
+                attention.forward(qkv, qkv, qkv, image_block_mask)
+            # Megatron Core's softmax, as configured for this layer; it masks the scores in place.
+            probs[layer_number] = attention.scale_mask_softmax(torch.zeros(1, 2, 5, 5), captured["mask"])[0, 0]
+
+        # Sliding layer: the first image token attends to the later image tokens; the window of 2
+        # drops the first text token for the last image token.
+        assert probs[1][1, 3] > 0
+        assert probs[1][3, 0] == 0
+        assert probs[1][4, 0] == 0
+        # Global layer: causal, including image tokens.
+        assert probs[2][1, 2] == 0
+        assert probs[2][1, 3] == 0
+        assert probs[2][3, 0] > 0
 
 
 class TestGemma4SelfAttention:
@@ -1285,6 +1514,112 @@ class TestGemma4SharedKVWiring:
         assert missing._kv_source_ref is None
 
 
+def _cpu_sliding_window_causal_mask(sq, skv, window_size):
+    mask = torch.triu(torch.ones(sq, skv, dtype=torch.bool), diagonal=skv - sq - window_size[0])
+    return ~torch.tril(mask, diagonal=skv - sq + window_size[1])
+
+
+class TestGemma4SharedKVTraining:
+    """Run a real tiny dense model with shared KV through forward and backward on CPU."""
+
+    @pytest.fixture
+    def cpu_model_parallel(self, monkeypatch, tmp_path):
+        # The local dense layer spec runs on CPU once RoPE, the sliding-window mask, the dropout RNG fork and the
+        # final norm stop assuming CUDA, and MCore's torch.compile'd activations run eagerly.
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+        monkeypatch.setattr("megatron.core.transformer.transformer_block.LayerNormImpl", WrappedTorchNorm)
+        monkeypatch.setattr(
+            "megatron.core.fusions.fused_softmax.get_sliding_window_causal_mask",
+            _cpu_sliding_window_causal_mask,
+        )
+        monkeypatch.setattr(
+            Gemma4DenseRotaryEmbedding,
+            "forward",
+            lambda self, max_seq_len, offset=0, packed_seq=False, cp_group=None: (
+                self.rope_sliding.get_emb(max_seq_len, offset),
+                self.rope_full.get_emb(max_seq_len, offset),
+            ),
+        )
+        monkeypatch.setattr(tensor_parallel.random.CudaRNGStatesTracker, "fork", lambda self, name=None: nullcontext())
+        torch.distributed.init_process_group(
+            "gloo", init_method=f"file://{tmp_path / 'dist_init'}", rank=0, world_size=1
+        )
+        parallel_state.initialize_model_parallel()
+        try:
+            with torch.compiler.set_stance("force_eager"):
+                yield
+        finally:
+            parallel_state.destroy_model_parallel()
+            torch.distributed.destroy_process_group()
+
+    def test_every_trainable_parameter_gets_a_gradient(self, cpu_model_parallel):
+        hf_config = Gemma4TextConfig(
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=6,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            num_global_key_value_heads=1,
+            head_dim=8,
+            global_head_dim=16,
+            layer_types=["sliding_attention", "sliding_attention", "full_attention"] * 2,
+            sliding_window=4,
+            num_kv_shared_layers=2,
+            hidden_size_per_layer_input=8,
+            vocab_size=64,
+            vocab_size_per_layer_input=64,
+            enable_moe_block=False,
+            rope_parameters={
+                "full_attention": {
+                    "partial_rotary_factor": 0.25,
+                    "rope_theta": 1_000_000.0,
+                    "rope_type": "proportional",
+                },
+                "sliding_attention": {"rope_theta": 10_000.0, "rope_type": "default"},
+            },
+        )
+        model_config = Gemma4Bridge().hf_config_to_model_config(hf_config)
+        model_config.seq_length = 16
+        model_config.make_vocab_size_divisible_by = 1
+        model_config.params_dtype = torch.float32
+        model_config.bf16 = False
+        model_config.use_cpu_initialization = True
+        model_config.gradient_accumulation_fusion = False
+        model_config.cross_entropy_loss_fusion = False
+        model_config.finalize()
+        torch.manual_seed(0)
+        model = Gemma4DenseModelBuilder(model_config).build_model(
+            pg_collection=ProcessGroupCollection.use_mpu_process_groups()
+        )
+
+        input_ids = torch.randint(0, 64, (2, 12))
+        loss = model(
+            input_ids=input_ids,
+            position_ids=torch.arange(12).expand(2, -1),
+            attention_mask=torch.ones(1, 1, 12, 12, dtype=torch.bool).triu(diagonal=1),
+            labels=torch.randint(0, 64, (2, 12)),
+        )
+        loss.mean().backward()
+
+        # MCore DDP with overlap_grad_reduce fails at the next zero_grad_buffer() if a bucketed parameter got none.
+        assert [name for name, param in model.named_parameters() if param.requires_grad and param.grad is None] == []
+        shared = {
+            layer.layer_number - 1: layer.self_attention
+            for layer in model.decoder.layers
+            if layer.self_attention.is_kv_shared_layer
+        }
+        assert sorted(shared) == [4, 5]
+        state_dict = model.state_dict()
+        for index, attention in shared.items():
+            # The source layer's K/V replace the layer's own, so its key norm stays a trainable checkpoint entry
+            # (HF keeps k_norm for every layer) whose gradient is all zero.
+            assert attention.k_layernorm.weight.requires_grad
+            assert f"decoder.layers.{index}.self_attention.k_layernorm.weight" in state_dict
+            assert torch.count_nonzero(attention.k_layernorm.weight.grad) == 0
+        assert torch.count_nonzero(model.decoder.layers[3].self_attention.k_layernorm.weight.grad) > 0
+
+
 class TestGemma4PLEHelpers:
     def test_attach_ple_modules_returns_without_valid_dimensions(self):
         model = SimpleNamespace()
@@ -1688,10 +2023,10 @@ class TestGemma4PLEHelpers:
             def _forward_attention(self, input_ids=None):
                 del input_ids
 
-            def __call__(self, **kwargs):
+            def __call__(self, hidden_states, /, **kwargs):
                 self.calls.append(kwargs)
                 return (
-                    kwargs["hidden_states"] + kwargs["per_layer_input"].sum() + float(self.layer_number),
+                    hidden_states + kwargs["per_layer_input"].sum() + float(self.layer_number),
                     f"context-{self.layer_number}",
                 )
 
@@ -1701,11 +2036,11 @@ class TestGemma4PLEHelpers:
             def __init__(self):
                 self.calls = []
 
-            def __call__(self, **kwargs):
+            def __call__(self, hidden_states, /, **kwargs):
                 self.calls.append(kwargs)
                 assert "per_layer_input" not in kwargs
                 assert "context" not in kwargs
-                return kwargs["hidden_states"] + 100.0
+                return hidden_states + 100.0
 
         def fake_checkpoint(function, distribute_saved_activations, *args):
             checkpoint_calls.append(distribute_saved_activations)
@@ -1772,9 +2107,9 @@ class TestGemma4PLEHelpers:
             def _forward_attention(self):
                 pass
 
-            def __call__(self, **kwargs):
+            def __call__(self, hidden_states, /, **kwargs):
                 self.calls.append(kwargs)
-                return kwargs["hidden_states"] + float(self.layer_number), None
+                return hidden_states + float(self.layer_number), None
 
         def fake_checkpoint(function, distribute_saved_activations, *args):
             del distribute_saved_activations
@@ -1825,8 +2160,8 @@ class TestGemma4PLEHelpers:
             def __init__(self, layer_number):
                 self.layer_number = layer_number
 
-            def __call__(self, **kwargs):
-                return kwargs["hidden_states"] + float(self.layer_number), None
+            def __call__(self, hidden_states, /, **kwargs):
+                return hidden_states + float(self.layer_number), None
 
         def fake_checkpoint(function, distribute_saved_activations, *args):
             checkpoint_calls.append(distribute_saved_activations)
@@ -1868,6 +2203,213 @@ class TestGemma4PLEHelpers:
         torch.testing.assert_close(hidden_states, torch.tensor(3.0))
         torch.testing.assert_close(intermediates[0], torch.tensor(1.0))
         assert checkpoint_calls == [True]
+
+    @pytest.mark.parametrize("fp8", [False, True], ids=["tensor_parallel_checkpoint", "te_checkpoint"])
+    @pytest.mark.parametrize("dual_rope", [True, False], ids=["dual_rope", "single_rope"])
+    def test_gemma4_checkpointed_forward_full_recompute_saves_rope_as_tensors(self, monkeypatch, fp8, dual_rope):
+        from megatron.core.extensions import transformer_engine as mcore_te
+
+        class FakeTransformerLayer:
+            def __init__(self, layer_number):
+                self.layer_number = layer_number
+                self.rotary_pos_embs = []
+
+            def __call__(self, hidden_states, /, *, rotary_pos_emb, per_layer_input, **kwargs):
+                del kwargs
+                self.rotary_pos_embs.append(rotary_pos_emb)
+                if isinstance(rotary_pos_emb, tuple):
+                    # Layer 1 uses the local RoPE and layer 2 the global one.
+                    rotary_pos_emb = rotary_pos_emb[self.layer_number - 1]
+                return hidden_states * rotary_pos_emb.cos() + per_layer_input, None
+
+        te_checkpoint_calls = []
+
+        def fake_te_checkpoint(function, distribute_saved_activations, get_rng_state_tracker, tp_group, *args):
+            del get_rng_state_tracker
+            te_checkpoint_calls.append(tp_group)
+            return tensor_parallel.checkpoint(function, distribute_saved_activations, *args)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
+            FakeTransformerLayer,
+        )
+        _use_cpu_checkpoint_rng(monkeypatch)
+        monkeypatch.setattr(mcore_te, "HAVE_TE", True)
+        monkeypatch.setattr(mcore_te, "te_checkpoint", fake_te_checkpoint)
+        block = SimpleNamespace(
+            layers=[FakeTransformerLayer(1), FakeTransformerLayer(2)],
+            config=SimpleNamespace(
+                recompute_method="uniform",
+                recompute_num_layers=1,
+                fp8=fp8,
+                fp4=False,
+                distribute_saved_activations=False,
+            ),
+            num_layers_per_pipeline_rank=2,
+            pg_collection=SimpleNamespace(tp="tp-group"),
+        )
+        torch.manual_seed(0)
+        hidden_states = torch.randn(3, 1, 4, requires_grad=True)
+        per_layer_inputs = torch.randn(1, 3, 2, 4, requires_grad=True)
+        local_rope = torch.randn(3, 1, 4)
+        global_rope = torch.randn(3, 1, 4)
+        rotary_pos_emb = (local_rope, global_rope) if dual_rope else global_rope
+
+        output = _gemma4_checkpointed_forward(
+            block,
+            hidden_states,
+            attention_mask=None,
+            context=None,
+            context_mask=None,
+            rotary_pos_emb=rotary_pos_emb,
+            attention_bias=None,
+            packed_seq_params=None,
+            use_inner_quantization_context=False,
+            per_layer_inputs=per_layer_inputs,
+        )
+        output.sum().backward()
+
+        layer_ropes = [local_rope, global_rope] if dual_rope else [global_rope, global_rope]
+        expected_hidden_states = hidden_states.detach().clone().requires_grad_(True)
+        expected_per_layer_inputs = per_layer_inputs.detach().clone().requires_grad_(True)
+        expected_output = expected_hidden_states
+        for layer_idx, rope in enumerate(layer_ropes):
+            per_layer_input = expected_per_layer_inputs[:, :, layer_idx, :].transpose(0, 1)
+            expected_output = expected_output * rope.cos() + per_layer_input
+        expected_output.sum().backward()
+
+        torch.testing.assert_close(output, expected_output)
+        torch.testing.assert_close(hidden_states.grad, expected_hidden_states.grad)
+        torch.testing.assert_close(per_layer_inputs.grad, expected_per_layer_inputs.grad)
+        assert te_checkpoint_calls == (["tp-group", "tp-group"] if fp8 else [])
+        for layer in block.layers:
+            # One call in the checkpointed forward, one in the backward recompute.
+            assert len(layer.rotary_pos_embs) == 2
+            for seen_rope in layer.rotary_pos_embs:
+                if dual_rope:
+                    assert isinstance(seen_rope, tuple)
+                    torch.testing.assert_close(seen_rope[0], local_rope)
+                    torch.testing.assert_close(seen_rope[1], global_rope)
+                else:
+                    assert isinstance(seen_rope, torch.Tensor)
+                    torch.testing.assert_close(seen_rope, global_rope)
+
+    @pytest.mark.parametrize(
+        ("recompute_method", "recompute_num_layers", "fp8"),
+        [("uniform", 1, False), ("uniform", 2, False), ("block", 3, False), ("uniform", 1, True)],
+        ids=["uniform_1", "uniform_2", "block_3", "uniform_1_te_checkpoint"],
+    )
+    def test_gemma4_checkpointed_forward_full_recompute_keeps_shared_kv_gradients(
+        self, monkeypatch, recompute_method, recompute_num_layers, fp8
+    ):
+        from megatron.core.extensions import transformer_engine as mcore_te
+
+        class FakeSelfAttention:
+            def __init__(self, store_full_length_kv=False, kv_source=None):
+                self.store_full_length_kv = store_full_length_kv
+                self._kv_source_ref = None if kv_source is None else weakref.ref(kv_source)
+                self._stored_kv = None
+
+        class FakeKVSharingLayer(torch.nn.Module):
+            def __init__(self, layer_number, self_attention):
+                super().__init__()
+                self.layer_number = layer_number
+                self.self_attention = self_attention
+                self.key_weight = torch.nn.Parameter(torch.randn(4))
+                self.value_weight = torch.nn.Parameter(torch.randn(4))
+
+            def forward(self, hidden_states, /, *, per_layer_input, **kwargs):
+                del kwargs
+                attention = self.self_attention
+                if attention._kv_source_ref is not None:
+                    key, value = attention._kv_source_ref()._stored_kv
+                else:
+                    key, value = hidden_states * self.key_weight, (hidden_states * self.value_weight).tanh()
+                if attention.store_full_length_kv:
+                    attention._stored_kv = (key, value)
+                return hidden_states + (hidden_states * key).sigmoid() * value + per_layer_input, None
+
+        def fake_te_checkpoint(function, distribute_saved_activations, get_rng_state_tracker, tp_group, *args):
+            del get_rng_state_tracker, tp_group
+            return tensor_parallel.checkpoint(function, distribute_saved_activations, *args)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
+            FakeKVSharingLayer,
+        )
+        _use_cpu_checkpoint_rng(monkeypatch)
+        monkeypatch.setattr(mcore_te, "HAVE_TE", True)
+        monkeypatch.setattr(mcore_te, "te_checkpoint", fake_te_checkpoint)
+        # Like Gemma 4 E2B/E4B: two source layers store K/V, later layers reuse it instead of their own.
+        source_a = FakeSelfAttention(store_full_length_kv=True)
+        source_b = FakeSelfAttention(store_full_length_kv=True)
+        attentions = [
+            FakeSelfAttention(),
+            source_a,
+            source_b,
+            FakeSelfAttention(kv_source=source_a),
+            FakeSelfAttention(kv_source=source_b),
+            FakeSelfAttention(kv_source=source_a),
+        ]
+        torch.manual_seed(0)
+        layers = [FakeKVSharingLayer(index + 1, attention) for index, attention in enumerate(attentions)]
+        block = SimpleNamespace(
+            layers=layers,
+            config=SimpleNamespace(
+                recompute_method=recompute_method,
+                recompute_num_layers=recompute_num_layers,
+                fp8=fp8,
+                fp4=False,
+                distribute_saved_activations=False,
+            ),
+            num_layers_per_pipeline_rank=len(layers),
+            pg_collection=SimpleNamespace(tp=None),
+        )
+        hidden_states = torch.randn(3, 1, 4, requires_grad=True)
+        per_layer_inputs = torch.randn(1, 3, len(layers), 4, requires_grad=True)
+
+        output = _gemma4_checkpointed_forward(
+            block,
+            hidden_states,
+            attention_mask=None,
+            context=None,
+            context_mask=None,
+            rotary_pos_emb=None,
+            attention_bias=None,
+            packed_seq_params=None,
+            use_inner_quantization_context=False,
+            per_layer_inputs=per_layer_inputs,
+        )
+        output.sum().backward()
+        recompute_grads = {
+            name: param.grad
+            for layer in layers
+            for name, param in layer.named_parameters(prefix=str(layer.layer_number))
+        }
+
+        for layer in layers:
+            layer.zero_grad(set_to_none=True)
+        expected_hidden_states = hidden_states.detach().clone().requires_grad_(True)
+        expected_per_layer_inputs = per_layer_inputs.detach().clone().requires_grad_(True)
+        expected_output = expected_hidden_states
+        for index, layer in enumerate(layers):
+            per_layer_input = expected_per_layer_inputs[:, :, index, :].transpose(0, 1)
+            expected_output, _ = layer(expected_output, per_layer_input=per_layer_input)
+        expected_output.sum().backward()
+
+        torch.testing.assert_close(output, expected_output)
+        torch.testing.assert_close(hidden_states.grad, expected_hidden_states.grad)
+        torch.testing.assert_close(per_layer_inputs.grad, expected_per_layer_inputs.grad)
+        for layer in layers:
+            for name, param in layer.named_parameters(prefix=str(layer.layer_number)):
+                if param.grad is None:
+                    assert recompute_grads[name] is None, name
+                else:
+                    torch.testing.assert_close(recompute_grads[name], param.grad, msg=name)
+        # The shared layers used their source's K/V, so their own K/V weights got no gradient.
+        for layer_number in (4, 5, 6):
+            assert recompute_grads[f"{layer_number}.key_weight"] is None
+            assert recompute_grads[f"{layer_number}.value_weight"] is None
 
     def test_gemma4_checkpointed_forward_rejects_invalid_recompute_method(self):
         block = SimpleNamespace(

@@ -261,3 +261,60 @@ def test_mxfp8_peft_supports_lora_and_dora(peft_scheme: str):
     _assert_basic_config(cfg)
     assert cfg.peft is not None
     assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+
+
+def _gpt_oss_hf_config():
+    from transformers import GptOssConfig
+
+    config = GptOssConfig()
+    config.architectures = ["GptOssForCausalLM"]
+    return config
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self):
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        return AutoBridge.from_hf_config(_gpt_oss_hf_config()).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GPT-OSS recipes must use get_model_config(), not the legacy provider API")
+
+
+def _gpt_oss_perf_recipe_factories():
+    from megatron.bridge import perf_recipes
+    from tests.unit_tests.recipes.recipe_test_utils import discover_recipe_factories
+
+    return [
+        factory
+        for factory in discover_recipe_factories(perf_recipes)
+        if factory.__module__.startswith("megatron.bridge.perf_recipes.gpt_oss.")
+    ]
+
+
+_STRICT_RECIPE_CASES = [*_ALL_RECIPE_CASES, *((f.__name__, f) for f in _gpt_oss_perf_recipe_factories())]
+
+
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _STRICT_RECIPE_CASES, ids=_recipe_ids(_STRICT_RECIPE_CASES))
+def test_each_recipe_uses_strict_builder_config(recipe_name: str, recipe_func: Callable, monkeypatch):
+    """Library and perf recipes only set fields that the builder-backed model config declares."""
+    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+    from megatron.bridge.recipes.gpt_oss.h100 import gpt_oss as h100_gpt_oss
+    from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+
+    patch_recipe_construction_dependencies(monkeypatch)
+    monkeypatch.setattr(h100_gpt_oss, "AutoBridge", _BuilderOnlyBridge)
+
+    cfg = _build_recipe_config(recipe_name, recipe_func)
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.softmax_type == "learnable"
+    if recipe_func.__module__.startswith("megatron.bridge.recipes."):
+        # Some perf recipes deliberately benchmark with plain RoPE.
+        assert cfg.model.position_embedding_type == "yarn"

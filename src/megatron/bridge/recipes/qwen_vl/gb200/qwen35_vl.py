@@ -140,9 +140,14 @@ def _apply_qwen35_vl_35b_a3b_gb200_functional_defaults(cfg: ConfigContainer) -> 
     cfg.train.empty_unused_memory_level = 2
 
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
+    # HybridEP fused permute requires identical chunk sizes; combine uses 128 below.
+    cfg.model.moe_permute_fusion_into_hybridep = False
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.high_priority_a2a_comm_stream = True
@@ -197,10 +202,8 @@ def _apply_qwen35_vl_35b_a3b_gb200_functional_defaults(cfg: ConfigContainer) -> 
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
@@ -222,9 +225,9 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     """Build the shared 32-GB200 long-context SFT configuration."""
     cfg = _sft_common_vlm()
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).get_model_config()
+    cfg.model.gdn_kernel_backend = "transformer_engine"
+    cfg.model.gdn_pre_gated_delta_rule_fusion = True
     cfg.model.calculate_per_token_loss = True
     cfg.ddp.average_in_collective = False
 
@@ -234,13 +237,16 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.offload_modules = None
     cfg.model.seq_length = 131072
-    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.context_parallel_size = 8
-    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = True
+    cfg.model.sequence_parallel = False
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
 
@@ -257,9 +263,10 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.dataset = EnergonDatasetConfig(
         seq_length=cfg.model.seq_length,
         micro_batch_size=cfg.train.micro_batch_size,
-        num_workers=1,
-        shuffle_buffer_size=2,
-        packing_buffer_size=8,
+        num_workers=2,
+        num_val_workers=1,
+        shuffle_buffer_size=16,
+        packing_buffer_size=16,
         dataset_kwargs={"image_decode_spec": "pilrgb"},
         task_encoder=QwenVLEnergonTaskEncoderConfig(
             hf_processor_path=hf_path,
@@ -275,6 +282,9 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 200
     cfg.scheduler.lr_decay_iters = 300000
     cfg.scheduler.lr_wsd_decay_iters = 300000
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=False,
         overlap_grad_reduce=False,
@@ -294,17 +304,15 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
         "NVTE_UNFUSED_ATTN": 1,
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        "USE_MNNVL": 1,
     }
     return cfg
 
 
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContainer:
-    """Return 128K BF16 Qwen3.5-VL SFT with TP2/CP8/EP16 on 32 GB200 GPUs.
+    """Return 128K BF16 Qwen3.5-VL SFT with TP1/CP8/EP8 on 32 GB200 GPUs.
 
     Override with ``"dataset.path=$CLEVR2_ENERGON"`` to select the prepared
     Nemotron Image Training v3 ``clevr_2`` Energon shards, and supply a
@@ -322,7 +330,7 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContai
 
 
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Return packed CLEVR2 128K MXFP8 SFT with BF16 parameter communication.
+    """Return packed CLEVR2 128K MXFP8 SFT with FP8 parameter gather and CuTeDSL.
 
     Override with ``"dataset.path=$CLEVR2_ENERGON"`` to select the prepared
     Nemotron Image Training v3 ``clevr_2`` Energon shards, and supply a
@@ -336,8 +344,19 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config() -> ConfigConta
     """
     cfg = _qwen35_vl_35b_a3b_long_context_common()
     cfg.mixed_precision = bf16_with_mxfp8_mixed()
-    cfg.mixed_precision.fp8_param_gather = False
-    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.checkpoint.load_main_params_from_ckpt = True
+    cfg.checkpoint.load_optim = False
+    cfg.checkpoint.load_rng = False
+    cfg.model.moe_use_grouped_tensor = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_single_grouped_weight = True
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL": 1,
+        "NVTE_GROUPED_LINEAR_SINGLE_PARAM": 1,
+    }
     return cfg
 
 

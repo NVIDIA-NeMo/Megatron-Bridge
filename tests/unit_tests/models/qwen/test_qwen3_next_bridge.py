@@ -16,12 +16,18 @@
 Unit tests for Qwen3 Next bridge functionality.
 """
 
-from unittest.mock import Mock
+from dataclasses import fields
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
+from transformers import Qwen3NextConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_next_bridge import Qwen3NextBridge
@@ -540,3 +546,130 @@ class TestQwen3NextBridge:
         assert any("decoder.layers" in p and p.endswith("linear_fc1.weight") for p in seq_params)
         assert any("decoder.layers" in p and p.endswith("linear_fc2.weight") for p in seq_params)
         assert any("mtp.layers" in p for p in seq_params)
+
+
+def _qwen3_next_config(**overrides) -> Qwen3NextConfig:
+    """Return a small Qwen3-Next config with the released 3 GDN : 1 attention layer layout."""
+    values = dict(
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        shared_expert_intermediate_size=32,
+        num_hidden_layers=8,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        num_experts=4,
+        num_experts_per_tok=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        max_position_embeddings=4096,
+        vocab_size=128,
+        dtype="bfloat16",
+    )
+    values.update(overrides)
+    config = Qwen3NextConfig(**values)
+    config.architectures = ["Qwen3NextForCausalLM"]
+    return config
+
+
+class TestQwen3NextBuilderConfig:
+    """Builder-backed ModelConfig path for Qwen3-Next."""
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in Qwen3NextBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert Qwen3NextBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert Qwen3NextBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        bridge = Qwen3NextBridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(_qwen3_next_config())
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.num_layers == 8
+        assert model_config.normalization == "RMSNorm"
+        assert model_config.qk_layernorm is True
+        assert model_config.layernorm_zero_centered_gamma is True
+        assert model_config.attention_output_gate is True
+        assert model_config.experimental_attention_variant == "gated_delta_net"
+        assert model_config.linear_attention_freq == [1, 1, 1, 0, 1, 1, 1, 0]
+        assert model_config.linear_conv_kernel_dim == 4
+        assert model_config.linear_num_key_heads == 2
+        assert model_config.linear_num_value_heads == 4
+        assert model_config.num_moe_experts == 4
+        assert model_config.moe_router_topk == 2
+        assert model_config.moe_shared_expert_intermediate_size == 32
+        assert model_config.moe_shared_expert_gate is True
+        assert model_config.moe_router_load_balancing_type == "global_aux_loss"
+        assert model_config.moe_aux_loss_coeff == 1e-3
+        assert model_config.moe_router_dtype == "fp32"
+        assert model_config.rotary_percent == 0.25
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.hetereogenous_dist_checkpoint is True
+        # Released Qwen3-Next configs do not declare MTP layers; recipes enable MTP explicitly.
+        assert model_config.mtp_num_layers is None
+        # The builder derives the hybrid block spec from experimental_attention_variant.
+        assert model_config.transformer_layer_spec is None
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {},
+            {"tie_word_embeddings": True, "dtype": "float16"},
+            {"rope_scaling": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 1024}},
+            {"num_hidden_layers": 4, "layer_types": ["linear_attention", "full_attention"] * 2},
+        ],
+        ids=["default", "tied_fp16", "yarn", "explicit_layer_types"],
+    )
+    def test_model_config_matches_provider_runtime_config(self, overrides):
+        config = _qwen3_next_config(**overrides)
+        bridge = Qwen3NextBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = config
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(pretrained)
+
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
+        for field_name in sorted(shared):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+        # The provider's default layer spec builds homogeneous layers, so it keeps the hybrid block spec.
+        assert provider.transformer_layer_spec is get_transformer_block_with_experimental_attention_variant_spec
+        assert model_config.transformer_layer_spec is None
+
+    def test_yarn_checkpoint_maps_to_yarn_embeddings(self):
+        config = _qwen3_next_config(
+            rope_scaling={"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 1024}
+        )
+
+        model_config = Qwen3NextBridge().hf_config_to_model_config(config)
+
+        assert model_config.position_embedding_type == "yarn"
+        assert model_config.transformer.yarn_rotary_scaling_factor == 4.0
+        assert model_config.transformer.yarn_original_max_position_embeddings == 1024
+
+    def test_builder_default_layer_spec_builds_gated_delta_net_block(self, monkeypatch):
+        from megatron.training.models import gpt as mcore_gpt
+
+        calls = []
+
+        def block_spec(config, vp_stage=None):
+            calls.append((config, vp_stage))
+            return "hybrid-block-spec"
+
+        monkeypatch.setattr(mcore_gpt, "get_transformer_block_with_experimental_attention_variant_spec", block_spec)
+        model_config = Qwen3NextBridge().hf_config_to_model_config(_qwen3_next_config())
+
+        assert mcore_gpt.default_layer_spec(model_config, vp_stage=None) == "hybrid-block-spec"
+        assert calls == [(model_config.transformer, None)]

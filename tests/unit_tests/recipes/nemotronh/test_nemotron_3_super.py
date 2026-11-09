@@ -30,9 +30,11 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_super import (
+    nemotron_3_super_peft_16gpu_gb200_bf16_config,
     nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+    nemotron_3_super_sft_64gpu_gb200_bf16_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_peft_16gpu_h100_bf16_config,
@@ -46,6 +48,8 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
+from tests.unit_tests.recipes.recipe_test_utils import nemotron_h_model_config
 
 
 @pytest.mark.unit
@@ -55,6 +59,8 @@ from megatron.bridge.training.config import ConfigContainer
         nemotron_3_super_pretrain_config,
         nemotron_3_super_pretrain_16gpu_h100_bf16_config,
         nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+        nemotron_3_super_sft_64gpu_gb200_bf16_config,
+        nemotron_3_super_peft_16gpu_gb200_bf16_config,
         nemotron_3_super_sft_config,
         nemotron_3_super_sft_16gpu_h100_bf16_config,
         nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
@@ -67,20 +73,13 @@ def test_text_only_source_preserves_super_recipe_policy(monkeypatch, recipe):
 
     def from_hf(path, **kwargs):
         calls.append((path, kwargs))
-        provider = HybridModelProvider(
-            hidden_size=256,
-            num_attention_heads=8,
-            hybrid_layer_pattern="ME*E",
-            vocab_size=131072,
-            hf_model_id=path,
-            hf_model_revision=kwargs.get("revision"),
-            hf_model_text_only=kwargs.get("text_only", False),
-            mtp_num_layers=1,
-            mtp_hybrid_override_pattern="*E",
-            mtp_use_repeated_layer=True,
+        model_config = nemotron_h_model_config(
+            path, hybrid_override_pattern="ME*E", num_nextn_predict_layers=1, mtp_hybrid_override_pattern="*E"
         )
+        if kwargs.get("revision"):
+            model_config.extra_checkpoint_metadata["hf_model_revision"] = kwargs["revision"]
         return SimpleNamespace(
-            to_megatron_provider=lambda *, load_weights: provider,
+            get_model_config=lambda: model_config,
             hf_model_revision=kwargs.get("revision"),
         )
 
@@ -100,9 +99,9 @@ def test_text_only_source_preserves_super_recipe_policy(monkeypatch, recipe):
     actual.pop("tokenizer")
     expected["checkpoint"].pop("hf_trust_remote_code")
     actual["checkpoint"].pop("hf_trust_remote_code")
-    for field in ("hf_model_id", "hf_model_revision", "hf_model_text_only"):
-        expected["model"].pop(field)
-        actual["model"].pop(field)
+    # Only the recorded Hugging Face source differs.
+    assert actual["model"].pop("extra_checkpoint_metadata") == {"hf_model_id": "org/vl", "hf_model_revision": "pinned"}
+    expected["model"].pop("extra_checkpoint_metadata")
     assert actual == expected
 
 
@@ -119,7 +118,7 @@ class TestNemotron3SuperPretrain:
         config = nemotron_3_super_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, BridgeHybridModelConfig)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 1
@@ -178,7 +177,6 @@ class TestNemotron3SuperPretrain:
         # Verify MTP recipe-level settings
         # Note: the recipe overrides mtp_use_repeated_layer=True (provider default is False)
         assert config.model.mtp_use_repeated_layer is True
-        assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.calculate_per_token_loss is True
         assert config.model.mtp_loss_scaling_factor == 0.3
 
@@ -211,7 +209,7 @@ class TestNemotron3SuperSft:
         config = nemotron_3_super_sft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, BridgeHybridModelConfig)
 
         # Check parallelism for full SFT
         assert config.model.tensor_model_parallel_size == 8
@@ -314,7 +312,7 @@ class TestNemotron3SuperPeft:
         config = nemotron_3_super_peft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, BridgeHybridModelConfig)
 
         # Check default parallelism for LoRA
         assert config.model.tensor_model_parallel_size == 1
@@ -364,7 +362,7 @@ class TestNemotron3SuperCommon:
         config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, BridgeHybridModelConfig)
 
         # Check required sections exist
         assert config.train is not None
@@ -486,3 +484,77 @@ class TestNemotron3Super16GpuH100:
         assert config.ddp.average_in_collective is False
         assert config.ddp.overlap_grad_reduce is False
         assert config.ddp.overlap_param_gather is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("gb200_recipe", "h100_recipe", "expert_parallel_size"),
+    [
+        (nemotron_3_super_sft_64gpu_gb200_bf16_config, nemotron_3_super_sft_16gpu_h100_bf16_config, 64),
+        (nemotron_3_super_peft_16gpu_gb200_bf16_config, nemotron_3_super_peft_16gpu_h100_bf16_config, 16),
+    ],
+)
+def test_gb200_finetuning_owns_execution_policy_and_preserves_training_contract(
+    gb200_recipe, h100_recipe, expert_parallel_size
+):
+    from megatron.bridge import recipes
+
+    assert getattr(recipes, gb200_recipe.__name__) is gb200_recipe
+    original = h100_recipe()
+    actual = gb200_recipe()
+    assert original.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert original.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert original.env_vars["USE_MNNVL"] == 0
+    assert actual.model.tensor_model_parallel_size == 8
+    assert actual.model.expert_model_parallel_size == expert_parallel_size
+    assert actual.model.moe_token_dispatcher_type == "flex"
+    assert actual.model.moe_flex_dispatcher_backend == "hybridep"
+    assert actual.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expert_parallel_size
+    assert actual.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert actual.env_vars["USE_MNNVL"] == 1
+    assert actual.optimizer.use_precision_aware_optimizer is False
+    for name in ("main_grads_dtype", "main_params_dtype", "exp_avg_dtype", "exp_avg_sq_dtype"):
+        assert getattr(actual.optimizer, name) == torch.float32
+    assert actual.mixed_precision.grad_reduce_in_fp32 is True
+    assert actual.ddp.grad_reduce_in_fp32 is True
+    assert actual.checkpoint.async_save is False
+    assert actual.checkpoint.exit_on_missing_checkpoint is True
+    assert actual.ddp.check_for_nan_in_grad is True
+    assert actual.ddp.check_for_large_grads is True
+    assert actual.rerun_state_machine.check_for_nan_in_loss is True
+    assert actual.checkpoint.load == original.checkpoint.load
+    assert actual.checkpoint.load_optim == original.checkpoint.load_optim
+    assert actual.checkpoint.load_rng == original.checkpoint.load_rng
+
+    # Only the GB200 execution/precision policy differs. Preserve objective,
+    # LR schedule, MTP, adapters, dataset and normal checkpoint resume behavior.
+    original.model.expert_model_parallel_size = expert_parallel_size
+    original.model.moe_token_dispatcher_type = "flex"
+    original.model.moe_shared_expert_overlap = False
+    original.model.moe_router_force_load_balancing = False
+    original.optimizer.use_precision_aware_optimizer = False
+    original.optimizer.main_grads_dtype = torch.float32
+    original.optimizer.main_params_dtype = torch.float32
+    original.optimizer.exp_avg_dtype = torch.float32
+    original.optimizer.exp_avg_sq_dtype = torch.float32
+    original.mixed_precision = bf16_mixed()
+    original.mixed_precision.grad_reduce_in_fp32 = True
+    original.ddp.grad_reduce_in_fp32 = True
+    original.ddp.check_for_large_grads = True
+    original.checkpoint.async_save = False
+    original.checkpoint.exit_on_missing_checkpoint = True
+    original.env_vars.update(
+        NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=expert_parallel_size,
+        NVLINK_DOMAIN_SIZE=72,
+        USE_MNNVL=1,
+    )
+    assert actual.to_dict() == original.to_dict()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_gb200_peft_preserves_adapter_scheme(peft_scheme):
+    config = nemotron_3_super_peft_16gpu_gb200_bf16_config(peft_scheme)
+    expected = nemotron_3_super_peft_16gpu_h100_bf16_config(peft_scheme)
+    assert type(config.peft) is type(expected.peft)
+    assert config.to_dict()["peft"] == expected.to_dict()["peft"]

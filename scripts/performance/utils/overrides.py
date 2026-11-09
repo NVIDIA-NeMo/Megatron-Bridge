@@ -280,7 +280,7 @@ def _apply_flat_cli_environment_compatibility(
     if connection_override:
         moe_a2a_overlap = args.moe_a2a_overlap if args.moe_a2a_overlap is not None else base_moe_a2a_overlap
         max_connections = 32 if effective_dispatcher_backend in {"deepep", "hybridep", "ncclep"} else 8
-        if gpu in {"b200", "b300", "gb200", "gb300", "vr200"}:
+        if gpu in {"b200", "b300", "gb200", "gb300", "vrnvl72"}:
             max_connections = 32
         elif (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
             max_connections = 1
@@ -292,7 +292,7 @@ def _apply_flat_cli_environment_compatibility(
         if gpu in {"h100", "b200", "b300"}:
             domain_size = 8
             ranks_per_domain = min(ep_size, domain_size)
-        elif gpu in {"gb200", "gb300", "vr200", "r100"}:
+        elif gpu in {"gb200", "gb300", "vrnvl72", "r100"}:
             domain_size = 72
             if ep_size > domain_size:
                 raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
@@ -553,6 +553,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
                 num_workers=recipe.dataset.num_workers,
                 pin_memory=recipe.dataset.pin_memory,
                 persistent_workers=recipe.dataset.persistent_workers,
+                create_attention_mask=getattr(recipe.dataset, "create_attention_mask", True),
             )
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:

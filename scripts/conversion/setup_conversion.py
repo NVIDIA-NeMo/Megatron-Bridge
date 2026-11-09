@@ -25,7 +25,7 @@ from pathlib import Path
 
 import nemo_run as run
 from arguments import build_parser, conversion_worker_args
-from container_runtime import apply_container_runtime, validate_container_runtime
+from container_runtime import apply_container_runtime, run_from_container_repo_root, validate_container_runtime
 from nemo_run.config import get_nemorun_home
 from slurm_wait import wait_for_slurm_job
 from torchx.specs.api import AppState
@@ -139,6 +139,8 @@ def _validate_args(args: argparse.Namespace) -> None:
                 worker_values.append(args.megatron_path)
             if args.command == "export":
                 worker_values.append(args.hf_path)
+            if args.command == "import" and args.bagel_repo is not None:
+                worker_values.append(args.bagel_repo)
             if any(shlex.quote(value) != value for value in worker_values):
                 raise ValueError(
                     "Local GPU execution cannot pass model IDs or paths containing whitespace or shell "
@@ -284,6 +286,8 @@ def main(argv: list[str] | None = None) -> None:
 
     experiment_options = {"skip_status_at_exit": True} if args.executor == "slurm" else {}
     task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
+    if args.executor == "slurm" and args.container_runtime == "pyxis":
+        task = run_from_container_repo_root(task)
     with run.Experiment(experiment_name, **experiment_options) as experiment:
         experiment.add(task, executor=executor, name=f"{args.command}-{args.device}")
         if args.submission_dry_run:

@@ -67,6 +67,10 @@ class _FakeBridge:
     def to_megatron_provider(self, load_weights: bool = False):
         return _FakeModelCfg()
 
+    def get_model_config(self):
+        # Builder-backed recipes (e.g. dense Qwen3) request a ModelConfig instead.
+        return _FakeModelCfg()
+
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         expected_revisions = {
@@ -91,6 +95,12 @@ class _FakeMoeBridge(_FakeBridge):
 
     def to_megatron_provider(self, load_weights: bool = False):
         cfg = super().to_megatron_provider(load_weights=load_weights)
+        cfg.num_moe_experts = 128
+        return cfg
+
+    def get_model_config(self):
+        # Builder-backed Qwen3 MoE recipes request a ModelConfig instead.
+        cfg = super().get_model_config()
         cfg.num_moe_experts = 128
         return cfg
 
@@ -543,7 +553,6 @@ def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.moe_flex_dispatcher_backend is None
     assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_flex_dispatcher_num_sms is None
-    assert cfg.model.moe_a2a_overlap is False
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.bias_activation_fusion is True
     assert cfg.model.apply_rope_fusion is True
@@ -797,7 +806,6 @@ def test_qwen3_30b_a3b_gb200_fp8mx_perf_recipe_uses_main_recipe(
     assert perf_cfg.train.micro_batch_size == main_cfg.train.micro_batch_size
     assert perf_cfg.model.moe_flex_dispatcher_backend == main_cfg.model.moe_flex_dispatcher_backend
     assert perf_cfg.model.moe_token_dispatcher_type == main_cfg.model.moe_token_dispatcher_type
-    assert perf_cfg.model.moe_a2a_overlap == main_cfg.model.moe_a2a_overlap
     assert perf_cfg.comm_overlap == main_cfg.comm_overlap
     assert perf_cfg.env_vars == main_cfg.env_vars
     assert perf_cfg.model.offload_modules == main_cfg.model.offload_modules == []

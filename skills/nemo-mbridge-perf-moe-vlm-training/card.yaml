@@ -3,7 +3,11 @@ validated_on: "2026-08-25"
 summary: >
   Training strategies for MoE vision-language models (VLMs), comparing FSDP
   vs 3D Parallel approaches. Backed by empirical data from Qwen3-VL 235B
-  and Qwen3.5-35B multimodal experiments on GB200 and B200.
+  and Qwen3.5-35B multimodal experiments on GB200 and B200. The best_configs
+  below are historical measured configurations, not default recommendations.
+  Retain full recompute only with target-scale fit evidence or a matched
+  throughput advantage over viable no-recompute/selective layouts; the
+  historical rows alone do not establish that comparison.
 
 validation_status:
   qwen3_vl_fsdp_gb200:
@@ -26,8 +30,9 @@ training_dimensions:
     effect: "FSDP shards more aggressively; 3D Parallel often needs recompute"
     confidence: medium
     rationale: >
-      3D Parallel with real vision data often needs full recompute for initial
-      fit, then should be retested with supported selective modules.
+      Full recompute can help diagnostic bring-up. For final recipes, measure
+      no recompute or cheap selective modules and retain full recompute only
+      for demonstrated capacity need or a matched end-to-end throughput gain.
   scale:
     effect: "Both approaches tested at 64–128 GPUs"
     confidence: medium

@@ -27,7 +27,7 @@ TELayerNormColumnParallelLinear). EXAONE instead needs:
 - Row-parallel linears with post-layernorm for output projection and FC2
 
 The Post-LN implementation reuses the TERowParallelLinearLayerNorm pattern
-established by Gemma2 bridge.
+established by the shared post-normalization layer.
 """
 
 from megatron.core.extensions.transformer_engine import TEColumnParallelLinear

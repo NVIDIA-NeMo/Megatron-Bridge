@@ -54,14 +54,18 @@ if transformers.__version__ == "5.17.0":
 
 
 def patch_minimax_m3_vision_rope() -> bool:
-    """Restore 3D vision RoPE for new HF MiniMax models on Transformers 5.17.0.
+    """Restore partial 3D vision RoPE on Transformers 5.17.0 only.
 
     Transformers PR #48105 changed the frequency ladder to 2D and dropped the
     width coordinate from the T/H/W position IDs. Keep the released checkpoint's
-    partial 3D rotation until an upstream fixed release is available. Replacing
-    the class affects new MiniMax models only. Import Bridge before constructing
-    HF MiniMax models; existing instances retain their old numerical behavior
-    and should be reconstructed before serialization.
+    partial 3D rotation on 5.17.0. Transformers PR #49164 restores the geometry
+    in 5.18+. Leave those releases unpatched: their native buffer-based frequency
+    calculation can differ after model.half()/bfloat16() from the FP32-per-forward
+    calculation used here. That precision difference is accepted; it is not the
+    missing-axis/incorrect-geometry bug this compatibility patch addresses.
+    Replacing the class affects new MiniMax models only. Import Bridge before
+    constructing HF MiniMax models; existing instances retain their old numerical
+    behavior and should be reconstructed before serialization.
     """
     if transformers.__version__ != "5.17.0":
         return False

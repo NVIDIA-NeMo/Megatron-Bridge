@@ -91,13 +91,14 @@ if [ -z "$PAD_SEQ_TO_MULT" ]; then
     fi
 fi
 
-RECOMPUTE_GRANULARITY=${RECOMPUTE_GRANULARITY:-full}
-RECOMPUTE_METHOD=${RECOMPUTE_METHOD:-uniform}
+# Leave these empty to use the recipe's selective recompute; set them to override it.
+RECOMPUTE_GRANULARITY=${RECOMPUTE_GRANULARITY:-}
+RECOMPUTE_METHOD=${RECOMPUTE_METHOD:-}
 if [ -z "${RECOMPUTE_MODULES+x}" ]; then
     RECOMPUTE_MODULES=""
 fi
-RECOMPUTE_NUM_LAYERS=${RECOMPUTE_NUM_LAYERS:-1}
-RECOMPUTE_TAG=${RECOMPUTE_TAG:-recompute_full_uniform1}
+RECOMPUTE_NUM_LAYERS=${RECOMPUTE_NUM_LAYERS:-}
+RECOMPUTE_TAG=${RECOMPUTE_TAG:-recompute_${RECOMPUTE_GRANULARITY:-recipe}}
 
 WANDB_ENTITY=${WANDB_ENTITY:-nvidia-nemo-fw-public}
 WANDB_PROJECT=${WANDB_PROJECT:-megatron-bridge-nemotron-ultra}
@@ -121,6 +122,10 @@ export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 export NCCL_TIMEOUT=${NCCL_TIMEOUT:-1800000}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
+# Compile Inductor kernels in the training process. On Python 3.12 before 3.12.8, Inductor's default pool of forked
+# compile workers can deadlock when it re-forks after an idle period (pytorch/pytorch#200848), stalling the long
+# first step. Inductor reads this when it is imported, so it must be exported here; the recipe cannot set it.
+export TORCHINDUCTOR_COMPILE_THREADS=${TORCHINDUCTOR_COMPILE_THREADS:-1}
 export PYTHONWARNINGS="${PYTHONWARNINGS:+${PYTHONWARNINGS},}ignore:The AccumulateGrad node:UserWarning"
 
 # ==============================================================================
@@ -171,9 +176,11 @@ CLI_OVERRIDES="\
     dataset.seq_length=${SEQ_LENGTH} \
     dataset.offline_packing_specs.packed_sequence_size=${SEQ_LENGTH} \
     dataset.offline_packing_specs.pad_seq_to_mult=${PAD_SEQ_TO_MULT} \
-    model.recompute_granularity=${RECOMPUTE_GRANULARITY} \
     dist.distributed_timeout_minutes=90"
 
+if [ -n "$RECOMPUTE_GRANULARITY" ]; then
+    CLI_OVERRIDES="${CLI_OVERRIDES} model.recompute_granularity=${RECOMPUTE_GRANULARITY}"
+fi
 if [ -n "$RECOMPUTE_METHOD" ]; then
     CLI_OVERRIDES="${CLI_OVERRIDES} model.recompute_method=${RECOMPUTE_METHOD}"
 fi
@@ -205,7 +212,7 @@ echo "GPUs/node: ${GPUS_PER_NODE}"
 echo "Recipe: ${RECIPE_NAME}"
 echo "Parallelism: TP=${TP} PP=${PP} EP=${EP} ETP=${ETP} CP=${CP} SP=${SP}"
 echo "Packed pad_seq_to_mult: ${PAD_SEQ_TO_MULT}"
-echo "Recompute: ${RECOMPUTE_GRANULARITY} ${RECOMPUTE_METHOD:-} ${RECOMPUTE_MODULES}"
+echo "Recompute: ${RECOMPUTE_GRANULARITY:-recipe default} ${RECOMPUTE_METHOD:-} ${RECOMPUTE_MODULES}"
 echo "Save dir: ${SAVE_DIR}"
 echo "W&B: ${WANDB_ENTITY}/${WANDB_PROJECT} (${WANDB_MODE})"
 echo "======================================"

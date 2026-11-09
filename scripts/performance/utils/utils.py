@@ -75,8 +75,6 @@ _DEFAULT_GPU_COUNT_OVERRIDES = {
     ("llama3_8b", "pretrain", "gb300", "nvfp4", None): 8,
     ("llama3_8b", "pretrain", "h100", "bf16", None): 8,
     ("llama3_8b", "pretrain", "h100", "fp8cs", None): 8,
-    ("nemotronh_56b", "pretrain", "b200", "fp8cs", None): 64,
-    ("nemotronh_56b", "pretrain", "gb300", "fp8cs", None): 64,
     ("qwen3_30b_a3b", "pretrain", "b200", "bf16", None): 8,
     ("qwen3_30b_a3b", "pretrain", "b200", "fp8cs", None): 8,
     ("qwen3_30b_a3b", "pretrain", "gb200", "bf16", None): 8,
@@ -326,7 +324,7 @@ def apply_target_topology_environment(
             "NVLINK_DOMAIN_SIZE": 8,
             "USE_MNNVL": 0,
         }
-    elif normalized_gpu in {"gb200", "gb300", "vr200", "r100"}:
+    elif normalized_gpu in {"gb200", "gb300", "vrnvl72", "r100"}:
         if expert_model_parallel_size > 72:
             raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
         topology = {

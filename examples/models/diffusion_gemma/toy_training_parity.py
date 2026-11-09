@@ -31,6 +31,7 @@ from types import SimpleNamespace
 
 import torch
 import torch.distributed as dist
+from fp32_precision import disable_tf32
 from megatron.core.transformer.enums import AttnBackend
 from real_encoder_parity import compare_layer0, hf_layer0_trace, megatron_layer0_trace
 from toy_parity import image_case, native_hf_encoder_inputs, toy_config
@@ -351,8 +352,7 @@ def main() -> None:
     dist.init_process_group("nccl")
     torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
     torch.manual_seed(1234)
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
+    disable_tf32()
 
     shared_dir = [tempfile.mkdtemp(prefix="diffusiongemma-toy-") if dist.get_rank() == 0 else None]
     dist.broadcast_object_list(shared_dir, src=0)
