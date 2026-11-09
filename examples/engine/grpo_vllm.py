@@ -28,7 +28,7 @@ import logging
 import time
 
 import torch
-from dapo_math import Sample, group_advantages, load_prompts, response_slice, score, to_datum
+from dapo_math import Sample, group_advantages, load_prompts, response_slice, score, to_datum, without_routing
 from transformers import AutoTokenizer
 from vllm_rollout import VllmRollout
 
@@ -65,6 +65,14 @@ def parse_args(add_arguments=None, description: str = __doc__) -> argparse.Names
         help="Train LoRA adapters of this rank on the frozen policy instead of full weights (0: full fine-tuning)",
     )
     parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
+    parser.add_argument(
+        "--measure-merge-every",
+        type=int,
+        default=0,
+        help="With --lora-rank: every N rounds (and the last), score the round's samples with a frozen engine on "
+        "the merged weights vllm received, to split the train/vllm gap into merge rounding and kernels (0: never)",
+    )
+    parser.add_argument("--merge-dir", default=None, help="Scratch root for the merged HF exports of the measurement")
     parser.add_argument("--clip-low", type=float, default=0.2)
     parser.add_argument("--clip-high", type=float, default=0.28)
     parser.add_argument("--tis-coef", type=float, default=2.0)
@@ -97,14 +105,15 @@ def parse_args(add_arguments=None, description: str = __doc__) -> argparse.Names
     return parser.parse_args()
 
 
-def build_engine(args: argparse.Namespace, **kwargs) -> TrainingEngine:
+def build_engine(args: argparse.Namespace, *, checkpoint_path: str | None = None, **kwargs) -> TrainingEngine:
     """An engine on ``--checkpoint``: ``TrainingEngine(model, ...)`` for ``--model``, ``from_recipe`` for ``--recipe``.
 
     ``kwargs`` are the per-engine options (``trainable``, ``output_head``). Only the policy's Datums carry
     routing, so ``router_replay`` is set on every engine without effect on the others. ``--lora-rank``
     gives the trainable language-model engine (the policy) LoRA adapters; frozen and value-head engines
-    keep full weights.
+    keep full weights. ``checkpoint_path`` replaces ``--checkpoint`` (the merge measurement's frozen engine).
     """
+    checkpoint_path = checkpoint_path or args.checkpoint
     if (args.model is None) == (args.recipe is None):
         raise SystemExit("pass exactly one of --model or --recipe")
     if args.lora_rank and kwargs.get("trainable", True) and kwargs.get("output_head", "lm") == "lm":
@@ -116,13 +125,13 @@ def build_engine(args: argparse.Namespace, **kwargs) -> TrainingEngine:
             args.model,
             seq_length=args.seq_length,
             hardware=args.hardware,
-            checkpoint_path=args.checkpoint,
+            checkpoint_path=checkpoint_path,
             overrides={"router_replay": args.router_replay},
             **kwargs,
         )
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
     recipe.router_replay = args.router_replay
-    return TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, **kwargs)
+    return TrainingEngine.from_recipe(recipe, checkpoint_path=checkpoint_path, **kwargs)
 
 
 def chunks(items: list, n: int) -> list[list]:
@@ -139,6 +148,65 @@ def consistency(datums: list[Datum], logprobs: list[torch.Tensor]) -> float:
         total += float(diff.sum())
         count += diff.numel()
     return total / max(count, 1)
+
+
+def _gap_stats(name: str, datums: list[Datum], first: list[torch.Tensor], second: list[torch.Tensor]) -> dict:
+    """Mean, p99 and max |first - second| over response tokens, and mean exp|first - second|."""
+    deltas = torch.cat(
+        [
+            (response_slice(d, a.cpu()) - response_slice(d, b.cpu())).abs().double()
+            for d, a, b in zip(datums, first, second)
+        ]
+    )
+    ordered = deltas.sort().values
+    return {
+        f"{name}_mean": float(deltas.mean()),
+        f"{name}_p99": float(ordered[int(0.99 * (len(ordered) - 1))]),
+        f"{name}_max": float(ordered[-1]),
+        f"{name}_mult_prob_error": float(deltas.exp().mean()),
+    }
+
+
+def measure_merge(policy: TrainingEngine, datums: list[Datum], args, round_index: int) -> dict[str, float]:
+    """Split this round's train/vllm logprob gap into merge rounding and kernel differences.
+
+    All three logprob sets are taken on the round's samples at the weights vllm sampled them with (before
+    the round's updates), with native routing: A is the policy with its adapters (``W x + s B(A x)``), B a
+    frozen engine built from the merged bf16 weights the refresh sent (``bf16(W + s B A) x``), C vllm's own
+    logprobs. ``merge_gap`` = |A - B| is the rounding alone (same kernels), ``kernel_gap`` = |B - C| matches
+    what full fine-tuning sees, ``total_gap`` = |A - C| is the example's usual agreement metric. The merged
+    HF directory and an adapter-only export of the same state stay under ``--merge-dir/round_<n>`` for an
+    offline per-tensor analysis; the previous round's directories are removed.
+    """
+    import os
+    import shutil
+
+    start = time.perf_counter()
+    rank0 = torch.distributed.get_rank() == 0
+    plain = without_routing(datums)
+    out_dir = os.path.join(args.merge_dir, f"round_{round_index:04d}")
+    policy.cuda()
+    trainer = [lp.cpu() for lp in policy.forward_only(plain).logprobs]
+    policy.export(path=os.path.join(out_dir, "merged"))
+    policy.export(path=os.path.join(out_dir, "adapter"), adapter_only=True)
+    policy.cpu()
+    frozen = build_engine(args, checkpoint_path=os.path.join(out_dir, "merged"), trainable=False)
+    merged = [lp.cpu() for lp in frozen.forward_only(plain).logprobs]
+    frozen.close()
+    rollout = [d.rollout_logprobs for d in datums]
+    stats = {
+        **_gap_stats("merge_gap", datums, trainer, merged),
+        **_gap_stats("kernel_gap", datums, merged, rollout),
+        **_gap_stats("total_gap", datums, trainer, rollout),
+    }
+    torch.distributed.barrier()
+    if rank0:
+        for entry in os.listdir(args.merge_dir):
+            if entry.startswith("round_") and entry != os.path.basename(out_dir):
+                shutil.rmtree(os.path.join(args.merge_dir, entry), ignore_errors=True)
+    stats["merge_measure_seconds"] = time.perf_counter() - start
+    print_rank_0(f"[merge] round {round_index}: " + json.dumps({k: round(v, 6) for k, v in stats.items()}))
+    return stats
 
 
 def rollout_round(
@@ -355,10 +423,19 @@ def eval_prompts_for(round_index: int, args, eval_prompts: list) -> list | None:
     return None
 
 
+def measure_this_round(args, round_index: int) -> bool:
+    """``--measure-merge-every N``: rounds 0, N, 2N, ... and the last round."""
+    if not args.measure_merge_every:
+        return False
+    return round_index % args.measure_merge_every == 0 or round_index == args.rounds - 1
+
+
 def main() -> None:
     """Entry point."""
     logging.basicConfig(level=logging.INFO)
     args = parse_args()
+    if args.measure_merge_every and not (args.lora_rank and args.merge_dir):
+        raise SystemExit("--measure-merge-every needs --lora-rank and --merge-dir")
     policy = build_engine(args)
     hf_path = policy.recipe.hf_path  # tokenizer and vllm weights; the same for both construction paths
     prompts, eval_prompts = load_data(args, hf_path)
@@ -393,6 +470,8 @@ def main() -> None:
         stats = {"round": round_index, "rollout_seconds": time.perf_counter() - start, **summarize_samples(samples)}
         stats.update(eval_stats)
         datums = [to_datum(s) for s in samples]
+        if measure_this_round(args, round_index):
+            stats.update(measure_merge(policy, datums, args, round_index))
         stats.update(train_round(policy, datums, args))
         last_round_seconds = time.perf_counter() - start
         stats["round_seconds"] = last_round_seconds

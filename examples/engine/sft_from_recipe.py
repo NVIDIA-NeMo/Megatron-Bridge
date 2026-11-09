@@ -45,7 +45,7 @@ import pyarrow.parquet as pq
 import torch
 
 import megatron.bridge.engine.recipes as recipes
-from megatron.bridge.engine import AdamParams, Datum, PreparedMicrobatch, TrainingEngine, check_datums
+from megatron.bridge.engine import AdamParams, Datum, LoraConfig, PreparedMicrobatch, TrainingEngine, check_datums
 from megatron.bridge.engine.batching import assign_to_dp_ranks, filler_microbatch, pack_sequences, shard_for_cp
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -118,7 +118,117 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--async-save", action="store_true", help="Use the asynchronous save for --save-at")
     parser.add_argument("--resume-from", default=None, help="Engine checkpoint root to resume from")
     parser.add_argument("--export-dir", default=None, help="After training, export HF weights here and verify")
+    parser.add_argument("--lora-rank", type=int, default=0, help="Train LoRA adapters of this rank (0: full weights)")
+    parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
+    parser.add_argument(
+        "--check-disable-adapters",
+        action="store_true",
+        help="LoRA gate: after --iters updates, adapters-off scores must equal a frozen engine on the same base",
+    )
     return parser.parse_args()
+
+
+def lora_config(args: argparse.Namespace) -> LoraConfig | None:
+    """``--lora-rank`` / ``--lora-alpha`` as the engine's LoRA settings, or ``None`` for full-weight training."""
+    return LoraConfig(rank=args.lora_rank, alpha=args.lora_alpha) if args.lora_rank else None
+
+
+def check_adapter_export(engine: TrainingEngine, adapter_dir: str) -> None:
+    """Adapter-only export: a PEFT directory, then the adapter stream, rewritten into the same PEFT layout,
+    compared tensor by tensor against the file (rank 0)."""
+    import os
+
+    from safetensors import safe_open
+
+    from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
+    from megatron.bridge.models.conversion.peft_bridge import convert_adapter_weights_to_peft_state
+
+    start = time.time()
+    engine.export(path=adapter_dir, adapter_only=True)
+    torch.distributed.barrier()
+    print_rank_0(f"[export] adapter directory {adapter_dir} written in {time.time() - start:.1f}s")
+    rank0 = torch.distributed.get_rank() == 0
+    streamed, families = [], {}
+    for name, tensor in engine.export(streaming=True, adapter_only=True):
+        if not rank0:
+            continue
+        streamed.append(HFWeightTuple(name, tensor.detach().cpu().clone()))
+        stem = name.split(".lora_")[0]
+        family = ".".join(part for part in stem.split(".")[-2:] if not part.isdigit())
+        families[family] = families.get(family, 0) + 1
+    if rank0:
+        state, _, _ = convert_adapter_weights_to_peft_state(streamed)
+        saved = safe_open(os.path.join(adapter_dir, "adapter_model.safetensors"), framework="pt")
+        file_keys = set(saved.keys())
+        missing = sorted(set(state) - file_keys)
+        extra = sorted(file_keys - set(state))
+        max_diff = max(
+            (
+                (state[key].float() - saved.get_tensor(key).float()).abs().max().item()
+                for key in set(state) & file_keys
+            ),
+            default=0.0,
+        )
+        with open(os.path.join(adapter_dir, "adapter_config.json")) as handle:
+            config = json.load(handle)
+        print_rank_0(
+            f"[export] adapters: {len(streamed)} streamed tensors -> {len(state)} PEFT tensors, {len(file_keys)} in "
+            f"the file; per module: {families}; r={config.get('r')} lora_alpha={config.get('lora_alpha')} "
+            f"targets={config.get('target_modules')}; max |stream - file|={max_diff:.3e}; "
+            f"missing={missing[:5]} extra={extra[:5]}"
+        )
+        assert streamed, "the adapter stream is empty"
+        assert not missing and not extra, f"stream and file disagree: {len(missing)} missing, {len(extra)} extra"
+        assert max_diff == 0.0, f"streamed and written adapters differ by {max_diff}"
+    print_rank_0("ADAPTER EXPORT CHECK PASSED")
+
+
+def _max_abs_diff(a: list[torch.Tensor], b: list[torch.Tensor]) -> tuple[float, float]:
+    """Max and mean |a - b| over every token of every Datum (scores are identical on every rank)."""
+    deltas = torch.cat([(x.float() - y.float()).abs().flatten() for x, y in zip(a, b)])
+    return deltas.max().item(), deltas.mean().item()
+
+
+def check_disable_adapters(args: argparse.Namespace, recipe) -> None:
+    """LoRA gate: ``forward_only(disable_adapters=True)`` scores exactly what a frozen engine on the base scores.
+
+    Before any update lora_B is zero, so adapters on and off must already agree exactly. After ``--iters``
+    updates at the constant rate ``--max-lr`` they must differ with the adapters on, and the adapters-off
+    scores must still equal a separately built frozen engine on the same checkpoint, token for token.
+    """
+    if not args.lora_rank:
+        raise SystemExit("--check-disable-adapters needs --lora-rank")
+    batches = iter_pack_batches(args.parquet, args.packs_per_step)
+    scoring = next(batches)
+    policy = TrainingEngine.from_recipe(
+        recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora_config(args)
+    )
+    on = policy.forward_only(scoring).logprobs
+    off = policy.forward_only(scoring, disable_adapters=True).logprobs
+    initial_max, _ = _max_abs_diff(on, off)
+    print_rank_0(f"[adapters] before any update: max |on - off|={initial_max:.3e}")
+    assert initial_max == 0.0, "zero-initialized adapters changed the scores"
+    for step in range(1, args.iters + 1):
+        outs = [policy.forward_backward(chunk) for chunk in _chunks(next(batches), args.calls_per_step)]
+        result = policy.optim_step(AdamParams(learning_rate=args.max_lr, weight_decay=args.weight_decay))
+        loss = sum(o.loss_sum for o in outs) / max(sum(o.num_loss_tokens for o in outs), 1)
+        print_rank_0(f"[adapters] update {step}: lm loss {loss:.4f} grad_norm {result['grad_norm']:.4f}")
+        assert result["update_successful"], f"update {step} was skipped"
+    on = policy.forward_only(scoring).logprobs
+    off = policy.forward_only(scoring, disable_adapters=True).logprobs
+    frozen = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=False)
+    base = frozen.forward_only(scoring).logprobs
+    frozen.close()
+    off_max, off_mean = _max_abs_diff(off, base)
+    on_max, on_mean = _max_abs_diff(on, base)
+    print_rank_0(
+        f"[adapters] after {args.iters} updates: adapters off vs frozen engine max={off_max:.3e} mean={off_mean:.3e}; "
+        f"adapters on vs frozen engine max={on_max:.3e} mean={on_mean:.3e}"
+    )
+    assert off_max == 0.0, f"adapters-off scores differ from the frozen engine by up to {off_max}"
+    assert on_max > 0.0, "trained adapters did not change any score"
+    policy.close()
+    print_rank_0("DISABLE ADAPTERS GATE PASSED")
 
 
 def check_export(engine: TrainingEngine, export_dir: str) -> None:
@@ -280,8 +390,9 @@ def _compare_one_vs_four(
 
     Returns (grad rel diff, grad-norm rel diff, max param diff, fraction of params with a different update)."""
     adam = AdamParams(learning_rate=args.max_lr, weight_decay=args.weight_decay)
-    one = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
-    four = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
+    lora = lora_config(args)
+    one = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora)
+    four = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora)
     diff0, _ = _param_delta(one, four, lr=adam.learning_rate)
     assert diff0 == 0.0, f"engines differ before training: {diff0}"
 
@@ -324,7 +435,9 @@ def check_accumulation(args: argparse.Namespace, recipe) -> None:
 
 def train(args: argparse.Namespace, recipe) -> None:
     """The engine-driven reproduction of the baseline schedule."""
-    engine = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
+    engine = TrainingEngine.from_recipe(
+        recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora_config(args)
+    )
     print_rank_0(f"[engine] built; parallel_info={engine.parallel_info}")
     run = None
     if args.wandb_project and torch.distributed.get_rank() == 0:
@@ -378,6 +491,8 @@ def train(args: argparse.Namespace, recipe) -> None:
         print_rank_0(f"[ckpt] checkpoint {handle.path} durable; wait took {time.time() - start:.1f}s")
     if args.export_dir:
         check_export(engine, args.export_dir)
+        if args.lora_rank:
+            check_adapter_export(engine, args.export_dir.rstrip("/") + "-adapter")
     if run is not None:
         run.finish()
     engine.close()
@@ -391,6 +506,8 @@ def main() -> None:
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
     if args.check_accumulation:
         check_accumulation(args, recipe)
+    elif args.check_disable_adapters:
+        check_disable_adapters(args, recipe)
     else:
         train(args, recipe)
     torch.distributed.barrier()

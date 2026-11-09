@@ -28,7 +28,7 @@ import logging
 import time
 
 import torch
-from sft_from_recipe import PackReplayEngine, _chunks, _grad_delta, _param_delta, iter_pack_batches
+from sft_from_recipe import PackReplayEngine, _chunks, _grad_delta, _param_delta, iter_pack_batches, lora_config
 
 import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import AdamParams, TrainingEngine
@@ -43,6 +43,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--parquet", required=True)
     parser.add_argument("--packs-per-step", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--lora-rank", type=int, default=0, help="Move LoRA engines of this rank (0: full weights)")
+    parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
     return parser.parse_args()
 
 
@@ -89,8 +91,10 @@ def main() -> None:
     datums = next(iter_pack_batches(args.parquet, args.packs_per_step))
     chunks = _chunks(datums, 4)
 
-    plain = PackReplayEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
-    moved = PackReplayEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
+    # With LoRA the frozen base lives outside the DDP buffers, so cpu() moves it through the .data swap.
+    lora = lora_config(args)
+    plain = PackReplayEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora)
+    moved = PackReplayEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora)
     for chunk in chunks:
         plain.forward_backward(chunk)
     for index, chunk in enumerate(chunks):
