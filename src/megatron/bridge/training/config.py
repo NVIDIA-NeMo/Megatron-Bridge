@@ -21,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
+import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
@@ -95,6 +96,34 @@ from megatron.bridge.utils.cuda_graph import (
 from megatron.bridge.utils.gdn_utils import validate_cudnn_gdn_stack
 
 
+def _apply_megatron_fsdp_grad_dtype_policy(ddp_config: MCoreDistributedDataParallelConfig) -> None:
+    """Keep Megatron-FSDP gradient precision governed by its explicit dtype fields.
+
+    ``grad_reduce_in_fp32`` sizes the gradient buffers of the standard DDP wrapper.
+    Megatron-FSDP takes gradient precision from ``megatron_fsdp_main_grads_dtype`` and
+    ``megatron_fsdp_grad_comm_dtype`` instead, and Megatron Core rejects the legacy flag
+    unless those fields request FP32. Bridge precision recipes enable the flag by default,
+    so clear it when the FSDP dtypes do not request FP32; the configured FSDP precision
+    policy is unchanged. Set ``megatron_fsdp_main_grads_dtype=torch.float32`` to
+    accumulate FSDP gradients in FP32.
+
+    The policy applies both to Bridge's deferred config and to the Megatron Core config
+    that some recipes construct directly.
+    """
+    if not (ddp_config.use_megatron_fsdp and ddp_config.grad_reduce_in_fp32):
+        return
+    main_grads_dtype = ddp_config.megatron_fsdp_main_grads_dtype
+    grad_comm_dtype = ddp_config.megatron_fsdp_grad_comm_dtype
+    if main_grads_dtype == torch.float32 and grad_comm_dtype in (None, torch.float32):
+        return
+    print_rank_0(
+        "grad_reduce_in_fp32 does not apply to Megatron-FSDP gradients "
+        f"(megatron_fsdp_main_grads_dtype={main_grads_dtype}, "
+        f"megatron_fsdp_grad_comm_dtype={grad_comm_dtype}). Deactivating..."
+    )
+    ddp_config.grad_reduce_in_fp32 = False
+
+
 @dataclass
 class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
     """Megatron Core DistributedDataParallelConfig with deferred post-init.
@@ -123,6 +152,7 @@ class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
         This method calls the original Megatron Core DistributedDataParallelConfig.__post_init__()
         to compute derived fields based on the current field values.
         """
+        _apply_megatron_fsdp_grad_dtype_policy(self)
         super().__post_init__()
 
 
@@ -1611,6 +1641,11 @@ class ConfigContainer(Container):
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):
             self.ddp.finalize()
+        elif isinstance(self.ddp, MCoreDistributedDataParallelConfig):
+            # Recipes may construct Megatron Core's DDP config directly. It has no deferred
+            # finalize(), so apply the Megatron-FSDP gradient dtype policy before its post-init
+            # is re-run below.
+            _apply_megatron_fsdp_grad_dtype_policy(self.ddp)
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
 

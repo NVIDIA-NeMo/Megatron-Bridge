@@ -86,7 +86,7 @@ def test_full_length_input_ids_leave_the_model_at_one_shard(cp_group) -> None:
 def test_pre_sharded_input_ids_shard_twice(cp_group) -> None:
     """Why the GPT step cannot drive this model: its batch is already CP-sharded."""
     batch = {"tokens": torch.arange(_SEQ, device="cuda").view(1, _SEQ), "attention_mask": None}
-    pre_sharded = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)["tokens"]
+    pre_sharded = get_batch_on_this_cp_rank(batch, dynamic_cp=False, cp_group=cp_group)["tokens"]
     assert pre_sharded.size(1) == _SEQ // _CP_SIZE
 
     assert _model_sequence_length(cp_group, pre_sharded) == _SEQ // _CP_SIZE**2
