@@ -521,31 +521,29 @@ class TestBuildDistributedModel:
         cfg.model = model_cfg
         cfg.ddp = MagicMock()
         cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-        cfg.dist.use_megatron_fsdp = False
-        cfg.dist.use_torch_fsdp2 = False
+        cfg.ddp.use_megatron_fsdp = False
+        cfg.dist = DistributedInitConfig()
         cfg.rng.data_parallel_random_init = False
         return cfg, model_cfg
 
-    @patch("megatron.bridge.training.setup.GPTModelConfig")
-    def test_build_with_model_config(self, _mock_gpt_cls):
-        """Test that builder.build_distributed_models is called for ModelConfig."""
+    @pytest.mark.parametrize("use_megatron_fsdp", [False, True])
+    def test_build_with_model_config(self, use_megatron_fsdp):
+        """Test that the distributed model helper receives the DDP FSDP setting."""
         cfg, model_cfg = self._make_cfg_with_model_config()
+        cfg.ddp.use_megatron_fsdp = use_megatron_fsdp
         assert not hasattr(model_cfg, "provide_distributed_model")
 
-        mock_builder_cls = MagicMock()
-        mock_builder = MagicMock()
-        mock_builder_cls.return_value = mock_builder
-
         mock_dist_model = [MagicMock()]
-        mock_builder.build_distributed_models.return_value = mock_dist_model
-
-        with patch.object(type(model_cfg), "get_builder_cls", return_value=mock_builder_cls):
+        with patch.object(training_setup, "build_distributed_models", return_value=mock_dist_model) as mock_build:
             result = _build_distributed_model(cfg, pg_collection=MagicMock())
 
-        mock_builder.build_distributed_models.assert_called_once()
+        mock_build.assert_called_once()
+        assert mock_build.call_args.args[0] is model_cfg
+        assert mock_build.call_args.kwargs["use_megatron_fsdp"] is use_megatron_fsdp
         assert result == mock_dist_model
 
-    def test_build_with_provider(self):
+    @pytest.mark.parametrize("use_megatron_fsdp", [False, True])
+    def test_build_with_provider(self, use_megatron_fsdp):
         """Test that provide_distributed_model is called for providers."""
         mock_provider = MagicMock()
         # Ensure isinstance(mock_provider, ModelConfig) is False
@@ -558,14 +556,15 @@ class TestBuildDistributedModel:
         cfg.model = mock_provider
         cfg.ddp = MagicMock()
         cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-        cfg.dist.use_megatron_fsdp = False
-        cfg.dist.use_torch_fsdp2 = False
+        cfg.ddp.use_megatron_fsdp = use_megatron_fsdp
+        cfg.dist = DistributedInitConfig()
         cfg.rng.data_parallel_random_init = False
 
         result = _build_distributed_model(cfg, pg_collection=MagicMock())
 
         mock_provider.finalize.assert_called_once_with()
         mock_provider.provide_distributed_model.assert_called_once()
+        assert mock_provider.provide_distributed_model.call_args.kwargs["use_megatron_fsdp"] is use_megatron_fsdp
         assert result == mock_dist_model
 
     def test_builder_path_keeps_float32_router_bias_loaded_before_wrap(self, monkeypatch, tmp_path):

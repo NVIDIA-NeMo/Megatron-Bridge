@@ -123,7 +123,9 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 # Transformers 5.15 still passes cls= to RobertaProcessing; this prerelease renamed it.
-constraint-dependencies = ["tokenizers!=0.23.0rc0"]
+# pyarrow 26 requires NumPy>=2 at import time but declares no numpy dependency, while
+# nvdlfw-inspect==0.2.1 ([tensor-inspect]) pins numpy==1.26.4.
+constraint-dependencies = ["tokenizers!=0.23.0rc0", "pyarrow<26"]
 override-dependencies = [
     "av; sys_platform == 'never'",                          # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
     "imageio; sys_platform == 'never'",                     # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh

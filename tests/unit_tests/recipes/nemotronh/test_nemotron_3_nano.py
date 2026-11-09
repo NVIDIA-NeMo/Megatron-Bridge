@@ -35,6 +35,8 @@ from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano import (
     nemotron_3_5_lightning_pretrain_8k_config,
     nemotron_3_5_lightning_pretrain_8k_deterministic_config,
+    nemotron_3_5_lightning_sft_32k_config,
+    nemotron_3_5_lightning_sft_32k_deterministic_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config,
 )
@@ -47,7 +49,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_pretrain_config,
     nemotron_3_nano_sft_config,
 )
-from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS, DETERMINISM_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import nemotron_h_model_config
@@ -422,6 +424,45 @@ class TestNemotron3NanoSft:
         assert config.logger.log_throughput is True
         assert config.logger.tensorboard_dir is None
 
+    def test_nemotron_3_5_gb200_32k_sft_recipe_owns_long_context_layout(self):
+        """The GB200 32K recipe owns the long-context layout on the Lightning SFT base."""
+        bridge = Mock()
+        bridge.get_model_config.return_value = nemotron_h_model_config(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
+
+        with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
+            config = nemotron_3_5_lightning_sft_32k_config()
+
+        from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
+        assert config.model.mtp_num_layers == 2
+        assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_LIGHTNING_MODEL_ID
+        assert config.model.seq_length == 32768
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.sequence_parallel is False
+        assert config.model.context_parallel_size == 2
+        assert config.model.cp_comm_type == "a2a"
+        assert config.model.expert_tensor_parallel_size == 1
+        assert config.model.expert_model_parallel_size == 8
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "hybridep"
+        assert config.model.cross_entropy_loss_fusion is False
+        assert config.model.calculate_per_token_loss is True
+        assert config.model.recompute_granularity == "selective"
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn", "mlp"]
+        assert config.model.recompute_method is None
+        assert config.model.recompute_num_layers is None
+        assert config.model.deterministic_mode is False
+        assert config.dataset.seq_length == config.model.seq_length
+        assert config.dataset.enable_offline_packing is True
+        assert config.dataset.offline_packing_specs.packed_sequence_size == config.model.seq_length
+        # Offline packing does not derive its CP alignment; keep it at 2 * CP.
+        assert config.dataset.offline_packing_specs.pad_seq_to_mult == 2 * config.model.context_parallel_size
+        assert config.train.global_batch_size == 128
+        assert config.train.micro_batch_size == 1
+        assert config.ddp.average_in_collective is False
+        assert config.ddp.overlap_param_gather is False
+        assert config.optimizer.overlap_param_gather is False
+        assert config.env_vars == COMMON_RECIPE_ENV_VARS
+
     def test_sft_config_with_custom_directory(self):
         """Test custom directory configuration for SFT."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -685,3 +726,36 @@ def test_gb200_lightning_8k_deterministic_pretrain_applies_determinism():
         assert cfg.env_vars[key] == base.env_vars[key]
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.unit
+def test_gb200_lightning_32k_deterministic_sft_applies_determinism():
+    """The deterministic Lightning 32K SFT recipe keeps the 32K layout and adds determinism settings."""
+    from megatron.bridge.recipes.nemotronh import (
+        nemotron_3_5_lightning_sft_32k_deterministic_config as exported_config,
+    )
+
+    bridge = Mock()
+    bridge.get_model_config.side_effect = lambda: nemotron_h_model_config(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
+    with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge):
+        base = nemotron_3_5_lightning_sft_32k_config()
+        cfg = nemotron_3_5_lightning_sft_32k_deterministic_config()
+
+    assert exported_config is nemotron_3_5_lightning_sft_32k_deterministic_config
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    for field in (
+        "seq_length",
+        "context_parallel_size",
+        "cp_comm_type",
+        "expert_model_parallel_size",
+        "moe_flex_dispatcher_backend",
+        "recompute_modules",
+        "mtp_num_layers",
+    ):
+        assert getattr(cfg.model, field) == getattr(base.model, field)
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == base.dataset.offline_packing_specs.pad_seq_to_mult
+    assert cfg.train.global_batch_size == base.train.global_batch_size == 128
+    assert cfg.optimizer.lr == base.optimizer.lr
+    assert cfg.env_vars == {**COMMON_RECIPE_ENV_VARS, **DETERMINISM_ENV_VARS}

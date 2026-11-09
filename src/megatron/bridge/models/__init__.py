@@ -61,6 +61,11 @@ from megatron.bridge.models.diffusion_gemma import (
 )
 from megatron.bridge.models.ernie import (
     Ernie45Bridge,
+    Ernie55Bridge,
+    Ernie55Config,
+    Ernie55ModelBuilder,
+    Ernie55ModelConfig,
+    Ernie55TransformerConfig,
 )
 from megatron.bridge.models.ernie_vl import (
     Ernie45VLBridge,
@@ -271,6 +276,11 @@ __all__ = [
     "DeepSeekV3Bridge",
     # ERNIE Text-Only Models
     "Ernie45Bridge",
+    "Ernie55Bridge",
+    "Ernie55Config",
+    "Ernie55ModelBuilder",
+    "Ernie55ModelConfig",
+    "Ernie55TransformerConfig",
     # ERNIE VL Models
     "Ernie45VLBridge",
     "Ernie45VLModel",

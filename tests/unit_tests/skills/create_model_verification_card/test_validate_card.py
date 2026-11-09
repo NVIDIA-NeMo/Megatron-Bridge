@@ -38,7 +38,6 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("deepseek-v4-flash", "checkpoint_resume", "GB200"): (4096, 256, 64),
     ("deepseek-v4-flash", "sft", "GB200"): (1024, 128, 32),
     ("deepseek-v4-flash", "peft", "GB200"): (1024, 128, 32),
-    ("deepseek-v4-flash", "sft_long_context", "GB200"): (1024, 128, 64),
     ("deepseek-v4-flash", "pretrain_performance", "GB200"): (4096, 2048, 128),
     ("deepseek-v4-flash", "pretrain_performance", "GB300"): (4096, 2048, 128),
     ("gemma-3-4b-it", "sft", "H100"): (4096, 32, 8),
@@ -92,6 +91,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("nemotron-3-super-120b-a12b", "pretrain", "H100"): (4096, 1280, 64),
     ("nemotron-3-super-120b-a12b", "sft_long_context", "H100"): (32768, 2, 16),
     ("nemotron-3-super-120b-a12b", "peft", "GB200"): (8192, 16, 16),
+    ("nemotron-3-super-120b-a12b", "checkpoint_resume", "H100"): (4096, 1280, 64),
     ("nemotron-3-super-120b-a12b", "pretrain_performance", "H100"): (4096, 1280, 64),
     ("nemotron-3-super-120b-a12b", "pretrain_performance", "GB200"): (4096, 512, 64),
     ("nemotron-3-ultra-550b-a55b", "pretrain", "GB200"): (8192, 256, 256),
@@ -152,6 +152,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3.6-35b-a3b", "peft", "GB200"): (4096, 32, 8),
     ("qwen3.8-27b", "pretrain", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "sft", "GB200"): (4096, 32, 16),
+    ("qwen3.8-27b", "sft", "H100"): (4096, 32, 16),
     ("qwen3.8-27b", "sft_long_context", "GB200"): (8192, 32, 16),
     ("qwen3.8-27b", "peft", "GB200"): (4096, 32, 4),
     ("qwen3.8-27b", "checkpoint_resume", "GB200"): (4096, 32, 16),
@@ -767,6 +768,51 @@ def test_sft_export_inference_accepts_hf_inference_launcher():
     )
 
     assert errors == []
+
+
+@pytest.mark.parametrize(
+    ("resume_override", "expected_errors"),
+    [
+        ("checkpoint.stage_precision_aware_optimizer_state_on_cpu=true", []),
+        ("train.empty_unused_memory_level=2", []),
+        (
+            "model.recompute_granularity=full",
+            [
+                "/items/checkpoint_resume/H100/command: reference and resume launch settings must match; "
+                "differences found in model.recompute_granularity"
+            ],
+        ),
+    ],
+)
+def test_resume_allows_execution_only_overrides(resume_override, expected_errors):
+    validator = _load_validator()
+    errors = []
+    common_command = (
+        "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 "
+        "--recipe llm_pretrain --mode pretrain --dataset megatron-indexed --max_steps 100"
+    )
+
+    validator._validate_resume_against_pretrain(
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": (
+                f"{common_command} {resume_override} "
+                "--load_dir work/reference --save_dir work/resume checkpoint.ckpt_step=50"
+            ),
+        },
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": f"{common_command} --save_dir work/reference checkpoint.load=null",
+        },
+        resume_path=("items", "checkpoint_resume", "H100"),
+        pretrain_path=("items", "pretrain", "H100"),
+        default_bridge_commit=None,
+        errors=errors,
+    )
+
+    assert errors == expected_errors
 
 
 @pytest.mark.parametrize(

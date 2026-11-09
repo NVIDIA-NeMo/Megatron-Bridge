@@ -287,14 +287,18 @@ def test_qwen35_vl_mimo_rejects_truncated_visual_tokens():
         sys.modules.pop(name, None)
 
 
-def _spec_for(module, module_name, pp_rank, pp_size, dataset):
+def _spec_for(module, module_name, pp_rank, pp_size, dataset, mtp_num_layers=None):
     class _PG:
         def rank(self):
             return pp_rank
 
     grid = SimpleNamespace(dim_names=("pp",), shape=[pp_size], get_pg=lambda dims: _PG())
     module._rank_grid_and_module = lambda grids: (grid, module_name)
-    cfg = SimpleNamespace(model=SimpleNamespace(_grids={module_name: grid}), dataset=dataset)
+    model = SimpleNamespace(
+        _grids={module_name: grid},
+        standard_provider=SimpleNamespace(mtp_num_layers=mtp_num_layers),
+    )
+    cfg = SimpleNamespace(model=model, dataset=dataset)
     return module._batch_spec_for_rank(cfg)
 
 
@@ -322,6 +326,71 @@ def test_batch_spec_language_non_first_stage_input_ids_only_under_reorder():
         assert on.labels is False and on.loss_mask is False and on.modality_inputs is False
         first = _spec_for(module, lang, pp_rank=0, pp_size=3, dataset=_dataset(reorder=False))
         assert first.input_ids is True
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_batch_spec_last_language_stage_ships_input_ids_for_mtp():
+    # The last language stage runs MTP, which re-embeds shifted input_ids.
+    name = "qwen35_vl_mimo_finetune_mtp_spec_under_test"
+    module = _load_example_module(name)
+    try:
+        lang = module.MIMO_LANGUAGE_MODULE_KEY
+        last = _spec_for(module, lang, pp_rank=2, pp_size=3, dataset=_dataset(), mtp_num_layers=1)
+        assert last.input_ids is True and last.labels is True and last.loss_mask is True
+        middle = _spec_for(module, lang, pp_rank=1, pp_size=3, dataset=_dataset(), mtp_num_layers=1)
+        assert middle.input_ids is False
+        without_mtp = _spec_for(module, lang, pp_rank=2, pp_size=3, dataset=_dataset())
+        assert without_mtp.input_ids is False
+        encoder = _spec_for(module, "images", pp_rank=1, pp_size=2, dataset=_dataset(), mtp_num_layers=1)
+        assert encoder.input_ids is False
+    finally:
+        sys.modules.pop(name, None)
+
+
+@pytest.mark.parametrize(
+    "enable_mtp, hf_mtp_num_layers, expected",
+    [(False, 1, None), (True, 1, 1), (False, None, None)],
+)
+def test_build_mimo_provider_keeps_mtp_only_when_enabled(monkeypatch, enable_mtp, hf_mtp_num_layers, expected):
+    name = "qwen35_vl_mimo_finetune_provider_mtp_under_test"
+    module = _load_example_module(name)
+    try:
+        standard_provider = SimpleNamespace(mtp_num_layers=hf_mtp_num_layers)
+        bridge = SimpleNamespace(to_megatron_provider=lambda load_weights: standard_provider)
+        monkeypatch.setattr(module.AutoBridge, "from_hf_config", lambda hf_config: bridge)
+        monkeypatch.setattr(
+            module.MegatronMIMOProvider,
+            "from_standard_provider",
+            lambda standard_provider, megatron_mimo_parallelism_config: SimpleNamespace(),
+        )
+        args = SimpleNamespace(
+            seq_length=16,
+            fp32=False,
+            enable_mtp=enable_mtp,
+            hf_model="Qwen/Qwen3.5-0.8B",
+            freeze_llm=False,
+            freeze_vision=False,
+            freeze_projector=False,
+        )
+
+        module._build_mimo_provider(object(), object(), args)
+
+        assert standard_provider.mtp_num_layers == expected
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_build_mimo_provider_rejects_enable_mtp_without_mtp_layers(monkeypatch):
+    name = "qwen35_vl_mimo_finetune_provider_no_mtp_under_test"
+    module = _load_example_module(name)
+    try:
+        bridge = SimpleNamespace(to_megatron_provider=lambda load_weights: SimpleNamespace(mtp_num_layers=None))
+        monkeypatch.setattr(module.AutoBridge, "from_hf_config", lambda hf_config: bridge)
+        args = SimpleNamespace(seq_length=16, fp32=False, enable_mtp=True, hf_model="Qwen/Qwen3.5-0.8B")
+
+        with pytest.raises(ValueError, match="--enable-mtp requires MTP layers"):
+            module._build_mimo_provider(object(), object(), args)
     finally:
         sys.modules.pop(name, None)
 

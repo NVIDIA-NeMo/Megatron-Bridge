@@ -385,6 +385,11 @@ def _transform_source_spec(
     if isinstance(task.mapping, MambaInProjMapping) and source.traced_rows is None:
         _mamba_row_indices(shards, task.mapping.tp_size)
     unquantized = _unquantized_outputs(task.mapping)
+    # Deployments read quantized linear layers from `<module>.weight`; anything else would be packed unannounced.
+    if other := sorted(name for name in names.values() if not name.endswith(".weight") and name not in unquantized):
+        raise NotImplementedError(
+            f"ModelOpt export requires quantized {task.global_param_name} to map to HF '.weight' tensors, not {other}"
+        )
     return {name: None if name in unquantized else reference for name in names.values() if name.endswith(".weight")}
 
 

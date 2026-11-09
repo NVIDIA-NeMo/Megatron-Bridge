@@ -20,6 +20,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
     nemotron_3_5_lightning_pretrain_config,
+    nemotron_3_5_lightning_sft_config,
     nemotron_3_5_lightning_sft_openmathinstruct2_packed_config,
 )
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
@@ -241,7 +242,6 @@ def nemotron_3_5_lightning_pretrain_8k_fsdp_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
     set_cuda_graph_modules(cfg.model, [])
 
-    cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.num_distributed_optimizer_instances = 1
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
@@ -289,6 +289,64 @@ def nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config() -> ConfigCo
     return cfg
 
 
+def nemotron_3_5_lightning_sft_32k_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Lightning 32K packed full-SFT config for eight GB200 GPUs.
+
+    Recommended parallelism is TP=1, PP=1, CP=2, EP=8 with HybridEP, DP=4.
+    """
+    cfg = nemotron_3_5_lightning_sft_config()
+
+    cfg.model.seq_length = 32768
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.context_parallel_size = 2
+    cfg.model.cp_comm_type = "a2a"
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    # CP SFT needs per-token accounting because a CP rank can receive no
+    # supervised labels after masking.
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "mlp"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+
+    cfg.dataset.seq_length = 32768
+    cfg.dataset.offline_packing_specs.packed_sequence_size = 32768
+    # Offline packs align each sequence to 2 * CP.
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
+
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
+def nemotron_3_5_lightning_sft_32k_deterministic_config() -> ConfigContainer:
+    """Return a deterministic Nemotron 3.5 Lightning 32K packed full-SFT config for eight GB200 GPUs.
+
+    Wraps :func:`nemotron_3_5_lightning_sft_32k_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    """
+    cfg = nemotron_3_5_lightning_sft_32k_config()
+    apply_determinism_overrides(cfg)
+    # Keep the exact process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        **DETERMINISM_ENV_VARS,
+    }
+    return cfg
+
+
 # NeMo-CI appends ``_pretrain_config`` to MODEL_RECIPE_NAME. This explicit
 # alias lets the GB200 release case select the hardware recipe without changing
 # the legacy ``nemotron_3_nano_pretrain_config`` default.
@@ -299,6 +357,8 @@ __all__ = [
     "nemotron_3_5_lightning_pretrain_8k_config",
     "nemotron_3_5_lightning_pretrain_8k_deterministic_config",
     "nemotron_3_5_lightning_pretrain_8k_fsdp_config",
+    "nemotron_3_5_lightning_sft_32k_config",
+    "nemotron_3_5_lightning_sft_32k_deterministic_config",
     "nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config",
     "nemotron_3_nano_gb200_pretrain_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
