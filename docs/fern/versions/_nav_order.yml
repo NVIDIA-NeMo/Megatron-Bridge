@@ -8,6 +8,7 @@
 "./versions/nightly/pages/modelopt/quantization.mdx": 1
 "./versions/nightly/pages/models/README.mdx": 1
 "./versions/nightly/pages/models/bailing/ling-2.mdx": 1
+"./versions/nightly/pages/models/beam/beam.mdx": 1
 "./versions/nightly/pages/models/falcon/falcon-h1.mdx": 1
 "./versions/nightly/pages/models/glm/glm45.mdx": 1
 "./versions/nightly/pages/models/gpt_oss/gpt-oss-20b.mdx": 1

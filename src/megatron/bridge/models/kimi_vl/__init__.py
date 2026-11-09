@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge import KimiK25VLBridge
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_config import KimiK25VLModelConfig
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
@@ -20,5 +21,6 @@ from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 __all__ = [
     "KimiK25VLModel",
     "KimiK25VLBridge",
+    "KimiK25VLModelConfig",
     "KimiK25VLModelProvider",
 ]

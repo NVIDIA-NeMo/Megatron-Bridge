@@ -345,6 +345,60 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
 
         self.assertEqual(seen_kwargs, {"min_pixels": 16, "max_pixels": 128})
 
+    def test_batch_omits_padding_mask_by_default(self):
+        sample = HFEnergonSample(
+            __key__="k1",
+            __subflavors__={},
+            example={"conversation": [{"role": "user", "content": "one"}]},
+        )
+
+        self.assertIsNone(self.encoder.batch([sample]).padding_mask)
+
+    def test_batch_derives_padding_mask_from_attention_mask_on_request(self):
+        def _collate(examples, processor, **kwargs):
+            collated = _make_collate_fn()(examples, processor, **kwargs)
+            collated["attention_mask"] = torch.tensor([[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]])
+            return collated
+
+        encoder = HFTaskEncoder(
+            processor=self.processor, seq_length=128, collate_fn=_collate, return_padding_mask=True
+        )
+        samples = [
+            HFEnergonSample(__key__=key, __subflavors__={}, example={"conversation": []}) for key in ("k1", "k2")
+        ]
+
+        batch = encoder.batch(samples)
+
+        expected = torch.tensor([[False, False, False, True, True], [False, False, False, False, False]])
+        self.assertTrue(torch.equal(batch.padding_mask, expected))
+
+    def test_padding_mask_request_leaves_packed_batches_unchanged(self):
+        def _collate(examples, processor, **kwargs):
+            collated = _make_collate_fn()(examples, processor, **kwargs)
+            collated["cu_seqlens_q"] = torch.tensor([0, 5], dtype=torch.int32)
+            return collated
+
+        encoder = HFTaskEncoder(
+            processor=self.processor, seq_length=128, collate_fn=_collate, return_padding_mask=True
+        )
+        sample = HFEnergonSample(__key__="k1", __subflavors__={}, example={"conversation": []})
+
+        self.assertIsNone(encoder.batch([sample]).padding_mask)
+
+    def test_padding_mask_request_requires_a_2d_attention_mask(self):
+        def _collate(examples, processor, **kwargs):
+            collated = _make_collate_fn()(examples, processor, **kwargs)
+            collated["attention_mask"] = None
+            return collated
+
+        encoder = HFTaskEncoder(
+            processor=self.processor, seq_length=128, collate_fn=_collate, return_padding_mask=True
+        )
+        sample = HFEnergonSample(__key__="k1", __subflavors__={}, example={"conversation": []})
+
+        with self.assertRaisesRegex(ValueError, "2D attention_mask"):
+            encoder.batch([sample])
+
     def test_collate_fallback_rejects_oversized_batches(self):
         processor = _make_processor()
         encoder = HFTaskEncoder(

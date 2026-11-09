@@ -16,8 +16,8 @@ export keeps the imported indexer rather than a trained sparse-attention
 indexer.
 
 The bundled H100 pretraining and SQuAD SFT recipes remain text-only: they use
-the checkpoint-compatible text provider and do not instantiate the vision,
-projector, or Lightning Indexer state. VLM training requires a multimodal
+the checkpoint-compatible text model config (`get_model_config().to_text_config()`)
+and do not instantiate the vision, projector, or Lightning Indexer state. VLM training requires a multimodal
 dataset and the VLM training step; this change targets complete VLM checkpoint
 import and export.
 

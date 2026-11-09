@@ -14,7 +14,7 @@ The checkpoints have important differences:
 - **Tokenizer and generation defaults:** `tokenizer.json`, `tokenizer_config.json`, and `generation_config.json` are identical at those revisions, including token IDs and sampling defaults.
 - **Chat formatting:** GLM-5.3's template adds low reasoning effort, retains historical reasoning by default, always opens a thinking response (it does not honor `enable_thinking=False`), and changes structured tool-result handling and ordering. Load the template from the GLM-5.3 checkpoint; do not substitute GLM-5.2's template.
 
-For config/provider loading without weights:
+For config loading without weights:
 
 ```python
 from megatron.bridge import AutoBridge
@@ -22,7 +22,7 @@ from megatron.bridge import AutoBridge
 bridge = AutoBridge.from_hf_pretrained(
     "zai-org/GLM-5.3", revision="aca966e4e02791568aa6a4ced368624b3d897f42"  # pragma: allowlist secret (public HF revision)
 )
-provider = bridge.to_megatron_provider(load_weights=False)
+model_config = bridge.get_model_config()
 ```
 
 For **BF16 export** using the FP8 source as the reference, explicitly select `--export-weight-dtype bfloat16` with the GPU or distributed-CPU conversion backend (API: `weight_dtype=torch.bfloat16`). This removes FP8 scale tensors from strict source-key validation and writes a BF16 artifact rather than claiming a bitwise FP8 round trip. The serial-CPU backend does not support this option. MTP is disabled by default; the appended MTP layer is outside that default inference graph.
@@ -36,7 +36,7 @@ The recorded commands and results below belong to the checkpoint named in each v
 ## HybridModel migration
 
 The shared GLM-5/5.1/5.2/5.3 bridge constructs `HybridModel` through
-`GLM5ModelProvider`. The outer language model is Core's native `HybridModel`;
+`GLM5ModelConfig` and `GLM5ModelBuilder`. The outer language model is Core's native `HybridModel`;
 GLM-specific runtime adaptations are supplied through the stack specification.
 Each HF block becomes a `D-` (dense) or `DE` (MoE) pair;
 78 HF blocks therefore become 156 physical Hybrid layers. A thin `GLMDSAttention`
@@ -47,8 +47,9 @@ original layer count, and MTP uses a separate `/DE` pattern when enabled.
 
 Import the pinned HF checkpoint into a **new** Hybrid checkpoint directory.
 The generic Core GPT-to-Hybrid converter does not support this DSA architecture;
-old GPT optimizer/checkpoint resume is outside this migration. `get_model_config()`
-is not supported for this family yet; use `to_megatron_provider()`.
+old GPT optimizer/checkpoint resume is outside this migration. Recipes and checkpoint
+conversion build the model from `get_model_config()`; the deprecated `to_megatron_provider()`
+returns the equivalent `GLM5ModelProvider`.
 
 The initial recipes use BF16 and non-VPP pipeline segments. Pattern boundaries
 must begin on DSA compute layers. Full recomputation replays an entire pipeline
@@ -313,30 +314,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-07</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-15</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.913098</dd>
+            <dd>1.913887</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.7940679</dd>
+            <dd>1.063773</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>6,738.850 ms</dd>
+            <dd>7,959.680 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>17.140 TFLOP/s/GPU</dd>
+            <dd>17.890 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>50.652 tokens/s/GPU</dd>
+            <dd>42.883 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -352,7 +353,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup configuration. Strictly reloaded the step-100 checkpoint with raise_all and completed a further training step. Metrics cover the original 100 steps only.</p>
+        <p>Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1, TP1/PP6/EP32 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing, warm-started from the pinned Hugging Face checkpoint. All LM/MTP losses were finite with zero skipped or NaN iterations, and the step-100 checkpoint and post-setup configuration were saved.</p>
       </section>
     </article>
     <article id="glm5-2-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="glm5-2-sft-long-context-gb200" tabindex="-1">
@@ -413,30 +414,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-07</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-15</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.903576</dd>
+            <dd>1.903709</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.8791012</dd>
+            <dd>0.8795374</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>4,322.970 ms</dd>
+            <dd>5,695.940 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>23.030 TFLOP/s/GPU</dd>
+            <dd>21.570 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>78.958 tokens/s/GPU</dd>
+            <dd>59.926 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -452,7 +453,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, MTP1 and natural routing. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved adapter, optimizer, scheduler and RNG state, strictly reloaded the step-100 adapters with raise_all, and completed step 101 at zero LR. All 790 saved adapter tensors matched the reloaded checkpoint exactly; only the five configured MLA projection targets were adapted. Metrics cover training steps 1-100 only.</p>
+        <p>Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, TP1/PP6/EP32, MTP1, all-to-all expert dispatch and natural routing, warm-started from the pinned Hugging Face checkpoint. All LM/MTP losses were finite with zero skipped or NaN iterations, and the step-100 adapter checkpoint with optimizer and RNG state was saved.</p>
       </section>
     </article>
   </div>

@@ -3,9 +3,10 @@
 
 title: k_exaone_2_750b_a37b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining,
+  Performance disclaimer: this card does not record a canonical pretrain
+  performance result; reported timing and throughput metrics are functional
+  verification observations, not standalone optimized performance results.
+  K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining,
   full SFT, and PEFT in this Bridge revision. CPU conversion, GPU export,
   training, export-after-SFT, long-context SFT, and checkpoint resume remain
   unverified. A complete 750B GPU import from a clean commit persisted and
@@ -15,8 +16,8 @@ summary: >
   full-model training item. The manual forward comparison against a
   memory-bounded Hugging Face reference that applies the configured SwiGLU
   limits matched the next token with 0.999997 cosine similarity on 48 GB200
-  GPUs. Complete-model deterministic
-  inference generated and independently confirmed exactly 16 new tokens. The
+  GPUs. Deterministic inference through the public launcher produced the
+  expected 16-token Korean completion on 48 H100 GPUs. The
   implementation fixes are committed; GPU export remains unverified pending
   its own clean-commit rerun and exact audit.
 verification_index:
@@ -135,25 +136,31 @@ items:
   inference:
     status: verified
     precision: bf16
-    bridge_commit: bd56432512613a88ceae9ecb05654b63955f6dcb  # pragma: allowlist secret
+    bridge_commit: 27cacee9bfa562a00ed6b93ce7bbe88ce0cffdba  # pragma: allowlist secret
     command: >
-      uv run python scripts/inference/text_generation.py
+      ./scripts/inference/infer.sh --nodes 6 --gpus-per-node 8
+      --task text-generation
       --hf-model-path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
       --megatron-model-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000
       --prompt "대한민국의 수도는" --max_new_tokens 16 --temperature 0
-      --top_k 1 --termination-id -1 --tp 1 --pp 3 --ep 16 --etp 1
+      --top_k 1 --tp 1 --pp 3 --ep 16 --etp 1
       --dtype bf16 --max_seq_length 128 --max_batch_size 1
+      --kv_cache_buffer_size_gb 20
       --use-coordinator --inference-moe-token-dispatcher-type nccl
       --distributed-timeout-minutes 180
-    last_verified: 2026-07-31
+    last_verified: 2026-10-18
     expected_result: |-
-      Generates an exact 16-token result. Literal completion: '?
+      On 48 H100 GPUs (TP1/PP3/EP16/ETP1), deterministic greedy generation
+      completed with the original 20 GiB KV-cache budget and natural EOS
+      stopping enabled. The Korean prompt produced exactly 16 new tokens,
+      identifying Seoul as the capital and largest city of South Korea.
+      Inference environment: NeMo Framework 26.10 release-candidate runtime.
+      The card-level 26.08 base records earlier checks.
+      Literal completion: ' 서울입니다.
 
-      Answer: Seoul
+      서울은 대한민국의 수도이자 최대 도시입니다.
 
-      What is the most pop song in the world?
-
-      Answer: "'
+      서울은'
 
   pretrain:
     H100:

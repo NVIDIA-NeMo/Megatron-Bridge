@@ -109,7 +109,8 @@ def transformer_config():
     )
 
 
-def test_local_hf_param_specs_cover_gated_and_expert_views():
+@pytest.mark.parametrize("transpose_on_export", [False, True])
+def test_local_hf_param_specs_cover_gated_and_expert_views(transpose_on_export):
     logical = torch.arange(32).reshape(8, 4)
     gated = GatedMLPMapping(
         "decoder.mlp.linear_fc1.weight",
@@ -129,12 +130,14 @@ def test_local_hf_param_specs_cover_gated_and_expert_views():
     down = FusedExpertMapping(
         "decoder.mlp.experts.linear_fc2.weight3",
         "model.mlp.experts.down_proj",
+        transpose_on_export=transpose_on_export,
     )
     assert [spec.name for spec in down.local_hf_param_specs()] == ["model.mlp.experts.3.down_proj.weight"]
 
     gate_up = FusedGatedExpertMapping(
         "decoder.mlp.experts.linear_fc1.weight3",
         "model.mlp.experts.gate_up_proj",
+        transpose_on_export=transpose_on_export,
     )
     assert [spec.name for spec in gate_up.local_hf_param_specs()] == [
         "model.mlp.experts.3.gate_proj.weight",
@@ -142,8 +145,8 @@ def test_local_hf_param_specs_cover_gated_and_expert_views():
     ]
 
 
-def test_local_hf_param_specs_reject_grouped_or_transformed_views():
-    """Mappings that need export transforms must use the normal Bridge path."""
+def test_local_hf_param_specs_reject_unsupported_local_transforms():
+    """Canonical local specs do not support arbitrary mapping transforms."""
 
     class GroupedAutoMapping(AutoMapping):
         is_grouped_export = True
@@ -183,17 +186,7 @@ def test_local_hf_param_specs_reject_grouped_or_transformed_views():
     assert not FusedExpertMapping(
         "decoder.mlp.experts.linear_fc2.weight3",
         "model.mlp.experts.down_proj",
-        transpose_on_export=True,
-    ).local_hf_param_specs()
-    assert not FusedExpertMapping(
-        "decoder.mlp.experts.linear_fc2.weight3",
-        "model.mlp.experts.down_proj",
         permute_dims=(1, 0),
-    ).local_hf_param_specs()
-    assert not FusedGatedExpertMapping(
-        "decoder.mlp.experts.linear_fc1.weight3",
-        "model.mlp.experts.gate_up_proj",
-        transpose_on_export=True,
     ).local_hf_param_specs()
     assert not FusedGatedExpertMapping(
         "decoder.mlp.experts.linear_fc1.weight3",
@@ -385,6 +378,56 @@ class TestColumnParallelMapping:
 
             assert "hf.weight" in result
             assert torch.equal(result["hf.weight"], full_weight)
+
+    @staticmethod
+    def _module_with_param(param_path, tensor):
+        root = torch.nn.Module()
+        module = root
+        *parents, leaf = param_path.split(".")
+        for name in parents:
+            child = torch.nn.Module()
+            module.add_module(name, child)
+            module = child
+        module.register_parameter(leaf, torch.nn.Parameter(tensor))
+        return root
+
+    @pytest.mark.parametrize(
+        "megatron_param",
+        [
+            "embedding.word_embeddings.weight",
+            "language_model.embedding.word_embeddings.weight",
+            "language_model.output_layer.weight",
+        ],
+    )
+    def test_hf_to_megatron_zero_pads_vocab_under_wrapper_prefix(self, mock_distributed_env, megatron_param):
+        _, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = ColumnParallelMapping(megatron_param, "hf.weight")
+        # Local shard of a vocabulary padded from 1280 to 2560 rows for TP2.
+        module = self._module_with_param(megatron_param, torch.empty(1280, 4))
+        hf_weight = torch.randn(1280, 4)
+        mock_dist.scatter.side_effect = lambda output, scatter_list, src, group: output.copy_(scatter_list[0])
+
+        local = mapping.hf_to_megatron(hf_weight, module)
+
+        scattered = torch.cat(mock_dist.scatter.call_args[0][1], dim=0)
+        assert local.shape == (1280, 4)
+        assert scattered.shape == (2560, 4)
+        assert torch.equal(scattered[:1280], hf_weight)
+        assert torch.count_nonzero(scattered[1280:]) == 0
+
+    @pytest.mark.parametrize(
+        "megatron_param",
+        [
+            "language_model.decoder.layers.0.mlp.linear_fc1.weight",
+            "language_model.extra_output_layer.weight",
+        ],
+    )
+    def test_hf_to_megatron_rejects_padding_for_non_vocab_params(self, mock_distributed_env, megatron_param):
+        mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = ColumnParallelMapping(megatron_param, "hf.weight")
+        module = self._module_with_param(megatron_param, torch.empty(1280, 4))
+        with pytest.raises(AssertionError):
+            mapping.hf_to_megatron(torch.randn(1280, 4), module)
 
     def test_current_pp_stage_only_export_keeps_tp_gather(self, mock_distributed_env):
         _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)

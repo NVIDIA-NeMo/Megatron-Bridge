@@ -35,6 +35,7 @@ from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
 )
 from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
     _build_qwen35_vl_35b_a3b_gb300_bf16,
+    _build_qwen35_vl_397b_a17b_gb300_fp8mx,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
@@ -367,19 +368,18 @@ def test_qwen35_vl_122b_gb300_keeps_cuda_graphs_disabled(monkeypatch: pytest.Mon
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
     ],
 )
 def test_qwen35_vl_397b_hybridep_domain_matches_expert_parallel_size(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The VRNVL72 397B recipes inherit EP from GB300 but restate the HybridEP env inline.
+    """The GB300 397B recipes and the VRNVL72 FP8-CS alias state the HybridEP env inline.
 
     HybridEP asserts that the EP group size is divisible by
     ``NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN``, and the launcher only re-derives
     that env when a CLI override changes EP, so the two must stay in sync here.
+    The VRNVL72 397B BF16 and MXFP8 recipes run NCCL EP and carry no HybridEP env.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
@@ -465,11 +465,11 @@ def test_qwen35_vl_35b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pyte
     assert config.model.use_grouped_gemm_for_shared_expert is True
     assert config.model.moe_shared_expert_glu_interleave_size == 32
 
-    assert config.model.moe_flex_dispatcher_backend == "hybridep"
-    assert config.model.moe_permute_fusion_into_hybridep is False
-    assert config.model.moe_hybridep_num_sms_preprocessing == 16
+    assert config.model.moe_flex_dispatcher_backend == "ncclep"
+    assert config.model.moe_use_grouped_tensor is True
     assert config.model.overlap_dispatch_backward_with_experts_wgrad is True
-    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == config.model.expert_model_parallel_size
+    assert config.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert not any(name.startswith(("NUM_OF_HYBRID_EP_", "NUM_OF_TOKENS_PER_CHUNK_")) for name in config.env_vars)
 
     assert config.model.cuda_graph_impl == "transformer_engine"
     assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
@@ -499,7 +499,10 @@ def test_qwen35_vl_397b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pyt
     _assert_cutedsl_grouped_mlp(config)
     assert config.model.recompute_granularity == "selective"
     assert config.model.recompute_modules == ["gdn_norm_out"]
-    assert config.model.moe_permute_fusion_into_hybridep is False
+    assert config.model.moe_flex_dispatcher_backend == "ncclep"
+    assert config.model.moe_use_grouped_tensor is True
+    # Built on the GB300 MXFP8 base, not the tuned GB300 recipe: the Adam moments stay in FP32.
+    assert config.optimizer.use_precision_aware_optimizer is False
     assert getattr(config.model, "use_grouped_gemm_for_shared_expert", False) is False
     assert getattr(config.model, "overlap_dispatch_backward_with_experts_wgrad", False) is False
 
@@ -507,9 +510,8 @@ def test_qwen35_vl_397b_vrnvl72_fp8mx_uses_the_vrnvl72_settings(monkeypatch: pyt
     assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
     _assert_vision_graph_covers_one_microbatch(config)
 
-    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-    assert config.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 128
-    assert config.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 128
+    assert config.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert not any(name.startswith(("NUM_OF_HYBRID_EP_", "NUM_OF_TOKENS_PER_CHUNK_")) for name in config.env_vars)
     assert config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
     assert config.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
     assert "NVTE_NORM_FWD_USE_CUDNN" not in config.env_vars
@@ -554,10 +556,7 @@ _MISSING = object()
     ("recipe_fn", "gb300_recipe_fn"),
     [
         (qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config, qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config),
-        (
-            qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
-            qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
-        ),
+        (qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config, _build_qwen35_vl_397b_a17b_gb300_fp8mx),
     ],
     ids=recipe_factory_id,
 )
@@ -586,6 +585,68 @@ def test_qwen35_vl_vrnvl72_fp8mx_model_settings_exist_on_the_provider(
     assert changed <= provider_fields, sorted(changed - provider_fields)
 
 
+def test_qwen35_vl_397b_gb300_fp8mx_uses_the_tuned_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default GB300 397B MXFP8 benchmark adds the tuned settings to its MXFP8 base, on real provider fields."""
+    from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
+
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config()
+    base = _build_qwen35_vl_397b_a17b_gb300_fp8mx()
+
+    _assert_cutedsl_grouped_mlp(config)
+    assert config.model.vision_cuda_graph_impl == "transformer_engine"
+    assert config.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    # The cap covers the real-data vision sequences at MBS 1, so the mock images fit under it.
+    assert config.model.max_vision_cuda_graph_seq_length == 1029
+    assert config.model.max_vision_cuda_graph_seq_length >= (
+        config.train.micro_batch_size * config.dataset.num_images * _vision_patches_per_mock_image(config)
+    )
+    assert config.model.recompute_granularity == "selective"
+    assert config.model.recompute_modules == ["core_attn", "gdn_norm_out"]
+
+    assert config.optimizer.use_precision_aware_optimizer is True
+    assert config.optimizer.main_params_dtype == torch.float32
+    assert config.optimizer.main_grads_dtype == torch.float32
+    assert config.optimizer.exp_avg_dtype == torch.bfloat16
+    assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    # FP32 main parameters and gradients are the defaults, so only the moments change.
+    optimizer_changed = {
+        name
+        for name in vars(config.optimizer).keys() | vars(base.optimizer).keys()
+        if getattr(config.optimizer, name, _MISSING) != getattr(base.optimizer, name, _MISSING)
+    }
+    assert optimizer_changed == {"use_precision_aware_optimizer", "exp_avg_dtype", "exp_avg_sq_dtype"}
+
+    # The environment is the base's plus exactly these settings.
+    assert config.env_vars == {
+        **base.env_vars,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 128,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 128,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+
+    # Only these model fields differ from the MXFP8 base, and the real provider declares each of them.
+    changed = {
+        name
+        for name in vars(config.model).keys() | vars(base.model).keys()
+        if getattr(config.model, name, _MISSING) != getattr(base.model, name, _MISSING)
+    }
+    assert changed == {
+        "max_vision_cuda_graph_seq_length",
+        "moe_mlp_glu_interleave_size",
+        "recompute_granularity",
+        "recompute_modules",
+        "use_transformer_engine_op_fuser",
+        "vision_cuda_graph_impl",
+        "vision_cuda_graph_scope",
+    }
+    provider_fields = {field.name for field in dataclasses.fields(Qwen35VLMoEModelProvider)}
+    assert changed <= provider_fields, sorted(changed - provider_fields)
+
+
 # GB300 recipes that run GatedDeltaNet on cuDNN once Megatron-Core exposes gdn_kernel_backend.
 _GB300_CUDNN_GDN_RECIPES = (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
@@ -595,18 +656,17 @@ _GB300_CUDNN_GDN_RECIPES = (
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
 )
-# VRNVL72 MXFP8 recipes; they keep the GB300 base's cuDNN GDN (measured against FLA on VRNVL72 at 35B, and used in the
-# measured 397B run).
+# VRNVL72 recipes that keep the GB300 base's cuDNN GDN backend: 35B/397B MXFP8 and 397B BF16.
 _VRNVL72_CUDNN_GDN_RECIPES = (
     qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
 )
-# VRNVL72 aliases of the GB300 BF16 and FP8-CS recipes; they keep FLA until cuDNN GDN is measured on VRNVL72 at those
+# The remaining VRNVL72 BF16 and FP8-CS aliases keep FLA until cuDNN GDN is measured at those model sizes and
 # precisions.
 _VRNVL72_FLA_ALIASES = (
     qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
 )
 _QWEN35_VL_PERF_RECIPES = tuple(
@@ -639,15 +699,16 @@ def test_qwen35_vl_gb300_runs_gdn_on_cudnn(recipe_fn: Callable, monkeypatch: pyt
 
 @pytest.mark.usefixtures("megatron_core_with_gdn_kernel_backend")
 @pytest.mark.parametrize("recipe_fn", _QWEN35_VL_PERF_RECIPES, ids=recipe_factory_id)
-def test_qwen35_vl_cudnn_gdn_is_limited_to_measured_recipes(
+def test_qwen35_vl_cudnn_gdn_is_limited_to_selected_recipes(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only these recipes leave FLA: the GB300 35B/397B recipes and the VRNVL72 35B/397B MXFP8 recipes.
+    """Only the GB300 35B/397B recipes and VRNVL72 35B/397B MXFP8 and 397B BF16 recipes leave FLA.
 
     On GB300, cuDNN GDN was measured with MXFP8; the BF16 and FP8-CS recipes inherit the shared builder's setting.
+    VRNVL72 also keeps that backend for the 397B BF16 benchmark.
 
-    122B, B200, B300 and GB200 were not measured, the VRNVL72 BF16 and FP8-CS aliases inherit the GB300 model config
-    and reset to FLA, and H100 is SM90, outside cuDNN's fast GDN engine.
+    122B, B200, B300 and GB200 were not measured, the remaining VRNVL72 BF16 and FP8-CS aliases reset to FLA, and
+    H100 is SM90, outside cuDNN's fast GDN engine.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 

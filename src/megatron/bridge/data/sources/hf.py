@@ -16,16 +16,17 @@
 
 import math
 import random
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import torch
-from datasets import concatenate_datasets, load_dataset
+from datasets import Dataset, concatenate_datasets, load_dataset
 
 from megatron.bridge.data.base import validate_declarative_mapping
 from megatron.bridge.data.sources.hf_adapters import (
+    LazyAdaptedHFDataset,
     adapt_hf_dataset,
     prepare_hf_dataset_for_adapter,
     validate_hf_dataset_adapter,
@@ -339,6 +340,28 @@ def load_and_adapt_hf_dataset(source: HFDatasetSourceConfig) -> list[dict[str, A
         dataset,
         adapter_name=resolved.schema_adapter,
         adapter_kwargs=resolved.adapter_kwargs,
+    )
+
+
+def load_and_adapt_hf_dataset_lazily(
+    source: HFDatasetSourceConfig,
+    transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> LazyAdaptedHFDataset:
+    """Load a Hugging Face split and adapt its rows on access; see :class:`LazyAdaptedHFDataset`."""
+    resolved = resolve_hf_dataset_source(source)
+    dataset = load_hf_dataset_source(source)
+    if not isinstance(dataset, Dataset):
+        raise ValueError(f"Lazy SFT examples need an indexable dataset, got {type(dataset).__name__}.")
+    dataset = prepare_hf_dataset_for_adapter(
+        dataset,
+        adapter_name=resolved.schema_adapter,
+        adapter_kwargs=resolved.adapter_kwargs,
+    )
+    return LazyAdaptedHFDataset(
+        dataset,
+        adapter_name=resolved.schema_adapter,
+        adapter_kwargs=resolved.adapter_kwargs,
+        transform=transform,
     )
 
 

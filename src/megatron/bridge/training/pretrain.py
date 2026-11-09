@@ -27,7 +27,7 @@ from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.setup import setup
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.train import _finish_train, train
+from megatron.bridge.training.train import _finish_train, _release_cuda_graph_references, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
 from megatron.bridge.utils.common_utils import print_rank_0
 from megatron.bridge.utils.decorators import experimental_fn
@@ -135,6 +135,7 @@ def _pretrain(
 
     config = state.cfg
     dataset_provider = get_dataset_provider(config.dataset)
+    optimizer = None
     try:
         setup_output = setup(state, dataset_provider, restart_store=store, callback_manager=callback_manager)
         state = setup_output.state
@@ -200,8 +201,17 @@ def _pretrain(
                 is_test=True,
             )
 
+        _release_cuda_graph_references(optimizer)
         _finish_train(state, checkpoint_manager)
     except BaseException as error:
+        if optimizer is not None:
+            try:
+                # Optimizers can retain the full-iteration graph after its global
+                # handle is cleared. Release it before ordinary or NVRx teardown.
+                # Do not synchronize CUDA here: a peer may have failed mid-collective.
+                _release_cuda_graph_references(optimizer)
+            except BaseException:
+                logger.exception("Failed to release CUDA graphs after pretrain failure")
         if inprocess_call_wrapper is None:
             logger.exception(
                 "Pretrain failed on rank=%s with %s: %s. Bridge is aborting framework-owned distributed resources "
@@ -216,6 +226,8 @@ def _pretrain(
                 logger.exception("Unexpected failure while cleaning up after pretrain failure")
         raise
 
+    # Release DataLoader workers before process-group teardown.
+    del setup_output, train_data_iterator, valid_data_iterator, test_data_iterator
     _maybe_destroy_process_group(should_destroy_process_group)
 
 

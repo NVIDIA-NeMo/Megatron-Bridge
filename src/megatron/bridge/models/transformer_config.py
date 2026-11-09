@@ -19,6 +19,7 @@ override system while maintaining compatibility with Megatron Core's post_init b
 """
 
 import copy
+from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, is_dataclass
 
 from megatron.core.transformer.enums import AttnBackend
@@ -41,6 +42,8 @@ def _safe_asdict(obj, skip_keys: set[str]) -> dict:
         for f in fields(obj):
             value = getattr(obj, f.name)
             result[f.name] = value if f.name in skip_keys else _safe_asdict(value, skip_keys)
+        if isinstance(obj, TransformerConfig):
+            result.update(obj._inferred_cp_inputs())
         return result
     if isinstance(obj, (list, tuple)):
         return obj.__class__(_safe_asdict(v, skip_keys) for v in obj)
@@ -221,6 +224,14 @@ class TransformerConfig(MCoreTransformerConfig):
     yarn_mscale_all_dim: float | None = None
     yarn_correction_range_round_to_int: bool | None = None
 
+    def __setattr__(self, name: str, value: object) -> None:
+        """Treat reassigned inferred CP fields as explicit, even when the value is unchanged."""
+        inferred = self.__dict__.get("_inferred_cp_values", {})
+        if name in inferred:
+            # Replace the mapping so a shallow config copy cannot alter the original's inputs.
+            object.__setattr__(self, "_inferred_cp_values", {key: val for key, val in inferred.items() if key != name})
+        super().__setattr__(name, value)
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -245,7 +256,8 @@ class TransformerConfig(MCoreTransformerConfig):
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
         self._finalize_gtp_weight_shards()
-        MCoreTransformerConfig.__post_init__(self)
+        with self._preserve_inferred_cp_inputs():
+            MCoreTransformerConfig.__post_init__(self)
 
         # In-batch packing produces variable-length packed sequences across microbatches,
         # so PP stages must communicate tensor shapes dynamically instead of using static
@@ -253,6 +265,34 @@ class TransformerConfig(MCoreTransformerConfig):
         # dispatcher check (irrelevant for non-MoE models).
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
+
+    def _inferred_cp_inputs(self) -> dict[str, None]:
+        """Recover unset CP inputs that have not been explicitly reassigned."""
+        return {
+            name: None
+            for name, resolved in getattr(self, "_inferred_cp_values", {}).items()
+            if getattr(self, name) == resolved
+        }
+
+    @contextmanager
+    def _preserve_inferred_cp_inputs(self):
+        """Keep dev's inferred CP mode/layout distinct from explicit user choices.
+
+        MCore resolves None in-place, then uses that distinction to select legacy
+        module-local versus stack-level CP conversion. A second finalize must
+        present the original unset inputs again, without changing runtime values.
+        """
+        for name in self._inferred_cp_inputs():
+            setattr(self, name, None)
+        inferred = [
+            name
+            for name in ("linear_cp_mode", "linear_cp_layout")
+            if hasattr(self, name) and getattr(self, name) is None
+        ]
+        try:
+            yield
+        finally:
+            self._inferred_cp_values = {name: getattr(self, name) for name in inferred}
 
     def _finalize_gtp_weight_shards(self) -> None:
         """Derive rematerialization sizes from optional logical weight-shard counts."""
@@ -344,7 +384,8 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
         self._finalize_gtp_weight_shards()
-        MCoreMLATransformerConfig.__post_init__(self)
+        with self._preserve_inferred_cp_inputs():
+            MCoreMLATransformerConfig.__post_init__(self)
 
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
@@ -402,7 +443,8 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
         self._finalize_gtp_weight_shards()
-        MCoreHeterogeneousTransformerConfig.__post_init__(self)
+        with self._preserve_inferred_cp_inputs():
+            MCoreHeterogeneousTransformerConfig.__post_init__(self)
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
 

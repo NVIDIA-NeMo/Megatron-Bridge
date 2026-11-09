@@ -22,6 +22,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
+from fp32_precision import disable_tf32, tf32_disabled
 from megatron.core.transformer.enums import AttnBackend
 from transformers.models.diffusion_gemma import DiffusionGemmaConfig, DiffusionGemmaForBlockDiffusion
 
@@ -141,8 +142,7 @@ def main() -> None:
     dist.init_process_group("nccl")
     torch.cuda.set_device(0)
     torch.manual_seed(1234)
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
+    disable_tf32()
 
     with tempfile.TemporaryDirectory() as tmp:
         model_dir = Path(tmp) / "diffusiongemma-toy"
@@ -279,7 +279,7 @@ def main() -> None:
             "decoder": decoder_results,
             "atol": args.atol,
             "attention_backend": args.attention_backend,
-            "tf32_disabled": True,
+            "tf32_disabled": tf32_disabled(),
             "passed": all(case["encoder_max_abs_diff"] <= args.atol for case in results.values())
             and all(case["relative_l2"] <= 0.001 for case in decoder_results.values()),
         }

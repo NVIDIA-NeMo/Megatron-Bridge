@@ -183,14 +183,10 @@ uv run python -m pytest tests/unit_tests/models/muse_spark_open/test_muse_spark_
 
 The initial path requires Transformer Engine, expert tensor parallelism of 1,
 dropless routing, and no CUDA graphs, EP communication overlap, virtual pipeline
-stages, MTP, FP8/FP4, or fused/dynamic inference. Full-checkpoint import at
-TP4/EP16, export at TP2/EP32, four-modality forward comparison at TP4/EP16 with
-CP1, CP2, and CP4, and LoRA training at TP4/EP16, TP4/EP32, and TP4/CP2/EP16 are
-recorded in the model verification card. Context parallelism must use
+stages, MTP, FP8/FP4, or fused/dynamic inference. Context parallelism must use
 A2A or all-gather communication, and training with TP greater than 1 needs sequence
-parallelism. Pipeline parallelism through six and eight explicit stages, full-parameter SFT
-and pretraining of the complete model on 48 and 64 GB200 nodes, packed long-context SFT at
-CP2 (32K) and CP4 (64K), packed Tulu 3 LoRA, and HF export of a fine-tuned checkpoint are
-recorded there as well. Cached native generation and gradient
-comparisons remain unvalidated. Image-text training reuses the Muse Glimmer collator; the
-GB200 recipes are listed in `examples/models/muse_spark_open/README.md`.
+parallelism. The model verification card records full-checkpoint import at TP4/EP16,
+export at TP2/EP32 with an exhaustive tensor audit, forward comparison with Hugging Face at
+TP4/EP16, and deterministic image generation at TP4/EP32 on the pinned public revision. Cached
+native generation and gradient comparisons remain unvalidated. Image-text training reuses the
+Muse Glimmer collator; the GB200 recipes are listed in `examples/models/muse_spark_open/README.md`.

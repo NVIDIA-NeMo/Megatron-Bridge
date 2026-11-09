@@ -11,10 +11,12 @@
 </div>
 
 ## 📣 News
+- [11/05/2026] [**ERNIE-5.5-Flash-Base**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55/README.md) for sft training details.
+- [10/16/2026] [**Reflection AI Beam-1.0-501B-A23B**](https://huggingface.co/reflection/Beam-1.0-501B-A23B) is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, inference, and BF16 H200 recipes for pretraining, SFT, long-context SFT, and LoRA PEFT. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/beam/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/beam/card.yaml) for verified configurations and current limitations.
 
-- [10/15/2026] [**NVIDIA Nemotron 3.5 Super VL**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120b-a12b-base-BF16) is released! Megatron Bridge supports the 120B-A12B vision-language model with HF↔Megatron checkpoint conversion, image inference, and pretraining, SFT, and LoRA recipes, plus text-only conversion and training workflows. See the [model documentation](docs/models/nemotron/nemotron3.5-super-vl.md) and [verification card](examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b/card.yaml) for supported workflows, verified configurations, and current limitations.
+- [10/15/2026] [**NVIDIA Nemotron 3.5 Super VL**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120b-a12b-base-BF16) is released! Megatron Bridge supports the 120B-A12B vision-language model with HF↔Megatron checkpoint conversion, image inference, and pretraining, SFT, and LoRA recipes, plus text-only conversion and training workflows. See the [model documentation](docs/models/nemotron/nemotron3.5-super-vl.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b/card.yaml) for supported workflows, verified configurations, and current limitations.
 
-- [10/15/2026] [**Muse-Spark-Open-816B-A42B**](examples/models/muse_spark_open/README.md) is now supported! Megatron Bridge adds checkpoint conversion, inference, and GB200 training recipes for the 816B-total / 42B-active vision-and-audio-language MoE model: pretraining, full SFT, long-context SFT at 32K and 64K with context parallelism, LoRA, and image-text SFT and LoRA, with HybridEP MoE dispatch. See the [examples README](examples/models/muse_spark_open/README.md) and the [verification card](examples/model_verification_cards/muse-spark-open-816b-a42b/card.yaml) for details.
+- [10/15/2026] [**Muse-Spark-Open-816B-A42B**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/muse_spark_open/README.md) is now supported! Megatron Bridge adds checkpoint conversion, inference, and GB200 training recipes for the 816B-total / 42B-active vision-and-audio-language MoE model: pretraining, full SFT, long-context SFT at 32K and 64K with context parallelism, LoRA, and image-text SFT and LoRA, with HybridEP MoE dispatch. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/muse_spark_open/README.md) and the [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/muse-spark-open-816b-a42b/card.yaml) for details.
 
 - [08/19/2026] **Megatron Bridge 0.6.0 released!** Highlights include GLM-5.2 with cuDNN fused DSA for 128K THD-packed context-parallel training, new LLM/VLM/diffusion models, more reliable VLM data and sequence packing, improved checkpoint and LoRA workflows, unified training and conversion launchers, and refreshed performance recipes. Huge thanks to our community contributors! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.6.0).
 
@@ -230,10 +232,11 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 |----------------|--------------------|
 | [**BAGEL**](docs/models/bagel/bagel.md) | BAGEL-7B-MoT (requires the tested MCore `dev` revision and `bagel` extra) |
 | [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
+| [**Beam**](docs/models/beam/beam.md) | Beam-1.0-501B-A23B |
 | [**BERT**](docs/models/bert/index.md) | Megatron-Style BERT (`MegatronBertForMaskedLM`) |
 | [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V3, DeepSeek V4 / V4 Flash |
 | [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
-| **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl) |
+| **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl), [Ernie 5.5](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55) |
 | [**EXAONE**](docs/models/exaone/exaone.md) | EXAONE 4.0, EXAONE 4.5 VL, K-EXAONE MoE |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
 | [**Gemma**](docs/models/gemma/index.md) | Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
@@ -242,6 +245,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL, Kimi K3 |
 | [**Llama**](docs/models/llama/index.md) | Llama 3 / 3.1 / 3.2 / 3.3 |
+| [**MiniCPM-o**](docs/models/minicpmo/minicpmo-4.5.md) | MiniCPM-o 4.5 (text/image/audio understanding only; no speech generation or SFT/LoRA recipes) |
 | [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7, MiniMax-M3 |
 | [**Mistral**](docs/models/mistral/index.md) | Ministral 3 (3B/8B/14B) |
 | [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |

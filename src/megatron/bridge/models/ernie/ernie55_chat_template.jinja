@@ -1,0 +1,357 @@
+{%- if chat_template_kwargs is defined and chat_template_kwargs.options is defined -%}
+    {%- set options = chat_template_kwargs.options -%}
+{%- endif -%}
+{%- if options is defined and options.thinking_mode is defined and (options.thinking_mode == 'close' or options.thinking_mode == 'false') -%}
+    {%- set enable_thinking = false -%}
+{%- endif -%}
+{%- set image_count = namespace(value=0) -%}
+{%- set video_count = namespace(value=0) -%}
+{%- set audio_count = namespace(value=0) -%}
+{% macro render_content(content_list, accumulate=True, role="user", contain_reasoning_content=False) %}
+  {%- for content_item in content_list -%}
+    {%- if content_item.type == 'text' -%}
+      {{- content_item.text }}
+    {%- elif content_item.type == 'image_url' -%}
+      {%- if accumulate -%}
+        {%- set image_count.value = image_count.value + 1 -%}
+      {%- endif -%}
+      {%- if role == "assistant" and contain_reasoning_content -%}
+        {{ ' ' }}<image_start><|image@placeholder|><image_end>
+      {%- else -%}
+        {{ ' ' }}Picture{{ ' ' ~ image_count.value if accumulate else '' }}:<image_start><|image@placeholder|><image_end>
+      {%- endif -%}
+    {%- elif content_item.type == 'video_url' -%}
+      {%- if accumulate -%}
+        {%- set video_count.value = video_count.value + 1 -%}
+      {%- endif -%}
+      {{ ' ' }}Video{{ ' ' ~ video_count.value if accumulate else '' }}:<video_start><|video@placeholder|><video_end>
+      {%- if content_item.video_url.subtitles is defined and content_item.video_url.subtitles -%}
+        {{ ' ' }}<Start of Audio Content>: {%- for subtitle in content_item.video_url.subtitles -%}
+          [{{ "%.1f"|format(subtitle[1]) }},{{ "%.1f"|format(subtitle[2]) }}]{{ subtitle[0] }}
+        {%- endfor -%} <End of Audio Content>{{ ' ' }}
+      {%- endif -%}
+    {%- elif content_item.type == 'audio_url' -%}
+      {%- if accumulate -%}
+        {%- set audio_count.value = audio_count.value + 1 -%}
+      {%- endif -%}
+      {%- if role == "user" -%}
+        {{ ' ' }}Audio{{ ' ' ~ audio_count.value if accumulate else '' }}:<audio_start><|audio@placeholder|><audio_end>
+      {%- elif role == 'assistant' -%}
+        {{ ' ' }}<audio_start><|audio@placeholder|><audio_end>
+      {%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+{% endmacro %}
+{#- ---- 定义 message 渲染 ---- -#}
+{%- macro build_messages(messages) -%}
+    {%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) -%}
+    {%- for message in messages[::-1] -%}
+        {%- set index = (messages|length - 1) - loop.index0 -%}
+        {%- set user_content = "" -%}
+        {%- if message.role == "user" -%}
+            {%- if message.content is string -%}
+                {%- set user_content = message.content -%}
+            {%- elif message.content is iterable -%}
+                {%- set user_content = render_content(message.content, False, message.role, message.reasoning_content is defined) -%}
+            {%- endif -%}
+        {%- endif -%}
+        {%- if ns.multi_step_tool and user_content and not(user_content.startswith('<ernie:tool_output>') and user_content.endswith('</ernie:tool_output>')) -%}
+            {%- set ns.multi_step_tool = false -%}
+            {%- set ns.last_query_index = index -%}
+        {%- endif -%}
+    {%- endfor -%}
+    {#- ---- 初始化 多模态计数器 ---- -#}
+    {%- for message in messages -%}
+        {%- if message.content is string -%}
+            {%- set content = message.content -%}
+        {%- elif message.content is iterable and not (message.role == "system" and loop.first) -%}
+            {%- set content = render_content(message.content, True, message.role, message.reasoning_content is defined) -%}
+        {%- elif message.content is iterable -%}
+            {%- set content = render_content(message.content, True, message.role, message.reasoning_content is defined) -%}
+        {%- else -%}
+            {%- set content = '' -%}
+        {%- endif -%}
+        {%- if (message.role == "user") or (message.role == "system" and not loop.first) -%}
+            {{- '<|ernie:im_start|>' + message.role + '\n' + content + '<|ernie:im_end|>\n' -}}
+        {%- elif message.role == "assistant" -%}
+            {%- set reasoning_content = '' -%}
+            {%- if message.thoughts is defined and message.thoughts is string -%}
+                {%- set reasoning_content = message.thoughts -%}
+            {%- elif message.reasoning_content is defined and message.reasoning_content is string -%}
+                {%- set reasoning_content = message.reasoning_content -%}
+            {%- else -%}
+                {%- if '</ernie:think>' in content -%}
+                    {%- set reasoning_content = content.split('</ernie:think>')[0].rstrip('\n').split('<ernie:think>')[-1].lstrip('\n') -%}
+                    {%- set content = content.split('</ernie:think>')[-1].lstrip('\n') -%}
+                {%- endif -%}
+            {%- endif -%}
+            {#- ③ enable_thinking=false 表示关闭思考 -#}
+            {%- set is_thinking_off = (enable_thinking is defined and (enable_thinking == false or enable_thinking == 'false' or enable_thinking == False)) -%}
+            {%- if loop.last or (not loop.last and reasoning_content) -%}
+                {%- if is_thinking_off or reasoning_content.strip() == "" -%}
+                    {#- ② 关思考或思考内容为空（含仅空白）时只拼接</ernie:think> -#}
+                    {{- '<|ernie:im_start|>' + message.role + '\n</ernie:think>' -}}
+                {%- else -%}
+                    {{- '<|ernie:im_start|>' + message.role + '\n<ernie:think>' -}}
+                    {{- reasoning_content.strip('\n') -}}
+                    {{- '</ernie:think>' -}}
+                {%- endif -%}
+            {%- else -%}
+                {{- '<|ernie:im_start|>' + message.role + '\n</ernie:think>' -}}
+            {%- endif -%}
+            {#- ⑥ 删除<response></response> -#}
+            {%- if content|length > 0 -%}
+                {{- content.strip('\n') -}}
+            {%- endif -%}
+            {%- if message.tool_calls -%}
+                {%- if content -%}
+                    {{- '\n' -}}
+                {%- endif -%}
+                {#- ④ 工具调用模式改为新的xml格式，所有invoke放在一个ernie:tool_call内 -#}
+                {{- '<ernie:tool_call>\n' -}}
+                {%- for tool_call in message.tool_calls -%}
+                    {%- if tool_call.function -%}
+                        {%- set tool_call = tool_call.function -%}
+                    {%- endif -%}
+                    {{- '<invoke name="' + tool_call.name + '">' -}}
+                    {%- if tool_call.arguments is string -%}
+                        {%- set args = tool_call.arguments | fromjson -%}
+                    {%- else -%}
+                        {%- set args = tool_call.arguments -%}
+                    {%- endif -%}
+                    {%- for key, value in args.items() -%}
+                        {{- '<parameter name="' + key + '">' -}}
+                        {%- if value is string -%}
+                            {{- value -}}
+                        {%- else -%}
+                            {{- value | tojson -}}
+                        {%- endif -%}
+                        {{- '</parameter>' -}}
+                    {%- endfor -%}
+                    {{- '</invoke>\n' -}}
+                {%- endfor -%}
+                {{- '</ernie:tool_call>' -}}
+            {%- endif -%}
+            {{- '<|ernie:im_end|>\n' -}}
+        {%- elif message.role == "tool" -%}
+            {%- if loop.first or (messages[loop.index0 - 1].role != "tool") -%}
+                {{- '<|ernie:im_start|>tool' -}}
+            {%- endif -%}
+            {{- '\n<ernie:tool_output>' -}}
+            {{- content -}}
+            {{- '</ernie:tool_output>' -}}
+            {%- if loop.last or (messages[loop.index0 + 1].role != "tool") -%}
+                {{- '<|ernie:im_end|>\n' -}}
+            {%- endif -%}
+        {%- endif -%}
+    {%- endfor -%}
+{%- endmacro -%}
+{%- if not add_generation_prompt is defined -%}
+    {%- set add_generation_prompt = true -%}
+{%- endif -%}
+{{- '<|ERNIE_MASK|><|ernie:im_start|>system\n' -}}
+{%- if messages[0].role == 'system' or system_settings or agent_storage or examples -%}
+    {{- '<ernie:system_setting>' -}}
+    {{- '\n'+system_settings if system_settings -}}
+    {%- if messages and messages[0].role == 'system' -%}
+        {%- if messages[0].content is string -%}
+            {{- '\n' + messages[0].content -}}
+        {%- elif messages[0].content is iterable -%}
+            {%- set sys_content = render_content(messages[0].content) %}
+            {{- '\n' + sys_content -}}
+        {%- endif -%}
+    {%- endif -%}
+    {%- if agent_storage -%}
+        {{- '\n【agent storage】记录额外的信息，包含但不限于用户画像、长期记忆内容等。\n' -}}
+        {{- agent_storage -}}
+    {%- endif -%}
+    {%- if examples and examples[0] -%}
+        {{- '\n' -}}
+        {{- '【行为例子】列举了一些情况下的行为逻辑供你参考。\n' -}}
+        {%- for example in examples[::-1] -%}
+            {{- '\n' if loop.index0 > 0 -}}
+            {{- '[示例' -}}
+            {{- loop.index0 + 1 -}}
+            {{- ']\n' -}}
+            {{- build_messages(example).strip('\n') -}}
+        {%- endfor -%}
+    {%- endif -%}
+    {{- '\n</ernie:system_setting>\n' -}}
+{%- endif -%}
+{{- '<ernie:global_setting>' -}}
+{#- ③ enable_thinking控制思考开关; reasoning_effort控制思考强度 -#}
+{%- set enable_thinking_false = enable_thinking is defined and (enable_thinking == false or enable_thinking == 'false' or enable_thinking == False) -%}
+{%- if not enable_thinking_false -%}
+    {#- enable_thinking不存在 或 enable_thinking=true 时，输出reasoning_effort -#}
+    {%- if reasoning_effort is defined -%}
+        {{- '\nreasoning_effort=' + reasoning_effort -}}
+    {%- else -%}
+        {{- '\nreasoning_effort=high' -}}
+    {%- endif -%}
+{%- endif -%}
+{#- ⑤ parallel_tool_calls: options显式为false时不拼入，否则tools存在时拼入 -#}
+{%- if options is defined and options.parallel_tool_calls is defined and (options.parallel_tool_calls == "false" or options.parallel_tool_calls == False) -%}
+{%- elif tools is defined and tools -%}
+    {{- '\nparallel_tool_calls=True' -}}
+{%- endif -%}
+{{ '\n</ernie:global_setting>' -}}
+{%- if tools -%}
+    {{- "\n<ernie:tool_list>\n" -}}
+    {{- '[' -}}
+    {%- for tool in tools -%}
+        {{- tool | tojson -}}
+        {%- if not loop.last -%}
+            {{- ', ' -}}
+        {%- endif -%}
+    {%- endfor -%}
+    {{- ']' -}}
+    {{- "\n</ernie:tool_list>" -}}
+{%- endif -%}
+{{-'<|ernie:im_end|>\n' -}}
+{#- ms-swift: the conversation is rendered at top level so {% generation %} offsets are exact. -#}
+{%- for message in messages -%}
+    {%- if message.content is string -%}
+        {%- set content = message.content -%}
+    {%- elif message.content is iterable and not (message.role == "system" and loop.first) -%}
+        {%- set content = render_content(message.content, True, message.role, message.reasoning_content is defined) -%}
+    {%- elif message.content is iterable -%}
+        {%- set content = render_content(message.content, True, message.role, message.reasoning_content is defined) -%}
+    {%- else -%}
+        {%- set content = '' -%}
+    {%- endif -%}
+    {%- if (message.role == "user") or (message.role == "system" and not loop.first) -%}
+        {{- '<|ernie:im_start|>' + message.role + '\n' + content + '<|ernie:im_end|>' -}}
+        {{- '\n' if not loop.last else '' -}}
+    {%- elif message.role == "assistant" -%}
+        {%- set reasoning_content = '' -%}
+        {%- if message.thoughts is defined and message.thoughts is string -%}
+            {%- set reasoning_content = message.thoughts -%}
+        {%- elif message.reasoning_content is defined and message.reasoning_content is string -%}
+            {%- set reasoning_content = message.reasoning_content -%}
+        {%- else -%}
+            {%- if '</ernie:think>' in content -%}
+                {%- set reasoning_content = content.split('</ernie:think>')[0].rstrip('\n').split('<ernie:think>')[-1].lstrip('\n') -%}
+                {%- set content = content.split('</ernie:think>')[-1].lstrip('\n') -%}
+            {%- endif -%}
+        {%- endif -%}
+        {#- ③ enable_thinking=false 表示关闭思考 -#}
+        {%- set is_thinking_off = (enable_thinking is defined and (enable_thinking == false or enable_thinking == 'false' or enable_thinking == False)) -%}
+        {{- '<|ernie:im_start|>' + message.role + '\n' -}}
+        {%- set think = not is_thinking_off and reasoning_content.strip() != "" -%}
+        {#- ms-swift: as in the generation prompt, <ernie:think> (or </ernie:think> with thinking off) belongs to the prompt; the
+            SFT-supervised span is the reasoning, answer, tool calls and <|ernie:im_end|>. A message with loss=false (an
+            untrained historical turn) is rendered outside the span. -#}
+        {{- '<ernie:think>' if think -}}
+        {{- '</ernie:think>' if is_thinking_off -}}
+        {%- set turn -%}
+        {%- if think -%}
+            {{- reasoning_content.strip('\n') -}}
+        {%- endif -%}
+        {#- ② 关思考或思考内容为空（含仅空白）时只拼接</ernie:think> -#}
+        {{- '</ernie:think>' if not is_thinking_off -}}
+        {#- ⑥ 删除<response></response> -#}
+        {%- if content|length > 0 -%}
+            {{- content.strip('\n') -}}
+        {%- endif -%}
+        {%- if message.tool_calls -%}
+            {%- if content -%}
+                {{- '\n' -}}
+            {%- endif -%}
+            {#- ④ 工具调用模式改为新的xml格式，所有invoke放在一个ernie:tool_call内 -#}
+            {{- '<ernie:tool_call>\n' -}}
+            {%- for tool_call in message.tool_calls -%}
+                {%- if tool_call.function -%}
+                    {%- set tool_call = tool_call.function -%}
+                {%- endif -%}
+                {{- '<invoke name="' + tool_call.name + '">' -}}
+                {%- if tool_call.arguments is string -%}
+                    {%- set args = tool_call.arguments | fromjson -%}
+                {%- else -%}
+                    {%- set args = tool_call.arguments -%}
+                {%- endif -%}
+                {%- for key, value in args.items() -%}
+                    {{- '<parameter name="' + key + '">' -}}
+                    {%- if value is string -%}
+                        {{- value -}}
+                    {%- else -%}
+                        {{- value | tojson -}}
+                    {%- endif -%}
+                    {{- '</parameter>' -}}
+                {%- endfor -%}
+                {{- '</invoke>\n' -}}
+            {%- endfor -%}
+            {{- '</ernie:tool_call>' -}}
+        {%- endif -%}
+        {{- '<|ernie:im_end|>' -}}
+        {%- endset -%}
+        {%- if message.loss is defined and message.loss is not none and not message.loss -%}
+            {{- turn -}}
+        {%- else -%}
+            {%- generation -%}{{- turn -}}{%- endgeneration -%}
+        {%- endif -%}
+        {{- '\n' if not loop.last else '' -}}
+    {%- elif message.role == "tool" -%}
+        {%- if loop.first or (messages[loop.index0 - 1].role != "tool") -%}
+            {{- '<|ernie:im_start|>tool' -}}
+        {%- endif -%}
+        {{- '\n<ernie:tool_output>' -}}
+        {{- content -}}
+        {{- '</ernie:tool_output>' -}}
+        {%- if loop.last or (messages[loop.index0 + 1].role != "tool") -%}
+            {{- '<|ernie:im_end|>' -}}
+            {{- '\n' if not loop.last else '' -}}
+        {%- endif -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{- '\n' -}}
+    {#- ③ enable_thinking=false 表示关闭思考 -#}
+    {%- set is_thinking_off = (enable_thinking is defined and (enable_thinking == false or enable_thinking == 'false' or enable_thinking == False)) -%}
+    {%- set handled = False -%}
+    {%- if options is defined and options.tool_choice is defined -%}
+        {%- if options.tool_choice.mode == "none" -%}
+            {{- "<|ernie:im_start|>assistant\n<ernie:think>" -}}
+            {{- options.tool_choice.thoughts if options.tool_choice.thoughts | length > 0 else '用户指定不要调用任何工具，所以我需要直接回复。' -}}
+            {{- '</ernie:think>' -}}
+            {{- options.tool_choice.response if options.tool_choice.response | length > 0 else '' -}}
+            {%- set handled = True -%}
+        {%- endif -%}
+        {%- if options.tool_choice.mode == "required" -%}
+            {{- "<|ernie:im_start|>assistant\n" -}}
+            {%- if is_thinking_off -%}
+                {{- '</ernie:think><ernie:tool_call>\n<invoke name="' -}}
+            {%- else -%}
+                {{- '<ernie:think>系统要求我必须使用一个或多个工具，注意要认真填写参数，若必填参数存在信息缺失，需做出合理的假设，不可询问用户。现在开始分析用户需求，' -}}
+            {%- endif -%}
+            {%- set handled = True -%}
+        {%- endif -%}
+        {%- if options.tool_choice.mode == "force" -%}
+            {{- "<|ernie:im_start|>assistant\n<ernie:think>" -}}
+            {{- "系统指定必须使用" + options.tool_choice.name + '工具，因此我尝试填写合适的参数满足用户需求。</ernie:think><ernie:tool_call>\n<invoke name="' + options.tool_choice.name + '">' -}}
+            {#- 核心兼容逻辑：寻找当前强制调用的工具定义 -#}
+            {%- set selected_tool = namespace(value=none) -%}
+            {%- for t in tools -%}
+                {%- if t.function.name == options.tool_choice.name -%}
+                    {%- set selected_tool.value = t -%}
+                {%- endif -%}
+            {%- endfor -%}
+            {#- 判断该工具是否有参数定义（未找到工具时按有参数处理） -#}
+            {%- if not selected_tool.value or (selected_tool.value.function.parameters and selected_tool.value.function.parameters.properties | length > 0) -%}
+                {#- 情况 A: 有参数或工具不在tool_list中，预填充参数起始标签 -#}
+                {{- '<parameter name="' -}}
+            {%- else -%}
+                {#- 情况 B: 空参数，预填充结束标签，引导模型闭合 -#}
+                {{- "</invoke>\n</ernie:tool_call>" -}}
+            {%- endif -%}
+            {%- set handled = True -%}
+        {%- endif -%}
+    {%- endif -%}
+    {%- if not handled -%}
+        {%- if is_thinking_off -%}
+            {#- ② 关思考时只拼接</ernie:think> -#}
+            {{- "<|ernie:im_start|>assistant\n</ernie:think>" -}}
+        {%- else -%}
+            {{- "<|ernie:im_start|>assistant\n<ernie:think>" -}}
+        {%- endif -%}
+    {%- endif -%}
+{%- endif -%}

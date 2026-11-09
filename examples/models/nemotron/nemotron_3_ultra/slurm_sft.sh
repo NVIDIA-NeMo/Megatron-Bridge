@@ -122,6 +122,10 @@ export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 export NCCL_TIMEOUT=${NCCL_TIMEOUT:-1800000}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
+# Compile Inductor kernels in the training process. On Python 3.12 before 3.12.8, Inductor's default pool of forked
+# compile workers can deadlock when it re-forks after an idle period (pytorch/pytorch#200848), stalling the long
+# first step. Inductor reads this when it is imported, so it must be exported here; the recipe cannot set it.
+export TORCHINDUCTOR_COMPILE_THREADS=${TORCHINDUCTOR_COMPILE_THREADS:-1}
 export PYTHONWARNINGS="${PYTHONWARNINGS:+${PYTHONWARNINGS},}ignore:The AccumulateGrad node:UserWarning"
 
 # ==============================================================================

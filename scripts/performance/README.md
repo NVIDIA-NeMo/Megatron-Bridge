@@ -27,6 +27,41 @@ Each training entrypoint therefore executes only once.
 - Prefer command-line overrides for one-off changes.
 - Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
 
+### DeepSeek V3 GB300 MXFP8 proxy
+
+Use `deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config` with the training launcher,
+or select `--model_family_name deepseek --model_recipe_name deepseek_v3 --task pretrain
+--gpu gb300 --compute_dtype fp8_mx --num_gpus 64 --config_variant proxy` in the
+performance launcher, together with your normal Slurm/container arguments.
+Prefer the performance launcher for measurements: on NCCL EP it exposes one GPU per
+rank (`scripts/performance/bootstrap.py`). The training launcher leaves
+`CUDA_VISIBLE_DEVICES` unchanged, so NCCL EP buffers map into every visible GPU,
+which adds host overhead on Grace+Blackwell nodes.
+
+This mock-data debugging benchmark has 3 dense + 10 MoE decoder layers and one
+additional MTP layer. It uses PP=1 with no virtual pipeline or explicit stage
+layout, TP=CP=ETP=1, EP=32, GBS=4096 and MBS=1. Thus dense DP=64, expert DP=2,
+and there are 64 microbatches per iteration. Its configuration matches the
+64-GPU VRNVL72 MXFP8 proxy, including per-layer shapes, full-iteration CUDA graphs,
+cuTeDSL fusion, MoE overlap, precision, optimizer and process environment. Both
+inherit NCCL EP and `moe_use_grouped_tensor=True` from their 256-GPU MXFP8
+parents and set `NCCL_EP_HT_EM_PULL_PUSH=1` without HybridEP tuning variables.
+
+Both 64-GPU MXFP8 proxies explicitly set `NVTE_ALLOW_NONDETERMINISTIC_ALGO=1`:
+the fused SwiGLU scale-gradient reduction uses atomics, and TE versions that
+enforce determinism reject this path with the setting at zero. This changes the
+VRNVL72 proxy's previous kernel policy; rerun its baseline for a matched comparison.
+The 256-GPU recipes and NVFP4 proxies keep their previous `NVTE_ALLOW_NONDETERMINISTIC_ALGO` settings.
+
+All 13 decoder layers and MTP reside on each PP=1 rank; there is no pipeline
+communication. Memory fit, graph capture/replay and performance require a new GPU
+run. The reduced depth, different dense/MoE proportions, DP group sizes and
+microbatch schedule mean this proxy is not convergence-equivalent to the full
+model or a direct predictor of its end-to-end throughput. Use matched software,
+launch settings and measurement windows for GB300/VRNVL72 comparisons, and
+revalidate improvements at scale. Both proxies previously used HybridEP, so rerun
+any earlier proxy baseline before comparing.
+
 ## Setup Instructions
 
 Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.

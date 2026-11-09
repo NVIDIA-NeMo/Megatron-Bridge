@@ -19,11 +19,13 @@ https://github.com/radixark/miles/blob/dc62a0bd4b7af1c59ee2084852eb18b5585ec082/
 """
 
 from collections.abc import Iterable, Mapping
+from typing import Any
 
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer.enums import AttnBackend
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -41,6 +43,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.kimi.kimi_k3_config import KimiK3ModelConfig
 from megatron.bridge.models.kimi.kimi_k3_provider import KimiK3ModelProvider
 
 
@@ -51,7 +54,16 @@ from megatron.bridge.models.kimi.kimi_k3_provider import KimiK3ModelProvider
     model_type="kimi_k3",
 )
 class KimiK3Bridge(MegatronModelBridge):
-    """Megatron Bridge for the Kimi K3 language backbone."""
+    """Megatron Bridge for the Kimi K3 language backbone.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("moonshotai/Kimi-K3", trust_remote_code=True)
+        >>> model_config = bridge.get_model_config()
+    """
+
+    MODEL_CONFIG_CLASS = KimiK3ModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     _HF_PASSTHROUGH_PREFIXES = ("vision_tower.", "mm_projector.")
 
@@ -69,79 +81,88 @@ class KimiK3Bridge(MegatronModelBridge):
             return "situ"
         return super().megatron_to_hf_activation(activation_func)
 
-    def hf_config_to_provider_kwargs(self, hf_config) -> dict:
-        """Map the nested K3 language configuration with the common config mappings."""
-        return super().hf_config_to_provider_kwargs(getattr(hf_config, "text_config", hf_config))
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Map the nested K3 language configuration to ``KimiK3ModelConfig`` kwargs.
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK3ModelProvider:
-        """Translate the nested Kimi K3 text configuration."""
+        The settings match the deprecated ``KimiK3ModelProvider``, including its
+        Megatron Core default for ``deallocate_pipeline_outputs``.
+        """
         from megatron.bridge.models.kimi.kimi_k3_spec import build_kimi_k3_spec
 
-        hf_config = hf_pretrained.config
-        text_config = hf_config.text_config
-        provider = super().provider_bridge(hf_pretrained)
-
-        provider.transformer_layer_spec = build_kimi_k3_spec
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False
-        provider.share_embeddings_and_output_weights = False
-        provider.qk_layernorm = True
-        provider.multi_latent_attention = True
-        provider.position_embedding_type = "none"
-        provider.attention_backend = AttnBackend.auto
-
-        provider.moe_latent_size = text_config.routed_expert_hidden_size
-        provider.moe_router_topk = text_config.num_experts_per_token
-        provider.moe_router_score_function = text_config.moe_router_activation_func
-        provider.moe_router_pre_softmax = True
-        if text_config.use_grouped_topk:
-            provider.moe_router_num_groups = text_config.num_expert_group
-            provider.moe_router_group_topk = text_config.topk_group
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_bias_update_rate = 0.0
-        provider.moe_router_dtype = "fp32"
-        provider.moe_router_load_balancing_type = "none"
-        provider.moe_aux_loss_coeff = 0.0
-        provider.moe_grouped_gemm = True
-        provider.moe_shared_expert_intermediate_size = (
-            text_config.moe_intermediate_size * text_config.num_shared_experts
-        )
-        provider.moe_shared_expert_overlap = False
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
+        text_config = getattr(hf_config, "text_config", hf_config)
+        config_kwargs = super().hf_config_to_model_config_kwargs(text_config)
 
         moe_layer_freq = [0] * text_config.num_hidden_layers
         for layer_idx in range(text_config.first_k_dense_replace, text_config.num_hidden_layers):
             if layer_idx % text_config.moe_layer_freq == 0:
                 moe_layer_freq[layer_idx] = 1
-        provider.moe_layer_freq = moe_layer_freq
-
         linear_config = text_config.linear_attn_config
-        provider.kimi_kda_layers = tuple(linear_config["kda_layers"])
-        provider.kimi_linear_num_heads = linear_config["num_heads"]
-        provider.kimi_linear_head_dim = linear_config["head_dim"]
-        provider.kimi_linear_conv_kernel_size = linear_config["short_conv_kernel_size"]
-        provider.kimi_kda_gate_lower_bound = linear_config["gate_lower_bound"]
-        provider.kimi_attn_res_block_size = text_config.attn_res_block_size
 
-        provider.use_te_activation_func = True
-        provider.bias_activation_fusion = False
-        provider.bias_dropout_fusion = False
-        provider.hidden_dropout = 0.0
-        provider.attention_dropout = 0.0
-        provider.attention_softmax_in_fp32 = True
-        provider.disable_bf16_reduced_precision_matmul = True
-        provider.apply_rope_fusion = False
-        provider.gradient_accumulation_fusion = True
-        provider.cross_entropy_fusion_impl = "te"
-        provider.cross_entropy_loss_fusion = True
-        provider.masked_softmax_fusion = True
-        provider.persist_layer_norm = True
-        provider.should_pad_vocab = False
+        config_kwargs.update(
+            transformer_layer_spec=build_kimi_k3_spec,
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            multi_latent_attention=True,
+            # K3's MLA layers apply no rotary embedding, and its KDA layers need none.
+            position_embedding_type="none",
+            rope_scaling_factor=1.0,
+            attention_backend=AttnBackend.auto,
+            moe_latent_size=text_config.routed_expert_hidden_size,
+            moe_router_topk=text_config.num_experts_per_token,
+            moe_router_score_function=text_config.moe_router_activation_func,
+            moe_router_pre_softmax=True,
+            moe_router_enable_expert_bias=True,
+            moe_router_bias_update_rate=0.0,
+            moe_router_dtype="fp32",
+            moe_router_load_balancing_type="none",
+            moe_aux_loss_coeff=0.0,
+            moe_grouped_gemm=True,
+            moe_shared_expert_intermediate_size=text_config.moe_intermediate_size * text_config.num_shared_experts,
+            moe_shared_expert_overlap=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_layer_freq=moe_layer_freq,
+            kimi_kda_layers=tuple(linear_config["kda_layers"]),
+            kimi_linear_num_heads=linear_config["num_heads"],
+            kimi_linear_head_dim=linear_config["head_dim"],
+            kimi_linear_conv_kernel_size=linear_config["short_conv_kernel_size"],
+            kimi_kda_gate_lower_bound=linear_config["gate_lower_bound"],
+            kimi_attn_res_block_size=text_config.attn_res_block_size,
+            use_te_activation_func=True,
+            bias_activation_fusion=False,
+            bias_dropout_fusion=False,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            attention_softmax_in_fp32=True,
+            disable_bf16_reduced_precision_matmul=True,
+            apply_rope_fusion=False,
+            gradient_accumulation_fusion=True,
+            cross_entropy_fusion_impl="te",
+            cross_entropy_loss_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            should_pad_vocab=False,
+            deallocate_pipeline_outputs=False,
+        )
+        if text_config.use_grouped_topk:
+            config_kwargs.update(
+                moe_router_num_groups=text_config.num_expert_group,
+                moe_router_group_topk=text_config.topk_group,
+            )
+        return config_kwargs
 
-        self._num_hidden_layers = text_config.num_hidden_layers
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated ``KimiK3ModelProvider`` path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK3ModelProvider:
+        """Build the deprecated provider without the rotary embedding the base selects for MLA providers."""
+        provider = super().provider_bridge(hf_pretrained)
+        provider.position_embedding_type = "none"
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
@@ -249,12 +270,9 @@ class KimiK3Bridge(MegatronModelBridge):
             ),
         ]
 
-        num_hidden_layers = getattr(self, "_num_hidden_layers", None)
-        if num_hidden_layers is None and self.hf_config is not None:
-            num_hidden_layers = self.hf_config.text_config.num_hidden_layers
-        if num_hidden_layers is None:
-            raise ValueError("Kimi K3 mapping construction requires num_hidden_layers")
-        last_layer = num_hidden_layers - 1
+        if self.hf_config is None:
+            raise ValueError("Kimi K3 mapping construction requires the Hugging Face config")
+        last_layer = self.hf_config.text_config.num_hidden_layers - 1
         mappings.extend(
             [
                 ReplicatedMapping(
@@ -345,6 +363,9 @@ class KimiK3Bridge(MegatronModelBridge):
         hf_pretrained,
         megatron_model,
         weight_dtype=None,
+        *,
+        exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
+        exclude_param_patterns: tuple[str, ...] = (),
     ) -> list[WeightConversionTask]:
         """Expose virtual BF16 expert weights for MXFP4 packed/scale pairs."""
         original_get_all_keys = hf_pretrained.state.source.get_all_keys
@@ -362,7 +383,13 @@ class KimiK3Bridge(MegatronModelBridge):
 
         hf_pretrained.state.source.get_all_keys = _get_all_keys_with_virtual
         try:
-            return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
+            return super().build_conversion_tasks(
+                hf_pretrained,
+                megatron_model,
+                weight_dtype=weight_dtype,
+                **({"exclude_module_types": exclude_module_types} if exclude_module_types else {}),
+                **({"exclude_param_patterns": exclude_param_patterns} if exclude_param_patterns else {}),
+            )
         finally:
             hf_pretrained.state.source.get_all_keys = original_get_all_keys
 

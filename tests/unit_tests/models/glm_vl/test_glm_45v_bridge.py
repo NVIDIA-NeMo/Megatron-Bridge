@@ -15,6 +15,7 @@
 from unittest.mock import Mock
 
 import pytest
+from transformers.models.glm4v_moe.configuration_glm4v_moe import Glm4vMoeTextConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
@@ -144,6 +145,29 @@ class TestGLM45VBridgeProviderBridge:
         provider = glm_45v_bridge.provider_bridge(mock_hf_pretrained)
 
         # Check rotary base configuration
+        assert provider.rotary_base == 10000.0
+        assert provider.rotary_percent == 0.5
+
+    def test_provider_bridge_reads_rope_from_hf_text_config(self, glm_45v_bridge, mock_hf_pretrained):
+        """Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters, not as an attribute."""
+        mock_hf_pretrained.config.text_config = Glm4vMoeTextConfig(
+            hidden_size=64,
+            intermediate_size=128,
+            moe_intermediate_size=32,
+            num_hidden_layers=2,
+            first_k_dense_replace=1,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=16,
+            n_routed_experts=4,
+            num_experts_per_tok=2,
+            rope_theta=10000.0,
+            partial_rotary_factor=0.5,
+            use_qk_norm=True,
+        )
+
+        provider = glm_45v_bridge.provider_bridge(mock_hf_pretrained)
+
         assert provider.rotary_base == 10000.0
         assert provider.rotary_percent == 0.5
 
