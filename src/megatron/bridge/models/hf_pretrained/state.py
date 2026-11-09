@@ -527,19 +527,43 @@ class SafeTensorsStateSource(StateSource):
         key_to_filename_map: Mapping[str, str] | None,
         ignored_source_key_prefixes: Iterable[str] | None,
         ignored_source_key_suffixes: Iterable[str] | None,
+        ignored_source_keys: Iterable[str] | None = None,
     ) -> Dict[str, str]:
         if not key_to_filename_map:
             return {}
-        if not ignored_source_key_prefixes and not ignored_source_key_suffixes:
+        if not ignored_source_key_prefixes and not ignored_source_key_suffixes and not ignored_source_keys:
             return dict(key_to_filename_map)
 
         prefixes = tuple(ignored_source_key_prefixes or ())
         suffixes = tuple(ignored_source_key_suffixes or ())
+        keys = frozenset(ignored_source_keys or ())
         return {
             key: filename
             for key, filename in key_to_filename_map.items()
-            if not key.startswith(prefixes) and not key.endswith(suffixes)
+            if key not in keys and not key.startswith(prefixes) and not key.endswith(suffixes)
         }
+
+    @staticmethod
+    def _drain_unexpected(generator: Iterable[Tuple[str, torch.Tensor]], strict: bool) -> list[str]:
+        """Consume a generator whose every tensor is unknown to the (filtered) source structure.
+
+        Returns the names seen. The generator is always exhausted and nothing is raised here: in a
+        distributed export the other ranks are still feeding it, and a rank that leaves the stream early
+        leaves them blocked in a collective. The caller raises for strict mode once every rank agrees.
+        """
+        unexpected: list[str] = []
+        for name, _tensor in generator:
+            unexpected.append(name)
+            if not strict:
+                print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
+        return unexpected
+
+    @staticmethod
+    def _unexpected_error(unexpected: list[str]) -> KeyError:
+        return KeyError(
+            f"{len(unexpected)} tensors from generator not found in the original model structure "
+            f"(first: '{unexpected[0]}'). Re-run with strict=False to save the partial checkpoint instead of failing."
+        )
 
     @property
     def path(self) -> Path:
@@ -862,6 +886,7 @@ class SafeTensorsStateSource(StateSource):
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
         ignored_source_key_suffixes: Iterable[str] | None = None,
+        ignored_source_keys: Iterable[str] | None = None,
     ) -> Set[str]:
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -892,6 +917,9 @@ class SafeTensorsStateSource(StateSource):
                 source sharding map when saving.
             ignored_source_key_suffixes: Source tensor key suffixes to omit from the expected
                 source sharding map when saving.
+            ignored_source_keys: Exact source tensor names to omit from the expected source
+                sharding map when saving: tensors the generator never yields on purpose, such
+                as a checkpoint's copies of parameters the model holds once.
 
         Returns:
             Relative paths of safetensors artifacts written by this call.
@@ -905,6 +933,7 @@ class SafeTensorsStateSource(StateSource):
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
                 ignored_source_key_suffixes=ignored_source_key_suffixes,
+                ignored_source_keys=ignored_source_keys,
             )
 
         # In a distributed environment, only rank 0 should write to disk.
@@ -928,14 +957,23 @@ class SafeTensorsStateSource(StateSource):
             self.key_to_filename_map,
             ignored_source_key_prefixes,
             ignored_source_key_suffixes,
+            ignored_source_keys,
         )
         all_expected_keys = set(key_to_filename_map.keys())
 
-        if not key_to_filename_map:
+        if not self.key_to_filename_map:
+            # No sharding map in the source: single-file save of whatever the generator yields.
             buffered_tensors = dict(generator)
             if buffered_tensors:
                 save_file(_contiguous_safetensors(buffered_tensors), output_path / "model.safetensors")
                 return {"model.safetensors"}
+            return set()
+        if not key_to_filename_map:
+            # Every source tensor is ignored: nothing is expected and nothing is written. A tensor the
+            # generator still yields is unknown to the source structure, as in the sharded path below.
+            unexpected = self._drain_unexpected(generator, strict)
+            if strict and unexpected:
+                raise self._unexpected_error(unexpected)
             return set()
 
         filename_to_keys_map = defaultdict(set)
@@ -1116,6 +1154,7 @@ class SafeTensorsStateSource(StateSource):
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
         ignored_source_key_suffixes: Iterable[str] | None = None,
+        ignored_source_keys: Iterable[str] | None = None,
     ) -> Set[str]:
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
@@ -1146,7 +1185,23 @@ class SafeTensorsStateSource(StateSource):
             self.key_to_filename_map,
             ignored_source_key_prefixes,
             ignored_source_key_suffixes,
+            ignored_source_keys,
         )
+
+        if self.key_to_filename_map and not key_to_filename_map:
+            # Every source tensor is ignored (see save_generator): nothing is written on any rank. Each rank
+            # drains its generator, then all ranks agree on the outcome before the trailing barrier, so no
+            # rank raises while another one waits.
+            unexpected = self._drain_unexpected(generator, strict)
+            if is_distributed:
+                per_rank: list[list[str] | None] = [None] * world_size
+                torch.distributed.all_gather_object(per_rank, unexpected)
+                unexpected = [name for names in per_rank if names for name in names]
+            if strict and unexpected:
+                raise self._unexpected_error(unexpected)
+            if is_distributed:
+                torch.distributed.barrier()
+            return set()
 
         # Fallback: no sharding map, single-file save
         if not key_to_filename_map:
