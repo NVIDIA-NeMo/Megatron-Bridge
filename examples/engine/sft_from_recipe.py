@@ -133,6 +133,22 @@ def lora_config(args: argparse.Namespace) -> LoraConfig | None:
     return LoraConfig(rank=args.lora_rank, alpha=args.lora_alpha) if args.lora_rank else None
 
 
+def copy_trainable_weights(source: TrainingEngine, target: TrainingEngine) -> None:
+    """Give ``target`` the trainable weights of ``source`` and refresh its optimizer's fp32 masters from them.
+
+    The two-engine gates need identical starting states. Base weights come from the checkpoint, but LoRA's
+    lora_A is drawn from the RNG at build time, and the second engine built in a process draws other values.
+    """
+    with torch.no_grad():
+        for chunk_source, chunk_target in zip(source.model, target.model):
+            pairs = zip(chunk_source.named_parameters(), chunk_target.named_parameters())
+            for (name_source, p_source), (name_target, p_target) in pairs:
+                assert name_source == name_target, f"parameter order differs: {name_source} vs {name_target}"
+                if p_source.requires_grad:
+                    p_target.copy_(p_source)
+    target.optimizer.reload_model_params()
+
+
 def check_adapter_export(engine: TrainingEngine, adapter_dir: str) -> None:
     """Adapter-only export: a PEFT directory, then the adapter stream, rewritten into the same PEFT layout,
     compared tensor by tensor against the file (rank 0)."""
@@ -393,6 +409,8 @@ def _compare_one_vs_four(
     lora = lora_config(args)
     one = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora)
     four = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora)
+    if lora is not None:
+        copy_trainable_weights(one, four)
     diff0, _ = _param_delta(one, four, lr=adam.learning_rate)
     assert diff0 == 0.0, f"engines differ before training: {diff0}"
 

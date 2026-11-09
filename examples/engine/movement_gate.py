@@ -28,7 +28,15 @@ import logging
 import time
 
 import torch
-from sft_from_recipe import PackReplayEngine, _chunks, _grad_delta, _param_delta, iter_pack_batches, lora_config
+from sft_from_recipe import (
+    PackReplayEngine,
+    _chunks,
+    _grad_delta,
+    _param_delta,
+    copy_trainable_weights,
+    iter_pack_batches,
+    lora_config,
+)
 
 import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import AdamParams, TrainingEngine
@@ -95,6 +103,10 @@ def main() -> None:
     lora = lora_config(args)
     plain = PackReplayEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora)
     moved = PackReplayEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora)
+    if lora is not None:
+        copy_trainable_weights(plain, moved)  # lora_A is random at build time; start both engines alike
+    diff0, _ = _param_delta(plain, moved, lr=adam.learning_rate)
+    assert diff0 == 0.0, f"engines differ before training: {diff0}"
     for chunk in chunks:
         plain.forward_backward(chunk)
     for index, chunk in enumerate(chunks):
