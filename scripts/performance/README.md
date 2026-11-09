@@ -170,8 +170,9 @@ uv run python scripts/performance/setup_experiment.py \
 - `--save_interval`: Number of iterations between checkpoint saves.
 - `--most_recent_k`: Number of latest checkpoints to keep.
 
-The flat performance launcher skips auxiliary Gloo process groups when both checkpoint save and load paths are unset.
-The check runs after all overrides; runs with a checkpoint save or load path retain their configured Gloo setting.
+The flat performance launcher defaults `--use_gloo_process_groups` to `None` and resolves it after all overrides:
+Gloo groups are enabled when either checkpoint save or load is configured, and disabled otherwise.
+Use `--use_gloo_process_groups true` or `--use_gloo_process_groups false` to set it explicitly.
 
 ##### Data arguments
 

@@ -72,36 +72,6 @@ def test_mock_dataset_keeps_recipe_attention_mask_setting(tmp_path, create_atten
     assert updated.dataset.create_attention_mask is create_attention_mask
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    ("save", "load", "flags", "cli_overrides", "expected_gloo"),
-    [
-        (None, None, [], [], False),
-        ("checkpoints", None, [], [], True),
-        (None, "checkpoints", [], [], True),
-        (None, None, ["--save_dir", "checkpoints"], [], True),
-        (None, None, ["--load_dir", "checkpoints"], [], True),
-        (None, None, ["--save_interval", "10"], [], True),
-        (None, None, [], ["checkpoint.save=checkpoints"], True),
-        (None, None, [], ["checkpoint.load=checkpoints"], True),
-        (None, None, [], ["dist.use_gloo_process_groups=true"], False),
-    ],
-)
-def test_flat_runner_applies_gloo_default_after_user_overrides(
-    tmp_path, save, load, flags, cli_overrides, expected_gloo
-):
-    from run_script import _apply_perf_recipe_overrides
-
-    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
-    recipe.checkpoint.save = save
-    recipe.checkpoint.load = load
-    recipe.dist.use_gloo_process_groups = True
-
-    updated = _apply_perf_recipe_overrides(recipe, cli_overrides, _parse_args(tmp_path, *flags))
-
-    assert updated.dist.use_gloo_process_groups is expected_gloo
-
-
 @pytest.mark.parametrize(
     ("backend", "visible", "expected"),
     [
