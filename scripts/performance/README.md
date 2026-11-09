@@ -170,6 +170,10 @@ uv run python scripts/performance/setup_experiment.py \
 - `--save_interval`: Number of iterations between checkpoint saves.
 - `--most_recent_k`: Number of latest checkpoints to keep.
 
+The flat performance launcher skips auxiliary Gloo process groups when both checkpoint save and load paths are unset.
+Checkpoint runs retain the recipe's Gloo setting, as do memory-efficient fully reshardable optimizer checkpoint configs.
+An explicit `dist.use_gloo_process_groups=true` or `false` override takes precedence over this benchmark default.
+
 ##### Data arguments
 
 - `--data`: Dataset type to use (`mock`, `rp2`, `squad`, `squad_packed`). Default `mock`.
