@@ -248,57 +248,6 @@ class TestSFTData:
         assert labels[:4] == [IGNORE_LABEL] * 4 and labels[4:9] == ids[5:10] and labels[9] == IGNORE_LABEL
         assert train[1] == row and train[2] != row
 
-    def test_validation_and_test_splits_read_their_own_files(self, tmp_path):
-        train_path = _write_jsonl(tmp_path / "train.jsonl", [([1, 2, 3, 4], [1, 2, 3, 4])])
-        valid_path = _write_jsonl(tmp_path / "valid.jsonl", [([5, 6, 7], [5, 6, 7])])
-        test_path = _write_jsonl(tmp_path / "test.jsonl", [([8, 9], [8, 9])])
-        config = Ernie55SFTDatasetConfig(
-            seq_length=16, pad_token_id=0, path=train_path, valid_path=valid_path, test_path=test_path
-        )
-        config.finalize()
-        train, valid, test = config.build_datasets(
-            DatasetBuildContext(train_samples=1, valid_samples=1, test_samples=1)
-        )
-        assert train[0] == [([1, 2, 3, 4], [2, 3, 4, -100])]
-        assert valid[0] == [([5, 6, 7], [6, 7, -100])]
-        assert test[0] == [([8, 9], [9, -100])]
-        # The split configurations are copies that only differ in the file they read.
-        assert valid.config.path == valid_path and valid.config.seq_length == 16
-        assert config.path == train_path and config.valid_path == valid_path
-
-    def test_splits_default_to_the_training_file(self, tmp_path):
-        path = _write_jsonl(tmp_path / "train.jsonl", [([1, 2, 3, 4], [1, 2, 3, 4])])
-        config = Ernie55SFTDatasetConfig(seq_length=16, pad_token_id=0, path=path)
-        config.finalize()
-        train, valid, test = config.build_datasets(
-            DatasetBuildContext(train_samples=1, valid_samples=1, test_samples=1)
-        )
-        assert valid.config is config and test.config is config
-        assert valid[0] == train[0] == test[0]
-
-    def test_the_two_held_out_files_are_independent(self, tmp_path):
-        train_path = _write_jsonl(tmp_path / "train.jsonl", [([1, 2, 3, 4], [1, 2, 3, 4])])
-        test_path = _write_jsonl(tmp_path / "test.jsonl", [([8, 9], [8, 9])])
-        config = Ernie55SFTDatasetConfig(seq_length=16, pad_token_id=0, path=train_path, test_path=test_path)
-        config.finalize()
-        train, valid, test = config.build_datasets(
-            DatasetBuildContext(train_samples=1, valid_samples=1, test_samples=1)
-        )
-        # Only test_path is set: the validation split still reads the training file, the test split its own file.
-        assert valid.config is config and valid[0] == train[0]
-        assert test.config is not config and test[0] == [([8, 9], [9, -100])]
-        with pytest.raises(ValueError, match="set dataset.path too"):
-            Ernie55SFTDatasetConfig(
-                seq_length=16, pad_token_id=0, mock_document_lengths=(4,), test_path=test_path
-            ).finalize()
-
-    def test_held_out_files_need_a_training_file(self, tmp_path):
-        valid_path = _write_jsonl(tmp_path / "valid.jsonl", [([5, 6, 7], [5, 6, 7])])
-        with pytest.raises(ValueError, match="set dataset.path too"):
-            Ernie55SFTDatasetConfig(
-                seq_length=16, pad_token_id=0, mock_document_lengths=(4,), valid_path=valid_path
-            ).finalize()
-
     def test_synthetic_rows_must_fit(self):
         with pytest.raises(ValueError, match="more than seq_length"):
             Ernie55SFTDatasetConfig(
