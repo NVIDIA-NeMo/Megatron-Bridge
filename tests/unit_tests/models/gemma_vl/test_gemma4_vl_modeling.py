@@ -183,6 +183,53 @@ class TestComputeAttentionMask:
         assert mask[0, 0, 1, 0].item() is False
 
 
+class TestDenseAttentionImageMasks:
+    """Dense Gemma 4 layers apply the VL mask as Hugging Face's create_masks_for_vision_model does."""
+
+    @pytest.mark.parametrize("layer_number", [1, 2])
+    def test_dense_core_attention_matches_hf_per_layer_mask(self, monkeypatch, layer_number):
+        from megatron.core.transformer.enums import AttnMaskType
+
+        from megatron.bridge.models.gemma.modeling_gemma4 import Gemma4DotProductAttention
+
+        sliding_window = 3
+        image, text = IMAGE_TOKEN_ID, 1
+        input_ids = torch.tensor([[text, text, image, image, image, image, text, text, image, image, text]])
+        block_ids = torch.tensor([-1, -1, 0, 0, 0, 0, -1, -1, 1, 1, -1])
+        vl_mask = _make_model()._compute_attention_mask(input_ids)
+
+        captured = {}
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.__init__", lambda self, **kwargs: None
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.forward",
+            lambda self, q, k, v, mask, *args, **kwargs: captured.setdefault("mask", mask),
+        )
+        config = SimpleNamespace(
+            window_size=(sliding_window - 1, 0),
+            window_attn_skip_freq=["sliding_attention", "full_attention"],
+            text_config=SimpleNamespace(use_bidirectional_attention="vision"),
+        )
+        attention = Gemma4DotProductAttention(
+            config=config, layer_number=layer_number, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+        qkv = torch.zeros(input_ids.shape[1], 1, 1, 4)
+        attention.forward(qkv, qkv, qkv, vl_mask)
+
+        # Hugging Face: full attention is causal only; sliding attention is
+        # AND(sliding window, OR(causal, same image block)).
+        q = torch.arange(input_ids.shape[1])[:, None]
+        k = torch.arange(input_ids.shape[1])[None, :]
+        causal = k <= q
+        same_image = (block_ids[:, None] == block_ids[None, :]) & (block_ids[:, None] >= 0)
+        if layer_number == 1:
+            hf_attends = (k > q - sliding_window) & (causal | same_image)
+        else:
+            hf_attends = causal
+        torch.testing.assert_close(captured["mask"][0, 0], ~hf_attends)
+
+
 class TestHFPrecisionBuffers:
     def test_keep_hf_precision_buffers_in_fp32(self):
         class RopeModule(torch.nn.Module):
@@ -394,3 +441,68 @@ class TestFeatureExtractionAndFreeze:
         )
 
         assert model.language_model.param.requires_grad is False
+
+
+# ---------------------------------------------------------------------------
+# Construction by a builder
+# ---------------------------------------------------------------------------
+
+
+class TestBuilderConstruction:
+    def test_builder_supplies_language_model_and_process_groups(self):
+        """A builder passes a transformer config, which has no provide_language_model()."""
+        config = SimpleNamespace(
+            vision_config=Mock(), text_config=Mock(), audio_config=None, params_dtype=None, sequence_parallel=False
+        )
+        language_model = Mock()
+        language_model.share_embeddings_and_output_weights = True
+        build_language_model = Mock(return_value=language_model)
+        pg_collection = SimpleNamespace(tp="tp-group")
+
+        with (
+            patch("megatron.bridge.models.gemma_vl.modeling_gemma4_vl.AutoModel"),
+            patch("megatron.bridge.models.gemma_vl.modeling_gemma4_vl.hook_hf_module_setattr_for_tp_grad_sync"),
+            patch.object(Gemma4VLModel, "_init_embed_vision"),
+        ):
+            model = Gemma4VLModel(
+                config,
+                pre_process=True,
+                post_process=False,
+                vp_stage=None,
+                build_language_model=build_language_model,
+                pg_collection=pg_collection,
+            )
+
+        build_language_model.assert_called_once_with(pre_process=True, post_process=False, vp_stage=None)
+        assert model.language_model is language_model
+        assert model.share_embeddings_and_output_weights is True
+        assert model.pg_collection is pg_collection
+
+    def test_forward_uses_the_builder_process_groups(self):
+        model = _make_model()
+        model.config.sequence_parallel = True
+        model.config.audio_token_id = None
+        model.pg_collection = SimpleNamespace(tp="tp-group")
+        model.language_model = Mock()
+        model.language_model.forward.return_value = "outputs"
+        groups = {}
+
+        def fake_slice(**kwargs):
+            groups["cp"] = kwargs["pg_collection"]
+            return (
+                kwargs[name] for name in ("inputs_embeds", "labels", "loss_mask", "position_ids", "attention_mask")
+            )
+
+        def fake_scatter(tensor, *, group=None):
+            groups["tp"] = group
+            return tensor
+
+        with (
+            patch("megatron.bridge.models.gemma_vl.modeling_gemma4_vl.slice_batch_for_context_parallel", fake_slice),
+            patch(
+                "megatron.bridge.models.gemma_vl.modeling_gemma4_vl.scatter_to_sequence_parallel_region", fake_scatter
+            ),
+        ):
+            Gemma4VLModel.forward(model, input_ids=torch.tensor([[7, 8]]), inputs_embeds=torch.ones(1, 2, 4))
+
+        assert groups == {"cp": model.pg_collection, "tp": "tp-group"}

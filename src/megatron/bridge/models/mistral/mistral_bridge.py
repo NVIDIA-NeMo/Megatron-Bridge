@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
+from typing import Any
 
-import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import MistralForCausalLM
+from transformers import MistralForCausalLM, PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -25,13 +25,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=MistralForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=MistralForCausalLM, target=GPTModel, provider=MistralModelProvider)
 class MistralBridge(MegatronModelBridge):
     """
     Megatron Bridge for Mistral Causal LM.
@@ -41,46 +41,49 @@ class MistralBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("mistralai/Ministral-8B-Instruct-2410")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MistralModelProvider:
-        hf_config = hf_pretrained.config
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        if getattr(hf_config, "rope_scaling", None) is not None and hf_config.rope_scaling.get("rope_type") == "yarn":
-            # Apply Mistral customize rope scaling
-            cls = partial(MistralModelProvider, scale_factor=rope_scaling_factor_from_hf(hf_config, default=8.0))
-        else:
-            cls = MistralModelProvider
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Mistral config to builder config kwargs.
+
+        YaRN-scaled checkpoints are handled by the shared mapping, which sets
+        ``position_embedding_type="yarn"`` and the ``yarn_*`` fields.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
 
         window_size, cp_comm_type = (None, None)
         if getattr(hf_config, "sliding_window", None) is not None:
             window_size = [hf_config.sliding_window - 1, 0]
             cp_comm_type = "a2a"
 
-        provider = cls(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
+        config_kwargs.update(
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            attention_dropout=0.0,
+            hidden_dropout=0.0,
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.rms_norm_eps,
-            num_query_groups=hf_config.num_key_value_heads,
-            seq_length=hf_config.max_position_embeddings,
             rotary_base=rope_theta_from_hf(hf_config),
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
             window_size=window_size,
             cp_comm_type=cp_comm_type,
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            vocab_size=hf_config.vocab_size,
             kv_channels=getattr(hf_config, "head_dim", None),
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
         )
+        config_kwargs.setdefault("position_embedding_type", "rope")
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     @classmethod
     def megatron_to_hf_config(cls, provider: MistralModelProvider) -> dict:

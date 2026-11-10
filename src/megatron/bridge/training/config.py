@@ -21,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
+import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
@@ -77,6 +78,11 @@ from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispa
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
+from megatron.bridge.training.utils.optimizer_utils import (
+    normalize_optimizer_config,
+    uses_distributed_optimizer,
+    uses_layer_wise_optimizer,
+)
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
     print_rank_0,
@@ -88,6 +94,34 @@ from megatron.bridge.utils.cuda_graph import (
     validate_cuda_graph_configuration,
 )
 from megatron.bridge.utils.gdn_utils import validate_cudnn_gdn_stack
+
+
+def _apply_megatron_fsdp_grad_dtype_policy(ddp_config: MCoreDistributedDataParallelConfig) -> None:
+    """Keep Megatron-FSDP gradient precision governed by its explicit dtype fields.
+
+    ``grad_reduce_in_fp32`` sizes the gradient buffers of the standard DDP wrapper.
+    Megatron-FSDP takes gradient precision from ``megatron_fsdp_main_grads_dtype`` and
+    ``megatron_fsdp_grad_comm_dtype`` instead, and Megatron Core rejects the legacy flag
+    unless those fields request FP32. Bridge precision recipes enable the flag by default,
+    so clear it when the FSDP dtypes do not request FP32; the configured FSDP precision
+    policy is unchanged. Set ``megatron_fsdp_main_grads_dtype=torch.float32`` to
+    accumulate FSDP gradients in FP32.
+
+    The policy applies both to Bridge's deferred config and to the Megatron Core config
+    that some recipes construct directly.
+    """
+    if not (ddp_config.use_megatron_fsdp and ddp_config.grad_reduce_in_fp32):
+        return
+    main_grads_dtype = ddp_config.megatron_fsdp_main_grads_dtype
+    grad_comm_dtype = ddp_config.megatron_fsdp_grad_comm_dtype
+    if main_grads_dtype == torch.float32 and grad_comm_dtype in (None, torch.float32):
+        return
+    print_rank_0(
+        "grad_reduce_in_fp32 does not apply to Megatron-FSDP gradients "
+        f"(megatron_fsdp_main_grads_dtype={main_grads_dtype}, "
+        f"megatron_fsdp_grad_comm_dtype={grad_comm_dtype}). Deactivating..."
+    )
+    ddp_config.grad_reduce_in_fp32 = False
 
 
 @dataclass
@@ -118,6 +152,7 @@ class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
         This method calls the original Megatron Core DistributedDataParallelConfig.__post_init__()
         to compute derived fields based on the current field values.
         """
+        _apply_megatron_fsdp_grad_dtype_policy(self)
         super().__post_init__()
 
 
@@ -130,6 +165,15 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    use_layer_wise_param_layout: bool = False
+    """Use the precomputed shard-aligned layout for the LayerWise optimizer.
+
+    The default retains compact DDP buffers, LayerWise's variable-size parameter
+    synchronization, and the optimizer representation used by existing checkpoints.
+    Shard-aligned buffers are opt-in and require compatible parameter routing.
+    This setting has no effect unless ``use_layer_wise_distributed_optimizer`` is enabled.
+    """
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -138,12 +182,18 @@ class OptimizerConfig(MCoreOptimizerConfig):
         pass
 
     def finalize(self) -> None:
-        """Execute the deferred MCore post-init logic.
+        """Execute the deferred MCore validation and finalization.
 
-        This method calls the original Megatron Core OptimizerConfig.__post_init__()
-        to compute derived fields based on the current field values.
+        This method normalizes optimizer aliases, runs Megatron Core's
+        ``OptimizerConfig.validate()`` and then ``finalize_optimizer_config()`` to
+        resolve dtypes and derived fields based on the current field values.
         """
-        super().__post_init__()
+        normalize_optimizer_config(self)
+        if hasattr(MCoreOptimizerConfig, "finalize_optimizer_config"):
+            self.validate()
+            self.finalize_optimizer_config()
+        else:
+            super().__post_init__()
 
 
 @dataclass(kw_only=True)
@@ -155,13 +205,6 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     (e.g., via CUDA_VISIBLE_DEVICES environment variable). When True, uses device 0
     instead of local rank for CUDA device selection. This is useful when launching
     with external process managers that handle GPU visibility.
-    """
-
-    use_megatron_fsdp: bool = False
-    """Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2.
-
-    Megatron Core no longer declares this field on its ``DistributedInitConfig``; Bridge keeps it
-    so recipes and user configs can continue to enable Megatron FSDP through ``cfg.dist``.
     """
 
     gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
@@ -313,10 +356,12 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         return config_dict
 
     def finalize(self) -> None:
-        """Execute the deferred MCore post-init logic and Bridge-specific checks.
+        """Execute the deferred MCore validation and Bridge-specific checks.
 
-        This method calls the original Megatron Core GPTDatasetConfig.__post_init__()
-        and then performs Bridge-specific validation.
+        This method runs Megatron Core's tokenizer-free ``GPTDatasetConfig`` checks
+        and then performs Bridge-specific validation. The tokenizer is bound later
+        during setup; ``BlendedMegatronDatasetBuilder`` runs the full ``validate()``
+        before building datasets.
         """
         self.sequence_length = self.seq_length
 
@@ -334,8 +379,12 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
             with open(self.per_dataset_sequences_path, "r") as f:
                 self.sequences_per_dataset = json.load(f)
 
-        # Call MCore's post_init
-        super(MCoreGPTDatasetConfig, self).__post_init__()
+        # Run MCore's checks that do not need the tokenizer.
+        if hasattr(MCoreGPTDatasetConfig, "validate_without_tokenizer"):
+            MCoreGPTDatasetConfig.validate_without_tokenizer(self)
+        else:
+            # Older dev validates the blend before the tokenizer is available.
+            super(MCoreGPTDatasetConfig, self).__post_init__()
 
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
@@ -593,7 +642,8 @@ class CheckpointConfig(MTrainCheckpointConfig):
     points to a HuggingFace directory).
 
     When unset, Bridge resolves a source in this order (see training checkpointing helpers):
-      1. ``cfg.model.hf_model_id`` (preferred when populated by recipes / AutoBridge);
+      1. the source recorded on ``cfg.model`` by recipes / AutoBridge (preferred):
+         ``extra_checkpoint_metadata["hf_model_id"]`` for builder-backed configs, ``hf_model_id`` for providers;
       2. ``cfg.tokenizer.tokenizer_model`` (fallback; may refer to tokenizer assets rather than model ids).
 
     Explicit ``hf_source_path`` always overrides both when set.
@@ -1096,10 +1146,6 @@ class ConfigContainer(Container):
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """Validate and apply configuration required by the selected Megatron-FSDP version."""
-        # Set configs needed for Megatron-FSDP.
-        self.dist.use_megatron_fsdp = True
-        self.ddp.use_megatron_fsdp = True
-
         megatron_fsdp_version = self.ddp.megatron_fsdp_version
         if megatron_fsdp_version == 1:
             self._validate_and_apply_megatron_fsdp_v1_configs()
@@ -1206,7 +1252,6 @@ class ConfigContainer(Container):
         if self.model.fp4 or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP4.")
 
-        self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
         self.optimizer.use_distributed_optimizer = False
         self.ddp.overlap_grad_reduce = False
@@ -1222,16 +1267,17 @@ class ConfigContainer(Container):
             return
         if self.checkpoint.hf_source_path:
             return
-        if getattr(self.model, "hf_model_id", None):
+        # Builder-backed configs record their source in metadata, providers in hf_model_id.
+        metadata = getattr(self.model, "extra_checkpoint_metadata", None) or {}
+        if metadata.get("hf_model_id") or getattr(self.model, "hf_model_id", None):
             return
         if getattr(self.tokenizer, "tokenizer_model", None):
             return
 
         raise ValueError(
             "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
-            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
-            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
-            "an HF model id."
+            "Set cfg.checkpoint.hf_source_path, record the source on cfg.model (AutoBridge and recipes "
+            "do this), or set cfg.tokenizer.tokenizer_model when it points at an HF model id."
         )
 
     def _validate_thd_per_token_loss_mode(self, feature: str) -> None:
@@ -1426,6 +1472,12 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        _validate_and_sync_distributed_optimizer_settings(self)
+        if self.optimizer.optimizer not in ("adam", "sgd") and (
+            self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
+        ):
+            raise ValueError("Emerging optimizers such as Muon do not support Megatron-FSDP or Torch-FSDP2.")
+
         if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
                 "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
@@ -1589,6 +1641,11 @@ class ConfigContainer(Container):
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):
             self.ddp.finalize()
+        elif isinstance(self.ddp, MCoreDistributedDataParallelConfig):
+            # Recipes may construct Megatron Core's DDP config directly. It has no deferred
+            # finalize(), so apply the Megatron-FSDP gradient dtype policy before its post-init
+            # is re-run below.
+            _apply_megatron_fsdp_grad_dtype_policy(self.ddp)
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
 
@@ -1619,7 +1676,7 @@ class ConfigContainer(Container):
                     "checkpoint.dist_ckpt_optim_fully_reshardable=False."
                 )
             if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
-                if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+                if self.ddp.use_megatron_fsdp:
                     raise ValueError(
                         "GTP + mxfp8 is not supported with Megatron FSDP because "
                         "reuse_grad_buf_for_mxfp8_param_ag is required."
@@ -1716,7 +1773,7 @@ class ConfigContainer(Container):
             if not self.model.mtp_num_layers:
                 raise ValueError("freeze_base_model_for_mtp requires mtp_num_layers.")
         if getattr(self.model, "moe_shortcut_connection", False) and (
-            self.dist.use_torch_fsdp2 or self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+            self.dist.use_torch_fsdp2 or self.ddp.use_megatron_fsdp
         ):
             raise ValueError("moe_shortcut_connection is not supported with FSDP.")
         # Core also enables LayerWise for legacy dist_* optimizer names.
@@ -1726,14 +1783,14 @@ class ConfigContainer(Container):
             raise ValueError("Layer-wise distributed optimizer does not support moe_single_grouped_weight.")
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
-        if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
+        if self.ddp.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive.")
         # Validate Megatron-FSDP configuration.
-        if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+        if self.ddp.use_megatron_fsdp:
             self._validate_and_apply_megatron_fsdp_configs()
 
         # Validate reuse_grad_buf_for_mxfp8_param_ag when FSDP is not enabled
-        is_fsdp = self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+        is_fsdp = self.ddp.use_megatron_fsdp
         if (
             not is_fsdp
             and self.mixed_precision is not None
@@ -1805,7 +1862,7 @@ class ConfigContainer(Container):
 
         # Make sure all functionality that requires Gloo process groups is disabled.
         if not self.dist.use_gloo_process_groups:
-            if self.optimizer.use_distributed_optimizer:
+            if uses_distributed_optimizer(self.optimizer):
                 # If using distributed optimizer, must use distributed checkpointing.
                 # Legacy checkpointing uses Gloo process groups to collect full distributed
                 # optimizer state in the CPU memory of DP rank 0.
@@ -2243,6 +2300,61 @@ def apply_environment_variables(cfg: ConfigContainer) -> None:
         os.environ.setdefault(name, str(value))
 
 
+def apply_ncclep_one_gpu_per_rank(cfg: ConfigContainer) -> None:
+    """Bind NCCL EP recipes to one GPU per rank before CUDA is initialized.
+
+    The NCCL EP plugin allocates its buffers with ``ncclMemAlloc``, which maps them into every GPU
+    visible to the process; on Grace+Blackwell nodes each mapped GPU adds ~11 us to every ``munmap``
+    of the process, i.e. host-side overhead on every training step. When the resolved recipe uses
+    the ``ncclep`` flex backend and the launcher exposes several devices to this rank (Slurm's
+    default per-node list), keep only the local rank's device in ``CUDA_VISIBLE_DEVICES`` and make
+    the trainer select device 0 (``dist.external_gpu_device_mapping``). ``scripts/performance/
+    bootstrap.py`` does the same for perf recipes before the trainer imports torch; this covers
+    recipes launched through ``pretrain()`` directly.
+
+    No-op when the recipe does not use NCCL EP, when no local rank can be determined, or when CUDA
+    is already initialized in this process (the visible-device list can no longer change). A
+    launcher that already exposes exactly one device only gets ``external_gpu_device_mapping``.
+    """
+    model = getattr(cfg, "model", None)
+    if getattr(model, "moe_token_dispatcher_type", None) != "flex":
+        return
+    if getattr(model, "moe_flex_dispatcher_backend", None) != "ncclep":
+        return
+    local_rank = os.environ.get("LOCAL_RANK") or os.environ.get("SLURM_LOCALID")
+    if local_rank is None:
+        return
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    devices = [device for device in visible.split(",") if device] if visible else None
+    if devices is not None and len(devices) == 1:
+        cfg.dist.external_gpu_device_mapping = True
+        return
+
+    import torch
+
+    if torch.cuda.is_initialized():
+        warnings.warn(
+            "NCCL EP one-GPU-per-rank binding skipped: CUDA was initialized before runtime_config_update, "
+            "so CUDA_VISIBLE_DEVICES can no longer be narrowed; all devices stay visible to this rank."
+        )
+        return
+    if devices is None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = local_rank
+    elif int(local_rank) < len(devices):
+        os.environ["CUDA_VISIBLE_DEVICES"] = devices[int(local_rank)]
+    else:
+        warnings.warn(
+            f"NCCL EP one-GPU-per-rank binding skipped: local rank {local_rank} is not in "
+            f"CUDA_VISIBLE_DEVICES={visible}; all listed devices stay visible to this rank."
+        )
+        return
+    cfg.dist.external_gpu_device_mapping = True
+    print_rank_0(
+        f"NCCL EP one-GPU-per-rank binding: CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} "
+        f"(was {visible}), dist.external_gpu_device_mapping=True"
+    )
+
+
 def runtime_config_update(cfg: ConfigContainer) -> None:
     """Apply runtime configuration updates prior to initialization.
 
@@ -2261,6 +2373,8 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     """
     # Environment settings may affect runtime finalization and must be applied first.
     apply_environment_variables(cfg)
+    # Must also run before CUDA initialization (it edits CUDA_VISIBLE_DEVICES).
+    apply_ncclep_one_gpu_per_rank(cfg)
 
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
@@ -2282,7 +2396,8 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
         cfg.comm_overlap.finalize()
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
-    # Validate configuration after all modifications
+    # Normalize distribution and validate only after explicit overlap overrides
+    # have replaced inherited recipe settings, and before model construction.
     cfg.validate()
 
 
@@ -2310,6 +2425,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
     apply_environment_variables(cfg)
+    apply_ncclep_one_gpu_per_rank(cfg)
 
     if cfg.train.num_epochs is not None:
         raise ValueError("num_epochs is not supported for MegatronMIMO datasets")
@@ -2349,8 +2465,18 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
             configure_nvtx_profiling(enabled=True)
 
-    # Safe validations
     _validate_and_sync_distributed_optimizer_settings(cfg)
+
+    # The component training loop does not stage reused gradient buffers before
+    # overlapped parameter gathering.
+    if cfg.ddp.overlap_param_gather and (
+        cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag or cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag
+    ):
+        raise ValueError(
+            "overlap_param_gather with reuse_grad_buf_for_mxfp8_param_ag is not supported for MegatronMIMO"
+        )
+
+    # Safe validations
     cfg._validate_and_apply_deterministic_mode()
 
 
@@ -2358,8 +2484,8 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
 
     This function ensures that distributed optimizer settings are consistent across
-    DDP and optimizer configurations. If either setting is enabled, both will be
-    enabled to maintain consistency.
+    DDP and optimizer configurations. Emerging optimizers use layer-wise
+    distribution; Adam and SGD use the ordinary distributed optimizer.
 
     Args:
         config: The configuration container to validate and potentially modify.
@@ -2367,7 +2493,15 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     ddp_setting = config.ddp.use_distributed_optimizer
     optimizer_setting = config.optimizer.use_distributed_optimizer
 
-    if ddp_setting or optimizer_setting:
+    normalize_optimizer_config(config.optimizer, ddp_use_distributed_optimizer=ddp_setting)
+    if uses_layer_wise_optimizer(config.optimizer):
+        if config.ddp.num_distributed_optimizer_instances != 1:
+            raise ValueError("Layer-wise optimizers require num_distributed_optimizer_instances=1.")
+        # This flag selects the ordinary DistributedOptimizer DDP layout. The
+        # model wrapper enables it only when a shard-aligned LayerWise layout is
+        # requested; compact LayerWise mode intentionally leaves it disabled.
+        config.ddp.use_distributed_optimizer = False
+    elif ddp_setting or optimizer_setting:
         if ddp_setting != optimizer_setting:
             warn_rank_0(
                 f"Distributed optimizer settings were not in sync: "

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -109,11 +111,11 @@ def _pg_collection():
 
 
 def _model_config(**overrides):
-    values = {"mtp_num_layers": 0, "seq_length": 4, "overlap_moe_expert_parallel_comm": False, **overrides}
+    values = {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": False, **overrides}
     return type("ModelConfig", (), values)()
 
 
-def _state(*, enable_in_batch_packing):
+def _state(*, enable_in_batch_packing, seq_length=4):
     return type(
         "State",
         (),
@@ -124,6 +126,9 @@ def _state(*, enable_in_batch_packing):
                 "Config",
                 (),
                 {
+                    # A builder-backed model's config is its transformer config, so the step
+                    # reads the sequence length from the outer model config.
+                    "model": SimpleNamespace(seq_length=seq_length),
                     "dataset": type("Dataset", (), {"enable_in_batch_packing": enable_in_batch_packing})(),
                     "rerun_state_machine": type(
                         "Rerun", (), {"check_for_nan_in_loss": False, "check_for_spiky_loss": False}
@@ -251,7 +256,7 @@ def test_forward_step_passes_padding_mask_for_padded_batches_only(monkeypatch, e
 
 
 def test_forward_step_scatters_padding_mask_on_later_sequence_parallel_stages(monkeypatch):
-    config = _model_config(seq_length=16, sequence_parallel=True)
+    config = _model_config(sequence_parallel=True)
     model = _RecordingModel()
     model.pre_process = False
     padding_mask = torch.zeros((2, 16), dtype=torch.bool)
@@ -281,7 +286,7 @@ def test_forward_step_scatters_padding_mask_on_later_sequence_parallel_stages(mo
         scatter_first_half,
     )
 
-    forward_step(_state(enable_in_batch_packing=False), iter(()), model)
+    forward_step(_state(enable_in_batch_packing=False, seq_length=16), iter(()), model)
 
     # The mask is scattered sequence-first, like the activations this stage receives.
     assert len(scattered) == 1 and scattered[0].shape == (16, 2)

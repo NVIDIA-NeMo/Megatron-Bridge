@@ -65,7 +65,7 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).get_model_config()
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 3
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -88,7 +88,6 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = []
     cfg.model.mtp_num_layers = 2
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.use_te_rng_tracker = True
@@ -221,7 +220,6 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.model.mlp_chunks_for_training = 64
     cfg.model.mamba_chunk_size = 256
 
-    cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.keep_fp8_transpose_cache = False
@@ -273,7 +271,7 @@ def nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     """
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).get_model_config()
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 12
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -299,7 +297,6 @@ def nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = []
     cfg.model.mtp_num_layers = 2
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.use_te_rng_tracker = True
@@ -393,7 +390,7 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
     """
     cfg = _peft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).get_model_config()
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -416,7 +413,6 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = []
     cfg.model.mtp_num_layers = 2
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.use_te_rng_tracker = True

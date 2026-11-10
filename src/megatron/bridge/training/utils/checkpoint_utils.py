@@ -17,7 +17,7 @@ import posixpath
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -265,6 +265,28 @@ def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
         return msc.os.path.isfile(path)
     else:
         return os.path.isfile(path)
+
+
+def get_hf_source_from_model_config(model_config: Any) -> tuple[str | None, str | None]:
+    """Return the Hugging Face source id and revision recorded on a model config.
+
+    Builder-backed configs record them in ``extra_checkpoint_metadata``; legacy
+    providers in flat ``hf_model_id`` / ``hf_model_revision`` fields. The
+    revision is read from the same record as the id.
+
+    Args:
+        model_config: Builder-backed model config or model provider.
+
+    Returns:
+        ``(hf_model_id, hf_model_revision)``, each ``None`` when not recorded.
+    """
+    metadata = getattr(model_config, "extra_checkpoint_metadata", None)
+    if isinstance(metadata, dict) and metadata.get("hf_model_id"):
+        return metadata["hf_model_id"], metadata.get("hf_model_revision")
+    hf_model_id = getattr(model_config, "hf_model_id", None)
+    if hf_model_id:
+        return hf_model_id, getattr(model_config, "hf_model_revision", None)
+    return None, None
 
 
 def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:

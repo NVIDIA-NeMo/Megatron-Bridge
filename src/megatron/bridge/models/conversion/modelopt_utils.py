@@ -14,8 +14,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+import json
+import re
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NamedTuple
 
@@ -27,13 +30,22 @@ from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, Weight
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    ConcatenatedQKVMapping,
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    GDNLinearMapping,
+    GDNLinearMappingSeparate,
+    MambaInProjMapping,
+    MegatronParamMapping,
+    QKVGMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
+    _split_gdn_grouped_to_separate,
+    split_gdn_linear_weights,
     split_qkv_weights,
+    split_qkvg_weights,
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 
@@ -48,6 +60,7 @@ class ModelOptExportPlan(NamedTuple):
     quantization_config: dict[str, Any]
     quantized_params: frozenset[str]
     local_quantization_specs: dict[str, object | None]
+    traced_rows: dict[str, tuple[tuple[str, tuple[int, ...]], ...]] = {}
 
 
 @dataclass(frozen=True)
@@ -57,6 +70,18 @@ class _SourceState:
     parallelism: str | None = None
     qkv_layout: tuple[int, int, int, int, bool] | None = None
     weight_dtype: torch.dtype | None = None
+    gdn_layout: tuple[int, int, int, int] | None = None
+    mamba_layout: tuple[int, int, int, int, int] | None = None
+    traced_rows: tuple[tuple[str, tuple[int, ...]], ...] | None = None
+
+
+# Recipes keep GatedDeltaNet's beta / alpha gates in BF16, but Megatron fuses them into the
+# quantized in_proj, so a quantizer pattern can't exclude them; they're exported unquantized.
+_GDN_UNQUANTIZED_OUTPUTS = ("b", "a")
+
+# Grouped expert mappings with ``oai_mxfp4_export`` hold HF experts as [experts, in, out] tensors and export
+# them in OpenAI's MXFP4 layout, as released GPT-OSS checkpoints: ``<name>_blocks`` / ``<name>_scales``.
+_OAI_MXFP4_FORMAT = "w4a16_mxfp4"
 
 
 def _same_storage(left: object, right: object) -> bool:
@@ -81,12 +106,78 @@ def _direct_weight_name(module: torch.nn.Module, weight: torch.Tensor) -> str | 
     return None
 
 
+# Mappings whose HF rows follow a known layout, unless a subclass overrides that layout.
+_ROW_LAYOUT_MAPPINGS = (QKVMapping, ConcatenatedQKVMapping, QKVGMapping, MambaInProjMapping, GDNLinearMappingSeparate)
+_PLAIN_MAPPINGS = (AutoMapping, ColumnParallelMapping, RowParallelMapping, ReplicatedMapping, GatedMLPMapping)
+
+
+def _traces_rows(mapping: Any) -> bool:
+    """Whether the HF rows of a quantized weight come from tracing the mapping's own ``megatron_to_hf``."""
+    if mapping.is_expert:
+        return False
+    for base in _ROW_LAYOUT_MAPPINGS:
+        if isinstance(mapping, base):
+            return any(
+                getattr(type(mapping), method) is not getattr(base, method)
+                for method in ("megatron_to_hf", "_megatron_to_hf")
+                if hasattr(base, method)
+            )
+    return not isinstance(mapping, _PLAIN_MAPPINGS)
+
+
+def _trace_rows(task: WeightConversionTask, parallelism: str) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    """Rows of the TP-merged weight that land in each HF output, from the mapping's own conversion.
+
+    Each element is labeled with its (row, column) in the merged weight, so the converted labels show
+    where every element went. Only whole-row selections can reuse the weight's quantization state.
+    """
+    mapping, weight = task.mapping, task.param_weight
+    if weight.ndim != 2 or parallelism not in ("column", "row", "replicated"):
+        raise NotImplementedError(
+            f"ModelOpt export cannot trace {type(mapping).__name__} rows for {task.global_param_name}"
+        )
+    rows, cols = weight.shape
+    full_rows = rows * mapping.tp_size if parallelism == "column" else rows
+    full_cols = cols * mapping.tp_size if parallelism == "row" else cols
+    dtype = torch.int32 if full_rows * full_cols <= torch.iinfo(torch.int32).max else torch.int64
+    row_ids = torch.arange(rows, dtype=dtype, device=weight.device)
+    col_ids = torch.arange(cols, dtype=dtype, device=weight.device)
+    row_ids += mapping.tp_rank * rows if parallelism == "column" else 0
+    col_ids += mapping.tp_rank * cols if parallelism == "row" else 0
+    with MegatronParamMapping.skip_pp_broadcast():
+        outputs = mapping.megatron_to_hf(row_ids[:, None] * full_cols + col_ids, task.megatron_module)
+    if not outputs:
+        raise NotImplementedError(
+            f"ModelOpt export requires {type(mapping).__name__} to convert {task.global_param_name} on its own"
+        )
+    traced = []
+    for hf_name, labels in outputs.items():
+        hf_rows = labels[:, 0] // full_cols if labels.ndim == 2 else None
+        if (
+            hf_rows is None
+            or labels.dtype != dtype
+            or not torch.equal(
+                labels, hf_rows[:, None] * full_cols + torch.arange(full_cols, dtype=dtype, device=labels.device)
+            )
+        ):
+            raise NotImplementedError(
+                f"ModelOpt export requires {type(mapping).__name__} to copy whole rows of "
+                f"{task.global_param_name}, but {hf_name} does not"
+            )
+        traced.append((hf_name, tuple(hf_rows.tolist())))
+    return tuple(traced)
+
+
 def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
     if getattr(mapping, "is_grouped_export", False):
+        if getattr(mapping, "oai_mxfp4_export", False):
+            return "grouped"
         raise NotImplementedError("ModelOpt real-quant export does not yet support grouped HF expert weights")
     if isinstance(mapping, GatedMLPMapping):
         return "gated"
-    if isinstance(mapping, QKVMapping):
+    if isinstance(mapping, MambaInProjMapping):
+        return "column"
+    if isinstance(mapping, (QKVMapping, ConcatenatedQKVMapping, QKVGMapping, GDNLinearMappingSeparate)):
         return mapping._tp_mapping._detect_parallelism_type(module)
     if isinstance(mapping, AutoMapping):
         return mapping._detect_parallelism_type(module)
@@ -96,11 +187,16 @@ def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
         return "row"
     if isinstance(mapping, ReplicatedMapping):
         return "replicated"
+    if _traces_rows(mapping):
+        tp_mapping = getattr(mapping, "_tp_mapping", None)
+        if not isinstance(tp_mapping, (AutoMapping, ColumnParallelMapping, RowParallelMapping, ReplicatedMapping)):
+            tp_mapping = AutoMapping(mapping.megatron_param, mapping.megatron_param)
+        return _mapping_parallelism(tp_mapping, module)
     raise NotImplementedError(f"ModelOpt real-quant export does not support {type(mapping).__name__} topology")
 
 
 def _qkv_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, int, bool] | None:
-    if not isinstance(mapping, QKVMapping):
+    if not isinstance(mapping, (QKVMapping, ConcatenatedQKVMapping, QKVGMapping)):
         return None
     config = mapping._get_config(module)
     return (
@@ -112,6 +208,63 @@ def _qkv_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, i
     )
 
 
+def _gdn_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, int] | None:
+    if not isinstance(mapping, GDNLinearMappingSeparate):
+        return None
+    config = mapping._get_config(module)
+    return (
+        int(config.linear_num_key_heads),
+        int(config.linear_num_value_heads),
+        int(config.linear_key_head_dim),
+        int(config.linear_value_head_dim),
+    )
+
+
+def _gdn_row_indices(layout: tuple[int, int, int, int], rows: int, tp_size: int) -> dict[str, torch.Tensor]:
+    """Rows of the gathered in_proj that land in each HF projection, from the mapping's own split."""
+    num_key_heads, num_value_heads, key_head_dim, value_head_dim = layout
+    config = SimpleNamespace(
+        linear_num_key_heads=num_key_heads,
+        linear_num_value_heads=num_value_heads,
+        linear_key_head_dim=key_head_dim,
+        linear_value_head_dim=value_head_dim,
+    )
+    qkvz, ba = split_gdn_linear_weights(config, torch.arange(rows).unsqueeze(1), tp_size=tp_size, feature_dim=1)
+    indices = _split_gdn_grouped_to_separate(config, qkvz, ba, feature_dim=1)
+    return {name: index.squeeze(1) for name, index in zip(("qkv", "z", "b", "a"), indices, strict=True)}
+
+
+def _unquantized_outputs(mapping: Any) -> set[str]:
+    if isinstance(mapping, GDNLinearMappingSeparate):
+        return {mapping.hf_param[key] for key in _GDN_UNQUANTIZED_OUTPUTS}
+    if isinstance(mapping, GDNLinearMapping):
+        return {mapping.hf_param["ba"]}
+    return set()
+
+
+def _mamba_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, int, int] | None:
+    if not isinstance(mapping, MambaInProjMapping):
+        return None
+    config = mapping._get_config(module)
+    inner = int(config.mamba_num_heads * config.mamba_head_dim)
+    ssm = int(config.mamba_state_dim * config.mamba_num_groups)
+    return inner, inner, ssm, ssm, int(config.mamba_num_heads)
+
+
+def _mamba_row_indices(shards: list[_SourceState], tp_size: int) -> torch.Tensor:
+    """Follow MambaInProjMapping's component-wise TP gather for quantization state."""
+    layout = shards[0].mamba_layout
+    if layout is None or len(shards) != tp_size or any(shard.mamba_layout != layout for shard in shards):
+        raise ValueError("Inconsistent Mamba projection geometry across TP")
+    if any(size <= 0 or size % tp_size for size in layout):
+        raise ValueError("Mamba projection components must be divisible by TP")
+    local_sizes = [size // tp_size for size in layout]
+    if any(len(shard.weight_shape) != 2 or shard.weight_shape[0] != sum(local_sizes) for shard in shards):
+        raise ValueError("Mamba projection rows do not match its component geometry")
+    rows = torch.arange(sum(layout)).reshape(tp_size, -1)
+    return torch.cat([component.reshape(-1) for component in torch.split(rows, local_sizes, dim=1)])
+
+
 def _validate_quantized_task(task: WeightConversionTask) -> None:
     if ".to_wrap.weight" in task.global_param_name:
         raise NotImplementedError(
@@ -119,11 +272,6 @@ def _validate_quantized_task(task: WeightConversionTask) -> None:
         )
     if isinstance(task.mapping, AutoMapping) and task.mapping.permute_dims is not None:
         raise NotImplementedError("ModelOpt export does not support dimension-permuting mappings")
-    if isinstance(task.mapping, QKVMapping) and (
-        type(task.mapping).megatron_to_hf is not QKVMapping.megatron_to_hf
-        or type(task.mapping)._megatron_to_hf is not QKVMapping._megatron_to_hf
-    ):
-        raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
 
 
 def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
@@ -148,6 +296,8 @@ def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
         _mapping_parallelism(task.mapping, task.megatron_module),
         _qkv_layout(task.mapping, task.megatron_module),
         task.param_weight.dtype,
+        _gdn_layout(task.mapping, task.megatron_module),
+        _mamba_layout(task.mapping, task.megatron_module),
     )
 
 
@@ -164,14 +314,23 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
     from modelopt.torch.export.quantized_weight_export import get_quantized_weight_export_spec
 
     spec = get_quantized_weight_export_spec(task.megatron_module, weight_name)
+    parallelism = None
     if spec is not None:
         _validate_quantized_task(task)
+        parallelism = _mapping_parallelism(task.mapping, task.megatron_module)
+        if parallelism == "grouped" and spec.quantization_format != _OAI_MXFP4_FORMAT:
+            raise NotImplementedError(
+                f"{task.global_param_name} is exported in OpenAI's MXFP4 layout, which holds weight-only MXFP4, "
+                f"not {spec.quantization_format!r}"
+            )
     return _SourceState(
         spec,
         tuple(task.param_weight.shape),
-        _mapping_parallelism(task.mapping, task.megatron_module) if spec is not None else None,
+        parallelism,
         _qkv_layout(task.mapping, task.megatron_module) if spec is not None else None,
         task.param_weight.dtype,
+        _gdn_layout(task.mapping, task.megatron_module) if spec is not None else None,
+        _mamba_layout(task.mapping, task.megatron_module) if spec is not None else None,
     )
 
 
@@ -222,21 +381,36 @@ def _transform_source_spec(
     task: WeightConversionTask,
     source: _SourceState,
 ) -> dict[str, object | None]:
-    names = _mapping_names(task.mapping)
+    names = _mapping_names(task.mapping, source.traced_rows)
     shards: list[_SourceState] = _all_gather_objects(source, task.mapping.tp_group)
     quantized = [shard.state is not None for shard in shards]
     if any(quantized) and not all(quantized):
         raise RuntimeError(f"Inconsistent ModelOpt quantization across TP for {task.global_param_name}")
     if not any(quantized):
+        if len(source.weight_shape) < 2:
+            # Norms and other vectors are not deployment layers, so they stay out of the exclude list.
+            return {}
         return {name: None for name in names.values() if name.endswith(".weight")}
 
     reference = shards[0].state
     if any(shard.state != reference for shard in shards[1:]):
         raise RuntimeError(f"Inconsistent ModelOpt export format across TP for {task.global_param_name}")
-    return {name: reference for name in names.values() if name.endswith(".weight")}
+    if source.parallelism == "grouped":
+        return {task.mapping.hf_param: reference}
+    if isinstance(task.mapping, MambaInProjMapping) and source.traced_rows is None:
+        _mamba_row_indices(shards, task.mapping.tp_size)
+    unquantized = _unquantized_outputs(task.mapping)
+    # Deployments read quantized linear layers from `<module>.weight`; anything else would be packed unannounced.
+    if other := sorted(name for name in names.values() if not name.endswith(".weight") and name not in unquantized):
+        raise NotImplementedError(
+            f"ModelOpt export requires quantized {task.global_param_name} to map to HF '.weight' tensors, not {other}"
+        )
+    return {name: None if name in unquantized else reference for name in names.values() if name.endswith(".weight")}
 
 
-def _mapping_names(mapping: Any) -> dict[str, str]:
+def _mapping_names(mapping: Any, traced_rows: tuple[tuple[str, tuple[int, ...]], ...] | None = None) -> dict[str, str]:
+    if traced_rows is not None:
+        return {name: name for name, _ in traced_rows}
     if isinstance(mapping.hf_param, str):
         return {"": mapping.hf_param}
     return dict(mapping.hf_param)
@@ -307,8 +481,9 @@ def _transform_source_state(
     task: WeightConversionTask,
     source: _SourceState | None,
     capture_error: str | None = None,
+    traced_rows: tuple[tuple[str, tuple[int, ...]], ...] | None = None,
 ) -> dict[str, object | None]:
-    names = _mapping_names(task.mapping)
+    names = _mapping_names(task.mapping, traced_rows)
     shards = (
         _gather_source_states(source, task.mapping, capture_error)
         if source is None or capture_error is not None or source.state is not None
@@ -367,7 +542,13 @@ def _transform_source_state(
         else:
             raise NotImplementedError(f"Unsupported ModelOpt topology {parallelism!r} for {task.global_param_name}")
 
-        if isinstance(task.mapping, QKVMapping):
+        if traced_rows is not None:
+            unquantized = _unquantized_outputs(task.mapping)
+            transformed = {
+                name: None if name in unquantized else _select_state(transformed_state, 0, torch.tensor(rows))
+                for name, rows in traced_rows
+            }
+        elif isinstance(task.mapping, (QKVMapping, ConcatenatedQKVMapping, QKVGMapping)):
             if source.qkv_layout is None:
                 raise RuntimeError(f"Missing QKV layout for {task.global_param_name}")
             heads, groups, channels, hidden, output_gate = source.qkv_layout
@@ -378,14 +559,43 @@ def _transform_source_state(
                 hidden_size=hidden,
                 attention_output_gate=output_gate,
             )
-            q_indices, k_indices, v_indices = split_qkv_weights(
-                config,
-                torch.arange(full_shape[0]),
-            )
+            rows = torch.arange(full_shape[0])
+            if isinstance(task.mapping, QKVGMapping):
+                # The mapping's own split; its gate takes one row per head.
+                indices = split_qkvg_weights(config, rows.unsqueeze(1), feature_dim=1)
+                transformed = {
+                    names[key]: _select_state(transformed_state, 0, index.squeeze(1))
+                    for key, index in zip(("q", "k", "v", "g"), indices, strict=True)
+                }
+            elif isinstance(task.mapping, ConcatenatedQKVMapping):
+                # One HF tensor holding Q, K and V in that order, as the mapping writes it.
+                transformed = {
+                    task.mapping.hf_param: _select_state(
+                        transformed_state, 0, torch.cat(split_qkv_weights(config, rows))
+                    )
+                }
+            else:
+                q_indices, k_indices, v_indices = split_qkv_weights(config, rows)
+                transformed = {
+                    names["q"]: _select_state(transformed_state, 0, q_indices),
+                    names["k"]: _select_state(transformed_state, 0, k_indices),
+                    names["v"]: _select_state(transformed_state, 0, v_indices),
+                }
+        elif isinstance(task.mapping, GDNLinearMappingSeparate):
+            if source.gdn_layout is None:
+                raise RuntimeError(f"Missing GatedDeltaNet layout for {task.global_param_name}")
+            row_indices = _gdn_row_indices(source.gdn_layout, full_shape[0], task.mapping.tp_size)
             transformed = {
-                names["q"]: _select_state(transformed_state, 0, q_indices),
-                names["k"]: _select_state(transformed_state, 0, k_indices),
-                names["v"]: _select_state(transformed_state, 0, v_indices),
+                names[key]: None
+                if key in _GDN_UNQUANTIZED_OUTPUTS
+                else _select_state(transformed_state, 0, row_indices[key])
+                for key in names
+            }
+        elif isinstance(task.mapping, MambaInProjMapping):
+            transformed = {
+                task.mapping.hf_param: _select_state(
+                    transformed_state, 0, _mamba_row_indices(shards, task.mapping.tp_size)
+                )
             }
         else:
             if len(names) != 1:
@@ -461,6 +671,11 @@ def _local_expert_mapping(mapping: Any, global_param_name: str, pg_collection: A
             specs[0].name,
             getattr(mapping, "permute_dims", None),
         )
+    elif type(mapping) in (ColumnParallelMapping, RowParallelMapping):
+        if len(specs) != 1 or specs[0].split_count != 1:
+            return None
+        local_type = _LocalExpertColumnMapping if type(mapping) is ColumnParallelMapping else _LocalExpertRowMapping
+        replacement = local_type(mapping.megatron_param, specs[0].name)
     else:
         return None
     replacement.set_process_groups_from_pg_collection(pg_collection)
@@ -589,10 +804,13 @@ def _compose_export_hooks(
     return export_and_finalize
 
 
-def _make_export_hook(task: WeightConversionTask) -> HFExportHook:
+def _make_export_hook(
+    task: WeightConversionTask,
+    traced_rows: tuple[tuple[str, tuple[int, ...]], ...] | None = None,
+) -> HFExportHook:
     from modelopt.torch.export.quantized_weight_export import export_quantized_weight_tensors
 
-    expected_names = {name for name in _mapping_names(task.mapping).values() if name.endswith(".weight")}
+    expected_names = {name for name in _mapping_names(task.mapping, traced_rows).values() if name.endswith(".weight")}
     transformed_states = None
     remaining_names = set(expected_names)
 
@@ -600,17 +818,23 @@ def _make_export_hook(task: WeightConversionTask) -> HFExportHook:
         nonlocal remaining_names, transformed_states
         if transformed_states is None:
             source, capture_error = _capture_current_source_state(task)
-            transformed_states = _transform_source_state(task, source, capture_error)
+            transformed_states = _transform_source_state(task, source, capture_error, traced_rows)
             remaining_names = set(expected_names)
 
-        state = transformed_states.get(hf_name)
-        if state is None:
+        if hf_name not in transformed_states:
             raise RuntimeError(f"Missing ModelOpt export state for {hf_name}")
-        prefix = hf_name.removesuffix(".weight")
-        exported = export_quantized_weight_tensors(tensor, state, tensor.dtype)
+        state = transformed_states[hf_name]
         remaining_names.discard(hf_name)
         if not remaining_names:
             transformed_states = None
+        if state is None:
+            yield HFWeightTuple(hf_name, tensor)
+            return
+        prefix = hf_name.removesuffix(".weight")
+        # TODO: Drop the float32 cast once nvidia-modelopt includes NVIDIA/Model-Optimizer#3005: earlier
+        # versions round a per-tensor FP8 weight in its own dtype, unlike fake quantization.
+        dtype = torch.float32 if getattr(state, "quantization_format", None) == "fp8" else tensor.dtype
+        exported = export_quantized_weight_tensors(tensor, state, dtype)
 
         for relative_name, exported_tensor in exported.items():
             exported_name = hf_name if relative_name == "weight" else f"{prefix}.{relative_name}"
@@ -619,12 +843,62 @@ def _make_export_hook(task: WeightConversionTask) -> HFExportHook:
     return export_weight
 
 
+def _make_oai_mxfp4_export_hook(task: WeightConversionTask) -> HFExportHook:
+    from modelopt.torch.export.quantized_weight_export import (
+        export_quantized_weight_tensors,
+        merge_quantized_weight_export_states,
+        split_quantized_weight_export_state,
+    )
+
+    def export_experts(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
+        source, error = _capture_current_source_state(task)
+        # One expert's state packs all of them only when it holds no tensors, as weight-only MXFP4's does.
+        if error is None and (
+            getattr(source.state, "quantization_format", None) != _OAI_MXFP4_FORMAT
+            or split_quantized_weight_export_state(source.state)[1]
+        ):
+            error = f"{task.global_param_name} is no longer weight-only MXFP4"
+        _raise_distributed_errors(error, _world_group(), f"ModelOpt export of {hf_name} failed")
+        # Blocks run along each expert's input dimension, so pack [experts, out, in].
+        weight = tensor.transpose(-1, -2)
+        num_experts, rows, cols = weight.shape
+        shard_rows, shard_cols = source.weight_shape
+        if cols != shard_cols or (num_experts * rows) % shard_rows:
+            raise ValueError(f"{hf_name} of shape {tuple(tensor.shape)} does not match its experts' weights")
+        state = merge_quantized_weight_export_states([source.state] * (num_experts * rows // shard_rows), 0)
+        packed = export_quantized_weight_tensors(weight.reshape(-1, cols), state, tensor.dtype)
+        scales = packed["weight_scale"].reshape(num_experts, rows, -1)
+        yield HFWeightTuple(f"{hf_name}_blocks", packed["weight"].reshape(*scales.shape, -1))
+        yield HFWeightTuple(f"{hf_name}_scales", scales)
+
+    return export_experts
+
+
+def _oai_mxfp4_quantization_config(named_specs: dict[str, object | None], expert_names: set[str]) -> dict[str, Any]:
+    """OpenAI's MXFP4 config, which keeps every layer but the experts in BF16."""
+    quantized = sorted(name for name, spec in named_specs.items() if spec is not None and name not in expert_names)
+    if quantized:
+        raise NotImplementedError(
+            f"OpenAI's MXFP4 format keeps every layer but the experts in BF16, but these are quantized: {quantized[:4]}"
+        )
+    unquantized = (name.removesuffix(".weight") for name, spec in named_specs.items() if spec is None)
+    return {"quant_method": "mxfp4", "modules_to_not_convert": sorted(unquantized)}
+
+
 def build_modelopt_export_plan(
     conversion_tasks: list[WeightConversionTask | None],
     *,
     model: list[torch.nn.Module],
+    tied_weight_aliases: dict[str, str] | None = None,
 ) -> ModelOptExportPlan:
-    """Prepare canonical ModelOpt export state without encoding a quantization format."""
+    """Prepare canonical ModelOpt export state without encoding a quantization format.
+
+    Args:
+        conversion_tasks: Weight conversion tasks, including remote pipeline-stage tasks.
+        model: Megatron model chunks used to capture quantization state.
+        tied_weight_aliases: HF alias-to-source weight names that share export specifications
+            even when the alias has no separate conversion task.
+    """
     # ModelOpt converts quantizer state into deployment scales from the owning
     # weight task. Amax mappings are only part of the fake-quant refit path.
     concrete_tasks = [
@@ -668,17 +942,58 @@ def build_modelopt_export_plan(
         "ModelOpt export metadata capture failed",
     )
 
+    # TP ranks of a pipeline stage hold the same tasks, but they must also agree on which ones are
+    # quantized before entering the mappings' TP collectives.
+    trace_error = None
+    traced_tasks = [
+        task for task in planning_tasks if task.global_param_name in local_specs and _traces_rows(task.mapping)
+    ]
+    quantized = {
+        task.global_param_name for task in traced_tasks if local_specs[task.global_param_name].state is not None
+    }
+    if traced_tasks:
+        quantized_by_rank = _all_gather_objects(quantized, traced_tasks[0].mapping.tp_group)
+        quantized = set.intersection(*quantized_by_rank)
+        if mismatched := set.union(*quantized_by_rank) - quantized:
+            trace_error = f"Inconsistent ModelOpt quantization across TP for {min(mismatched)}"
+    for task in traced_tasks:
+        source = local_specs[task.global_param_name]
+        if trace_error is not None or task.global_param_name not in quantized:
+            continue
+        try:
+            local_specs[task.global_param_name] = replace(source, traced_rows=_trace_rows(task, source.parallelism))
+        except Exception as error:
+            trace_error = trace_error or f"{type(error).__name__}: {error}"
+    _raise_distributed_errors(trace_error, _world_group(), "ModelOpt export row tracing failed")
+
     pp_group = model_bridge_utils._get_pp_group(model) if torch.distributed.is_initialized() else None
     source_specs = _sync_source_specs(local_specs, pp_group)
 
+    # A grouped HF tensor is packed by one expert's hook, so its experts must all be quantized or none,
+    # and OpenAI's MXFP4 layout has no BF16 experts. Gathered from every rank, as EP splits the experts.
+    oai_mxfp4_experts: dict[str, set[bool]] = {}
+    for task in concrete_tasks:
+        source = source_specs.get(task.global_param_name)
+        # Biases share the mapping but stay BF16.
+        if getattr(task.mapping, "oai_mxfp4_export", False) and source is not None and len(source.weight_shape) > 1:
+            oai_mxfp4_experts.setdefault(task.mapping.hf_param, set()).add(source.state is not None)
+    for rank_experts in _all_gather_objects(oai_mxfp4_experts, _world_group()):
+        for name, quantized in rank_experts.items():
+            oai_mxfp4_experts.setdefault(name, set()).update(quantized)
+
     expert_mapping_error = None
     try:
+        if any(True in quantized for quantized in oai_mxfp4_experts.values()):
+            if partial := sorted(name for name, quantized in oai_mxfp4_experts.items() if False in quantized):
+                raise NotImplementedError(
+                    f"OpenAI's MXFP4 format quantizes every expert, but these have unquantized experts: {partial[:4]}"
+                )
         for task in concrete_tasks:
             source = source_specs.get(task.global_param_name)
             if source is None or source.state is None or not task.mapping.is_expert:
                 continue
             local_mapping = local_expert_mappings.get(task.global_param_name)
-            if local_mapping is None:
+            if local_mapping is None and source.parallelism != "grouped":
                 raise NotImplementedError(
                     "ModelOpt real-quant export cannot pack expert mapping "
                     f"{type(task.mapping).__name__} before its EP gather"
@@ -716,8 +1031,11 @@ def build_modelopt_export_plan(
             for rank_specs, _ in gathered:
                 assert rank_specs is not None
                 overlap = expert_specs.keys() & rank_specs.keys()
-                if overlap:
-                    raise RuntimeError(f"Duplicate ModelOpt expert specs: {sorted(overlap)}")
+                # Every expert of a grouped HF tensor shares its name, and must share its spec.
+                if overlap and (
+                    source.parallelism != "grouped" or any(expert_specs[name] != rank_specs[name] for name in overlap)
+                ):
+                    raise RuntimeError(f"Duplicate or inconsistent ModelOpt expert specs: {sorted(overlap)}")
                 expert_specs.update(rank_specs)
             transformed = expert_specs
         elif transform_error is not None:
@@ -748,7 +1066,26 @@ def build_modelopt_export_plan(
 
     from modelopt.torch.export.quantized_weight_export import build_hf_quantization_config
 
-    quantization_config = build_hf_quantization_config(named_specs)
+    # Tied output weights may have no task, but deployment still needs their spec.
+    # Copy explicit None too: a BF16 embedding must keep its tied head unquantized.
+    for alias, source_name in (tied_weight_aliases or {}).items():
+        if source_name not in named_specs:
+            raise ValueError(f"Missing ModelOpt export spec for tied source {source_name}")
+        source_spec = named_specs[source_name]
+        if alias in named_specs and named_specs[alias] != source_spec:
+            raise ValueError(f"Inconsistent ModelOpt export spec for tied weight {alias}")
+        named_specs[alias] = source_spec
+
+    oai_mxfp4_names = {
+        task.mapping.hf_param
+        for task in concrete_tasks
+        if (source := source_specs.get(task.global_param_name)) is not None and source.parallelism == "grouped"
+    }
+    quantization_config = (
+        _oai_mxfp4_quantization_config(named_specs, oai_mxfp4_names)
+        if oai_mxfp4_names
+        else build_hf_quantization_config(named_specs)
+    )
 
     export_tasks = []
     for task in concrete_tasks:
@@ -780,6 +1117,7 @@ def build_modelopt_export_plan(
         quantization_config,
         quantized_params,
         {name: source.state for name, source in local_specs.items()},
+        {name: source.traced_rows for name, source in source_specs.items() if source.traced_rows is not None},
     )
 
 
@@ -809,6 +1147,9 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
             export_tasks.append(task)
             continue
         _validate_quantized_task(task)
+        if getattr(task.mapping, "oai_mxfp4_export", False):
+            export_tasks.append(replace(task, export_hook=_make_oai_mxfp4_export_hook(task)))
+            continue
 
         finalizer = None
         if isinstance(task.mapping, _LocalExpertMappingMixin):
@@ -821,7 +1162,131 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
         export_tasks.append(
             replace(
                 task,
-                export_hook=_compose_export_hooks(_make_export_hook(task), finalizer),
+                export_hook=_compose_export_hooks(
+                    _make_export_hook(task, plan.traced_rows.get(task.global_param_name)), finalizer
+                ),
             )
         )
     return export_tasks
+
+
+# HF projections that vLLM / TRT-LLM fuse into one GEMM, which takes a single scale per tensor.
+_FUSED_SIBLING_PROJECTIONS = (
+    frozenset({"q_proj", "k_proj", "v_proj"}),
+    frozenset({"gate_proj", "up_proj"}),
+    frozenset({"q_a_proj", "kv_a_proj_with_mqa"}),
+)
+_SHARED_SIBLING_SCALES = ("weight_scale_2", "input_scale")
+_EXPORTED_QUANTIZER = re.compile(r"(?:^|\.)(?:\w*weight_quantizer|input_quantizer)(?:\.\d+)?$")
+_WEIGHT_QUANTIZER = re.compile(r"(?:^|\.)\w*weight_quantizer(?:\.\d+)?$")
+
+
+def check_fused_sibling_scales(tensors: Mapping[str, torch.Tensor]) -> None:
+    """Reject per-tensor scales that differ within a group of projections deployments fuse.
+
+    Args:
+        tensors: Exported HF tensors; only the ``weight_scale_2`` and ``input_scale`` entries are read.
+
+    Raises:
+        ValueError: If siblings such as ``q_proj`` / ``k_proj`` / ``v_proj`` carry different scales.
+    """
+    groups: dict[tuple[str, int, str], dict[str, torch.Tensor]] = {}
+    for name, tensor in tensors.items():
+        module, _, scale = name.rpartition(".")
+        parent, _, projection = module.rpartition(".")
+        if scale not in _SHARED_SIBLING_SCALES:
+            continue
+        for index, siblings in enumerate(_FUSED_SIBLING_PROJECTIONS):
+            if projection in siblings:
+                groups.setdefault((parent, index, scale), {})[name] = tensor
+    mismatched = [
+        sorted(members)
+        for members in groups.values()
+        if any(not torch.equal(tensor, next(iter(members.values()))) for tensor in members.values())
+    ]
+    if mismatched:
+        raise ValueError(f"Fused projections need equal per-tensor scales, but these differ: {mismatched}")
+
+
+def check_exportable_quantizers(model: list[torch.nn.Module]) -> None:
+    """Fail on every rank when any rank holds an enabled quantizer the export would drop.
+
+    Only weight and input quantizers become checkpoint tensors; e.g. KV-cache (``k_bmm_quantizer``)
+    and output quantizers have no deployment format here yet, and an input quantizer is exported only
+    with its layer's weight quantizer.
+    """
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    unsupported = set()
+    for chunk in model:
+        enabled = [
+            name for name, module in chunk.named_modules() if isinstance(module, TensorQuantizer) and module.is_enabled
+        ]
+        unsupported.update(name for name in enabled if not _EXPORTED_QUANTIZER.search(name))
+        weight_layers = {_WEIGHT_QUANTIZER.sub("", name) for name in enabled if _WEIGHT_QUANTIZER.search(name)}
+        unsupported.update(
+            name
+            for name in enabled
+            if name.endswith("input_quantizer") and name.rpartition(".")[0] not in weight_layers
+        )
+    unsupported = sorted(unsupported)
+    error = None
+    if unsupported:
+        error = f"ModelOpt HF export cannot carry these enabled quantizers: {unsupported[:4]}"
+    _raise_distributed_errors(error, _world_group(), "ModelOpt export failed")
+
+
+def save_safetensors_shards(
+    tensors: Iterable[HFWeightTuple],
+    path: Path,
+    *,
+    max_shard_size: int,
+) -> set[str]:
+    """Stream tensors into HF safetensors shards of at most ``max_shard_size`` bytes each.
+
+    Unlike the source-checkpoint layout, this accepts tensors the source does not have, such as
+    quantization scales. A single shard is written as ``model.safetensors`` without an index.
+
+    Returns:
+        Names of the files written, relative to ``path``.
+    """
+    from safetensors.torch import save_file
+
+    path.mkdir(parents=True, exist_ok=True)
+    shards: list[tuple[Path, list[str]]] = []
+    current: dict[str, torch.Tensor] = {}
+    current_size = total_size = 0
+
+    def flush() -> None:
+        temporary = path / f".modelopt-shard-{len(shards):05d}.safetensors.tmp"
+        save_file(current, temporary, metadata={"format": "pt"})
+        shards.append((temporary, list(current)))
+
+    seen: set[str] = set()
+    for name, tensor in tensors:
+        if name in seen:
+            raise ValueError(f"Duplicate exported tensor {name}")
+        seen.add(name)
+        size = tensor.numel() * tensor.element_size()
+        if current and current_size + size > max_shard_size:
+            flush()
+            current, current_size = {}, 0
+        current[name] = tensor.contiguous()
+        current_size += size
+        total_size += size
+    if current or not shards:
+        flush()
+
+    if len(shards) == 1:
+        shards[0][0].replace(path / "model.safetensors")
+        return {"model.safetensors"}
+    weight_map = {}
+    for index, (temporary, names) in enumerate(shards, start=1):
+        filename = f"model-{index:05d}-of-{len(shards):05d}.safetensors"
+        temporary.replace(path / filename)
+        weight_map.update(dict.fromkeys(names, filename))
+    index_file = "model.safetensors.index.json"
+    (path / index_file).write_text(
+        json.dumps({"metadata": {"total_size": total_size}, "weight_map": weight_map}, indent=2) + "\n"
+    )
+    return {*weight_map.values(), index_file}

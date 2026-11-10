@@ -56,6 +56,8 @@ override-dependencies = [
     "nemo-run @ /opt/Run",
     "transformer-engine; sys_platform == 'never'",     # Installed by MBridge
     # Pinning versions to solve conflicts
+    "leptonai==0.27.3",                        # NeMo-Run requires leptonai.api.v1, absent in 0.47.1
+    "anyio>=4.14.2",                           # Override LeptonAI's <=4.9.0 cap; CVE-2026-63374
     "webdataset==0.2.86",                       # fix for SB multimodal
     "pandas==2.2.3",
     "ctc_segmentation==1.7.4",
@@ -69,8 +71,8 @@ override-dependencies = [
     "transformers; sys_platform == 'never'",    # Defer to transformers in MBridge install
     "packaging>=25.0",
     "nvidia-pytriton>=0.7.0",
-    "flashinfer-python==0.6.18.post1",          # Match flashinfer-cubin installed by MBridge
-    "nvidia-cudnn-frontend==1.29.1",           # Match MBridge; override PyPI MCore's older dev pin
+    "flashinfer-python==0.7.2.post1",           # Match flashinfer-cubin installed by MBridge
+    "nvidia-cudnn-frontend==1.32.0",           # Match MBridge; override PyPI MCore's older dev pin
     "urllib3>=2.0.7",
     "sh==2.2.4",
     "jupyter-core==5.8.1",

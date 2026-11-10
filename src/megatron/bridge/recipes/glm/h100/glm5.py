@@ -57,9 +57,7 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded pretraining on 416 H100 GPUs."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
 
@@ -137,9 +135,7 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded full SFT on 416 H100 GPUs."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
 
@@ -227,9 +223,7 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     """GLM-5.2 200K packed SFT with context parallelism on 608 H100 GPUs."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
 
@@ -312,9 +306,7 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     """GLM-5.2 bounded LoRA SFT on 208 H100 GPUs."""
     cfg = _peft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
 

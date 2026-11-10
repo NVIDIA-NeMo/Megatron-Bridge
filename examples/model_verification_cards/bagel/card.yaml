@@ -3,18 +3,17 @@
 
 title: bagel_7b_mot
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. The H100 FSDP leaf records standalone raw metrics for a real-data
-  BAGEL training run using the official BAGEL Qwen2 FLOPs formula. It must not
-  be compared directly with the official BAGEL run: Bridge used block-23
-  language-model recompute without EMA, while the official run used full
-  recompute and performed an EMA update. This card claims clean-commit GPU
-  import, bounded 8-GPU pretraining, and 32-GPU pretraining performance
-  verification. Direct deterministic image-understanding inference was also
-  smoke-tested, but remains unverified until the generic public inference
-  launcher supports BAGEL. Fine-tuning and checkpoint-resume verification
-  remain incomplete or unsupported.
+  Performance disclaimer: this card does not record a canonical pretrain
+  performance result; reported timing and throughput metrics are functional
+  verification observations, not standalone optimized performance results.
+  The H100 FSDP leaf awaits a real-data BAGEL run in the recorded container;
+  its throughput uses the official BAGEL Qwen2 FLOPs formula and must not be
+  compared directly with the official BAGEL run, which uses full recompute
+  and an EMA update. This card claims clean-commit GPU import and bounded
+  8-GPU pretraining verification. Direct deterministic image-understanding
+  inference was also smoke-tested, but remains unverified until the generic
+  public inference launcher supports BAGEL. Fine-tuning and checkpoint-resume
+  verification remain incomplete or unsupported.
 verification_index:
   model_level:
     verified:
@@ -32,15 +31,15 @@ verification_index:
       unverified: [sft, checkpoint_resume]
       unsupported: [sft_export_inference, sft_long_context, peft]
   fsdp:
-    H100: verified
+    H100: unverified
 model:
   hf_id: ByteDance-Seed/BAGEL-7B-MoT
   hf_revision: 5019f57d168e5816e8f3f701b17cc816bb7cf24b  # pragma: allowlist secret
   architecture: BagelForConditionalGeneration
   min_transformers_version: "5.12.1"
 verification_environment:
-  base_container: nvcr.io/nvidia/nemo:26.04
-  bridge_commit: 8d1c3a12f86fee68eea014bc8960189fd69a49fb  # pragma: allowlist secret
+  base_container: nvcr.io/nvidia/nemo:26.10.rc9
+  bridge_commit: adddd2ee2bf09786b1f131065c6d6bc6fbc7b934  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -56,7 +55,7 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
-    bridge_commit: fd8ab826d95fbad72d440248947abe373cfc0b35  # pragma: allowlist secret
+    bridge_commit: 86e1bb9bcfd7972bdee4d3df093b512f013927ee  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 1
@@ -64,7 +63,8 @@ items:
       --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b
       --megatron-path work/model-verification/bagel/hf-to-megatron
       --torch-dtype bfloat16
-    last_verified: 2026-09-01
+      --bagel-repo work/dependencies/Bagel
+    last_verified: 2026-10-26
     expected_result: >
       The public GPU importer consumed the pinned official EMA state, reported
       1,223 source tensors consumed and 943 target tensors verified, and wrote
@@ -116,7 +116,7 @@ items:
       --max-new-tokens 16
     last_verified: null
     expected_result: >
-      On clean commit fd8ab826d95fbad72d440248947abe373cfc0b35 the direct
+      On clean commit adddd2ee2bf09786b1f131065c6d6bc6fbc7b934 the direct
       deterministic example loaded the converted checkpoint and returned the
       literal completion `(b) False` for the pinned public image and prompt.
       This item remains unverified because the generic maintained inference
@@ -126,7 +126,6 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: fd8ab826d95fbad72d440248947abe373cfc0b35  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
@@ -153,24 +152,24 @@ items:
         validation.eval_iters=0 validation.eval_interval=null
         logger.log_interval=1 logger.log_throughput=true
         logger.save_config_filepath=work/model-verification/bagel/pretrain/run_config.yaml
-      last_verified: 2026-09-01
+      last_verified: 2026-10-26
       metrics:
-        initial_loss: 0.9585528
-        final_loss: 1.242196
-        last_10_steps_step_time_ms_avg: 16383.960
-        last_10_steps_model_tflops_per_gpu_avg: 195.540
-        last_10_steps_tokens_per_second_per_gpu_avg: 2250.005
-        peak_allocated_memory_gib: 57.060
-        peak_reserved_memory_gib: 70.154
+        initial_loss: 0.9577008
+        final_loss: 1.240236
+        last_10_steps_step_time_ms_avg: 12667.250
+        last_10_steps_model_tflops_per_gpu_avg: 190.070
+        last_10_steps_tokens_per_second_per_gpu_avg: 2910.182
+        peak_allocated_memory_gib: 57.262
+        peak_reserved_memory_gib: 72.337
       expected_result: >
         The clean public-data run completes 10 BF16 optimizer steps on 8 H100s
         at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and
         total loss with no skipped or NaN iterations. The final step reports
-        CE 0.9156674, MSE 0.3265290, and total loss 1.242196. The final-10
-        averages include first-step compilation and are 16,383.960 ms and
-        195.540 model TFLOP/s/GPU; 2,250.005 token slots/GPU/s uses the fixed
+        CE 0.9137746, MSE 0.3264609, and total loss 1.240236. The final-10
+        averages include first-step compilation and are 12,667.250 ms and
+        190.070 model TFLOP/s/GPU; 2,910.182 token slots/GPU/s uses the fixed
         36,864 maximum packed sequence slots rather than variable logical
-        tokens. The post-setup configuration and iteration-10 model,
+        tokens. The post-setup configuration and the iteration-10 model,
         optimizer, RNG, and per-DP dataloader state are persisted. A separate
         same-topology public-launcher load restored step 10 and exited without
         executing an additional optimizer step.
@@ -265,7 +264,7 @@ items:
 
   pretrain_fsdp:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         megatron_fsdp: optim_grads_params
@@ -290,29 +289,19 @@ items:
         checkpoint.save=null checkpoint.save_interval=0
         validation.eval_iters=0 validation.eval_interval=0
         logger.log_interval=1 logger.log_throughput=true
-      last_verified: 2026-08-31
+      last_verified: null
       metrics:
-        initial_loss: 14.683310
-        final_loss: 10.809916
-        last_10_steps_step_time_ms_avg: 7697.160
-        last_10_steps_model_tflops_per_gpu_avg: 234.268
-        last_10_steps_tokens_per_second_per_gpu_avg: 4789.299
-        peak_allocated_memory_gib: 58.594
-        peak_reserved_memory_gib: 62.919
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16
+        The 32-GPU TP1/PP1/CP1/DP32 real-data run must complete exactly 30 BF16
         steps at GBS/MBS 32/1 with one microbatch, block-23 language-model
         recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total
-        losses, and no skipped or NaN iterations. Steps 21-30 average
-        7,697.160 ms, 234.268 model TFLOP/s/GPU, 23.687% MFU, and 4,789.299
-        token slots/GPU/s using 36,864 maximum packed sequence slots and
-        GBS 32 across 32 GPUs. The separately measured logical throughput is
-        4,428.810 tokens/GPU/s from 1,090,856.3 logical tokens per step. Logical
-        tokens include text, ViT, VAE-latent, and special tokens and exclude
-        physical padding. The variable packed sequence length averages
-        34,070.15 tokens/GPU over steps 6-30. Peak allocated/reserved memory is
-        58.594/62.919 GiB. The same steps 6-30 workload reports standalone raw
-        metrics of 10,167.941 ms, 176.936 model TFLOP/s/GPU, and 17.890% MFU
-        under official BAGEL. Do not compute a relative speedup: that run uses
-        full language-model recompute and performs an EMA update, while the
-        Bridge run uses block-23 recompute without EMA.
+        losses, and no skipped or NaN iterations in the recorded container,
+        with standalone step-time, model TFLOP/s/GPU, token-slot, and peak
+        memory metrics. Do not compare this run with official BAGEL: that run
+        uses full language-model recompute and performs an EMA update, while
+        the Bridge run uses block-23 recompute without EMA.

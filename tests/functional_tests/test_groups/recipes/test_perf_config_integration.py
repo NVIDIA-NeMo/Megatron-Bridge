@@ -191,8 +191,7 @@ class TestPerfConfigIntegration:
                 ),
                 {
                     "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-                    "NVLINK_DOMAIN_SIZE": 72,
-                    "USE_MNNVL": 1,
+                    "NCCL_EP_HT_EM_PULL_PUSH": 1,
                     "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
                 },
             ),
@@ -221,14 +220,14 @@ class TestPerfConfigIntegration:
                     "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh:"
                     "nemotron_3_super_pretrain_64gpu_gb200_bf16_config"
                 ),
-                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NCCL_EP_HT_EM_PULL_PUSH": 1},
             ),
             (
                 "qwen",
                 ("megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe:qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"),
                 {
                     "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-                    "NVLINK_DOMAIN_SIZE": 72,
+                    "NCCL_EP_HT_EM_PULL_PUSH": 1,
                     "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
                 },
             ),

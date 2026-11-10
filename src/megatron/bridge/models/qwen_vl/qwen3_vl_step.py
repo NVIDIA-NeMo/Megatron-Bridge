@@ -290,7 +290,8 @@ def _forward_step_common(
             this_pg_collection,
             use_fp8_padding=True,
             force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
-            seq_length=config.seq_length,
+            # A builder-backed model's config is its transformer config, which has no seq_length.
+            seq_length=state.cfg.model.seq_length,
             padding_mask=padding_mask,
         )
     )
@@ -339,7 +340,7 @@ def _forward_step_common(
     original_tokens = tokens.clone()
     forward_args = get_batch_on_this_cp_rank(
         forward_args,
-        is_hybrid_cp=False,
+        dynamic_cp=False,
         cp_group=this_pg_collection.cp,
     )
     sequence_parallel = getattr(config, "sequence_parallel", False)

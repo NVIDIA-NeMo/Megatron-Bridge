@@ -250,7 +250,7 @@ def add_common_model_args(parser: argparse.ArgumentParser) -> None:
         "--hf-model-id",
         type=str,
         required=True,
-        help="HuggingFace model ID or local path (e.g. meta-llama/Llama-3.2-1B).",
+        help="HuggingFace model ID or local path (e.g. Qwen/Qwen3-0.6B).",
     )
 
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")

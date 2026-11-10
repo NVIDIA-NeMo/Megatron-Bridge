@@ -669,30 +669,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-12</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-06</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4268849</dd>
+            <dd>0.4268937</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2653473</dd>
+            <dd>0.2648948</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>41,101.830 ms</dd>
+            <dd>31,931.380 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>420.700 TFLOP/s/GPU</dd>
+            <dd>437.850 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>12,755.831 tokens/s/GPU</dd>
+            <dd>16,419.209 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -703,12 +703,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe nemotron_3_5_lightning_sft_config --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 --context_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 model.moe_flex_dispatcher_backend=hybridep &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;469216e3f46f4dacf476b382e192485ea51a143e&quot;}&#x27; dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}&#x27; model.cp_comm_type=a2a model.cross_entropy_loss_fusion=false model.calculate_per_token_loss=true model.recompute_granularity=selective &#x27;model.recompute_modules=[moe,layernorm,core_attn,mlp]&#x27; model.recompute_method=null model.recompute_num_layers=null model.moe_router_force_load_balancing=false ddp.average_in_collective=false ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe nemotron_3_5_lightning_sft_32k_config --mode sft --dataset openmathinstruct2 --max_steps 100 --lr 5e-6 --min_lr 0 --warmup_iters 10 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;469216e3f46f4dacf476b382e192485ea51a143e&quot;}&#x27; dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268849 -&gt; 0.2653473 and MTP-1 loss 0.7321853 -&gt; 0.4469699. All 100 steps have finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100 average 41,101.830 ms / 420.700 TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata, saved run configuration and training state, 12 files, and a latest marker of 100.
+        <p>Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268937 -&gt; 0.2648948 and MTP-1 loss 0.5040868 -&gt; 0.3120846. All 100 steps have finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100 average 31,931.380 ms / 437.850 TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata, saved run configuration and training state, 12 files, and a latest marker of 100. This leaf&#x27;s MTP losses cover completion tokens only (SFT loss mask); the H100 long-context leaf&#x27;s default bridge_commit predates that masking and computes MTP loss over every token, so the two leaves have different MTP objectives and are not convergence-comparable.
 </p>
       </section>
     </article>

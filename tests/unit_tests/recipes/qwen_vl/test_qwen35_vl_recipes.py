@@ -156,8 +156,23 @@ class _FakeAutoBridge:
     def from_hf_pretrained(hf_path: str, *, revision: str | None = None):
         return _FakeAutoBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Qwen3.5-VL recipes must use get_model_config()")
+
+
+def _real_moe_model_config(**overrides):
+    """Return a strict builder config for the default Qwen3.5 MoE architecture (35B-A3B shape)."""
+    from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeConfig
+
+    from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLMoEBridge
+
+    model_config = Qwen35VLMoEBridge().hf_config_to_model_config(Qwen3_5MoeConfig())
+    for name, value in overrides.items():
+        setattr(model_config, name, value)
+    return model_config
 
 
 def _assert_basic_config(cfg):
@@ -454,12 +469,12 @@ def test_qwen35_vl_397b_a17b_pretrain_64gpu_gb300_defaults(monkeypatch: pytest.M
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.context_parallel_size == 1
-    # EP32 measured 370.2 TF against 211.0 TF at EP64 on 64x GB300; the HybridEP
-    # NVLink rank count must track it or the domain is split wrongly.
+    # EP32 measured 370.2 TF against 211.0 TF at EP64 on 64x GB300.
     assert cfg.model.expert_model_parallel_size == 32
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     assert cfg.model.recompute_granularity == "selective"
     # No "moe_act": the CuTe DSL fused grouped MLP rejects it.
     assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out"]
@@ -485,12 +500,12 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_gb300_defaults(monkeypatch: pytest.Mon
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.context_parallel_size == 1
-    # EP4 on 16 GPUs; the HybridEP NVLink rank count must track it or the
-    # domain is split wrongly.
+    # EP4 on 16 GPUs.
     assert cfg.model.expert_model_parallel_size == 4
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     # LayerNorm SM margin is 0 at 35B, not the 397B recipe's 20.
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 0
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 0
@@ -526,7 +541,8 @@ def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_defaults(monkeypatc
     _assert_basic_config(cfg)
     # Same parallel layout, CUDA graphs, recompute, batch shape and routing as the 16-GPU recipe.
     assert cfg.model.expert_model_parallel_size == 4
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.train.global_batch_size == base.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == base.train.micro_batch_size == 4
     assert cfg.model.max_vision_cuda_graph_seq_length == 3712
@@ -547,9 +563,9 @@ def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_defaults(monkeypatc
     assert cfg.model.moe_permute_fusion_into_hybridep is False
     assert cfg.model.moe_hybridep_num_sms_preprocessing == 16
     assert cfg.model.overlap_dispatch_backward_with_experts_wgrad is True
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 64
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 64
+    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API" not in cfg.env_vars
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     # Building the 8-GPU recipe must not leak the env gate into the 16-GPU recipe.
@@ -578,8 +594,6 @@ def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_defaults(monkeypatc
     }
     assert changed_env_vars == {
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP",
-        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API",
-        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API",
         "NVTE_NORM_FWD_USE_CUDNN",
         "NVTE_NORM_BWD_USE_CUDNN",
     }
@@ -599,7 +613,7 @@ class _FakeAutoBridgeWithGdnKernelBackend(_FakeAutoBridge):
     def from_hf_pretrained(hf_path: str, *, revision: str | None = None):
         return _FakeAutoBridgeWithGdnKernelBackend()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfgWithGdnKernelBackend()
 
 
@@ -639,8 +653,8 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.num_layers_in_first_pipeline_stage == 16
-    assert cfg.model.num_layers_in_last_pipeline_stage == 24
+    assert cfg.model.num_layers_in_first_pipeline_stage == 32
+    assert cfg.model.num_layers_in_last_pipeline_stage == 48
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.checkpoint.pretrained_checkpoint is None
     assert cfg.model.freeze_language_model is False
@@ -687,8 +701,8 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.virtual_pipeline_model_parallel_size is None
-    assert cfg.model.num_layers_in_first_pipeline_stage == 17
-    assert cfg.model.num_layers_in_last_pipeline_stage == 23
+    assert cfg.model.num_layers_in_first_pipeline_stage == 34
+    assert cfg.model.num_layers_in_last_pipeline_stage == 46
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.model.sequence_parallel is False
@@ -749,6 +763,27 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.optimizer.lr == 2e-5
 
 
+def test_qwen35_vl_27b_sft_fits_16_h100(monkeypatch: pytest.MonkeyPatch):
+    """The dense 27B SFT recipe should carry the layout that fits 80 GB H100s at its own batch."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_h100_module.qwen35_vl_27b_sft_16gpu_h100_bf16_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.sequence_parallel is True
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 4
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out", "mlp"]
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    # No CUDA graph scope can split a recomputed module.
+    assert cfg.model.cuda_graph_impl == "none"
+
+
 def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Shared Qwen3.5/Qwen3.6 long-context SFT should own packing and CP defaults."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
@@ -781,14 +816,11 @@ def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyP
 def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest.MonkeyPatch):
     """The GB200 BF16 and MXFP8 recipes should share one 128K execution topology."""
     from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
-    from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
 
     monkeypatch.setattr(
         _FakeAutoBridge,
-        "to_megatron_provider",
-        lambda self, load_weights=False: Qwen35VLMoEModelProvider(
-            num_layers=40, hidden_size=2048, num_attention_heads=16, bias_activation_fusion=False
-        ),
+        "get_model_config",
+        lambda self: _real_moe_model_config(bias_activation_fusion=False),
     )
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
 
@@ -808,7 +840,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.model.expert_tensor_parallel_size == 1
         assert cfg.model.sequence_parallel is False
         assert cfg.model.moe_token_dispatcher_type == "flex"
-        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 32
         assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
         assert cfg.model.gdn_kernel_backend == "transformer_engine"
@@ -859,7 +891,8 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.comm_overlap.overlap_param_gather is False
         assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
         assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
-        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+        assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+        assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
 
     assert bf16_cfg.mixed_precision.fp8 is None
     assert bf16_cfg.mixed_precision.fp8_param_gather is False
@@ -874,7 +907,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
     assert fp8mx_cfg.checkpoint.load_rng is False
 
     assert bf16_cfg.model.use_transformer_engine_op_fuser is False
-    assert bf16_cfg.model.moe_use_grouped_tensor is False
+    assert bf16_cfg.model.moe_use_grouped_tensor is True
     assert bf16_cfg.model.moe_mlp_glu_interleave_size is None
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in bf16_cfg.env_vars
     assert fp8mx_cfg.model.use_transformer_engine_op_fuser is True
@@ -957,8 +990,8 @@ def test_qwen35_vl_35b_a3b_peft_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPa
     assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.num_layers_in_first_pipeline_stage == 17
-    assert cfg.model.num_layers_in_last_pipeline_stage == 23
+    assert cfg.model.num_layers_in_first_pipeline_stage == 34
+    assert cfg.model.num_layers_in_last_pipeline_stage == 46
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.moe_token_dispatcher_type == "flex"
@@ -1062,9 +1095,10 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
     assert cfg.train.empty_unused_memory_level == 2
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_permute_fusion_into_hybridep is False
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.high_priority_a2a_comm_stream is True
 
@@ -1106,9 +1140,10 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
     assert cfg.comm_overlap.delay_wgrad_compute is False
 
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
 
@@ -1499,7 +1534,7 @@ class _FakeAutoBridgeWithoutExpertTensorParallel:
     def from_hf_pretrained(hf_path: str):
         return _FakeAutoBridgeWithoutExpertTensorParallel()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfgWithoutExpertTensorParallel()
 
 
@@ -1641,7 +1676,7 @@ class _FakeAutoBridgeNoGdnFusion(_FakeAutoBridge):
     def from_hf_pretrained(hf_path: str):
         return _FakeAutoBridgeNoGdnFusion()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfgNoGdnFusion()
 
 
@@ -1659,9 +1694,9 @@ class _FakeAutoBridgeNoGdnFusion(_FakeAutoBridge):
 def test_qwen35_vl_library_recipes_enable_gdn_conv_fusion(monkeypatch: pytest.MonkeyPatch, recipe_name: str):
     """Qwen3.5-VL library recipes fuse the GatedDeltaNet pre-gated-delta-rule path.
 
-    ``_enable_gdn_conv_fusion`` is applied from ``_qwen35_vl_provider``, the single
-    construction point for every Qwen3.5-VL recipe in the module, so it applies to
-    pretrain, SFT and PEFT alike rather than only to the perf recipes.
+    Every Qwen3.5-VL recipe in the module applies ``_enable_gdn_conv_fusion`` right
+    after building its model config, so it covers pretrain, SFT and PEFT alike rather
+    than only the perf recipes.
     """
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
@@ -1690,22 +1725,14 @@ def test_qwen35_vl_gdn_conv_fusion_skipped_on_older_core(monkeypatch: pytest.Mon
         _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config,
     ],
 )
-def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_func):
-    from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
-
+def test_gb200_long_context_validates_with_real_model_config(monkeypatch, recipe_func):
     monkeypatch.setattr(
         torch.cuda, "get_device_properties", lambda index: SimpleNamespace(major=10, name="NVIDIA GB200")
     )
 
     config_module = importlib.import_module("megatron.bridge.training.config")
     monkeypatch.setattr(config_module, "get_world_size_safe", lambda: 32)
-    monkeypatch.setattr(
-        _FakeAutoBridge,
-        "to_megatron_provider",
-        lambda self, load_weights=False: Qwen35VLMoEModelProvider(
-            num_layers=40, hidden_size=2048, num_attention_heads=16
-        ),
-    )
+    monkeypatch.setattr(_FakeAutoBridge, "get_model_config", lambda self: _real_moe_model_config())
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
     config = recipe_func()
 
@@ -1722,7 +1749,7 @@ def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_fun
         "gdn_kernel_backend",
         "gdn_pre_gated_delta_rule_fusion",
         "gdn_gated_output_norm_fusion",
-    } <= {field.name for field in fields(config.model)}
+    } <= {field.name for field in fields(config.model.transformer)}
     assert config.model.gdn_kernel_backend == "transformer_engine"
     assert config.ddp.overlap_grad_reduce is False
     assert config.ddp.overlap_param_gather is False
@@ -1759,3 +1786,88 @@ def test_gb200_long_context_pins_model_and_processor_together(monkeypatch):
     cfg = recipe()
     encoder = cfg.dataset.task_encoder
     assert calls == [(encoder.hf_processor_path, {"revision": encoder.hf_processor_revision})]
+
+
+# ---------------------------------------------------------------------------
+# Builder-backed model config
+# ---------------------------------------------------------------------------
+
+
+class _BuilderOnlyAutoBridge:
+    """AutoBridge returning a strict Qwen3.5-VL builder config and rejecting the provider API."""
+
+    def __init__(self, hf_path: str):
+        self._hf_path = hf_path
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, *, revision: str | None = None):
+        return _BuilderOnlyAutoBridge(hf_path)
+
+    def get_model_config(self):
+        from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config
+        from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeConfig
+
+        from megatron.bridge import AutoBridge
+
+        # MoE checkpoints are named by active parameters, e.g. Qwen3.5-35B-A3B.
+        if "-A" in self._hf_path:
+            hf_config = Qwen3_5MoeConfig(architectures=["Qwen3_5MoeForConditionalGeneration"])
+        else:
+            hf_config = Qwen3_5Config(architectures=["Qwen3_5ForConditionalGeneration"])
+        return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Qwen3.5-VL recipes must use get_model_config()")
+
+
+_ALL_QWEN35_VL_RECIPE_FUNCS = list(
+    dict.fromkeys(
+        _QWEN35_VL_PRETRAIN_MOCK_FUNCS
+        + _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS
+        + _QWEN35_VL_SFT_FUNCS
+        + _QWEN35_VL_H100_SFT_FUNCS
+        + _QWEN35_VL_PEFT_FUNCS
+        + _QWEN35_VL_H100_PEFT_FUNCS
+        + _QWEN35_VL_GB200_FUNCS
+        + _QWEN35_VL_GB300_FUNCS
+    )
+)
+
+
+@pytest.mark.parametrize("recipe_func", _ALL_QWEN35_VL_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_qwen35_vl_recipes_build_strict_model_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Every recipe builds the builder-backed config and assigns only fields it declares."""
+    from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig
+
+    monkeypatch.setattr(_qwen35_vl_h100_module, "AutoBridge", _BuilderOnlyAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_gb200_module, "AutoBridge", _BuilderOnlyAutoBridge)
+
+    cfg = recipe_func()
+
+    _assert_basic_config(cfg)
+    assert isinstance(cfg.model, Qwen35VLModelConfig)
+    assert cfg.model.position_embedding_type == "mrope"
+    assert cfg.model.vision_config is not None
+    assert cfg.model.experimental_attention_variant == "gdn"
+
+
+@pytest.mark.parametrize(
+    "recipe_func, expected_blocks",
+    [
+        (_qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_config, (16, 24)),
+        (_qwen35_vl_h100_module.qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config, (17, 23)),
+        (_qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config, (17, 23)),
+    ],
+)
+def test_h100_35b_pipeline_preserves_hf_block_placement(monkeypatch, recipe_func, expected_blocks):
+    """The actual Hybrid config must cover every block across both pipeline stages."""
+    from megatron.bridge.models.qwen.modeling_qwen35.model_config import prepare_qwen35_pipeline_config
+
+    monkeypatch.setattr(_FakeAutoBridge, "get_model_config", lambda self: _real_moe_model_config())
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+    config = recipe_func().model
+    prepared = prepare_qwen35_pipeline_config(config)
+    stages = prepared.hybrid_layer_pattern.partition("/")[0].split("|")
+    assert tuple(len(stage) // 2 for stage in stages) == expected_blocks
+    assert "".join(stages) == config.hybrid_layer_pattern.partition("/")[0]
+    assert sum(map(len, stages)) == config.num_layers
