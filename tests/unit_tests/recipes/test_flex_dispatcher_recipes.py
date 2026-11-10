@@ -31,7 +31,7 @@ pytestmark = pytest.mark.unit
     ("package", "factory_name", "backend"),
     [
         ("recipes.qwen", "qwen3_30b_a3b_pretrain_config", "hybridep"),
-        ("recipes.qwen", "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config", "hybridep"),
+        ("recipes.qwen", "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config", "ncclep"),
         ("perf_recipes.qwen", "qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config", "hybridep"),
         ("perf_recipes.qwen", "qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config", "hybridep"),
         ("perf_recipes.qwen", "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config", "hybridep"),

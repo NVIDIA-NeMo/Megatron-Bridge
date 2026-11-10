@@ -501,6 +501,7 @@ def _build_resume_config(
 # ── Test class ───────────────────────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("reset_distributed")
 class TestMegatronMIMOTraining:
     """Functional tests for MegatronMIMO heterogeneous parallel training.
 

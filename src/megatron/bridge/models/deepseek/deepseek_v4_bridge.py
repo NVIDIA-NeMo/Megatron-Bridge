@@ -155,7 +155,8 @@ def set_deepseek_v4_pipeline_model_parallel_layout(
     Args:
         model_cfg: DeepSeek-V4 provider or model config to configure in place.
         logical_layers_per_stage: Optional block counts in VPP-major, PP-minor
-            order. Otherwise distribute logical blocks as evenly as possible.
+            order. Otherwise distribute logical blocks as evenly as possible
+            while keeping the hash-routed MoE blocks on the embedding stage.
     """
     pp_size = model_cfg.pipeline_model_parallel_size or 1
     vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None) or 1
@@ -191,8 +192,13 @@ def set_deepseek_v4_pipeline_model_parallel_layout(
 
     num_stages = pp_size * vp_size
     if logical_layers_per_stage is None:
+        # MCore requires every hash-routed MoE layer on the embedding stage, the only one that owns the token
+        # IDs. Grow that stage when an even split would leave hash layers behind; otherwise the split is even.
+        num_hash_blocks = min(len(blocks), int(getattr(model_cfg, "moe_num_hash_layers", 0) or 0))
         base, extra = divmod(len(blocks), num_stages)
-        counts = [base + int(stage < extra) for stage in range(num_stages)]
+        first = max(base + int(extra > 0), num_hash_blocks)
+        base, extra = divmod(len(blocks) - first, num_stages - 1)
+        counts = [first] + [base + int(stage < extra) for stage in range(num_stages - 1)]
     else:
         counts = list(logical_layers_per_stage)
         if (
@@ -419,32 +425,18 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def generate_pipeline_layout(num_layers: int, pp: int, mtp_layers: int = 1) -> list[list[str]]:
-        """Generate a pipeline-parallel layout for DSv4 models.
+    def configure_pipeline_layout(model_cfg: DeepSeekV4HybridModelProvider) -> None:
+        """Set the pipeline stages of a DSv4 model for checkpoint conversion.
 
-        DSv4 with hash MoE routing requires an explicit pipeline layout when PP > 1.
-        The layout distributes decoder layers across PP stages, placing the embedding
-        on the first stage and MTP + loss on the last stage.
+        MCore's HybridModel takes its stage boundaries from the ``|`` segments of
+        ``hybrid_layer_pattern``, and the layout must list one decoder entry per
+        physical layer, so conversion uses the same segmentation as the recipes.
 
         Args:
-            num_layers: Number of decoder layers (e.g. 43 for Flash, 61 for Pro).
-            pp: Pipeline parallel size.
-            mtp_layers: Number of MTP layers (default 1).
-
-        Returns:
-            List of lists, where each inner list describes one pipeline stage.
+            model_cfg: DeepSeek-V4 provider or model config with its pipeline
+                parallel size set; updated in place.
         """
-        base, rem = num_layers // pp, num_layers % pp
-        layout = []
-        for i in range(pp):
-            n = base + (1 if i < rem else 0)
-            stage = ["decoder"] * n
-            if i == 0:
-                stage = ["embedding"] + stage
-            if i == pp - 1:
-                stage = stage + ["mtp"] * mtp_layers + ["loss"]
-            layout.append(stage)
-        return layout
+        set_deepseek_v4_pipeline_model_parallel_layout(model_cfg)
 
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Map a DeepSeek-V4 HF config to ``DeepSeekV4ModelConfig`` kwargs.
@@ -453,7 +445,6 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         configuration.
         """
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
-        use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
         use_dsa_kernel_fusion = (
             torch.cuda.is_available()
             and torch.cuda.get_device_capability()[0] >= 9
@@ -554,7 +545,11 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             # ---- Hyper-Connections (mHC) ----
             enable_mhc_connections=True,
             mhc_num_residual_streams=hf_config.hc_mult,  # 4
-            use_fused_mhc=use_blackwell_fused_kernels,
+            # DeepSeek-V4 adds rms_norm_eps inside the square root of the mHC mapping norm.
+            # Only the unfused mHC path supports that, so the bridge maps it on every GPU;
+            # recipes that enable fused mHC also set mhc_norm_eps_inside_sqrt=False.
+            mhc_norm_eps_inside_sqrt=True,
+            use_fused_mhc=False,
             mhc_sinkhorn_iterations=hf_config.hc_sinkhorn_iters,  # 20
             # ---- MoE ----
             gated_linear_unit=True,
@@ -651,6 +646,17 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             "moe_intermediate_size", 1
         )
 
+        # Invert the import's MLA geometry: head_dim -> v_head_dim, qk_rope_head_dim -> qk_pos_emb_head_dim.
+        # Import pins rotary_percent to 1.0, but Transformers derives qk_rope_head_dim as
+        # head_dim * partial_rotary_factor, so export the factor that reproduces the RoPE width.
+        hf_cfg["head_dim"] = provider.v_head_dim
+        hf_cfg["partial_rotary_factor"] = provider.qk_pos_emb_head_dim / provider.v_head_dim
+
+        # Import replaces the context length and router aux-loss coefficient with training settings, and this
+        # export keeps the reference config's RoPE parameters, so let the reference supply these fields as well.
+        for hf_name in ("max_position_embeddings", "router_aux_loss_coef", "aux_loss_alpha", "rope_theta"):
+            hf_cfg.pop(hf_name, None)
+
         return hf_cfg
 
     # ------------------------------------------------------------------
@@ -698,6 +704,15 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         hf_config = self.hf_config
         num_hidden_layers = int(hf_config.num_hidden_layers)
         num_mtp = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+        # Released checkpoints keep the indexer score projection outside `scorer`. Map the name the source uses,
+        # so exports keyed by mapping name (e.g. the ModelOpt quantized export) need no rename.
+        hf_state = getattr(getattr(self, "hf_pretrained", None), "state", None)
+        state_source = getattr(hf_state, "source", None)
+        hf_keys = frozenset(state_source.get_all_keys()) if state_source is not None else frozenset()
+
+        def _indexer_weights_proj(ck: str) -> str:
+            legacy = f"{ck}.attn.indexer.weights_proj.weight"
+            return legacy if legacy in hf_keys else f"{ck}.attn.indexer.scorer.weights_proj.weight"
 
         def _hc_alpha_mappings(hc_prefix: str, hf_scale_param: str) -> list:
             """mHC alpha triplet: one 3-vector hc_*_scale <-> alpha_pre/post/res scalars."""
@@ -739,9 +754,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 _ReplicatedOptional(f"{core}.compressor.norm.weight", f"{ck}.attn.compressor.norm.weight"),
                 # Indexer (CSA layers only) and its own sub-compressor.
                 _ReplicatedOptional(f"{core}.indexer.linear_wq_b.weight", f"{ck}.attn.indexer.wq_b.weight"),
-                _ReplicatedOptional(
-                    f"{core}.indexer.linear_weights_proj.weight", f"{ck}.attn.indexer.scorer.weights_proj.weight"
-                ),
+                _ReplicatedOptional(f"{core}.indexer.linear_weights_proj.weight", _indexer_weights_proj(ck)),
                 _ReplicatedOptional(
                     f"{core}.indexer.compressor.linear_wkv.weight", f"{ck}.attn.indexer.compressor.wkv.weight"
                 ),
@@ -863,8 +876,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         """Restore the DSv4 source checkpoint's keys and quantized weight layout.
 
         Expert-bias buffers synthesized during import are omitted when the source
-        checkpoint did not contain them. Legacy indexer scorer names are restored
-        before selecting the export dtype. When ``task.weight_dtype`` is set, skip
+        checkpoint did not contain them. When ``task.weight_dtype`` is set, skip
         requantization and return the weights unchanged — the generic export path
         casts the dtype.
         """
@@ -875,19 +887,6 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             converted_weights_dict = {
                 key: value for key, value in converted_weights_dict.items() if key not in omitted_expert_biases
             }
-        native_scorer_key = next(
-            (
-                key
-                for key in converted_weights_dict
-                if ".indexer.scorer.weights_proj." in key and key not in hf_state_dict
-            ),
-            None,
-        )
-        if native_scorer_key is not None:
-            legacy_key = native_scorer_key.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
-            if legacy_key in hf_state_dict:
-                converted_weights_dict = dict(converted_weights_dict)
-                converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
         if task.weight_dtype is not None:
             return converted_weights_dict
 

@@ -32,6 +32,7 @@ from megatron.bridge.recipes.deepseek import (
     deepseek_v4_flash_no_mtp_sft_config,
     deepseek_v4_flash_sft_config,
     deepseek_v4_flash_sft_openmath_thinking_packed_config,
+    set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as deepseek_v4_h100_module
 
@@ -115,6 +116,11 @@ class TestDeepSeekV4FinetuneRecipes:
         with pytest.MonkeyPatch.context() as monkeypatch:
             monkeypatch.setattr(deepseek_v4_h100_module, "DEEPSEEK_V4_FLASH_HF_PATH", hf_path)
             config = config_func()
+        # Rebuild the native '|' segments for one stage; overriding PP alone would keep
+        # the recipe's multi-stage segments in hybrid_layer_pattern.
+        config.model.pipeline_model_parallel_size = 1
+        config.model.virtual_pipeline_model_parallel_size = None
+        set_deepseek_v4_pipeline_model_parallel_layout(config.model)
 
         # Swap the shipped SQuAD config for a mock dataset (forward path is identical;
         # this keeps CI fast and offline).
@@ -157,7 +163,8 @@ class TestDeepSeekV4FinetuneRecipes:
         eval_samples = config.validation.eval_iters * config.train.global_batch_size
         test_samples = 8
         total = train_samples + eval_samples + test_samples
-        config.dataset.split = [train_samples / total, eval_samples / total, test_samples / total]
+        # Megatron Core parses ``split`` as a comma-separated string of weights.
+        config.dataset.split = f"{train_samples / total},{eval_samples / total},{test_samples / total}"
 
         from megatron.bridge.training.gpt_step import forward_step
         from megatron.bridge.training.pretrain import pretrain
