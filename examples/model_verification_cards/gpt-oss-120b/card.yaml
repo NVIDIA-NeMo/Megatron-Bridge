@@ -287,6 +287,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 894d55832e58b5865a9a27756a63fafa70ab01bb  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 4

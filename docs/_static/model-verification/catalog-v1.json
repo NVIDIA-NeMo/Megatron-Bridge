@@ -8130,7 +8130,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "a8038f6d99d8ade33e1b715ba79bc9185b073e59",
+          "bridge_commit": "894d55832e58b5865a9a27756a63fafa70ab01bb",
           "command_topologies": [
             {
               "gpus_per_node": "8",
