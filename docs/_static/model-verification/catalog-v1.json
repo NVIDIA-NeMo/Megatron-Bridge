@@ -8149,15 +8149,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "gpt-oss-120b-sft-long-context-h100",
-          "expected_result": "Completed 20 long-context full-SFT optimizer steps from the imported checkpoint on 48x H100 with 32K sequence length, immutable Tulu3 selection, assistant-token masking, offline packing, TP2/SP, CP4 with a2a context-parallel communication, PP6, EP4, disabled cross-entropy and bias-activation fusions, and selective MoE-activation recompute. All 20 optimizer-step rows are present exactly once with finite losses, zero skipped iterations, and zero NaN iterations. Loss decreases from 6.666666 to 1.238030, all five metrics are recorded, and no checkpoint is saved because this bounded long-context verification run disables checkpoint output.\n",
+          "expected_result": "On 48x H100, run in the NeMo 26.10 release-candidate container (rc10) with Bridge at this item's commit, completed 20 long-context full-SFT optimizer steps from the imported checkpoint with 32K sequence length, immutable Tulu3 selection, assistant-token masking, offline packing, TP2/SP, CP4 with a2a context-parallel communication, PP6, EP4, disabled cross-entropy and bias-activation fusions, and selective MoE-activation recompute. All 20 optimizer-step rows are present exactly once with finite losses, zero skipped iterations, and zero NaN iterations. Loss decreases from 6.245447 to 1.232932, steps 11-20 averaged 5,966.370 ms and 24.050 model TFLOP/s/GPU, and no checkpoint is saved because this bounded long-context verification run disables checkpoint output.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-13",
+          "last_verified": "2026-10-28",
           "metrics": {
-            "final_loss": 1.23803,
-            "initial_loss": 6.666666,
-            "last_10_steps_model_tflops_per_gpu_avg": 5.07,
-            "last_10_steps_step_time_ms_avg": 24388.78,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 111.964
+            "final_loss": 1.232932,
+            "initial_loss": 6.245447,
+            "last_10_steps_model_tflops_per_gpu_avg": 24.05,
+            "last_10_steps_step_time_ms_avg": 5966.37,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 457.676
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.H100",
