@@ -276,11 +276,12 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigCont
     cfg = qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
     apply_determinism_overrides(cfg)
 
-    # TODO: revert the two overrides below once a deterministic fused GDN kernel is available.
-    # Megatron-Core rejects deterministic_mode with Gated DeltaNet unless the torch backend is used.
-    cfg.model.gdn_kernel_backend = "torch"
-    # MBS 2 OOMs with the torch GDN backend.
-    cfg.train.micro_batch_size = 1
+    # Standalone Qwen3.5 override, not part of apply_determinism_overrides: Megatron-Core's
+    # deterministic_mode rejects the default FLA Gated DeltaNet kernel; the fused Transformer
+    # Engine backend replays bit-exactly, so the deterministic recipe uses it. The torch
+    # reference kernel this recipe used before needed micro_batch_size=1 to fit; the fused
+    # kernel runs the base recipe's batch size.
+    cfg.model.gdn_kernel_backend = "transformer_engine"
 
     # Keep the exact process environment visible on the recipe.
     cfg.env_vars = {
