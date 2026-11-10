@@ -80,6 +80,7 @@ def _assert_export_matches(bridge, models) -> None:
 
 
 @pytest.mark.run_only_on("GPU")
+@pytest.mark.usefixtures("reset_distributed")
 @pytest.mark.parametrize(
     "topology,model_api",
     [

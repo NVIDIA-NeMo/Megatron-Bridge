@@ -125,6 +125,7 @@ QWEN35_VL_SFT_QWEN3_VL_STEP = [
 ]
 
 
+@pytest.mark.usefixtures("reset_distributed")
 class TestQwen35VLFinetuneRecipes:
     """Functional tests covering SFT freeze combos and recompute."""
 
