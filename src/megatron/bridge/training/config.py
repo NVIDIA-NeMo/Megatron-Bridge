@@ -21,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
+import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
@@ -95,6 +96,34 @@ from megatron.bridge.utils.cuda_graph import (
 from megatron.bridge.utils.gdn_utils import validate_cudnn_gdn_stack
 
 
+def _apply_megatron_fsdp_grad_dtype_policy(ddp_config: MCoreDistributedDataParallelConfig) -> None:
+    """Keep Megatron-FSDP gradient precision governed by its explicit dtype fields.
+
+    ``grad_reduce_in_fp32`` sizes the gradient buffers of the standard DDP wrapper.
+    Megatron-FSDP takes gradient precision from ``megatron_fsdp_main_grads_dtype`` and
+    ``megatron_fsdp_grad_comm_dtype`` instead, and Megatron Core rejects the legacy flag
+    unless those fields request FP32. Bridge precision recipes enable the flag by default,
+    so clear it when the FSDP dtypes do not request FP32; the configured FSDP precision
+    policy is unchanged. Set ``megatron_fsdp_main_grads_dtype=torch.float32`` to
+    accumulate FSDP gradients in FP32.
+
+    The policy applies both to Bridge's deferred config and to the Megatron Core config
+    that some recipes construct directly.
+    """
+    if not (ddp_config.use_megatron_fsdp and ddp_config.grad_reduce_in_fp32):
+        return
+    main_grads_dtype = ddp_config.megatron_fsdp_main_grads_dtype
+    grad_comm_dtype = ddp_config.megatron_fsdp_grad_comm_dtype
+    if main_grads_dtype == torch.float32 and grad_comm_dtype in (None, torch.float32):
+        return
+    print_rank_0(
+        "grad_reduce_in_fp32 does not apply to Megatron-FSDP gradients "
+        f"(megatron_fsdp_main_grads_dtype={main_grads_dtype}, "
+        f"megatron_fsdp_grad_comm_dtype={grad_comm_dtype}). Deactivating..."
+    )
+    ddp_config.grad_reduce_in_fp32 = False
+
+
 @dataclass
 class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
     """Megatron Core DistributedDataParallelConfig with deferred post-init.
@@ -123,6 +152,7 @@ class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
         This method calls the original Megatron Core DistributedDataParallelConfig.__post_init__()
         to compute derived fields based on the current field values.
         """
+        _apply_megatron_fsdp_grad_dtype_policy(self)
         super().__post_init__()
 
 
@@ -1611,6 +1641,11 @@ class ConfigContainer(Container):
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):
             self.ddp.finalize()
+        elif isinstance(self.ddp, MCoreDistributedDataParallelConfig):
+            # Recipes may construct Megatron Core's DDP config directly. It has no deferred
+            # finalize(), so apply the Megatron-FSDP gradient dtype policy before its post-init
+            # is re-run below.
+            _apply_megatron_fsdp_grad_dtype_policy(self.ddp)
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
 
@@ -2265,6 +2300,61 @@ def apply_environment_variables(cfg: ConfigContainer) -> None:
         os.environ.setdefault(name, str(value))
 
 
+def apply_ncclep_one_gpu_per_rank(cfg: ConfigContainer) -> None:
+    """Bind NCCL EP recipes to one GPU per rank before CUDA is initialized.
+
+    The NCCL EP plugin allocates its buffers with ``ncclMemAlloc``, which maps them into every GPU
+    visible to the process; on Grace+Blackwell nodes each mapped GPU adds ~11 us to every ``munmap``
+    of the process, i.e. host-side overhead on every training step. When the resolved recipe uses
+    the ``ncclep`` flex backend and the launcher exposes several devices to this rank (Slurm's
+    default per-node list), keep only the local rank's device in ``CUDA_VISIBLE_DEVICES`` and make
+    the trainer select device 0 (``dist.external_gpu_device_mapping``). ``scripts/performance/
+    bootstrap.py`` does the same for perf recipes before the trainer imports torch; this covers
+    recipes launched through ``pretrain()`` directly.
+
+    No-op when the recipe does not use NCCL EP, when no local rank can be determined, or when CUDA
+    is already initialized in this process (the visible-device list can no longer change). A
+    launcher that already exposes exactly one device only gets ``external_gpu_device_mapping``.
+    """
+    model = getattr(cfg, "model", None)
+    if getattr(model, "moe_token_dispatcher_type", None) != "flex":
+        return
+    if getattr(model, "moe_flex_dispatcher_backend", None) != "ncclep":
+        return
+    local_rank = os.environ.get("LOCAL_RANK") or os.environ.get("SLURM_LOCALID")
+    if local_rank is None:
+        return
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    devices = [device for device in visible.split(",") if device] if visible else None
+    if devices is not None and len(devices) == 1:
+        cfg.dist.external_gpu_device_mapping = True
+        return
+
+    import torch
+
+    if torch.cuda.is_initialized():
+        warnings.warn(
+            "NCCL EP one-GPU-per-rank binding skipped: CUDA was initialized before runtime_config_update, "
+            "so CUDA_VISIBLE_DEVICES can no longer be narrowed; all devices stay visible to this rank."
+        )
+        return
+    if devices is None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = local_rank
+    elif int(local_rank) < len(devices):
+        os.environ["CUDA_VISIBLE_DEVICES"] = devices[int(local_rank)]
+    else:
+        warnings.warn(
+            f"NCCL EP one-GPU-per-rank binding skipped: local rank {local_rank} is not in "
+            f"CUDA_VISIBLE_DEVICES={visible}; all listed devices stay visible to this rank."
+        )
+        return
+    cfg.dist.external_gpu_device_mapping = True
+    print_rank_0(
+        f"NCCL EP one-GPU-per-rank binding: CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} "
+        f"(was {visible}), dist.external_gpu_device_mapping=True"
+    )
+
+
 def runtime_config_update(cfg: ConfigContainer) -> None:
     """Apply runtime configuration updates prior to initialization.
 
@@ -2283,6 +2373,8 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     """
     # Environment settings may affect runtime finalization and must be applied first.
     apply_environment_variables(cfg)
+    # Must also run before CUDA initialization (it edits CUDA_VISIBLE_DEVICES).
+    apply_ncclep_one_gpu_per_rank(cfg)
 
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
@@ -2333,6 +2425,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
     apply_environment_variables(cfg)
+    apply_ncclep_one_gpu_per_rank(cfg)
 
     if cfg.train.num_epochs is not None:
         raise ValueError("num_epochs is not supported for MegatronMIMO datasets")

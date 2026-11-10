@@ -76,6 +76,7 @@ def _configure_global_batch_packing(cfg, *, context_parallel_size: int) -> None:
     cfg.logger.log_interval = 1
 
 
+@pytest.mark.usefixtures("reset_distributed")
 class TestGlobalBatchPacking:
     """Global-batch online packing through pretrain and finetune on two GPUs."""
 
