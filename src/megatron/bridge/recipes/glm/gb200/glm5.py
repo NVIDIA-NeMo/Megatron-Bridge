@@ -165,6 +165,8 @@ def _glm_sft_config(*, model_id: str, revision: str, data_slug: str) -> ConfigCo
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # NCCL EP sizes its dispatch buffers once; packed (THD) batches take their per-rank bound from the pack length.
+    cfg.model.max_seq_length_per_sample = cfg.model.seq_length
     # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
     # which NCCL EP's faster dispatch exposes as a CPU stall.
     cfg.model.moe_use_grouped_tensor = True
@@ -282,6 +284,8 @@ def _glm_sft_128k_config(*, model_id: str, revision: str, data_slug: str) -> Con
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # NCCL EP sizes its dispatch buffers once; packed (THD) batches take their per-rank bound from the pack length.
+    cfg.model.max_seq_length_per_sample = cfg.model.seq_length
     # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
     # which NCCL EP's faster dispatch exposes as a CPU stall.
     cfg.model.moe_use_grouped_tensor = True
