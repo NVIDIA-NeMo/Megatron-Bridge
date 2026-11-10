@@ -577,7 +577,12 @@ def _normalize_model_guide_format(text: str) -> str:
             f"{{/* {boundary} GENERATED VERIFIED CONFIGURATIONS */}}",
             f"<!-- {boundary} GENERATED VERIFIED CONFIGURATIONS -->",
         )
-    text = re.sub(r"<p>(.*?)</p>", lambda match: "<p>" + " ".join(match[1].split()) + "</p>", text, flags=re.DOTALL)
+    text = re.sub(
+        r"<p>(.*?)</p>",
+        lambda match: "<p>" + " ".join(match[1].split()).replace("&#123;", "{").replace("&#125;", "}") + "</p>",
+        text,
+        flags=re.DOTALL,
+    )
     return re.sub(
         r'(<code class="language-bash">)(.*?)(</code>)',
         lambda match: match[1] + match[2].replace("&#123;", "{").replace("&#125;", "}") + match[3],
@@ -590,19 +595,24 @@ def test_model_guide_format_normalization_preserves_content() -> None:
     """Format parity must still detect changed prose, commands, and code spacing."""
     sphinx = (
         "<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->\n"
-        "<p>Expected result\n</p>\n"
+        "<p>Expected result {&quot;loss&quot;: 0.5} from ${MODEL}\n</p>\n"
         '<code class="language-bash">echo ${MODEL}\n  --flag</code>\n'
         "<!-- END GENERATED VERIFIED CONFIGURATIONS -->\n"
     )
     fern = (
         "{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}\n"
-        "<p>Expected result</p>\n"
+        "<p>Expected result &#123;&quot;loss&quot;: 0.5&#125; from $&#123;MODEL&#125;</p>\n"
         '<code class="language-bash">echo $&#123;MODEL&#125;\n  --flag</code>\n'
         "{/* END GENERATED VERIFIED CONFIGURATIONS */}\n"
     )
     expected = _normalize_model_guide_format(sphinx)
     assert expected == _normalize_model_guide_format(fern)
-    for old, new in (("Expected result", "Different result"), ("MODEL", "OTHER"), ("  --flag", " --flag")):
+    for old, new in (
+        ("Expected result", "Different result"),
+        ("0.5", "0.6"),
+        ("MODEL", "OTHER"),
+        ("  --flag", " --flag"),
+    ):
         assert expected != _normalize_model_guide_format(fern.replace(old, new))
     assert _normalize_model_guide_format("Prose &#123;value&#125;") == "Prose &#123;value&#125;"
 
