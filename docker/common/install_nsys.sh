@@ -33,7 +33,7 @@ fi
 
 ARCH=$(dpkg --print-architecture)
 
-# Extract year.major.patch for the devtools package name.
+# Extract year.major.patch for the devtools package name (e.g., "2026.5.1" -> "nsight-systems-cli-2026.5.1").
 NSYS_RELEASE=$(echo "$NSYS_VERSION" | cut -d. -f1-3)
 NSYS_PKG="nsight-systems-cli-${NSYS_RELEASE}"
 
