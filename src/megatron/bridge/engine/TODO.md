@@ -49,14 +49,18 @@ models, several engines sharing one runtime.
   `export(adapter_only=True)`, and `forward_only(disable_adapters=True)` replacing the reference engine in
   `ppo_vllm.py`. Rank 32 / alpha 64 is the examples' setting (`--lora-rank 32`, `--lora-alpha` defaults
   to 64), not a library default.
-- Not validated on GPUs yet: construction on the Qwen3.5 recipe, N-call accumulation and movement gates
-  with LoRA, merged-stream vs written-files export parity, and an RL run.
+- Validated on 16 GB300s with the Qwen3.5-35B-A3B recipe (TP1 CP8 EP16, rank 32 / alpha 64):
+  construction, 1-vs-4-call accumulation and mid-window movement (exact), adapters off vs a frozen engine
+  (bit for bit), merged-stream vs written-files export (exact), resume (identical losses), GRPO and PPO
+  with the merged refit, and a 10-round 32K GRPO run.
 - **Merged refit and train/inference agreement** (`TODO(lora-refit)`): the trainer computes
   `W x + s B(A x)` with the update kept apart, while the merged refit sends vllm `bf16(W + s B A)`, so
-  update elements below half a bf16 step of W are lost to the sampler. Measure it (trainer with adapters,
-  a frozen engine on the merged weights, and vllm, on the same rollout tokens) before choosing between
-  merged and adapter-only refit. Adapter-only refit needs vllm LoRA support for the GDN projections and
-  the shared expert adapters (`share_expert_adapters=True`), and its decode cost measured.
+  update elements below half a bf16 step of W are lost to the sampler. Measured on the 10-round 32K GRPO
+  run (trainer with adapters, a frozen engine on the merged weights, and vllm, on the same rollout
+  tokens): the cast leaves 62% of the updated elements unchanged at round 5 and 52% at round 9, but the
+  trainer-vs-vllm gap is only 2-6% above full fine-tuning on the same prompts from round 2 on. Merged
+  refit stays the default for now; recheck on a longer run. Adapter-only refit needs vllm LoRA support for the GDN
+  projections and the shared expert adapters (`share_expert_adapters=True`), and its decode cost measured.
 - **Adapter conversion planning** is redone on every merged streaming export (Bridge rebuilds the
   adapter tasks; only the base conversion tasks are cached).
 - **LoRA+** (a per-group `max_lr` ratio on `lora_B`) is not reachable from the engine, and
