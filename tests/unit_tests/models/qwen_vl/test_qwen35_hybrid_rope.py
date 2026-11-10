@@ -53,6 +53,7 @@ def test_hybrid_rotary_defers_to_layer_buffer_outside_forward(monkeypatch):
     group.size.return_value = 1
     rotary = _HybridMultimodalRotaryEmbedding(kv_channels=8, cp_group=group)
     rotary.mrope_section = [2, 1, 1]
+    rotary.te_attn_cuda_graph = True
 
     assert rotary(8, packed_seq=False) is None
 
