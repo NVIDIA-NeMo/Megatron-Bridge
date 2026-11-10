@@ -17,6 +17,7 @@ Model, optimizer, DDP and precision settings are copied from the SFT recipe
 ``megatron.bridge.recipes.qwen.gb200.qwen35._qwen35_text_35b_a3b_long_context_common`` and
 ``qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_bf16_config`` (Megatron-Bridge dec652474), minus
 the dataset, learning-rate schedule, logging and checkpoint-path sections that the application owns.
+The vision-language recipe builds the full multimodal model with the same settings.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.engine.recipes.base import TrainingRecipe
+from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import DistributedDataParallelConfig, OptimizerConfig, RNGConfig
 from megatron.bridge.training.mixed_precision import bf16_mixed
@@ -68,6 +70,95 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
 
     model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    # MTP depth (mtp_num_hidden_layers) and its 0.1 loss weight come from the HF config via the bridge.
+    _apply_35b_a3b_execution_settings(model, seq_length=seq_length, mtp_detach_heads=mtp_detach_heads)
+    return _rl_recipe(
+        model,
+        env_vars=_35B_A3B_ENV_VARS,
+        pad_to_max_length=pad_to_max_length,
+        hf_path=hf_path,
+        hf_revision=hf_revision,
+    )
+
+
+def qwen35_vl_35b_a3b_rl_16gpu_gb200_bf16(
+    *,
+    hf_path: str,
+    hf_revision: str | None = None,
+    seq_length: int = 131072,
+    pad_to_max_length: bool = True,
+    mtp_detach_heads: bool = False,
+) -> TrainingRecipe:
+    """Qwen3.5-35B-A3B vision-language model on text input, BF16, TP1/CP8/EP16, for 16 GB200/GB300 GPUs.
+
+    The full multimodal model is built. Execution settings are those of the text recipe above, plus the
+    vision settings of ``megatron.bridge.recipes.qwen_vl.gb200.qwen35_vl._qwen35_vl_35b_a3b_long_context_common``.
+    As there, every part is trainable; freeze the vision side with the overrides
+    ``model.freeze_vision_model`` and ``model.freeze_vision_projection``.
+    Image and video inputs are not supported by the engine yet.
+
+    Args:
+        hf_path: HF model ID or local directory of the multimodal checkpoint; also the layout ``export``
+            writes (config, tokenizer files, weight names).
+        hf_revision: Matching HF revision, or ``None`` for a local directory.
+        seq_length: Packed token budget per microbatch; a positive multiple of 16 for CP8.
+        pad_to_max_length: Pad every pack to ``seq_length`` (one kernel shape) instead of to its content.
+        mtp_detach_heads: Train the MTP head without letting its loss reach the main model's gradients.
+
+    Returns:
+        The engine recipe. Pretrained weights are supplied to the engine through ``checkpoint_path``.
+    """
+    if seq_length <= 0 or seq_length % 16:
+        raise ValueError("seq_length must be positive and divisible by 16 for CP8.")
+    hf_config = AutoConfig.from_pretrained(hf_path, revision=hf_revision)
+    if getattr(hf_config, "model_type", None) != "qwen3_5_moe" or not hasattr(hf_config, "vision_config"):
+        raise ValueError("Expected a Qwen3.5 MoE vision-language configuration.")
+    if seq_length > hf_config.text_config.max_position_embeddings:
+        raise ValueError("seq_length exceeds the text model's max_position_embeddings.")
+
+    model = AutoBridge.from_hf_pretrained(hf_path, revision=hf_revision).to_megatron_provider(load_weights=False)
+    model.mtp_num_layers = 1
+    _apply_35b_a3b_execution_settings(model, seq_length=seq_length, mtp_detach_heads=mtp_detach_heads)
+    model.tensor_model_parallel_size = 1
+    model.sequence_parallel = False
+    model.cuda_graph_scope = []
+    model.offload_modules = None
+    model.vision_recompute_granularity = "full"
+    model.vision_recompute_method = "uniform"
+    model.vision_recompute_num_layers = 1
+    env_vars = {
+        **_35B_A3B_ENV_VARS,
+        # Both language and vision towers use automatic TE backend selection.
+        "NVTE_FUSED_ATTN": 1,
+        "NVTE_FLASH_ATTN": 1,
+        "NVTE_UNFUSED_ATTN": 1,
+        "NCCL_GRAPH_REGISTER": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+    }
+    return _rl_recipe(
+        model,
+        env_vars=env_vars,
+        pad_to_max_length=pad_to_max_length,
+        hf_path=hf_path,
+        hf_revision=hf_revision,
+    )
+
+
+_35B_A3B_ENV_VARS = {
+    **COMMON_RECIPE_ENV_VARS,
+    "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+    "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
+    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+    "NVLINK_DOMAIN_SIZE": 72,
+    "USE_MNNVL": 1,
+}
+
+
+def _apply_35b_a3b_execution_settings(model: ModelProviderMixin, *, seq_length: int, mtp_detach_heads: bool) -> None:
+    """Set the TP1/CP8/EP16 long-context execution settings shared by the 35B-A3B recipes."""
     model.gdn_kernel_backend = "transformer_engine"
     model.gdn_pre_gated_delta_rule_fusion = True
     model.seq_length = seq_length
@@ -75,7 +166,6 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
     model.context_parallel_size = 8
     model.expert_model_parallel_size = 16
     model.expert_tensor_parallel_size = 1
-    # MTP depth (mtp_num_hidden_layers) and its 0.1 loss weight come from the HF config via the bridge.
     model.mtp_detach_heads = mtp_detach_heads
     model.bias_activation_fusion = True
     model.cross_entropy_fusion_impl = "te"
@@ -88,6 +178,16 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
     model.moe_hybridep_pad_uneven_dispatch_inputs = True
     model.moe_router_fusion = True
 
+
+def _rl_recipe(
+    model: ModelProviderMixin,
+    *,
+    env_vars: dict[str, str | int | float | bool],
+    pad_to_max_length: bool,
+    hf_path: str,
+    hf_revision: str | None,
+) -> TrainingRecipe:
+    """Wrap ``model`` with the optimizer, DDP and precision settings shared by the 35B-A3B recipes."""
     # SFT recipe: distributed_fused_adam_with_cosine_annealing(lr_warmup_iters=200, lr_decay_iters=300000,
     # max_lr=2e-5, min_lr=2e-6). The schedule is the caller's (AdamParams per step); defaults kept here.
     optimizer = OptimizerConfig(
@@ -113,23 +213,13 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
         overlap_param_gather=False,
         average_in_collective=False,
     )
-    env_vars = {
-        **COMMON_RECIPE_ENV_VARS,
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
-    }
     return TrainingRecipe(
         model=model,
         optimizer=optimizer,
         ddp=ddp,
         mixed_precision=bf16_mixed(),
         rng=RNGConfig(seed=1234),
-        env_vars=env_vars,
+        env_vars=dict(env_vars),
         pad_to_max_length=pad_to_max_length,
         hf_path=hf_path,
         hf_revision=hf_revision,

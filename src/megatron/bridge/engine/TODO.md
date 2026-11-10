@@ -40,6 +40,39 @@ models, several engines sharing one runtime.
   primary token count like every other parameter instead of the pooled MTP-target count. The exact
   version needs a Megatron-LM option to skip the module's per-rank ratio.
 
+## Open investigations
+
+- **Logprobs depend on the input order when packs are padded.** With `pad_to_max_length=True`,
+  `examples/engine/score_packed_parquet.py` fails its reversed-order check: sequences that are last in
+  a pack in one order and not in the other get different logprobs from the first context-parallel cut
+  onward (about half their tokens differ by 1e-3 or more, worst case above 20), while per-sequence loss
+  over supervised tokens moves by at most 0.002. With `pad_to_max_length=False` both orders match.
+  The padding is attached to the last sequence of a pack, so that sequence is cut across ranks at
+  different points. Not settled: whether this is bf16 rounding amplified by discrete expert routing, or
+  an error in how a padded last sequence is handled. To do: histogram the differences on supervised
+  tokens, print the values at the worst token, compare the routing decisions of the two orders, and
+  repeat in fp32 or on a small model. Until then, use `pad_to_max_length=False` for scoring that must
+  not depend on batch composition.
+
+## Multimodal models
+
+`qwen35_vl_35b_a3b_rl_16gpu_gb200_bf16` builds the full Qwen3.5 vision-language model and runs it on
+text input. Checked so far on text input: construction, and `forward_only` giving the same mean NLL as
+the text recipe. Missing:
+
+- **Image and video input** (`TODO(multimodal)`): `Datum` has no pixel or grid fields, and
+  `check_microbatches` rejects image and video placeholder tokens in `input_ids`. Needs the pixel
+  data and grid sizes on the Datum, grid positions for visual tokens (the engine passes the same
+  position on all three MRoPE axes, which is only right for text), and the per-rank vision mask the
+  model requires for CP-sharded packed input.
+- **Value head** (`TODO(multimodal)`): `output_head="value"` raises; the head has to replace the
+  language model's output layer inside the wrapper.
+- **Lookup by model.** The recipe is not in the registry: a multimodal checkpoint passed to
+  `TrainingEngine(model, ...)` still resolves to the text recipe. Select the multimodal recipe by name.
+- **Not run yet for this recipe:** `forward_backward` and `optim_step`, with and without the vision
+  side frozen (`model.freeze_vision_model`, `model.freeze_vision_projection`), routing replay,
+  checkpoints, `cpu()`/`cuda()`, and export (weight names against the multimodal HF layout).
+
 ## LoRA
 
 - `lora=` on construction and `forward_only(disable_adapters=True)` raise (`TODO(lora)`). Agreed design:
@@ -55,8 +88,8 @@ models, several engines sharing one runtime.
   window to be closed.
 - **Export of a value-head engine** (`TODO(value-export)`): the HF causal-LM layout has no slot for the
   head; a critic layout is undefined.
-- **Export with `overlap_param_gather`** (`TODO(export)`) and **export through a multimodal source**
-  (`TODO(export)`) raise.
+- **Export with `overlap_param_gather`** (`TODO(export)`) and **export of a text-only model through a
+  multimodal source** (`TODO(export)`) raise.
 - **`cpu()`/`cuda()` with** `overlap_param_gather` (`TODO(overlap)`), MXFP8 grad-buffer reuse
   (`TODO(mxfp8)`), `nccl_ub` (`TODO(nccl-ub)`), `optimizer_cpu_offload` (`TODO(hdo)`) or the
   precision-aware optimizer (`TODO(precision-aware)`) raise.

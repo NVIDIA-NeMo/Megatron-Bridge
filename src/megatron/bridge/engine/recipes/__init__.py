@@ -20,7 +20,10 @@ from megatron.bridge.engine.recipes.base import (
     finalize_recipe,
     min_gpus,
 )
-from megatron.bridge.engine.recipes.qwen35 import qwen35_text_35b_a3b_rl_16gpu_gb200_bf16
+from megatron.bridge.engine.recipes.qwen35 import (
+    qwen35_text_35b_a3b_rl_16gpu_gb200_bf16,
+    qwen35_vl_35b_a3b_rl_16gpu_gb200_bf16,
+)
 from megatron.bridge.engine.recipes.registry import (
     KNOWN_HARDWARE,
     REGISTRY,
@@ -43,5 +46,6 @@ __all__ = [
     "finalize_recipe",
     "min_gpus",
     "qwen35_text_35b_a3b_rl_16gpu_gb200_bf16",
+    "qwen35_vl_35b_a3b_rl_16gpu_gb200_bf16",
     "resolve_recipe",
 ]

@@ -44,12 +44,30 @@ def test_make_export_state_rejects_multimodal_sources_and_passes_the_revision(mo
         lambda path, revision=None: built.append((path, revision)) or _Bridge(),
     )
     ddp = SimpleNamespace(overlap_param_gather=False)
+    text_model = SimpleNamespace()
     with pytest.raises(NotImplementedError, match="text-only"):
-        make_export_state(SimpleNamespace(hf_path="vlm", hf_revision="r1", ddp=ddp))
+        make_export_state(SimpleNamespace(hf_path="vlm", hf_revision="r1", ddp=ddp, model=text_model))
     assert built == []
-    state = make_export_state(SimpleNamespace(hf_path="text", hf_revision="r2", ddp=ddp))
+    state = make_export_state(SimpleNamespace(hf_path="text", hf_revision="r2", ddp=ddp, model=text_model))
     assert isinstance(state.bridge, _Bridge) and state.tasks is None
     assert loaded == [("vlm", "r1"), ("text", "r2")] and built == [("text", "r2")]
+
+
+def test_make_export_state_accepts_a_multimodal_source_for_a_multimodal_model(monkeypatch):
+    monkeypatch.setattr(
+        "megatron.bridge.engine.export.AutoConfig.from_pretrained",
+        lambda path, revision=None: SimpleNamespace(text_config=SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.engine.export.AutoBridge.from_hf_pretrained", lambda path, revision=None: _Bridge()
+    )
+    recipe = SimpleNamespace(
+        hf_path="vlm",
+        hf_revision=None,
+        ddp=SimpleNamespace(overlap_param_gather=False),
+        model=SimpleNamespace(vision_config=SimpleNamespace()),
+    )
+    assert isinstance(make_export_state(recipe).bridge, _Bridge)
 
 
 def test_export_streams_with_cached_tasks_and_writes_directories():
