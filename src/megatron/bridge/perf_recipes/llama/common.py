@@ -186,6 +186,8 @@ def _llama2_benchmark_common(cfg: ConfigContainer) -> None:
     cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
     cfg.tokenizer.tensor_model_parallel_size = 1
     cfg.tokenizer.use_tokenizer_vocab_size = False
+
+
 def _llama31_8b_common(cfg: ConfigContainer) -> None:
     """Set common configurations for all Llama3.1 8B configs."""
     cfg.optimizer.adam_beta2 = 0.95

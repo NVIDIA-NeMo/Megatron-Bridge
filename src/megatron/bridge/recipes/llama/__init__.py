@@ -13,11 +13,10 @@
 # limitations under the License.
 
 # Llama2 models
+from .gb200 import llama31_405b_pretrain_64gpu_gb200_fp8mx_config
 from .llama2 import (
     llama2_70b_peft_config,
 )
-
-from .gb200 import llama31_405b_pretrain_64gpu_gb200_fp8mx_config
 
 # Llama3 models
 from .llama3 import (
