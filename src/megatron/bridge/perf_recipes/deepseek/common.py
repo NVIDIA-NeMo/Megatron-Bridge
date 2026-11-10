@@ -29,6 +29,14 @@ from megatron.bridge.training.config import ConfigContainer
 
 def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     """Apply DeepSeek V3 perf defaults shared by the legacy workload configs."""
+    # Preserve benchmark optimizer precision independently of library defaults.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     cfg.dataset.seq_length = cfg.model.seq_length
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"

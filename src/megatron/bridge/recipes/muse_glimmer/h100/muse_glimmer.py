@@ -100,7 +100,7 @@ def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigConta
         min_lr=0.0,
     )
     cfg.scheduler.lr_decay_iters = 100
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
     cfg.env_vars = {

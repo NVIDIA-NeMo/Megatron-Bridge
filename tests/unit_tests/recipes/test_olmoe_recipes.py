@@ -333,8 +333,8 @@ def test_olmoe_7b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.manual_gc_interval == 5
 
 
-def test_olmoe_7b_sft_precision_aware_optimizer(monkeypatch: pytest.MonkeyPatch):
-    """Test that OLMoE-7B SFT uses precision-aware optimizer settings."""
+def test_olmoe_7b_sft_fp32_optimizer_state(monkeypatch: pytest.MonkeyPatch):
+    """Test that OLMoE-7B SFT uses standard Adam with FP32 optimizer state."""
     from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
@@ -345,13 +345,13 @@ def test_olmoe_7b_sft_precision_aware_optimizer(monkeypatch: pytest.MonkeyPatch)
 
     _assert_basic_config(cfg)
 
-    # Check precision-aware optimizer settings
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    # Check standard Adam optimizer settings
+    assert cfg.optimizer.use_precision_aware_optimizer is False
 
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
 
 
 def test_olmoe_7b_sft_tokenizer_with_trust_remote_code(monkeypatch: pytest.MonkeyPatch):
@@ -384,13 +384,13 @@ def test_olmoe_7b_pretrain_optimizer_settings(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # Check optimizer is using precision-aware settings
-    assert cfg.optimizer.use_precision_aware_optimizer is True
+    # Check optimizer uses FP32 state
+    assert cfg.optimizer.use_precision_aware_optimizer is False
 
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
 
 
 def test_olmoe_7b_pretrain_mixed_precision_config(monkeypatch: pytest.MonkeyPatch):

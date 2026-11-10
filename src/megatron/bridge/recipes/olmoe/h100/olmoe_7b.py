@@ -50,7 +50,7 @@ def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for OLMoE-7B (7B total, ~1B active).
 
     Recommended parallelism: TP=1, PP=1, EP=8
-    Uses precision-aware optimizer with bf16 gradients/moments.
+    Uses standard Adam with FP32 main parameters, gradients, and moments.
     """
     cfg = _pretrain_common()
 
@@ -103,12 +103,12 @@ def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
     cfg.optimizer.adam_eps = 1e-8
 
-    # Precision-aware optimizer settings
-    cfg.optimizer.use_precision_aware_optimizer = True
+    # Standard Adam optimizer settings
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -270,11 +270,11 @@ def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.model.moe_router_padding_for_fp8 = False
 
     # MoE Force Load Balancing
@@ -423,11 +423,11 @@ def olmoe_7b_peft_1gpu_h100_bf16_config(
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.model.moe_router_padding_for_fp8 = False
 
     # MoE Force Load Balancing

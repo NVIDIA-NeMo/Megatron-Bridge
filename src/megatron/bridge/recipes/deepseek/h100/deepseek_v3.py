@@ -209,7 +209,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
         params_dtype=torch.bfloat16,
         pipeline_dtype=torch.bfloat16,
         autocast_enabled=False,
-        grad_reduce_in_fp32=False,
+        grad_reduce_in_fp32=True,
     )
     # FP8 settings (commented - enable if using FP8)
     # cfg.mixed_precision.fp8_recipe = "tensorwise"
@@ -218,12 +218,13 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.model.moe_router_padding_for_fp8 = False  # Pad router for FP8 alignment
 
-    # Optimizer settings - DeepSeek V3 uses precision-aware optimizer with bf16 moments
+    # DeepSeek-V3 is the documented BF16-moment exception; retain FP32 weights and accumulation.
+    # https://arxiv.org/html/2412.19437v2#S3.SS3.SSS3
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.bfloat16  # Different from default float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16  # Different from default float32
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16  # Different from default float32
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
@@ -239,13 +240,13 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT: grad_reduce_in_fp32=False)
+    # DDP config - FP32 buffers preserve gradient accumulation precision
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.grad_reduce_in_fp32 = False  # Different from default True
+    cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     # MoE Force Load Balancing
@@ -371,14 +372,15 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
         params_dtype=torch.bfloat16,
         pipeline_dtype=torch.bfloat16,
         autocast_enabled=False,
-        grad_reduce_in_fp32=False,
+        grad_reduce_in_fp32=True,
     )
     cfg.model.moe_router_padding_for_fp8 = False
 
-    # Optimizer settings - precision-aware optimizer with bf16 moments
+    # DeepSeek-V3 is the documented BF16-moment exception; retain FP32 weights and accumulation.
+    # https://arxiv.org/html/2412.19437v2#S3.SS3.SSS3
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
@@ -399,7 +401,7 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     # MoE Force Load Balancing

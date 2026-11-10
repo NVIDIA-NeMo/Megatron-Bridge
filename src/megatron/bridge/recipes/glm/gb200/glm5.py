@@ -116,7 +116,7 @@ def _glm_pretrain_config(*, model_id: str, revision: str) -> ConfigContainer:
         min_lr=3e-5,
     )
     cfg.scheduler.lr_decay_iters = 100
-    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.use_precision_aware_optimizer = False
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
     block_counts = [14, 16, 12, 12, 12, 12]

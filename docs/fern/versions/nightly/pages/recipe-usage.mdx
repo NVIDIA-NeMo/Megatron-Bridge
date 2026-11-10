@@ -27,6 +27,34 @@ Training mode follows the recipe and dataset type:
 
 For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for a local JSONL split directory or `per_split_data_source_manifest_path` for MLM-style JSONL blends. Do not use `data_path` for SFT/PEFT JSONL sources.
 
+## Optimizer state precision
+
+Library recipes use FP32 optimizer state by default, with
+`use_precision_aware_optimizer=False`. This keeps the main parameters, main
+gradients, and Adam moments in FP32. Model compute and gradient communication
+can still use other precisions, such as BF16.
+
+**DeepSeek-V3 is the exception:** its pretraining recipes retain BF16 Adam
+moments with `use_precision_aware_optimizer=True`, while keeping master weights,
+main gradients, and gradient accumulation in FP32. The
+[DeepSeek-V3 technical report, section 3.3.3](https://arxiv.org/html/2412.19437v2#S3.SS3.SSS3)
+reports no observable degradation from BF16 moments compared with FP32. This is
+an author-reported result, not a convergence comparison of this Bridge implementation.
+It does not establish the same behavior for DeepSeek-V4 or other models.
+
+For other models, low-precision optimizer state saves memory, but can affect convergence. Rounding
+small optimizer updates can lead to slower convergence or higher final loss,
+even when training appears stable. It can also cause loss spikes or divergence.
+Use it only as a last resort when the model still does not fit after trying
+parameter and optimizer sharding, activation recomputation, or optimizer offload.
+If you enable it, compare convergence against FP32 optimizer state under the same
+training conditions. See the [NeMo AutoModel mixed-precision training guide](https://docs.nvidia.com/nemo/automodel/development/mixed-precision-training)
+for more background.
+
+FP32 optimizer state uses more memory. Check memory usage through optimizer
+initialization, training, and checkpoint saving on your target allocation.
+Performance recipes may use lower-precision state for benchmarking.
+
 ## Overriding configuration
 
 Recipes are provided through a `ConfigContainer` object. This is a dataclass that holds all configuration objects needed for training. You can find a more detailed overview of the `ConfigContainer` [here](training/config-container-overview.md).
