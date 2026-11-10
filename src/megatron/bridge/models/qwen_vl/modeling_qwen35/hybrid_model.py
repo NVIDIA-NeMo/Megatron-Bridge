@@ -34,7 +34,14 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification impo
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_layer import Qwen3VLRotaryTransformerLayer
 
 
-_POSITION_IDS: ContextVar[torch.Tensor | None] = ContextVar("qwen35_hybrid_position_ids", default=None)
+class _OutsideForward:
+    """Marks a rotary call made outside a Qwen3.5 Hybrid language-model forward."""
+
+
+_OUTSIDE_FORWARD = _OutsideForward()
+_POSITION_IDS: ContextVar[torch.Tensor | None | _OutsideForward] = ContextVar(
+    "qwen35_hybrid_position_ids", default=_OUTSIDE_FORWARD
+)
 
 
 class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
@@ -44,8 +51,13 @@ class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
         *,
         packed_seq: bool = False,
         cp_group: torch.distributed.ProcessGroup | None = None,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | None:
         position_ids = _POSITION_IDS.get()
+        if position_ids is _OUTSIDE_FORWARD:
+            # Core's TE CUDA graph helper builds static attention inputs before any forward and sees this
+            # Hybrid model's "rope". mRoPE depends on each batch's positions, so return None: the helper then
+            # keeps the batch-shaped buffer from Qwen3VLRotaryTransformerLayer, which every replay refills.
+            return None
         if position_ids is None:
             raise RuntimeError("Qwen3.5 Hybrid mRoPE requires the current forward's position_ids.")
         return super().forward(position_ids, self.mrope_section, cp_group=cp_group)
