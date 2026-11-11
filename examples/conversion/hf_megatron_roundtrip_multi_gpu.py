@@ -188,45 +188,46 @@ def main(
         torch_dtype=torch.bfloat16,
     )
 
-    if megatron_load_path:
-        model_provider = bridge.to_megatron_provider(load_weights=False)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.params_dtype = torch.bfloat16
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-
-        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
-        megatron_model = bridge.load_megatron_model(
-            megatron_load_path,
-            mp_overrides={
-                "tensor_model_parallel_size": tp,
-                "pipeline_model_parallel_size": pp,
-                "expert_model_parallel_size": ep,
-                "expert_tensor_parallel_size": etp,
-                "pipeline_dtype": torch.bfloat16,
-                "params_dtype": torch.bfloat16,
-            },
-            wrap_with_ddp=False,
-        )
-        megatron_model = [m.cuda() for m in megatron_model]
-
+    use_model_config = bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION
+    if use_model_config:
+        model_config = bridge.get_model_config()
+        model_provider = model_config.transformer
     else:
-        model_provider = bridge.to_megatron_provider(load_weights=True)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.params_dtype = torch.bfloat16
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
+        model_provider = bridge.to_megatron_provider(load_weights=not megatron_load_path)
+    model_provider.tensor_model_parallel_size = tp
+    model_provider.pipeline_model_parallel_size = pp
+    model_provider.pipeline_dtype = torch.bfloat16
+    model_provider.params_dtype = torch.bfloat16
+    model_provider.expert_model_parallel_size = ep
+    model_provider.expert_tensor_parallel_size = etp
 
-        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
-        megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    if use_model_config and not megatron_load_path:
+        megatron_model = bridge.get_model(model_config, wrap_with_ddp=False, mixed_precision_wrapper=None)
+    else:
+        # Once all overrides are set, finalize to ensure the post initialization logic is run
+        if use_model_config:
+            model_config.finalize()
+            bridge._get_or_initialize_pg_collection(model_provider)
+        else:
+            model_provider.finalize()
+            model_provider.initialize_model_parallel(seed=0)
+
+        if megatron_load_path:
+            megatron_model = bridge.load_megatron_model(
+                megatron_load_path,
+                mp_overrides={
+                    "tensor_model_parallel_size": tp,
+                    "pipeline_model_parallel_size": pp,
+                    "expert_model_parallel_size": ep,
+                    "expert_tensor_parallel_size": etp,
+                    "pipeline_dtype": torch.bfloat16,
+                    "params_dtype": torch.bfloat16,
+                },
+                wrap_with_ddp=False,
+            )
+            megatron_model = [m.cuda() for m in megatron_model]
+        else:
+            megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0

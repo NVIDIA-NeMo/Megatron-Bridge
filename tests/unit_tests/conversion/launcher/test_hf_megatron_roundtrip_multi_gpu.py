@@ -155,6 +155,7 @@ def test_roundtrip_synchronizes_result_and_saves_before_reporting_summary(
 
     class FakeBridge:
         hf_pretrained = SimpleNamespace(state={"weight": torch.ones(1)})
+        _model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=False)
 
         def to_megatron_provider(self, load_weights):
             return FakeProvider()
@@ -193,3 +194,82 @@ def test_roundtrip_synchronizes_result_and_saves_before_reporting_summary(
     assert event_names.index("save") < event_names.index("report")
     save_kwargs = next(event[1] for event in events if event[0] == "save")
     assert save_kwargs["distributed_save"] is True
+
+
+class _FakeModelConfig:
+    def __init__(self):
+        self.transformer = SimpleNamespace()
+        self.finalized = False
+
+    def finalize(self):
+        self.finalized = True
+
+
+class _FakeBuilderBridge:
+    hf_pretrained = SimpleNamespace(state={"weight": torch.ones(1)})
+    _model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=True)
+
+    def __init__(self):
+        self.model_config = _FakeModelConfig()
+        self.calls = []
+
+    def to_megatron_provider(self, load_weights):
+        raise NotImplementedError("builder-backed bridge")
+
+    def get_model_config(self):
+        return self.model_config
+
+    def get_model(self, model_config, **kwargs):
+        self.calls.append(("get_model", model_config, kwargs))
+        return [object()]
+
+    def _get_or_initialize_pg_collection(self, transformer_config):
+        self.calls.append(("pg_collection", transformer_config))
+
+    def load_megatron_model(self, path, **kwargs):
+        self.calls.append(("load", path, kwargs))
+        return [SimpleNamespace(cuda=lambda: "cuda_model")]
+
+    def export_hf_weights(self, model, show_progress):
+        yield "weight", torch.ones(1)
+
+
+def _run_builder_roundtrip(monkeypatch: pytest.MonkeyPatch, **main_kwargs):
+    module = _load_roundtrip_module(monkeypatch)
+    fake_bridge = _FakeBuilderBridge()
+    monkeypatch.setattr(
+        module,
+        "AutoBridge",
+        SimpleNamespace(from_hf_pretrained=lambda *args, **kwargs: fake_bridge),
+    )
+    monkeypatch.setattr(module.torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(module, "_synchronize_weight_verification", lambda all_match: False)
+    monkeypatch.setattr(module, "_print_verification_results", lambda *args, **kwargs: None)
+    monkeypatch.setenv("WORLD_SIZE", "2")
+
+    module.main(hf_model_id="example/model", tp=2, ep=2, skip_save=True, **main_kwargs)
+    return fake_bridge
+
+
+class TestRoundtripBuilderBackedBridges:
+    """Tests that builder-backed bridges are built through get_model_config/get_model."""
+
+    def test_hf_import_builds_through_get_model(self, monkeypatch: pytest.MonkeyPatch):
+        fake_bridge = _run_builder_roundtrip(monkeypatch)
+
+        transformer = fake_bridge.model_config.transformer
+        assert transformer.tensor_model_parallel_size == 2
+        assert transformer.expert_model_parallel_size == 2
+        assert transformer.params_dtype == torch.bfloat16
+        assert [call[0] for call in fake_bridge.calls] == ["get_model"]
+        _, model_config, kwargs = fake_bridge.calls[0]
+        assert model_config is fake_bridge.model_config
+        assert kwargs == {"wrap_with_ddp": False, "mixed_precision_wrapper": None}
+
+    def test_megatron_load_finalizes_model_config(self, monkeypatch: pytest.MonkeyPatch):
+        fake_bridge = _run_builder_roundtrip(monkeypatch, megatron_load_path="/ckpt")
+
+        assert fake_bridge.model_config.finalized is True
+        assert [call[0] for call in fake_bridge.calls] == ["pg_collection", "load"]
+        assert fake_bridge.calls[0][1] is fake_bridge.model_config.transformer
+        assert fake_bridge.calls[1][1] == "/ckpt"
