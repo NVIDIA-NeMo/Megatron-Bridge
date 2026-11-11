@@ -76,6 +76,7 @@ class Llama3TinyModelProvider(GPTModelProvider):
     vocab_size: int | None = 128256
 
 
+@pytest.mark.usefixtures("reset_distributed")
 class TestDoRAFinetune:
     """
     Test end to end DoRA finetuning: pretrain -> save checkpoint -> finetune with DoRA.

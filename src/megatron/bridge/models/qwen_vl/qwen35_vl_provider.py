@@ -34,18 +34,23 @@ This module provides three model providers:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Callable, ClassVar, List, Literal, Optional, cast
 
 import transformers
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec,
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
 )
-from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from packaging.version import Version as PkgVersion
+from transformers import PretrainedConfig
 
 
 _TRANSFORMERS_HAS_QWEN3_5_MOE = PkgVersion(transformers.__version__) >= PkgVersion("5.2.0")
@@ -79,13 +84,22 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 
 from megatron.bridge.models.common.heads import LinearForLastLayer
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import configure_qwen35_hybrid
+from megatron.bridge.models.qwen.modeling_qwen35.model_config import prepare_qwen35_pipeline_config
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import (
+    Qwen35HybridForTokenClassification,
+    Qwen35VLHybridLanguageModel,
+    qwen35_vl_hybrid_stack_spec,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.models.qwen_vl.qwen35_vl_builder import Qwen35VLModelBuilder
+from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _QWEN_VISUAL_ENCODER_KEY = "qwen_visual"
@@ -139,9 +153,7 @@ class Qwen35VLModelProvider(GPTModelProvider):
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
     # =========================================================================
-    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = (
-        get_transformer_block_with_experimental_attention_variant_spec
-    )
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = qwen35_vl_hybrid_stack_spec
     layernorm_zero_centered_gamma: bool = True
     attention_output_gate: bool = True
     experimental_attention_variant: str = "gdn"
@@ -251,45 +263,23 @@ class Qwen35VLModelProvider(GPTModelProvider):
         return _qwen35_build_language_model_spec(self, pp_rank=pp_rank)
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
-        """Provide a Qwen3.5 VL dense model instance with vision and language components."""
-        language_transformer_config = self
-        hf_vision_config = self.vision_config
-        hf_vision_config.torch_dtype = self.params_dtype
+        """Adapt the legacy serialized provider to the shared Hybrid builder."""
+        config = _qwen35_provider_model_config(self)
+        builder = Qwen35VLModelBuilder(config)
+        builder.model_class = getattr(self, "MODEL_CLASS", None)
+        pg = self._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
+        return builder.build_model(pg, pre_process, post_process, vp_stage)
 
-        block_spec = self.build_language_spec(vp_stage=vp_stage)
-        mtp_spec = self.build_mtp_spec(vp_stage=vp_stage)
-
-        model_class = self.MODEL_CLASS or Qwen3VLModel
-        model = model_class(
-            language_transformer_config=language_transformer_config,
-            language_transformer_layer_spec=block_spec,
-            vision_transformer_config=hf_vision_config,
-            pre_process=pre_process,
-            post_process=post_process,
-            pg_collection=self._pg_collection,
-            mtp_block_spec=mtp_spec,
-            vp_stage=vp_stage,
-        )
-
-        if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
-            model.freeze(
-                freeze_language_model=self.freeze_language_model,
-                freeze_vision_model=self.freeze_vision_model,
-                freeze_vision_projection=self.freeze_vision_projection,
-            )
-
-        return model
-
-    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> HybridModel:
         """Provide just the language model component without vision."""
-        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        return _provide_qwen35_language_model(self, pre_process, post_process, vp_stage)
 
 
 @dataclass
 class Qwen35TokenClassificationModelProvider(Qwen35VLModelProvider):
     """Serializable provider for Qwen3.5 VL token-classification models."""
 
-    MODEL_CLASS: ClassVar[type[Qwen3VLModel]] = Qwen3VLForTokenClassification
+    MODEL_CLASS: ClassVar[type[Qwen3VLModel]] = Qwen35HybridForTokenClassification
 
     num_labels: int | None = None
     classifier_dropout: float = 0.1
@@ -378,9 +368,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
     # =========================================================================
-    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = (
-        get_transformer_block_with_experimental_attention_variant_spec
-    )
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = qwen35_vl_hybrid_stack_spec
     layernorm_zero_centered_gamma: bool = True
     attention_output_gate: bool = True
     experimental_attention_variant: str = "gdn"
@@ -520,38 +508,40 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         return _qwen35_build_language_model_spec(self, pp_rank=pp_rank)
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
-        """Provide a Qwen3.5 or Qwen3.6 VL model with vision and language components."""
-        language_transformer_config = self
-        hf_vision_config = self.vision_config
-        hf_vision_config.torch_dtype = self.params_dtype
+        """Adapt the legacy serialized provider to the shared Hybrid builder."""
+        config = _qwen35_provider_model_config(self)
+        builder = Qwen35VLModelBuilder(config)
+        builder.model_class = getattr(self, "MODEL_CLASS", None)
+        pg = self._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
+        return builder.build_model(pg, pre_process, post_process, vp_stage)
 
-        block_spec = self.build_language_spec(vp_stage=vp_stage)
-        mtp_spec = self.build_mtp_spec(vp_stage=vp_stage)
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> HybridModel:
+        """Provide just the language model component without vision."""
+        return _provide_qwen35_language_model(self, pre_process, post_process, vp_stage)
 
-        model = Qwen3VLModel(
-            language_transformer_config=language_transformer_config,
-            language_transformer_layer_spec=block_spec,
-            vision_transformer_config=hf_vision_config,
-            pre_process=pre_process,
-            post_process=post_process,
-            pg_collection=self._pg_collection,
-            mtp_block_spec=mtp_spec,
-            vp_stage=vp_stage,
+
+def _provide_qwen35_language_model(provider, pre_process, post_process, vp_stage):
+    pg = provider._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
+    vp_size = provider.virtual_pipeline_model_parallel_size
+    if pre_process is None:
+        pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(pg.pp)
+    if post_process is None:
+        post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(pg.pp)
+
+    assert provider.vocab_size is not None, "vocab_size must be configured before calling provide_language_model()"
+    spec = provider.build_language_model_spec()
+    if provider.should_pad_vocab:
+        spec.params["vocab_size"] = calculate_padded_vocab_size(
+            provider.vocab_size, provider.make_vocab_size_divisible_by, provider.tensor_model_parallel_size
         )
 
-        # Apply freeze options if any are enabled for fine-tuning
-        if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
-            model.freeze(
-                freeze_language_model=self.freeze_language_model,
-                freeze_vision_model=self.freeze_vision_model,
-                freeze_vision_projection=self.freeze_vision_projection,
-            )
-
-        return model
-
-    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        """Provide just the language model component without vision."""
-        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+    return build_module(
+        spec,
+        pre_process=pre_process,
+        post_process=post_process,
+        vp_stage=vp_stage,
+        pg_collection=pg,
+    )
 
 
 def _qwen35_build_language_block_spec(
@@ -559,14 +549,8 @@ def _qwen35_build_language_block_spec(
     vp_stage: Optional[int],
     pp_rank: Optional[int] = None,
 ) -> TransformerBlockSubmodules | ModuleSpec:
-    """Build the language transformer-block spec from a provider or a builder's transformer config."""
-    block_spec = get_transformer_block_with_experimental_attention_variant_spec(
-        config,
-        vp_stage=vp_stage,
-        pp_rank=pp_rank,
-    )
-    _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
-    return block_spec
+    """Build the language transformer-block spec."""
+    return qwen35_vl_hybrid_stack_spec()
 
 
 def _qwen35_build_mtp_block_spec(
@@ -575,33 +559,69 @@ def _qwen35_build_mtp_block_spec(
     pp_rank: Optional[int] = None,
 ) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
     """Build the MTP block spec."""
-    from megatron.bridge.models.gpt_provider import mtp_block_spec
+    # HybridModel builds the nested MTP stack from its unified layer pattern.
+    return None
 
-    mtp_spec = mtp_block_spec(provider, vp_stage=vp_stage, pp_rank=pp_rank)
-    _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
-    return mtp_spec
+
+def _qwen35_provider_model_config(provider: GPTModelProvider) -> Qwen35VLModelConfig:
+    """Translate legacy HF-block fields once, at the deprecated provider boundary."""
+    outer_fields = {item.name for item in fields(Qwen35VLModelConfig) if item.init} - {"transformer"}
+    transformer_class = Qwen35VLModelConfig.transformer_config_class
+    transformer_fields = {item.name for item in fields(transformer_class) if item.init}
+    kwargs = {name: getattr(provider, name) for name in outer_fields | transformer_fields if hasattr(provider, name)}
+    kwargs.pop("transformer_layer_spec", None)
+    configure_qwen35_hybrid(
+        kwargs,
+        PretrainedConfig(
+            num_hidden_layers=provider.num_layers,
+            num_experts=provider.num_moe_experts,
+            full_attention_interval=provider.linear_attention_freq,
+        ),
+    )
+    kwargs["hybrid_stack_spec"] = qwen35_vl_hybrid_stack_spec
+    outer = {name: value for name, value in kwargs.items() if name in outer_fields}
+    transformer = {name: value for name, value in kwargs.items() if name not in outer_fields}
+    # Legacy pipeline layouts count HF blocks; canonical configs count Hybrid positions.
+    for name in ("num_layers_in_first_pipeline_stage", "num_layers_in_last_pipeline_stage"):
+        if transformer.get(name) is not None:
+            transformer[name] *= 2
+    if transformer.get("pipeline_model_parallel_layout") is not None:
+        from megatron.core.transformer.enums import LayerType
+        from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+
+        layout = transformer["pipeline_model_parallel_layout"]
+        if not isinstance(layout, PipelineParallelLayerLayout):
+            layout = PipelineParallelLayerLayout(layout, provider.pipeline_model_parallel_size)
+        expanded = [
+            [entry for layer in stage for entry in ([layer, layer] if layer == LayerType.decoder else [layer])]
+            for vp_stage in range(layout.virtual_pipeline_model_parallel_size)
+            for stages in layout.layout
+            for stage in [stages[vp_stage]]
+        ]
+        transformer["pipeline_model_parallel_layout"] = PipelineParallelLayerLayout(
+            expanded, provider.pipeline_model_parallel_size
+        )
+    return Qwen35VLModelConfig(transformer=transformer_class(**transformer), **outer)
 
 
 def _qwen35_build_language_model_spec(provider: GPTModelProvider, pp_rank: Optional[int] = 0) -> ModuleSpec:
-    """Build the Qwen3VL language model spec.
-
-    MegatronMIMO builds this spec without the MPU globals, so both block specs get the
-    explicit ``pp_rank``. The MTP block is only built on the stage that owns it.
-    """
+    """Build the MIMO decoder spec from the same normalized Hybrid config as full VL."""
+    config = prepare_qwen35_pipeline_config(_qwen35_provider_model_config(provider))
     return ModuleSpec(
-        module=Qwen3VLGPTModel,
+        module=Qwen35VLHybridLanguageModel,
         params={
-            "config": provider,
+            "config": config.transformer,
             "transformer_layer_spec": provider.build_language_spec(pp_rank=pp_rank),
-            "vocab_size": provider.vocab_size,
-            "max_sequence_length": provider.language_max_sequence_length,
-            "fp16_lm_cross_entropy": provider.fp16_lm_cross_entropy,
-            "logit_dtype": provider.logit_dtype,
+            "hybrid_layer_pattern": config.hybrid_layer_pattern,
+            "vocab_size": config.vocab_size,
+            "max_sequence_length": config.language_max_sequence_length,
+            "fp16_lm_cross_entropy": config.fp16_lm_cross_entropy,
+            "logit_dtype": config.logit_dtype,
             "parallel_output": True,
-            "share_embeddings_and_output_weights": provider.share_embeddings_and_output_weights,
+            "share_embeddings_and_output_weights": config.share_embeddings_and_output_weights,
             "position_embedding_type": "mrope",
-            "rotary_percent": provider.rotary_percent,
-            "rotary_base": provider.rotary_base,
+            "rotary_percent": config.rotary_percent,
+            "rotary_base": config.rotary_base,
             "scatter_embedding_sequence_parallel": False,
             "mtp_block_spec": provider.build_mtp_spec(pp_rank=pp_rank),
         },

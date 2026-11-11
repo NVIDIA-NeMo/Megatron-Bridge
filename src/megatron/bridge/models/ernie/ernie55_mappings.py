@@ -1025,7 +1025,9 @@ def ernie55_mtp_body_copy_keys(hf_config: Any, hf_keys: Iterable[str] | None = N
 
     Every MTP depth shares the decoder's last layer (``mtp_shared_last_layer``), so the registry reads that body
     once, under the last layer's names. A checkpoint that also stores it under the MTP layer, as the released ones
-    do, holds a copy of those tensors; these are the copies' names. The released checkpoints name the copied
+    do, holds a copy of those tensors; these are the copies' names. The import skips them and the export leaves
+    them out of the expected source shards
+    (:meth:`Ernie55WeightConversionMixin.hf_export_ignored_source_keys`). The released checkpoints name the copied
     hyper-connections ``transformer_layer.{self_attention,mlp}_hyper_connection.*``.
 
     Args:
@@ -1140,6 +1142,22 @@ class Ernie55WeightConversionMixin:
         if kwargs.get("hf_state_dict") is None:
             _check_checkpoint_of(hf_pretrained)
         return super().stream_weights_hf_to_megatron(hf_pretrained, megatron_model, *args, **kwargs)
+
+    def hf_export_ignored_source_keys(self, hf_pretrained: Any, source_keys: Iterable[str]) -> list[str]:
+        """The checkpoint's copies of the shared MTP body, which export writes once under the decoder's names.
+
+        Export yields exactly the tensors the registry maps. A checkpoint that also stores the shared MTP
+        body under its MTP layers (:func:`ernie55_mtp_body_copy_keys`; the released checkpoints do) would
+        otherwise leave the shards holding those copies incomplete, and a strict save would refuse to write
+        them together with every other tensor they hold. A checkpoint written by this export holds no copies,
+        and the result is empty.
+
+        Args:
+            hf_pretrained: The source checkpoint wrapper; its ``config`` selects the layout.
+            source_keys: The source checkpoint's tensor names.
+        """
+        hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+        return sorted(ernie55_mtp_body_copy_keys(hf_config) & set(source_keys))
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]

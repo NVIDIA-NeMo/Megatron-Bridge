@@ -72,7 +72,7 @@ from megatron.bridge.models.ernie.ernie55_mappings import (  # noqa: E402
     split_kv_b_proj,
 )
 from megatron.bridge.models.ernie.modeling_ernie55 import check_ernie55_mtp_aliases  # noqa: E402
-from megatron.bridge.models.hf_pretrained.state import StateDict  # noqa: E402
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict  # noqa: E402
 from tests.unit_tests.models.ernie.ernie55_cp_harness import run_cases  # noqa: E402
 from tests.unit_tests.models.ernie.test_ernie55_mhc_mtp import (  # noqa: E402, F401 - fixtures
     VOCAB,
@@ -723,6 +723,61 @@ class TestProxyCheckpointKeys:
         config = dict(_proxy_config_without("n_shared_experts"), num_shared_experts=1)
         with pytest.raises(ValueError, match="which the reference implementation reads"):
             check_ernie55_checkpoint_keys(config, _PROXY_DTYPES)
+
+    def test_export_declares_the_checkpoints_mtp_body_copies(self):
+        """Export leaves a released checkpoint's MTP body copies out of the expected shards, and nothing else."""
+        bridge = _Ernie55TestBridge()
+        hf = _hf_pretrained(_PROXY_CONFIG, {})
+        copies = sorted(mappings.ernie55_mtp_body_copy_keys(_PROXY_CONFIG))
+        assert copies
+        assert bridge.hf_export_ignored_source_keys(hf, [*_PROXY_DTYPES, *copies]) == copies
+        assert bridge.hf_export_ignored_source_keys(hf, _PROXY_DTYPES) == []
+        # only the copies the checkpoint holds, never a tensor the registry writes
+        assert bridge.hf_export_ignored_source_keys(hf, [*_PROXY_DTYPES, copies[0]]) == [copies[0]]
+
+
+class TestStrictExportOfReleasedCheckpoints:
+    """``run_conversion.py export`` in strict mode on a checkpoint that stores the shared MTP body under its MTP
+    layer."""
+
+    def test_strict_save_writes_the_shards_that_hold_the_copies(self, toy, tmp_path):
+        """The copies are declared ignored, so the shard they share with real tensors is written; undeclared, the
+        strict save drops that shard with every tensor in it and fails, as it did on the released checkpoints."""
+        from safetensors.torch import save_file
+
+        last = f"model.layers.{toy.config['num_hidden_layers'] - 1}."
+        mtp = f"model.layers.{toy.config['num_hidden_layers']}."
+        copies = sorted(mappings.ernie55_mtp_body_copy_keys(toy.config))
+
+        def body_of(copy: str) -> str:
+            return last + copy[len(mtp) :].replace("transformer_layer.", "", 1)
+
+        assert copies and all(body_of(copy) in toy.tensors for copy in copies)
+        source = dict(toy.tensors)
+        # Clone: safetensors refuses to write two names that share one storage, as a real checkpoint never does.
+        source.update({copy: toy.tensors[body_of(copy)].clone() for copy in copies})
+        # Two shards: the copies share the second one with the last decoder layer and the MTP's own tensors.
+        shards = {
+            name: "model-00002-of-00002.safetensors"
+            if name.startswith((last, mtp))
+            else "model-00001-of-00002.safetensors"
+            for name in source
+        }
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        for shard in sorted(set(shards.values())):
+            save_file({n: t.contiguous() for n, t in source.items() if shards[n] == shard}, source_dir / shard)
+        (source_dir / "model.safetensors.index.json").write_text(json.dumps({"weight_map": shards}))
+
+        ignored = _Ernie55TestBridge().hf_export_ignored_source_keys(_hf_pretrained(toy.config, source), list(source))
+        assert ignored == copies
+        state = SafeTensorsStateSource(source_dir)
+        with pytest.raises(RuntimeError, match="not written|Missing"):
+            state.save_generator(iter(toy.exported.items()), tmp_path / "undeclared", strict=True)
+        state.save_generator(iter(toy.exported.items()), tmp_path / "strict", strict=True, ignored_source_keys=ignored)
+        written = json.loads((tmp_path / "strict" / "model.safetensors.index.json").read_text())["weight_map"]
+        assert set(written) == set(toy.exported) == set(toy.tensors)
+        assert set(written.values()) == set(shards.values())
 
 
 # ---------------------------------------------------------------------------------------------
