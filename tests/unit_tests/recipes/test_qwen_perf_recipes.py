@@ -30,7 +30,9 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
+    qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
     qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config,
     qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config,
@@ -127,3 +129,13 @@ def test_non_nvfp4_preserves_tp_comm_overlap(fp8cs_config_fn):
     assert cfg.comm_overlap.tp_comm_overlap is True, (
         f"{fp8cs_config_fn.__name__}: expected tp_comm_overlap=True for FP8-CS, got {cfg.comm_overlap.tp_comm_overlap}"
     )
+
+
+def test_qwen3_30b_vrnvl72_fp8mx_skips_paged_stash_but_keeps_capacity():
+    cfg = qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config()
+
+    assert cfg.model.moe_paged_stash is False
+    # Static NCCL EP buffers and the full-iteration graph stay; PagedStashRunner handles overflow.
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config().model.moe_paged_stash is True
