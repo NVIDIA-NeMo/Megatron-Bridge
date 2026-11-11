@@ -667,7 +667,7 @@ def train(
             params_norm = None
 
             if config.logger.log_params_norm:
-                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
+                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.ddp.use_megatron_fsdp)
 
             learning_rate = None
             decoupled_learning_rate = None
@@ -815,7 +815,7 @@ def train(
                 callback_manager=callback_manager,
             )
 
-    _delete_cuda_graphs(cuda_graph_helper, model)
+    _delete_cuda_graphs(cuda_graph_helper, model, optimizer)
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -1765,19 +1765,17 @@ def _delete_local_cuda_graph_runners(model: list[MegatronModule]) -> None:
                 module.custom_cudagraphs_lookup_table.clear()
 
 
-def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None, model: list[MegatronModule] | None = None):
-    """
-    Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
-    process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
-
-    TODO: Move this method to MCore.
-
-    Args:
-        cuda_graph_helper: The TECudaGraphHelper object.
-        model: The list of model chunks (MegatronModule instances).
-    """
-
-    print_rank_0("Deleting CUDA graphs")
+def _release_cuda_graph_references(optimizer: MegatronOptimizer | None) -> None:
+    """Release full-iteration graph references without synchronizing CUDA."""
+    # MCore's gradient-conversion graph retains the forward/backward graph and
+    # its NCCL buffers independently of FullCudaGraphWrapper's global handles.
+    pending = [optimizer]
+    while pending:
+        opt = pending.pop()
+        if hasattr(opt, "_cudagraphed_grad_copy"):
+            opt._cudagraphed_grad_copy = None
+        # Layer-wise optimizers can themselves be children of ChainedOptimizer.
+        pending.extend(getattr(opt, "chained_optimizers", []))
 
     # Explicitly delete full CUDA graphs because of
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
@@ -1795,6 +1793,28 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None, model: list
         OptimizerCudaGraphWrapper.cuda_graph = None
         OptimizerCudaGraphWrapper.result = None
         OptimizerCudaGraphWrapper.curr_iteration = 0
+
+
+def _delete_cuda_graphs(
+    cuda_graph_helper: TECudaGraphHelper | None,
+    model: list[MegatronModule] | None = None,
+    optimizer: MegatronOptimizer | None = None,
+):
+    """
+    Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
+    process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
+
+    TODO: Move this method to MCore.
+
+    Args:
+        cuda_graph_helper: The TECudaGraphHelper object.
+        model: The list of model chunks (MegatronModule instances).
+        optimizer: Optimizer whose gradient conversion may retain the training graph.
+    """
+
+    print_rank_0("Deleting CUDA graphs")
+
+    _release_cuda_graph_references(optimizer)
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
     # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper

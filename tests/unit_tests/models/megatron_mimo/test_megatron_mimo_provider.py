@@ -955,6 +955,20 @@ class TestStandardProviderMTPHandling:
         )
         assert standard_provider.mtp_num_layers == 2
 
+    def test_zero_mtp_layers_become_none_with_opt_in(self):
+        standard_provider = self._standard_provider(supports_mtp=True)
+        standard_provider.mtp_num_layers = 0
+        MegatronMIMOProvider.from_standard_provider(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                    "images": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                }
+            ),
+        )
+        assert standard_provider.mtp_num_layers is None
+
 
 class TestCastModelDtypeExceptFp32Marked:
     @pytest.mark.parametrize("dtype_name", ["float16", "bfloat16"])
