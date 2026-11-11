@@ -160,9 +160,14 @@ def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> 
     gb300_cfg.model.moe_use_grouped_tensor = True
     gb300_cfg.model.moe_flex_dispatcher_backend = "ncclep"
     assert vars(vrnvl72_cfg.model) == vars(gb300_cfg.model)
-    # The environments differ only in the dispatcher settings.
+    # The environments differ in dispatcher settings and Rubin's kernel policy.
     expected_env = {name: value for name, value in gb300_cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
-    assert vrnvl72_cfg.env_vars == {**expected_env, "NCCL_EP_HT_EM_PULL_PUSH": 1}
+    assert gb300_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+    assert vrnvl72_cfg.env_vars == {
+        **expected_env,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+    }
     for field in fields(vrnvl72_cfg):
         if field.name not in ("model", "env_vars"):
             assert getattr(vrnvl72_cfg, field.name) == getattr(gb300_cfg, field.name), field.name
