@@ -248,8 +248,8 @@ def deepseek_v3_pretrain_128gpu_b200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_fullcg_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=8, NCCL-EP, full-iteration CUDA graph."""
+def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=16, NCCL-EP, full-iteration CUDA graph."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     _deepseek_v3_common(cfg)
@@ -258,7 +258,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_fullcg_config() -> ConfigC
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 16
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
@@ -271,43 +271,27 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_fullcg_config() -> ConfigC
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    # Full-iteration CG (sets HybridEP, paged_stash, overlap, cuda_graph_impl=full_iteration).
     _enable_deepseek_full_iteration(cfg)
-    # Override dispatcher to NCCL-EP per official guidance.
     _enable_ncclep(cfg)
     cfg.model.moe_use_grouped_tensor = False
+    # EP=16 spans 2 NVLink domains; lower capacity factor reduces expert token buffer memory.
+    cfg.model.moe_expert_rank_capacity_factor = 1.2
     cfg.dist.distributed_timeout_minutes = 30
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        # graph_capture_record_stream_reuse reduces peak memory at CG capture (iter 4).
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # EP=16 spans 2 NVLink domains (rdma_team_size=2); NCCL_EP_HT_EM_PULL_PUSH requires
+        # single-LSA-team (EP≤8), so must be disabled for inter-domain EP.
+        "NCCL_EP_HT_EM_PULL_PUSH": 0,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-    }
-    return cfg
-
-
-def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=16, NCCL-EP, full-iteration CUDA graph."""
-    cfg = deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_fullcg_config()
-    cfg.model.expert_model_parallel_size = 16
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
-    # EP=16 spans 2 NVLink domains (rdma_team_size=2); NCCL_EP_HT_EM_PULL_PUSH requires
-    # single-LSA-team (EP≤8), so disable it for inter-domain EP.
-    # graph_capture_record_stream_reuse allows the CG capture to reuse expandable-segment
-    # mappings, reducing peak memory before capture at iter 4.
-    # Lower capacity factor from 1.5→1.2 to reduce expert token buffer memory.
-    cfg.model.moe_expert_rank_capacity_factor = 1.2
-    cfg.env_vars = {
-        **cfg.env_vars,
-        "NCCL_EP_HT_EM_PULL_PUSH": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
     }
     return cfg
 
