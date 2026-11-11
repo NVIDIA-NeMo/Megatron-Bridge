@@ -502,6 +502,97 @@ class TestConfigContainer_ConvertValueToDict:
         assert "_target_" in result
 
 
+class TestConfigContainer_BridgeTraversal:
+    """Bridge owns container traversal so its value hooks apply at every depth."""
+
+    def test_to_dict_routes_nested_values_through_conversion_hook(self):
+        """Sections, collections and overlays all use the subclass conversion hook."""
+
+        class Marker:
+            pass
+
+        @dataclass
+        class Section:
+            marker: object = None
+            items: list = field(default_factory=list)
+
+        @dataclass
+        class HookedContainer(_ConfigContainerBase):
+            section: Section = field(default_factory=Section)
+            mapping: dict = field(default_factory=dict)
+
+            @classmethod
+            def _convert_value_to_dict(cls, value):
+                if isinstance(value, Marker):
+                    return "converted-marker"
+                return super()._convert_value_to_dict(value)
+
+        config = HookedContainer(
+            section=Section(marker=Marker(), items=[Marker()]),
+            mapping={"nested": {"marker": Marker()}},
+        )
+
+        result = config.to_dict()
+        assert result["section"]["marker"] == "converted-marker"
+        assert result["section"]["items"] == ["converted-marker"]
+        assert result["mapping"] == {"nested": {"marker": "converted-marker"}}
+
+        overlaid = config.to_dict(section={"items": [Marker(), 3]})
+        assert overlaid["section"]["_target_"] == result["section"]["_target_"]
+        assert overlaid["section"]["marker"] == "converted-marker"
+        assert overlaid["section"]["items"] == ["converted-marker", 3]
+        assert isinstance(config.section.items[0], Marker)
+
+    def test_to_cfg_dict_value_can_delegate_to_container_conversion(self):
+        """Model providers serialize their own fields through the Bridge converter."""
+
+        @dataclass
+        class Provider:
+            inner: SimpleDataclass = field(default_factory=SimpleDataclass)
+
+            def to_cfg_dict(self):
+                return {
+                    "_target_": "my.module.Provider",
+                    "inner": _ConfigContainerBase._convert_value_to_dict(self.inner),
+                }
+
+        @dataclass
+        class ContainerWithProvider(_ConfigContainerBase):
+            model: Provider = field(default_factory=Provider)
+
+        result = ContainerWithProvider().to_dict()
+
+        assert result["model"] == {
+            "_target_": "my.module.Provider",
+            "inner": {
+                "_target_": "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass",
+                "name": "test",
+                "value": 42,
+            },
+        }
+
+    def test_to_dict_rejects_invalid_section_overrides(self):
+        """Unknown sections and fields and non-mapping overrides are rejected."""
+        config = ComplexConfigContainer(
+            simple_config=TestConfigContainer(),
+            nested_data=NestedDataclass(simple=SimpleDataclass()),
+            items=[],
+            metadata={},
+        )
+
+        with pytest.raises(ValueError, match="has no section named"):
+            config.to_dict(missing={})
+        with pytest.raises(ValueError, match="has no field named"):
+            config.to_dict(nested_data={"missing": 1})
+        with pytest.raises(TypeError, match="must map field names to values"):
+            config.to_dict(nested_data=[("regular_value", 1)])
+        with pytest.raises(TypeError, match="is not a dataclass"):
+            config.to_dict(items={"value": 1})
+        overlaid = config.to_dict(nested_data={"description": "overlaid"})["nested_data"]
+        assert overlaid["description"] == "overlaid"
+        assert overlaid["simple"]["value"] == 42
+
+
 class TestConfigContainer_ToYaml:
     """Test ConfigContainer.to_yaml method."""
 

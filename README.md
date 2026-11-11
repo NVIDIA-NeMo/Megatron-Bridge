@@ -11,7 +11,7 @@
 </div>
 
 ## 📣 News
-
+- [11/05/2026] [**ERNIE-5.5-Flash-Base**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55/README.md) for sft training details.
 - [10/16/2026] [**Reflection AI Beam-1.0-501B-A23B**](https://huggingface.co/reflection/Beam-1.0-501B-A23B) is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, inference, and BF16 H200 recipes for pretraining, SFT, long-context SFT, and LoRA PEFT. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/beam/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/beam/card.yaml) for verified configurations and current limitations.
 
 - [10/15/2026] [**NVIDIA Nemotron 3.5 Super VL**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120b-a12b-base-BF16) is released! Megatron Bridge supports the 120B-A12B vision-language model with HF↔Megatron checkpoint conversion, image inference, and pretraining, SFT, and LoRA recipes, plus text-only conversion and training workflows. See the [model documentation](docs/models/nemotron/nemotron3.5-super-vl.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b/card.yaml) for supported workflows, verified configurations, and current limitations.
@@ -236,7 +236,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**BERT**](docs/models/bert/index.md) | Megatron-Style BERT (`MegatronBertForMaskedLM`) |
 | [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V3, DeepSeek V4 / V4 Flash |
 | [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
-| **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl) |
+| **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl), [Ernie 5.5](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55) |
 | [**EXAONE**](docs/models/exaone/exaone.md) | EXAONE 4.0, EXAONE 4.5 VL, K-EXAONE MoE |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
 | [**Gemma**](docs/models/gemma/index.md) | Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
