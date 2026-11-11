@@ -131,9 +131,10 @@ def test_non_nvfp4_preserves_tp_comm_overlap(fp8cs_config_fn):
     )
 
 
-def test_qwen3_30b_vrnvl72_fp8mx_skips_paged_stash_but_keeps_capacity():
+def test_qwen3_30b_vrnvl72_fp8mx_skips_paged_stash_and_fuses_qk_norm_rope():
     cfg = qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config()
 
+    assert cfg.model.fused_single_qkv_rope is True
     assert cfg.model.moe_paged_stash is False
     # Static NCCL EP buffers and the full-iteration graph stay; PagedStashRunner handles overflow.
     assert cfg.model.moe_expert_rank_capacity_factor == 1.5
