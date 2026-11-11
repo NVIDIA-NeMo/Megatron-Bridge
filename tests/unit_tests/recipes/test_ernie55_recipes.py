@@ -19,13 +19,6 @@ validation (with the GPU-only checks stubbed), and the learning rate and weight 
 each parameter group match the reference's schedule.
 """
 
-import pytest
-
-
-# ERNIE 5.5 is pinned to Megatron-Core dev and cannot run on Megatron-Core main, which CI uses, so this test
-# module is skipped unconditionally for now.
-pytest.skip("ERNIE 5.5 is pinned to Megatron-Core dev and cannot run on Megatron-Core main.", allow_module_level=True)
-
 import contextlib
 import inspect
 import json
@@ -35,6 +28,7 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from tests.unit_tests.models.ernie.ernie55_test_utils import allow_conversion_imports_without_te
