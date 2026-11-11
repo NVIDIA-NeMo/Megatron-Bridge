@@ -516,7 +516,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """Resolve wildcard patterns with captured values.
 
         Handles both ** (any characters) and * (digits) wildcards in order.
-        ** patterns are processed before * patterns to avoid conflicts.
+        ** patterns are processed before * patterns to avoid conflicts, so
+        ``captures`` must list every ** value first and every * value second,
+        each in text order. ``MegatronMappingRegistry`` reorders regex groups
+        into this order before calling ``resolve()``.
         """
         resolved_megatron_param = self.megatron_param
         capture_index = 0

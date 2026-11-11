@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import re
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, MegatronParamMapping
 from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map, derive_kv_bmm_amax_map
@@ -148,6 +149,38 @@ class MegatronMappingRegistry:
 
         return regex_pattern
 
+    @staticmethod
+    @functools.lru_cache(maxsize=None)
+    def _wildcard_capture_order(pattern: str) -> Optional[Tuple[int, ...]]:
+        """Return how to reorder a pattern's regex groups into ``resolve()`` order.
+
+        The regex built by ``_convert_pattern_to_regex`` yields one group per
+        wildcard in text order, while ``MegatronParamMapping._resolve_names``
+        consumes captures as all ``**`` values first and all ``*`` values second
+        (each in text order). When a ``*`` appears before a ``**`` the two orders
+        differ, so the groups have to be permuted before resolving.
+
+        Args:
+            pattern: Pattern string with * and ** wildcards
+
+        Returns:
+            Tuple of group indices in ``resolve()`` order, or None when the text
+            order already matches it.
+        """
+        kinds = re.findall(r"\*\*|\*", pattern)
+        order = tuple(i for i, kind in enumerate(kinds) if kind == "**") + tuple(
+            i for i, kind in enumerate(kinds) if kind == "*"
+        )
+        return None if order == tuple(range(len(kinds))) else order
+
+    def _captures_for_resolve(self, pattern: str, match: re.Match) -> Tuple[str, ...]:
+        """Return the captures of ``match`` (made from ``pattern``) in ``resolve()`` order."""
+        groups = match.groups()
+        order = self._wildcard_capture_order(pattern)
+        if order is None:
+            return groups
+        return tuple(groups[i] for i in order)
+
     def __init__(self, *mappings: MegatronParamMapping):
         """
         Initialize MegatronMappingRegistry with weight mappings.
@@ -244,7 +277,8 @@ class MegatronMappingRegistry:
                 match = pattern.match(megatron_param_name)
                 if match:
                     # Return resolved mapping with wildcards replaced
-                    return self.resolve_mapping(mapping, match.groups())
+                    captures = self._captures_for_resolve(mapping.megatron_param, match)
+                    return self.resolve_mapping(mapping, captures)
         return None
 
     def hf_to_megatron_lookup(self, hf_param_name: str) -> Optional[MegatronParamMapping]:
@@ -272,7 +306,7 @@ class MegatronMappingRegistry:
                     # Pattern match
                     match = pattern.match(hf_param_name)
                     if match:
-                        return self.resolve_mapping(mapping, match.groups())
+                        return self.resolve_mapping(mapping, self._captures_for_resolve(mapping.hf_param, match))
             else:
                 # Dict destination - check each pattern
                 patterns_dict = pattern_info
@@ -286,7 +320,8 @@ class MegatronMappingRegistry:
                         # Pattern match
                         match = pattern.match(hf_param_name)
                         if match:
-                            return self.resolve_mapping(mapping, match.groups())
+                            captures = self._captures_for_resolve(mapping.hf_param[key], match)
+                            return self.resolve_mapping(mapping, captures)
         return None
 
     def get_all_mappings(self) -> List[MegatronParamMapping]:
