@@ -130,16 +130,20 @@ input to the zigzag partition and back. Every rank holds 4096 of a row's 262144 
 #### GB200: the full model on 16 nodes
 
 `ernie55_sft_64gpu_gb200_bf16_config` trains the same model with the same loss, optimizer and schedule on 16 nodes of
-4 GB200 GPUs, at a shape that fits their memory. Select it with `RECIPE`; the rest of the command is unchanged:
+4 GB200 GPUs, at a shape that fits their memory. Select it with `RECIPE` and ask for the time of a full run; the
+rest of the command is unchanged:
 
 ```bash
 RECIPE=ernie55_sft_64gpu_gb200_bf16_config \
 ERNIE55_HF_PATH=/path/to/ernie55_hf DATA_PATH=/path/to/train.jsonl \
 CONTAINER_IMAGE=/path/to/image.sqsh MEGATRON_LM_PATH=/path/to/Megatron-LM \
 MEGATRON_BRIDGE_PATH=/path/to/Megatron-Bridge WORKSPACE=/path/to/workspace CONTAINER_MOUNTS=/path:/path \
-    sbatch --account=<account> --partition=<partition> --qos=<qos> \
+    sbatch --account=<account> --partition=<partition> --qos=<qos> --time=14:00:00 \
     examples/models/ernie55/slurm_train.sh
 ```
+
+At the 18.8 s per step of the validation run, the 2065 steps take about 11 hours. The recipe saves once, at the
+end, and the script asks for 4 hours, hence `--time` in the command above.
 
 What differs from the GB300 recipe, and why:
 
@@ -153,8 +157,9 @@ What differs from the GB300 recipe, and why:
   the GB300 recipe's two 262144-token rows, so the schedule (2065 steps, 103 of them warmup) is the GB300 recipe's.
 * **Process group `cpu:gloo,cuda:nccl`.** CUDA tensors still go through NCCL; the object collectives of a distributed
   checkpoint save go through gloo. On an NCCL-only group on GB200, a save leaves about 24 GiB of point-to-point
-  buffers on rank 0 at 64 ranks, and the next training step runs out of memory there. On the command line the value
-  needs quotes: `dist.distributed_backend='cpu:gloo,cuda:nccl'`.
+  buffers on rank 0 at 64 ranks, and the next training step runs out of memory there. As a command-line override
+  the value needs two layers of quotes, one for the shell and one for the override parser, which reads a bare comma
+  as a sweep: `'dist.distributed_backend="cpu:gloo,cuda:nccl"'`.
 
 ### 3. Export to Hugging Face
 

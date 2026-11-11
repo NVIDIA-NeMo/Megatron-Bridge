@@ -627,3 +627,19 @@ class TestGB200Recipe:
         assert cfg.train.train_iters == 20
         # The process group survives the OmegaConf round trip of the overrides.
         assert cfg.dist.distributed_backend == "cpu:gloo,cuda:nccl"
+
+    @needs_cp
+    def test_a_process_group_override_needs_quotes_for_the_override_parser(self):
+        # The override parser reads a bare comma as a sweep. A shell removes one layer of quotes, hence the two
+        # layers around the value in examples/models/ernie55/README.md.
+        from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
+
+        recipe = getattr(gb200_recipes, GB200_RECIPE)
+        quoted = ['dist.distributed_backend="cpu:gloo,cuda:nccl"']
+        assert process_config_with_overrides(recipe(), cli_overrides=quoted).dist.distributed_backend == (
+            "cpu:gloo,cuda:nccl"
+        )
+        plain = ["dist.distributed_backend=nccl"]
+        assert process_config_with_overrides(recipe(), cli_overrides=plain).dist.distributed_backend == "nccl"
+        with pytest.raises(OverridesError):
+            process_config_with_overrides(recipe(), cli_overrides=["dist.distributed_backend=cpu:gloo,cuda:nccl"])
