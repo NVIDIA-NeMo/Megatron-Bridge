@@ -154,7 +154,7 @@ Step-3.5-Flash:
 
 ```python
 sliding_attention_setting = {
-    "window_size": [512, 0],
+    "window_size": [511, 0],  # HF sliding_window=512; TE window endpoints are inclusive
     "num_attention_heads": 96,
     "num_query_groups": 8,
     "kv_channels": 128,
