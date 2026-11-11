@@ -53,6 +53,11 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
+from megatron.bridge.models.gpt_oss.gpt_oss_bridge import (
+    GPTOSSBridge,
+    GPTOSSMLPDownProjMapping,
+    GPTOSSMLPGateUpProjMapping,
+)
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import MiMoV2FlashQKVMapping
 
 
@@ -511,9 +516,8 @@ def test_source_dtype_skips_checkpoint_requantization_and_keeps_key_fixes(monkey
     ]
     tasks = [replace(task, weight_dtype=weight_dtype) for task in tasks]
     plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[quantized])
-    native_key = "layers.0.indexer.scorer.weights_proj.weight"
-    legacy_key = "layers.0.indexer.weights_proj.weight"
-    hf_source = {legacy_key: torch.ones(4, 4)}
+    synthesized_bias = "layers.0.ffn.gate.bias"
+    hf_source = {}
     for task in tasks:
         hf_source[task.mapping.hf_param] = task.param_weight.to(torch.float8_e4m3fn)
         hf_source[task.mapping.hf_param.removesuffix(".weight") + ".weight_scale_inv"] = torch.ones(1)
@@ -527,10 +531,10 @@ def test_source_dtype_skips_checkpoint_requantization_and_keeps_key_fixes(monkey
         assert task.weight_dtype == (weight_dtype or task.param_weight.dtype)
         hf_name = task.mapping.hf_param
         result = bridge.maybe_modify_converted_hf_weight(
-            task, {hf_name: task.param_weight, native_key: hf_source[legacy_key]}, hf_source
+            task, {hf_name: task.param_weight, synthesized_bias: torch.zeros(4)}, hf_source
         )
         assert result[hf_name] is task.param_weight
-        assert native_key not in result and legacy_key in result
+        assert synthesized_bias not in result
         assert not any(name.endswith("weight_scale_inv") for name in result)
 
 
@@ -550,19 +554,16 @@ def test_source_dtype_reaches_non_owning_pp_task(monkeypatch):
 def test_legacy_renamed_weight_fails_closed_only_when_quantized(quantized):
     module = _fp8_linear() if quantized else torch.nn.Linear(4, 4, bias=False)
     dense = _fp8_linear()
-    native_key = "layers.0.attn.indexer.scorer.weights_proj.weight"
-    legacy_key = "layers.0.attn.indexer.weights_proj.weight"
+    native_key = "layers.0.attn.native_name.weight"
+    legacy_key = "layers.0.attn.legacy_name.weight"
     task = _task(ColumnParallelMapping("scorer.weight", native_key), module)
     plan = modelopt_utils.build_modelopt_export_plan(
         [task, _task(ColumnParallelMapping("dense.weight", "dense.weight"), dense, global_name="dense.weight")],
         model=[dense],
     )
     prepared = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
-    bridge = object.__new__(DeepSeekV4Bridge)
-    result = bridge.maybe_modify_converted_hf_weight(
-        prepared, {native_key: module.weight}, {legacy_key: module.weight}
-    )
-    output = HFWeightTuple(legacy_key, result[legacy_key]).iter_finalized(cpu=True, export_hook=prepared.export_hook)
+    # A bridge renaming the converted weight, as maybe_modify_converted_hf_weight may.
+    output = HFWeightTuple(legacy_key, module.weight).iter_finalized(cpu=True, export_hook=prepared.export_hook)
 
     if quantized:
         with pytest.raises(RuntimeError, match=f"Missing ModelOpt export state for {legacy_key}"):
@@ -1335,6 +1336,122 @@ def test_quantized_weight_must_map_to_hf_weight_tensor():
         modelopt_utils.build_modelopt_export_plan(
             [_task(mapping, module, global_name=mapping.megatron_param)], model=[module]
         )
+
+
+def _mxfp4_weight_only_linear(out_features, in_features):
+    from modelopt.torch.quantization.config import QuantizerAttributeConfig
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    module = torch.nn.Linear(in_features, out_features, bias=False)
+    module.weight_quantizer = TensorQuantizer(
+        QuantizerAttributeConfig(num_bits=(2, 1), block_sizes={-1: 32, "type": "dynamic", "scale_bits": (8, 0)})
+    )
+    module.input_quantizer = TensorQuantizer()
+    module.input_quantizer.disable()
+    return module
+
+
+def _exports_weight_only_mxfp4():
+    try:
+        return weight_export.get_quantized_weight_export_spec(_mxfp4_weight_only_linear(32, 32)) is not None
+    except NotImplementedError:
+        return False
+
+
+# TODO: Drop once nvidia-modelopt packs weight-only MXFP4 in its functional export (NVIDIA/Model-Optimizer#3221).
+_requires_weight_only_mxfp4 = pytest.mark.skipif(
+    not _exports_weight_only_mxfp4(), reason="nvidia-modelopt cannot export weight-only MXFP4"
+)
+_GPT_OSS_PROJECTIONS = {
+    # HF name: mapping, Megatron name, (out, in) of each expert's Megatron weight
+    "gate_up_proj": (GPTOSSMLPGateUpProjMapping, "linear_fc1", (64, 96)),
+    "down_proj": (GPTOSSMLPDownProjMapping, "linear_fc2", (96, 32)),
+}
+
+
+def _gpt_oss_expert_tasks(projection, factory):
+    mapping_type, megatron_name, shape = _GPT_OSS_PROJECTIONS[projection]
+    module = _GroupedWeights(lambda: factory(*shape))
+    module.tensor_model_parallel = True
+    module.partition_dim = 1 if projection == "down_proj" else 0
+    tasks = []
+    for expert in range(module.num_gemms):
+        mapping = mapping_type(
+            f"decoder.layers.0.mlp.experts.{megatron_name}.weight{expert}", f"model.layers.0.mlp.experts.{projection}"
+        )
+        tasks.append(_task(mapping, module, global_name=mapping.megatron_param, weight_name=f"weight{expert}"))
+    return module, tasks
+
+
+@_requires_weight_only_mxfp4
+@pytest.mark.parametrize("projection", _GPT_OSS_PROJECTIONS)
+def test_gpt_oss_experts_export_openai_mxfp4_blocks(projection):
+    from modelopt.torch.quantization.qtensor import MXFP4QTensor
+
+    module, tasks = _gpt_oss_expert_tasks(projection, _mxfp4_weight_only_linear)
+    dense = torch.nn.Linear(4, 4, bias=False)
+    dense_mapping = ColumnParallelMapping(
+        "decoder.layers.0.self_attention.linear_proj.weight", "model.layers.0.self_attn.o_proj.weight"
+    )
+    tasks.append(_task(dense_mapping, dense, global_name=dense_mapping.megatron_param))
+
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+    export_tasks = modelopt_utils.prepare_modelopt_export_tasks(plan)
+    hf_name = f"model.layers.0.mlp.experts.{projection}"
+    # The grouped export stacks each expert's HF view, then hands the stack to the last expert's hook.
+    merged = torch.stack(
+        [task.mapping.megatron_to_hf(task.param_weight.detach(), module)[hf_name] for task in export_tasks[:-1]]
+    )
+    exported = dict(export_tasks[-2].export_hook(hf_name, merged))
+
+    assert plan.quantization_config == {
+        "quant_method": "mxfp4",
+        "modules_to_not_convert": ["model.layers.0.self_attn.o_proj"],
+    }
+    assert export_tasks[-1].export_hook is None
+    # What ModelOpt's examples/gpt-oss/convert_oai_mxfp4_weight_only.py writes for the same weights.
+    packed, scales = MXFP4QTensor.quantize(merged.transpose(-1, -2).contiguous(), block_size=32)
+    num_experts, rows, cols = merged.transpose(-1, -2).shape
+    assert exported.keys() == {f"{hf_name}_blocks", f"{hf_name}_scales"}
+    torch.testing.assert_close(exported[f"{hf_name}_blocks"], packed._quantized_data.view(num_experts, rows, -1, 16))
+    torch.testing.assert_close(exported[f"{hf_name}_scales"], scales.view(num_experts, rows, -1))
+    # The bridge's own import reads them back.
+    loaded = object.__new__(GPTOSSBridge).maybe_modify_loaded_hf_weight(hf_name, exported)
+    expected = packed.dequantize(dtype=torch.bfloat16, scale=scales, block_sizes={-1: 32})
+    torch.testing.assert_close(loaded, expected.to(loaded.dtype), rtol=0, atol=0)
+
+
+@_requires_weight_only_mxfp4
+def test_gpt_oss_openai_mxfp4_export_rejects_other_quantized_layers():
+    module, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
+    dense = _fp8_linear()
+    dense_mapping = ColumnParallelMapping(
+        "decoder.layers.0.self_attention.linear_proj.weight", "model.layers.0.self_attn.o_proj.weight"
+    )
+    tasks.append(_task(dense_mapping, dense, global_name=dense_mapping.megatron_param))
+
+    with pytest.raises(NotImplementedError, match="keeps every layer but the experts in BF16"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+
+
+@_requires_weight_only_mxfp4
+@pytest.mark.parametrize("expert", [0, -1])
+def test_gpt_oss_openai_mxfp4_export_rejects_unquantized_experts(expert):
+    # The last expert's hook packs the whole projection, so cover it and another one.
+    module, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
+    module.weight_quantizer[expert].disable()
+
+    with pytest.raises(RuntimeError, match="quantizes every expert"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+
+
+def test_gpt_oss_experts_reject_formats_besides_weight_only_mxfp4():
+    module, tasks = _gpt_oss_expert_tasks(
+        "down_proj", lambda out_features, in_features: _fp8_linear(out_features, in_features)
+    )
+
+    with pytest.raises(RuntimeError, match="OpenAI's MXFP4 layout, which holds weight-only MXFP4"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
 
 
 def test_custom_quantized_expert_mapping_is_rejected_before_ep_gather():

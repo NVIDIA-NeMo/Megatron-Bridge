@@ -93,8 +93,11 @@ def test_qwen35_vl_122b_h100_pipeline_layout(
     recipe_fn: Callable,
     expected_pp_size: int,
     expected_vp_size: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    num_layers = 48
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    num_layers = 2 * 48  # Hybrid separates attention/GDN and MLP within each HF block.
     config = recipe_fn()
     pp_size = config.model.pipeline_model_parallel_size
     vp_size = config.model.virtual_pipeline_model_parallel_size
@@ -109,7 +112,7 @@ def test_qwen35_vl_122b_h100_pipeline_layout(
 def test_qwen35_vl_35b_h100_fp8cs_pipeline_layout_builds_all_layers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The 35B FP8-CS benchmark topology should allocate all 40 language layers."""
+    """The 35B FP8-CS topology should allocate all 80 Hybrid layers (40 HF blocks)."""
     patch_recipe_construction_dependencies(monkeypatch)
     config = qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config()
     model = config.model
@@ -119,7 +122,7 @@ def test_qwen35_vl_35b_h100_fp8cs_pipeline_layout_builds_all_layers(
         num_layers_in_last_pipeline_stage=getattr(model, "num_layers_in_last_pipeline_stage", None),
         account_for_embedding_in_pipeline_split=False,
         account_for_loss_in_pipeline_split=False,
-        num_layers=40,
+        num_layers=80,
         pipeline_model_parallel_size=model.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=model.virtual_pipeline_model_parallel_size,
     )
@@ -130,7 +133,7 @@ def test_qwen35_vl_35b_h100_fp8cs_pipeline_layout_builds_all_layers(
         for vp_stage in range(model.virtual_pipeline_model_parallel_size)
     )
 
-    assert allocated_layers == 40
+    assert allocated_layers == 80
 
 
 def test_qwen35_vl_35b_h100_measured_performance_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,8 +146,9 @@ def test_qwen35_vl_35b_h100_measured_performance_defaults(monkeypatch: pytest.Mo
     assert config.model.pipeline_model_parallel_size == 2
     assert config.model.context_parallel_size == 1
     assert config.model.virtual_pipeline_model_parallel_size is None
-    assert config.model.num_layers_in_first_pipeline_stage == 17
-    assert config.model.num_layers_in_last_pipeline_stage == 23
+    # Preserve the measured 17/23 HF-block split in Hybrid layer counts.
+    assert config.model.num_layers_in_first_pipeline_stage == 2 * 17
+    assert config.model.num_layers_in_last_pipeline_stage == 2 * 23
     assert config.model.expert_model_parallel_size == 8
     assert config.model.expert_tensor_parallel_size == 1
     assert config.model.sequence_parallel is False
@@ -656,18 +660,17 @@ _GB300_CUDNN_GDN_RECIPES = (
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
 )
-# VRNVL72 MXFP8 recipes; they keep the GB300 base's cuDNN GDN (measured against FLA on VRNVL72 at 35B, and used in the
-# measured 397B run).
+# VRNVL72 recipes that keep the GB300 base's cuDNN GDN backend: 35B/397B MXFP8 and 397B BF16.
 _VRNVL72_CUDNN_GDN_RECIPES = (
     qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
 )
-# VRNVL72 aliases of the GB300 BF16 and FP8-CS recipes; they keep FLA until cuDNN GDN is measured on VRNVL72 at those
+# The remaining VRNVL72 BF16 and FP8-CS aliases keep FLA until cuDNN GDN is measured at those model sizes and
 # precisions.
 _VRNVL72_FLA_ALIASES = (
     qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
 )
 _QWEN35_VL_PERF_RECIPES = tuple(
@@ -700,15 +703,16 @@ def test_qwen35_vl_gb300_runs_gdn_on_cudnn(recipe_fn: Callable, monkeypatch: pyt
 
 @pytest.mark.usefixtures("megatron_core_with_gdn_kernel_backend")
 @pytest.mark.parametrize("recipe_fn", _QWEN35_VL_PERF_RECIPES, ids=recipe_factory_id)
-def test_qwen35_vl_cudnn_gdn_is_limited_to_measured_recipes(
+def test_qwen35_vl_cudnn_gdn_is_limited_to_selected_recipes(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only these recipes leave FLA: the GB300 35B/397B recipes and the VRNVL72 35B/397B MXFP8 recipes.
+    """Only the GB300 35B/397B recipes and VRNVL72 35B/397B MXFP8 and 397B BF16 recipes leave FLA.
 
     On GB300, cuDNN GDN was measured with MXFP8; the BF16 and FP8-CS recipes inherit the shared builder's setting.
+    VRNVL72 also keeps that backend for the 397B BF16 benchmark.
 
-    122B, B200, B300 and GB200 were not measured, the VRNVL72 BF16 and FP8-CS aliases inherit the GB300 model config
-    and reset to FLA, and H100 is SM90, outside cuDNN's fast GDN engine.
+    122B, B200, B300 and GB200 were not measured, the remaining VRNVL72 BF16 and FP8-CS aliases reset to FLA, and
+    H100 is SM90, outside cuDNN's fast GDN engine.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 

@@ -485,7 +485,7 @@ def get_batch(
     else:
         full_position_ids = batch.get("position_ids") if _keep_full_position_ids_for_cp(model_cfg, cp_size) else None
         # slice batch along sequence dimension for context parallelism
-        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
+        batch = get_batch_on_this_cp_rank(batch, dynamic_cp=False, cp_group=pg_collection.cp)
         if full_position_ids is not None:
             batch["position_ids"] = full_position_ids
 

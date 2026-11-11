@@ -136,9 +136,9 @@ def _llama31_8b_common(cfg: ConfigContainer) -> None:
     cfg.dataset.defer_npy_index_mmap = True
     cfg.dataset.drop_last = True
     cfg.dataset.drop_last_partial_validation_sequence = True
+    cfg.dataset.dynamic_context_parallel = False
     cfg.dataset.eod_mask_loss = False
     cfg.dataset.fast_cache_load = True
-    cfg.dataset.hybrid_context_parallel = False
     cfg.dataset.inter_document_masking = False
     cfg.dataset.mid_level_dataset_surplus = 0.005
     cfg.dataset.mmap_bin_files = True

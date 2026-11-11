@@ -15,10 +15,13 @@
 """Builder-backed model config for the GLM-5 DSA family."""
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.common.dsa_metrics import register_dsa_metric_hook
 from megatron.bridge.models.glm_moe_dsa.glm5_hybrid import glm_hybrid_stack_spec
 from megatron.bridge.models.glm_moe_dsa.glm5_provider import finalize_glm_hybrid_pattern, validate_glm_hybrid_pattern
 from megatron.bridge.models.hybrid import BridgeHybridModelBuilder
@@ -54,6 +57,13 @@ class GLM5ModelBuilder(BridgeHybridModelBuilder):
     The spec isolates DSA index-sharing state per forward and replays a whole stage on
     recomputation. Like the provider, the builder uses it regardless of ``hybrid_stack_spec``.
     """
+
+    def build_distributed_models(
+        self, pg_collection: ProcessGroupCollection, *args: Any, **kwargs: Any
+    ) -> list[HybridModel]:
+        """Register DSA metric setup for the complete list of wrapped model chunks."""
+        register_dsa_metric_hook(self._model_config, pg_collection)
+        return super().build_distributed_models(pg_collection, *args, **kwargs)
 
     def _resolve_hybrid_stack_spec(self) -> ModuleSpec:
         """Return GLM's Hybrid stack spec."""

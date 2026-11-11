@@ -588,6 +588,24 @@ class MegatronModelBridge(
     # these source keys instead of reporting them as missing.
     DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ()
 
+    def hf_export_ignored_source_keys(self, hf_pretrained: Any, source_keys: Iterable[str]) -> Iterable[str]:
+        """Source checkpoint tensors that this bridge never writes back on export.
+
+        ``HF_EXPORT_IGNORED_SOURCE_PREFIXES`` names whole modules absent from every target; this hook covers
+        omissions that depend on the checkpoint, such as a checkpoint's copies of parameters the Megatron
+        model holds once (ERNIE 5.5's shared MTP body). Strict export treats the returned names as
+        intentionally absent instead of missing, so the shards that hold them are still written with their
+        other tensors. Never return a tensor the export does yield: strict saving rejects it as unknown.
+
+        Args:
+            hf_pretrained: The source checkpoint wrapper (``config`` and ``state.source``).
+            source_keys: Every tensor name of the source checkpoint.
+
+        Returns:
+            Tensor names to ignore; none by default.
+        """
+        return ()
+
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Apply model-specific fixes after Hugging Face artifacts are saved.
 
@@ -2771,6 +2789,9 @@ class MegatronModelBridge(
         if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
+        # Some registries read the source checkpoint's names, so attach it first as build_conversion_tasks does.
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
         mapping_registry = self.mapping_registry()
         pg_collection = _get_pg_collection_from_model(megatron_model)
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)

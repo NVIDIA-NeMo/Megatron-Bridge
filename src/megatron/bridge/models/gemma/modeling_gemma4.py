@@ -291,6 +291,27 @@ def _is_gemma4_sliding_layer(config: TransformerConfig, layer_number: int) -> bo
 # ---------------------------------------------------------------------------
 
 
+class _AttachZeroGradients(torch.autograd.Function):
+    """Return ``tensor`` unchanged and give each extra parameter an all-zero gradient in backward.
+
+    MCore DDP with ``overlap_grad_reduce`` waits for a gradient from every parameter in a bucket,
+    so a parameter that the forward pass leaves unused must still report one.
+    """
+
+    @staticmethod
+    def forward(ctx, tensor: Tensor, *params: nn.Parameter) -> Tensor:
+        ctx.param_specs = [(param.shape, param.dtype, param.device) for param in params]
+        return tensor
+
+    @staticmethod
+    def backward(ctx, grad_output: Tensor) -> tuple[Tensor | None, ...]:
+        zero_grads = [
+            torch.zeros(shape, dtype=dtype, device=device) if needs_grad else None
+            for (shape, dtype, device), needs_grad in zip(ctx.param_specs, ctx.needs_input_grad[1:])
+        ]
+        return (grad_output, *zero_grads)
+
+
 class Gemma4DenseSelfAttention(SelfAttention):
     """SelfAttention subclass for Gemma-4 Dense.
 
@@ -470,6 +491,13 @@ class Gemma4DenseSelfAttention(SelfAttention):
                 key, value = kv_source._stored_kv
                 key = key.to(query.device)
                 value = value.to(query.device)
+                # This layer's own K never reaches the loss, so neither does its k_layernorm (kept for HF
+                # checkpoint round trips). Give it an explicit zero gradient instead of none; freezing it
+                # would change the optimizer state layout and leave holes in its layer-stacked checkpoint keys.
+                if self.k_layernorm is not None:
+                    unused_params = [param for param in self.k_layernorm.parameters() if param.requires_grad]
+                    if unused_params:
+                        query = _AttachZeroGradients.apply(query, *unused_params)
             else:
                 key, value = _k, _v
                 value = self._v_norm(value)
@@ -1169,7 +1197,6 @@ def _gemma4_checkpointed_forward(
                     inner_quantization_context = nullcontext()
 
                 layer_kwargs = dict(
-                    hidden_states=hidden_states,
                     attention_mask=attention_mask,
                     context=context,
                     context_mask=context_mask,
@@ -1188,11 +1215,11 @@ def _gemma4_checkpointed_forward(
                     layer_kwargs["input_ids"] = input_ids
                 with inner_quantization_context:
                     if isinstance(layer, TransformerLayer):
-                        hidden_states, context = layer(**layer_kwargs)
+                        hidden_states, context = layer(hidden_states, **layer_kwargs)
                     else:
                         for k in ("context", "context_mask", "attention_bias", "padding_mask", "per_layer_input"):
                             layer_kwargs.pop(k, None)
-                        hidden_states = layer(**layer_kwargs)
+                        hidden_states = layer(hidden_states, **layer_kwargs)
                         context = None
 
                 if isinstance(hidden_states, tuple):
