@@ -1,5 +1,4 @@
 from megatron.bridge.perf_recipes.deepseek.b200.deepseek_v3 import (
-    deepseek_v3_pretrain_128gpu_b200_fp8mx_config,
     deepseek_v3_pretrain_256gpu_b200_bf16_config,
     deepseek_v3_pretrain_256gpu_b200_fp8cs_config,
     deepseek_v3_pretrain_256gpu_b200_fp8mx_config,
