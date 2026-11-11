@@ -13,10 +13,12 @@
 # limitations under the License.
 """B200 performance recipes for DeepSeek V3."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
+    _enable_deepseek_full_iteration,
     _enable_deepseek_transformer_engine_graph,
     _perf_precision,
     deepseek_v3_pretrain_config,
@@ -203,6 +205,97 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=16, NCCL-EP, full-iteration CUDA graph."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _deepseek_v3_common(cfg)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp", "core_attn"]
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    _benchmark_common(cfg)
+    _enable_deepseek_full_iteration(cfg)
+    _enable_ncclep(cfg)
+    cfg.model.moe_use_grouped_tensor = False
+    # EP=16 spans 2 NVLink domains; lower capacity factor reduces expert token buffer memory.
+    cfg.model.moe_expert_rank_capacity_factor = 1.2
+    cfg.dist.distributed_timeout_minutes = 30
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        # graph_capture_record_stream_reuse reduces peak memory at CG capture (iter 4).
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        # EP=16 spans 2 NVLink domains (rdma_team_size=2); NCCL_EP_HT_EM_PULL_PUSH requires
+        # single-LSA-team (EP≤8), so must be disabled for inter-domain EP.
+        "NCCL_EP_HT_EM_PULL_PUSH": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, MXFP8, EP=8, NCCL-EP, partial TE CUDA graph."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _deepseek_v3_common(cfg)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp", "core_attn"]
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    _benchmark_common(cfg)
+    _enable_deepseek_transformer_engine_graph(cfg)
+    _enable_ncclep(cfg)
+    cfg.model.moe_use_grouped_tensor = False
+    cfg.dist.distributed_timeout_minutes = 30
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
 
