@@ -530,7 +530,10 @@ class AutoBridge(Generic[MegatronModelT]):
 
         from transformers import AutoConfig
 
-        from megatron.bridge.models.conversion.utils import conform_config_to_reference
+        from megatron.bridge.models.conversion.utils import (
+            carry_rope_into_rope_parameters,
+            conform_config_to_reference,
+        )
         from megatron.bridge.training.model_load_save import load_model_config
         from megatron.bridge.training.utils.checkpoint_utils import get_hf_source_from_model_config
         from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
@@ -578,7 +581,9 @@ class AutoBridge(Generic[MegatronModelT]):
         # 2. Translate Megatron config -> HF, conforming to reference config
         bridge = cls.from_hf_config(hf_cfg)
         megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
-        megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
+        megatron_hf_cfg_dict = carry_rope_into_rope_parameters(
+            megatron_hf_cfg_dict, conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
+        )
         megatron_hf_cfg_dict = _drop_readonly_config_properties(megatron_hf_cfg_dict, type(hf_cfg))
         # 3. Build final bridge from the synthesized config
         synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)

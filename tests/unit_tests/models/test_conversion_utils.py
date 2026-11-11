@@ -16,7 +16,12 @@ from collections import namedtuple
 
 import pytest
 
-from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size, remove_non_pickleables
+from megatron.bridge.models.conversion.utils import (
+    carry_rope_into_rope_parameters,
+    conform_config_to_reference,
+    mcore_to_hf_window_size,
+    remove_non_pickleables,
+)
 
 
 class MetadataList(list):
@@ -186,3 +191,80 @@ def test_remove_non_pickleables_preserves_namedtuple_fields(max_depth):
     assert restored.values.head_dim == 8
     assert restored.values.callback is None
     assert original.values.callback is hook
+
+
+class TestCarryRopeIntoRopeParameters:
+    """The legacy RoPE keys ``megatron_to_hf_config`` emits must reach transformers 5 ``rope_parameters``."""
+
+    REFERENCE = {"hidden_size": 64, "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0}}
+
+    def _carry(self, emitted, reference=None):
+        return carry_rope_into_rope_parameters(
+            emitted, conform_config_to_reference(emitted, reference or self.REFERENCE)
+        )
+
+    def test_projection_alone_backfills_the_reference_rope(self):
+        assert conform_config_to_reference({"rope_theta": 500000.0}, self.REFERENCE)["rope_parameters"] == {
+            "rope_type": "default",
+            "rope_theta": 10000.0,
+        }
+
+    def test_rope_theta_overrides_the_reference(self):
+        assert self._carry({"rope_theta": 500000.0})["rope_parameters"] == {
+            "rope_type": "default",
+            "rope_theta": 500000.0,
+        }
+
+    def test_scaling_of_another_type_replaces_the_reference_scaling(self):
+        reference = {
+            "rope_parameters": {
+                "rope_type": "yarn",
+                "factor": 4.0,
+                "beta_fast": 32,
+                "original_max_position_embeddings": 4096,
+                "rope_theta": 10000.0,
+                "partial_rotary_factor": 0.5,
+            }
+        }
+        emitted = {"rope_theta": 10000.0, "rope_scaling": {"type": "linear", "factor": 2.0}}
+
+        assert self._carry(emitted, reference)["rope_parameters"] == {
+            "rope_type": "linear",
+            "factor": 2.0,
+            "rope_theta": 10000.0,
+            "partial_rotary_factor": 0.5,
+        }
+
+    def test_scaling_of_the_same_type_updates_only_changed_values(self):
+        reference = {"rope_parameters": {"rope_type": "yarn", "factor": 4, "beta_fast": 32, "rope_theta": 10000}}
+        emitted = {"rope_theta": 10000.0, "rope_scaling": {"rope_type": "yarn", "factor": 8.0, "beta_fast": 32.0}}
+
+        assert self._carry(emitted, reference)["rope_parameters"] == {
+            "rope_type": "yarn",
+            "factor": 8.0,
+            "beta_fast": 32,
+            "rope_theta": 10000,
+        }
+
+    def test_equal_values_keep_the_reference_rope_parameters_exactly(self):
+        reference = {"rope_parameters": {"rope_type": "yarn", "factor": 4, "rope_theta": 10000}}
+        emitted = {"rope_theta": 10000.0, "rope_scaling": {"rope_type": "yarn", "factor": 4.0, "truncate": True}}
+        conformed = conform_config_to_reference(emitted, reference)
+
+        assert carry_rope_into_rope_parameters(emitted, conformed) is conformed
+
+    def test_model_keys_such_as_mrope_section_are_kept(self):
+        reference = {"rope_parameters": {"rope_type": "default", "rope_theta": 1e6, "mrope_section": [16, 24, 24]}}
+
+        assert self._carry({"rope_theta": 5e6}, reference)["rope_parameters"] == {
+            "rope_type": "default",
+            "rope_theta": 5e6,
+            "mrope_section": [16, 24, 24],
+        }
+
+    def test_nested_or_missing_rope_parameters_are_left_unchanged(self):
+        nested = {"rope_parameters": {"full_attention": {"rope_type": "default", "rope_theta": 1e6}}}
+        legacy = {"rope_theta": 10000.0}
+
+        assert carry_rope_into_rope_parameters({"rope_theta": 5.0}, nested) is nested
+        assert carry_rope_into_rope_parameters({"rope_theta": 5.0}, legacy) is legacy
