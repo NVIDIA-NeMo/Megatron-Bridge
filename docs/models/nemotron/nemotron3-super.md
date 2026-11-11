@@ -266,7 +266,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-11-11</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-06</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
@@ -277,19 +277,19 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>5.72594</dd>
+            <dd>5.70551</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>27,515.620 ms</dd>
+            <dd>27,330.230 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>249.860 TFLOP/s/GPU</dd>
+            <dd>251.590 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>2,977.218 tokens/s/GPU</dd>
+            <dd>2,997.413 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -305,7 +305,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 H100s, the BF16 support run completes 100 bounded RP2 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. On the NeMo nightly container pulled 2026-11-11, loss remains finite from 12.19921 to 5.725940 with zero skipped or NaN iterations. The final ten steps average 27515.620 ms and 249.860 TFLOP/s/GPU. The resolved configuration persists, and complete iter_0000050 and iter_0000100 checkpoints each contain 64 distributed rank shards plus checkpoint metadata and training state. Launches must export TORCHINDUCTOR_COMPILE_THREADS=1 before Python starts (train.sh forwards it with --env TORCHINDUCTOR_COMPILE_THREADS): on Python 3.12 before 3.12.8, Inductor&#x27;s forked compile-worker pool can deadlock in the long first step (pytorch/pytorch#200848).
+        <p>On exactly 64 H100s, the BF16 support run completes 100 bounded RP2 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. Loss remains finite from 12.19921 to 5.705510 with zero skipped or NaN iterations. The final ten steps average 27330.230 ms and 251.590 TFLOP/s/GPU. The resolved configuration persists, and complete iter_0000050 and iter_0000100 checkpoints each contain 64 distributed rank shards plus checkpoint metadata and training state. Launches must export TORCHINDUCTOR_COMPILE_THREADS=1 before Python starts (train.sh forwards it with --env TORCHINDUCTOR_COMPILE_THREADS): on Python 3.12 before 3.12.8, Inductor&#x27;s forked compile-worker pool can deadlock in the long first step (pytorch/pytorch#200848).
 </p>
       </section>
     </article>
