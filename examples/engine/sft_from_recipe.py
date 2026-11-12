@@ -160,7 +160,8 @@ def check_adapter_export(engine: TrainingEngine, adapter_dir: str) -> None:
     from megatron.bridge.models.conversion.peft_bridge import convert_adapter_weights_to_peft_state
 
     start = time.time()
-    engine.export(path=adapter_dir, adapter_only=True)
+    # This gate trains on --checkpoint, a conversion of the recipe's HF model, so that model is the base.
+    engine.export(path=adapter_dir, adapter_only=True, base_model_name_or_path=engine.recipe.hf_path)
     torch.distributed.barrier()
     print_rank_0(f"[export] adapter directory {adapter_dir} written in {time.time() - start:.1f}s")
     rank0 = torch.distributed.get_rank() == 0

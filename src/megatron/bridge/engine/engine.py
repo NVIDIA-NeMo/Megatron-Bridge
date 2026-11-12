@@ -305,9 +305,11 @@ class TrainingEngine:
             lora: Train LoRA adapters on a frozen base instead of the full model (``output_head="lm"``,
                 ``trainable=True`` and a ``checkpoint_path`` with the base weights are required). The base
                 is loaded and LoRA applied before DDP and the optimizer are built, so both hold the
-                adapters only. ``forward_only(disable_adapters=True)`` then scores the base model (the
-                usual RL reference, with no second engine), ``save_state`` saves the adapters only, and
-                ``export`` merges them into the base weights unless ``adapter_only=True``.
+                adapters only. Routing stays the base model's: MoE router expert biases are frozen too,
+                and quantile-balanced routers are rejected. ``forward_only(disable_adapters=True)`` then
+                scores the base model (the usual RL reference, with no second engine), ``save_state``
+                saves the adapters and their settings, and ``export`` merges them into the base weights
+                unless ``adapter_only=True``.
             hooks: Extra pre-wrap hooks run after the Bridge-registered ones.
             spawn_async_save_worker: Spawn the asynchronous-save worker (one process per rank with its own
                 CUDA context, alive until ``close``) before the model is built. ``False`` saves that cost
@@ -874,6 +876,8 @@ class TrainingEngine:
         update count; returns this rank's ``user_state`` or ``None``. Only between updates. A LoRA
         engine's checkpoint holds the adapters only; they are restored over the base weights the engine
         was built with, so build it from the same base ``checkpoint_path`` as the engine that saved.
+        The checkpoint's LoRA settings (rank, alpha, dropout, targets; none without LoRA) must equal this
+        engine's, or it raises before anything is read.
         """
         self._require_open()
         self._require_resident("load_state")
@@ -903,7 +907,12 @@ class TrainingEngine:
             self._pending_save = None
 
     def export(
-        self, *, path: str | None = None, streaming: bool = False, adapter_only: bool = False
+        self,
+        *,
+        path: str | None = None,
+        streaming: bool = False,
+        adapter_only: bool = False,
+        base_model_name_or_path: str | None = None,
     ) -> Iterator[tuple[str, torch.Tensor]] | None:
         """Export the current weights in the HF layout of ``recipe.hf_path``.
 
@@ -912,7 +921,13 @@ class TrainingEngine:
         ``(hf_name, tensor)`` with full tensors on every rank; every rank must drain it, since the
         TP/EP/PP gathers run inside. A LoRA engine's adapters are merged into the base weights (in fp32,
         then cast to the base dtype); ``adapter_only=True`` exports the adapters alone, unmerged, in the
-        HF PEFT layout (a PEFT directory with ``path``, ``lora_A`` / ``lora_B`` tensors when streaming).
+        HF PEFT layout: ``lora_A`` / ``lora_B`` tensors when streaming, or with ``path`` a PEFT directory
+        whose ``adapter_config.json`` records ``base_model_name_or_path`` as the base model.
+
+        ``base_model_name_or_path`` is required for that PEFT directory and rejected otherwise. It names
+        the HF model whose weights the adapters were trained on; the engine cannot infer it, because
+        ``checkpoint_path`` may hold other weights than ``recipe.hf_path`` (a fine-tuned checkpoint, say),
+        and ``recipe.hf_path`` only supplies the layout.
         """
         self._require_open()
         self._require_resident("export")
@@ -921,6 +936,15 @@ class TrainingEngine:
             raise NotImplementedError("export of a value-head engine is not supported yet.")
         if adapter_only and self._peft is None:
             raise ValueError("adapter_only=True needs an engine built with lora=...; this engine has no adapters.")
+        writes_peft_directory = adapter_only and not streaming and path is not None
+        if writes_peft_directory and not base_model_name_or_path:
+            raise ValueError(
+                "export(adapter_only=True, path=...) needs base_model_name_or_path: the HF model the adapters "
+                "were trained on, which adapter_config.json records. recipe.hf_path is not assumed, since "
+                "checkpoint_path may hold other weights."
+            )
+        if base_model_name_or_path is not None and not writes_peft_directory:
+            raise ValueError("base_model_name_or_path only applies to export(adapter_only=True, path=...).")
         if self._export_state is None:
             self._export_state = make_export_state(self._recipe)
         if adapter_only:
@@ -930,7 +954,7 @@ class TrainingEngine:
                 self._peft,
                 path=path,
                 streaming=streaming,
-                base_model_name_or_path=self._recipe.hf_path,
+                base_model_name_or_path=base_model_name_or_path,
             )
         return export_hf_weights(self._export_state, self._model, path=path, streaming=streaming)
 

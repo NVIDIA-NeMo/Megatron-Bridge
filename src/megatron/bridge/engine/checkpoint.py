@@ -41,10 +41,13 @@ from megatron.core.transformer import MegatronModule
 from megatron.bridge.engine.datum import CheckpointHandle
 from megatron.bridge.engine.recipes.base import TrainingRecipe
 from megatron.bridge.peft.base import PEFT
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.checkpointing import (
+    _DIRECT_ITERATION_DIR_SENTINEL,
     CheckpointLoadContext,
     CheckpointSaveContext,
     _checkpoint_dp_cp_group,
+    _resolve_checkpoint_iteration,
     create_checkpoint_manager,
     maybe_finalize_async_save,
 )
@@ -58,7 +61,12 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.optim import sync_hybrid_device_optimizer_fp32_master_copies
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.checkpoint_utils import is_checkpoint_iteration_directory
+from megatron.bridge.training.utils.checkpoint_utils import (
+    get_checkpoint_name,
+    get_checkpoint_run_config_filename,
+    is_checkpoint_iteration_directory,
+    read_train_state,
+)
 
 
 _RUN_CONFIG_MODEL_KEYS = (
@@ -109,13 +117,55 @@ class _CheckpointConfigView:
     logger: LoggerConfig = field(default_factory=LoggerConfig)
 
     def to_yaml(self, path: str) -> None:
-        """Write the ``run_config.yaml`` the loader reads back: weight topology and the save flags."""
+        """Write the ``run_config.yaml`` the loader reads back: weight topology, the save flags and the
+        LoRA settings (``lora``, checked by ``load_engine_state``; ``null`` without LoRA)."""
         run_config = {
             "model": {key: getattr(self.model, key) for key in _RUN_CONFIG_MODEL_KEYS if hasattr(self.model, key)},
             "checkpoint": {key: getattr(self.checkpoint, key) for key in _RUN_CONFIG_CHECKPOINT_KEYS},
+            "lora": _lora_settings(self.peft),
         }
         with open(path, "w") as handle:
             yaml.safe_dump(run_config, handle)
+
+
+def _lora_settings(peft: PEFT | None) -> dict[str, Any] | None:
+    """The LoRA settings a checkpoint records, named as in ``LoraConfig``; ``None`` without LoRA.
+
+    Rank and targets also show in the adapter tensors, but alpha and the dropout do not, and Bridge's PEFT
+    resume ignores checkpoint adapters the engine has no target for.
+    """
+    if peft is None:
+        return None
+    if not isinstance(peft, LoRA):
+        raise TypeError(f"TrainingEngine checkpoints record LoRA settings only, got {type(peft).__name__}.")
+    return {
+        "rank": int(peft.dim),
+        "alpha": float(peft.alpha),
+        "dropout": float(peft.dropout),
+        "target_modules": [str(name) for name in peft.target_modules],
+    }
+
+
+def _check_lora_settings(path: str, peft: PEFT | None) -> None:
+    """Raise unless the step ``path`` resolves to was saved with ``peft``'s LoRA settings (or both have none).
+
+    The step is resolved as Bridge's loader resolves it. A checkpoint saved before the settings were
+    recorded reads as having no LoRA.
+    """
+    iteration, release = _resolve_checkpoint_iteration(path, None)
+    step_dir = path if iteration == _DIRECT_ITERATION_DIR_SENTINEL else get_checkpoint_name(path, iteration, release)
+    run_config_file = get_checkpoint_run_config_filename(step_dir)
+    saved = None
+    if os.path.exists(run_config_file):
+        with open(run_config_file) as handle:
+            saved = (yaml.safe_load(handle) or {}).get("lora")
+    expected = _lora_settings(peft)
+    if saved != expected:
+        raise ValueError(
+            f"{step_dir} was saved with lora={saved} but this engine has lora={expected} (None: no LoRA, or saved "
+            "before checkpoints recorded LoRA settings). Adapter tensors carry neither alpha nor dropout, so the "
+            "engine has to be built with the saved settings."
+        )
 
 
 def _engine_checkpoint_config(pretrained_checkpoint: str | None) -> CheckpointConfig:
@@ -272,7 +322,8 @@ def save_engine_state(
     ``start_async_checkpoint_worker`` (``async_state``; ``None`` when the engine was built with
     ``spawn_async_save_worker=False``) and stages through CPU shared memory; the returned handle's
     ``wait()`` then blocks until the finalize steps ran on every rank. With ``peft`` (a LoRA engine)
-    the model section holds only the adapters and the MoE router expert biases.
+    the model section holds only the adapters and the MoE router expert biases, and ``run_config.yaml``
+    records the LoRA settings.
     """
     if async_save and async_state is None:
         raise ValueError(
@@ -332,11 +383,16 @@ def load_engine_state(
     is restored when this engine has an optimizer and the checkpoint holds one; RNG state when the
     parallel layout matches. With ``peft`` (a LoRA engine) only the adapters and router expert biases
     are read, non-strictly (Bridge's PEFT resume): the base weights are the ones the engine loaded at
-    construction, so it must have been built from the same base checkpoint.
+    construction, so it must have been built from the same base checkpoint. The checkpoint's LoRA
+    settings must equal ``peft``'s (or both have none); a mismatch raises before anything is read.
     """
     root = checkpoint_root(path)
     if not (os.path.exists(os.path.join(root, "latest_train_state.pt")) or is_checkpoint_iteration_directory(path)):
         raise FileNotFoundError(f"{path} holds no complete engine checkpoint.")
+    # Bridge caches the root's tracker per process, but every save to the root rewrites it; without the
+    # clear, a load after a newer save in the same process would resolve (and load) the older step.
+    read_train_state.cache_clear()
+    _check_lora_settings(path, peft)
     checkpoint_config = CheckpointConfig(
         save=None,
         load=path,

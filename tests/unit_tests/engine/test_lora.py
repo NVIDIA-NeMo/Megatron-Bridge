@@ -1,3 +1,4 @@
+import importlib
 import os
 import re
 from contextlib import contextmanager
@@ -5,7 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import yaml
+from megatron.core.distributed.finalize_model_grads import _update_router_expert_bias
 from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker
+from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.engine import LoraConfig, TrainingEngine
 from megatron.bridge.engine.checkpoint import _checkpoint_state, load_engine_state, save_engine_state
@@ -16,6 +20,7 @@ from megatron.bridge.engine.recipes.base import BRIDGE_LORA_TARGET_MODULES, Trai
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.setup import _apply_peft_transformation
+from megatron.bridge.training.state import TrainState
 
 
 pytestmark = pytest.mark.unit
@@ -79,14 +84,16 @@ def test_lora_hook_loads_the_base_into_the_bare_model_before_applying_lora(monke
         "megatron.bridge.engine.lora.load_pretrained_weights",
         lambda recipe, model, optimizer, path: calls.append(("load", model, optimizer, path)),
     )
+    wrapped = [_MoeLayer(_CpuRouter(expert_bias=True))]
     monkeypatch.setattr(
         "megatron.bridge.engine.lora._apply_peft_transformation",
-        lambda peft, model: calls.append(("lora", peft, model)) or ["wrapped"],
+        lambda peft, model: calls.append(("lora", peft, model)) or wrapped,
     )
-    recipe, peft, bare = object(), object(), ["bare"]
-    assert make_lora_hook(recipe, peft, "/base")(bare) == ["wrapped"]
+    recipe, peft, bare = object(), build_lora(LoraConfig(rank=2, alpha=4.0), _recipe()), [_MoeLayer(_CpuRouter())]
+    assert make_lora_hook(recipe, peft, "/base")(bare) is wrapped
     # No optimizer exists yet: its fp32 masters are built later from the loaded (frozen) base and adapters.
     assert calls == [("load", bare, None, "/base"), ("lora", peft, bare)]
+    assert wrapped[0].mlp.router.frozen_expert_bias  # on the model LoRA returned
 
 
 class _Block(torch.nn.Module):
@@ -126,6 +133,70 @@ def test_bridge_lora_freezes_the_base_and_disable_adapter_scores_it():
     assert not torch.allclose(adapted, base_out)
     assert torch.equal(disabled, base_out) and torch.equal(again, adapted)
     assert torch.equal(router_out, base_router)  # never a target
+
+
+# ---- routing stays the base model's -------------------------------------------------------------
+
+
+class _CpuRouter(TopKRouter):
+    """A Megatron-Core ``TopKRouter`` for ``isinstance`` and the finalize update, built without its CUDA
+    buffers and config; ``expert_bias`` and ``qb_beta`` are what the two balancing modes register."""
+
+    def __init__(self, *, expert_bias: bool = False, quantile_balancing: bool = False):
+        torch.nn.Module.__init__(self)
+        self.weight = torch.nn.Parameter(torch.zeros(2, 4))
+        self.frozen_expert_bias = False
+        self.expert_bias = torch.zeros(2) if expert_bias else None
+        self.local_tokens_per_expert = torch.tensor([3, 1]) if expert_bias else None
+        self.qb_beta = torch.zeros(2) if quantile_balancing else None
+
+
+class _MoeLayer(torch.nn.Module):
+    def __init__(self, router: _CpuRouter):
+        super().__init__()
+        self.self_attention = torch.nn.Module()
+        self.self_attention.linear_qkv = torch.nn.Linear(4, 6, bias=False)
+        self.mlp = torch.nn.Module()
+        self.mlp.router = router
+        self.mlp.linear_fc1 = torch.nn.Linear(4, 8, bias=False)
+
+
+@pytest.mark.parametrize("pattern", ["*.rout*", "mlp.r*", "*"])
+def test_lora_hook_rejects_target_patterns_that_resolve_to_a_router(monkeypatch, pattern):
+    monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: pytest.fail("loaded"))
+    peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=["linear_qkv", pattern]), _recipe())
+    with pytest.raises(ValueError, match=re.escape("matches 1 router(s), e.g. mlp.router")):
+        make_lora_hook(object(), peft, "/base")([_MoeLayer(_CpuRouter())])
+
+
+def test_lora_hook_rejects_quantile_balanced_routing(monkeypatch):
+    monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: pytest.fail("loaded"))
+    peft = build_lora(LoraConfig(rank=2, alpha=4.0), _recipe())
+    with pytest.raises(NotImplementedError, match="quantile-balanced routing"):
+        make_lora_hook(object(), peft, "/base")([_MoeLayer(_CpuRouter(quantile_balancing=True))])
+
+
+def test_lora_hook_freezes_the_router_expert_bias_against_megatrons_update(monkeypatch):
+    monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: None)
+    # Megatron-Core's update reduces the token counts across ranks; here every update adds 1. (The package
+    # re-exports the finalize function under its module's name, so patch the module object.)
+    monkeypatch.setattr(
+        importlib.import_module("megatron.core.distributed.finalize_model_grads"),
+        "get_updated_expert_bias",
+        lambda tokens, bias, rate, tp_dp_cp_group=None: bias + 1.0,
+    )
+    config = SimpleNamespace(moe_router_bias_update_rate=1e-3)
+    peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=["linear_qkv", "*.linear_fc1"]), _recipe())
+    router = _CpuRouter(expert_bias=True)
+    model = make_lora_hook(object(), peft, "/base")([_MoeLayer(router)])
+    assert model[0].mlp.router is router and router.training and router.frozen_expert_bias
+    assert type(model[0].mlp.linear_fc1).__name__ == "LoRALinear"  # LoRA itself was applied
+    _update_router_expert_bias(model, config)
+    assert torch.equal(router.expert_bias, torch.zeros(2))
+    # Without the freeze, the same update moves the bias, and with it the routing of a "frozen" base.
+    unfrozen = [_MoeLayer(_CpuRouter(expert_bias=True))]
+    _update_router_expert_bias(unfrozen, config)
+    assert torch.equal(unfrozen[0].mlp.router.expert_bias, torch.ones(2))
 
 
 # ---- engine construction ------------------------------------------------------------------------
@@ -297,44 +368,115 @@ def test_checkpoint_view_carries_the_lora_only_when_given():
     assert _checkpoint_state(_checkpoint_recipe(), SimpleNamespace(), peft=peft).cfg.peft is peft
 
 
-def test_save_and_load_hand_the_lora_to_bridges_checkpointing(monkeypatch, tmp_path):
-    seen = []
+class _FakeCheckpointManager:
+    """Stands in for Bridge's checkpoint manager: a save writes what the engine's load checks read back
+    (the step's ``run_config.yaml`` through the config view, then the root's tracker), and a load returns the
+    step the tracker names."""
 
-    class _Manager:
-        checkpointing_context = {}
+    def __init__(self, seen: list):
+        self.seen = seen
+        self.checkpointing_context = {}
 
-        def save(self, context, _):
-            seen.append(("save", context.state.cfg.peft, context.state.cfg.checkpoint.save))
+    def save(self, context, _):
+        cfg, step = context.state.cfg, context.state.train_state.step
+        step_dir = os.path.join(cfg.checkpoint.save, f"iter_{step:07d}")
+        os.makedirs(step_dir, exist_ok=True)
+        cfg.to_yaml(os.path.join(step_dir, "run_config.yaml"))
+        torch.save(TrainState(step=step).state_dict(), os.path.join(cfg.checkpoint.save, "latest_train_state.pt"))
+        self.seen.append(("save", cfg.peft, cfg.checkpoint.save))
 
-        def load(self, context):
-            checkpoint = context.state.cfg.checkpoint
-            seen.append(("load", context.state.cfg.peft, checkpoint.load, checkpoint.pretrained_checkpoint))
-            return 5, None
+    def load(self, context):
+        checkpoint = context.state.cfg.checkpoint
+        self.seen.append(("load", context.state.cfg.peft, checkpoint.load, checkpoint.pretrained_checkpoint))
+        state = torch.load(os.path.join(checkpoint.load, "latest_train_state.pt"), weights_only=True)
+        return int(state["step"]), None
 
-    monkeypatch.setattr("megatron.bridge.engine.checkpoint.create_checkpoint_manager", lambda config: _Manager())
+
+@pytest.fixture
+def checkpoint_calls(monkeypatch) -> list:
+    seen: list = []
+    monkeypatch.setattr(
+        "megatron.bridge.engine.checkpoint.create_checkpoint_manager", lambda config: _FakeCheckpointManager(seen)
+    )
     monkeypatch.setattr(
         "megatron.bridge.engine.checkpoint.sync_hybrid_device_optimizer_fp32_master_copies", lambda optimizer: None
     )
     monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
-    peft = object()
-    root = str(tmp_path)
+    return seen
+
+
+def _save(root: str, step: int, peft: LoRA | None, user_state=None) -> None:
     save_engine_state(
         _checkpoint_recipe(),
         [],
         None,
-        step=5,
+        step=step,
         root=root,
-        user_state={"round": 2},
+        user_state=user_state,
         async_save=False,
         async_state=None,
         pg_collection=None,
         peft=peft,
     )
-    open(os.path.join(root, "latest_train_state.pt"), "wb").close()
+
+
+def test_save_and_load_hand_the_lora_to_bridges_checkpointing(checkpoint_calls, tmp_path):
+    peft = build_lora(LoraConfig(rank=8, alpha=16.0), _recipe())
+    root = str(tmp_path)
+    _save(root, 5, peft, user_state={"round": 2})
     step, user_state = load_engine_state(_checkpoint_recipe(), [], None, path=root, peft=peft)
     # Bridge's PEFT resume (adapter filter, non-strict load) applies when load is set, pretrained is not.
-    assert seen == [("save", peft, root), ("load", peft, root, None)]
+    assert checkpoint_calls == [("save", peft, root), ("load", peft, root, None)]
     assert step == 5 and user_state == {"round": 2}
+
+
+def test_checkpoints_record_the_lora_settings(checkpoint_calls, tmp_path):
+    peft = build_lora(LoraConfig(rank=8, alpha=16, target_modules=["linear_qkv", "*.in_proj"], dropout=0.1), _recipe())
+    _save(str(tmp_path / "lora"), 3, peft)
+    _save(str(tmp_path / "full"), 3, None)
+    with open(tmp_path / "lora" / "iter_0000003" / "run_config.yaml") as handle:
+        assert yaml.safe_load(handle)["lora"] == {
+            "rank": 8,
+            "alpha": 16.0,
+            "dropout": 0.1,
+            "target_modules": ["linear_qkv", "*.in_proj"],
+        }
+    with open(tmp_path / "full" / "iter_0000003" / "run_config.yaml") as handle:
+        assert yaml.safe_load(handle)["lora"] is None
+
+
+@pytest.mark.parametrize(
+    "saved, loading",
+    [
+        (LoraConfig(rank=8, alpha=16.0), LoraConfig(rank=8, alpha=32.0)),  # same tensors, other scaling
+        (LoraConfig(rank=8, alpha=16.0, dropout=0.1), LoraConfig(rank=8, alpha=16.0)),
+        # Fewer targets: Bridge's non-strict resume would drop the saved in_proj adapters without a word.
+        (LoraConfig(rank=8, alpha=16.0, target_modules=["linear_qkv", "in_proj"]), LoraConfig(rank=8, alpha=16.0)),
+        (LoraConfig(rank=8, alpha=16.0), None),
+        (None, LoraConfig(rank=8, alpha=16.0)),
+    ],
+)
+def test_load_refuses_a_checkpoint_saved_with_other_lora_settings(checkpoint_calls, tmp_path, saved, loading):
+    def lora(config):
+        return None if config is None else build_lora(config, _recipe(["linear_qkv"]))
+
+    root = str(tmp_path)
+    _save(root, 4, lora(saved))
+    for path in (root, os.path.join(root, "iter_0000004")):
+        with pytest.raises(ValueError, match="iter_0000004 was saved with lora="):
+            load_engine_state(_checkpoint_recipe(), [], None, path=path, peft=lora(loading))
+    assert [call[0] for call in checkpoint_calls] == ["save"]  # refused before anything was read
+
+
+def test_load_after_a_newer_save_to_the_same_root_takes_the_newer_step(checkpoint_calls, tmp_path):
+    root = str(tmp_path)
+    first = build_lora(LoraConfig(rank=8, alpha=16.0), _recipe())
+    _save(root, 3, first)
+    assert load_engine_state(_checkpoint_recipe(), [], None, path=root, peft=first)[0] == 3
+    # Bridge reads the root's tracker through a per-process cache; the step-3 read must not be reused.
+    second = build_lora(LoraConfig(rank=8, alpha=32.0), _recipe())
+    _save(root, 6, second)
+    assert load_engine_state(_checkpoint_recipe(), [], None, path=root, peft=second)[0] == 6
 
 
 def test_engine_save_and_load_pass_their_lora(monkeypatch):
@@ -398,21 +540,28 @@ def test_export_hf_adapter_streams_unmerged_adapters_and_writes_peft_directories
         export_hf_adapter(state, [], peft, path=None, streaming=False, base_model_name_or_path="hf/base")
 
 
-def test_engine_export_adapter_only_needs_lora_and_names_the_base_model(monkeypatch):
+def test_engine_export_adapter_only_needs_lora_and_an_explicit_base_model(monkeypatch):
     engine = TrainingEngine.__new__(TrainingEngine)
     engine._closed = False
     engine._resident = True
     engine._output_head = "lm"
-    engine._recipe = SimpleNamespace(hf_path="hf/base")
+    engine._recipe = SimpleNamespace(hf_path="hf/base")  # the layout; the adapters' base may differ
     engine._model = []
     engine._export_state = None
     engine._peft = None
     with pytest.raises(ValueError, match="adapter_only=True needs an engine built with lora"):
-        engine.export(path="/out", adapter_only=True)
+        engine.export(path="/out", adapter_only=True, base_model_name_or_path="hf/base")
     bridge = _AdapterBridge()
     monkeypatch.setattr("megatron.bridge.engine.engine.make_export_state", lambda recipe: ExportState(bridge))
     engine._peft = peft = object()
-    assert engine.export(path="/out", adapter_only=True) is None
+    with pytest.raises(ValueError, match="needs base_model_name_or_path"):
+        engine.export(path="/out", adapter_only=True)
+    assert engine.export(path="/out", adapter_only=True, base_model_name_or_path="org/sft-model") is None
     assert bridge.calls == [
-        ("save", "/out", {"peft_config": peft, "base_model_name_or_path": "hf/base", "show_progress": False})
+        ("save", "/out", {"peft_config": peft, "base_model_name_or_path": "org/sft-model", "show_progress": False})
     ]
+    # The adapter stream and the merged export record no base model, so naming one there is an error.
+    for kwargs in ({"streaming": True, "adapter_only": True}, {"path": "/merged"}):
+        with pytest.raises(ValueError, match="only applies to export"):
+            engine.export(base_model_name_or_path="org/sft-model", **kwargs)
+    assert len(bridge.calls) == 1

@@ -77,15 +77,19 @@ the text recipe. Missing:
 
 - Implemented as agreed: Bridge `LoRA` applied through a pre-wrap hook after the base weights load,
   targets = the recipe's `lora_target_modules` (Qwen3.5: Bridge's default four linears plus the GDN
-  `in_proj`/`out_proj`), router rejected as a target, the expert-adapter gradient sync for expert
-  parallelism, adapter-only checkpoints, merged weights in the streaming export plus
-  `export(adapter_only=True)`, and `forward_only(disable_adapters=True)` replacing the reference engine in
+  `in_proj`/`out_proj`), routing kept the base model's (no router may match a target pattern, router
+  expert biases frozen, quantile-balanced routing rejected), the expert-adapter gradient sync for expert
+  parallelism, adapter-only checkpoints that record the LoRA settings `load_state` checks, merged weights
+  in the streaming export plus `export(adapter_only=True)` (a PEFT directory names its base through
+  `base_model_name_or_path`), and `forward_only(disable_adapters=True)` replacing the reference engine in
   `ppo_vllm.py`. Rank 32 / alpha 64 is the examples' setting (`--lora-rank 32`, `--lora-alpha` defaults
   to 64), not a library default.
 - Validated on 16 GB300s with the Qwen3.5-35B-A3B recipe (TP1 CP8 EP16, rank 32 / alpha 64):
   construction, 1-vs-4-call accumulation and mid-window movement (exact), adapters off vs a frozen engine
   (bit for bit), merged-stream vs written-files export (exact), resume (identical losses), GRPO and PPO
-  with the merged refit, and a 10-round 32K GRPO run.
+  with the merged refit, and a 10-round 32K GRPO run. The router checks, the expert-bias freeze, the
+  settings check on resume and the adapter base name are covered by CPU unit tests only (Qwen3.5 has no
+  expert bias).
 - **Merged refit and train/inference agreement** (`TODO(lora-refit)`): the trainer computes
   `W x + s B(A x)` with the update kept apart, while the merged refit sends vllm `bf16(W + s B A)`, so
   update elements below half a bf16 step of W are lost to the sampler. Measured on the 10-round 32K GRPO

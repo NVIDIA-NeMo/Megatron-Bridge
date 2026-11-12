@@ -188,7 +188,10 @@ def measure_merge(policy: TrainingEngine, datums: list[Datum], args, round_index
     policy.cuda()
     trainer = [lp.cpu() for lp in policy.forward_only(plain).logprobs]
     policy.export(path=os.path.join(out_dir, "merged"))
-    policy.export(path=os.path.join(out_dir, "adapter"), adapter_only=True)
+    # The example trains on --checkpoint, a conversion of the recipe's HF model, so that model is the base.
+    policy.export(
+        path=os.path.join(out_dir, "adapter"), adapter_only=True, base_model_name_or_path=policy.recipe.hf_path
+    )
     policy.cpu()
     frozen = build_engine(args, checkpoint_path=os.path.join(out_dir, "merged"), trainable=False)
     merged = [lp.cpu() for lp in frozen.forward_only(plain).logprobs]

@@ -297,16 +297,17 @@ class LoraConfig:
     """LoRA adapter settings for a trainable language-model engine (``from_recipe(lora=...)``).
 
     Lowered to Bridge's ``LoRA`` by ``megatron.bridge.engine.lora.build_lora``: ``rank`` becomes its
-    ``dim`` and the adapter output is scaled by ``alpha / rank``. The base model is frozen, so the
-    gradient buffers, the optimizer and ``save_state`` hold the adapters only;
-    ``forward_only(disable_adapters=True)`` scores the base model, and ``export`` merges the adapters
-    into the base weights unless ``adapter_only=True``.
+    ``dim`` and the adapter output is scaled by ``alpha / rank``. The base model is frozen, MoE router
+    expert biases included, so the gradient buffers, the optimizer and ``save_state`` hold the adapters
+    only; ``forward_only(disable_adapters=True)`` scores the base model, and ``export`` merges the
+    adapters into the base weights unless ``adapter_only=True``. ``save_state`` records these settings
+    and ``load_state`` requires them to match.
 
     Attributes:
         rank: strict. Adapter rank.
         alpha: strict. Adapter scaling numerator; the adapter output is scaled by ``alpha / rank``.
-        target_modules: strict. Megatron module names the adapters attach to, or ``None`` for the
-            recipe's ``lora_target_modules``. The MoE router cannot be a target.
+        target_modules: strict. Megatron module names or ``*`` wildcards the adapters attach to, or
+            ``None`` for the recipe's ``lora_target_modules``. No MoE router may match.
         dropout: strict. Adapter dropout probability, in ``[0, 1)``.
     """
 
