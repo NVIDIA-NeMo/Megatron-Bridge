@@ -450,7 +450,7 @@ class TestLlama4ScalingPositions:
         for cp_rank in range(cp_size):
             cp_group = _FakeCPGroup(cp_rank, cp_size)
             batch = {"position_ids": torch.arange(64).unsqueeze(0), "cu_seqlens": None}
-            sliced = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)
+            sliced = get_batch_on_this_cp_rank(batch, dynamic_cp=False, cp_group=cp_group)
             positions = get_llama_4_scaling_positions(
                 64 // cp_size, packed_seq_params=None, cp_group=cp_group, device=torch.device("cpu")
             )
