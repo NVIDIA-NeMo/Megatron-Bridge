@@ -253,6 +253,49 @@ class TestCarryRopeIntoRopeParameters:
 
         assert carry_rope_into_rope_parameters(emitted, conformed) is conformed
 
+    def test_default_scaling_drops_the_reference_scaling(self):
+        reference = {
+            "rope_parameters": {
+                "rope_type": "llama3",
+                "factor": 8.0,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+                "rope_theta": 500000.0,
+            }
+        }
+        emitted = {"rope_theta": 500000.0, "rope_scaling": {"rope_type": "default"}}
+
+        assert self._carry(emitted, reference)["rope_parameters"] == {"rope_type": "default", "rope_theta": 500000.0}
+
+    def test_partial_rotary_factor_overrides_the_reference(self):
+        reference = {"rope_parameters": {"rope_type": "default", "rope_theta": 10000.0, "partial_rotary_factor": 0.5}}
+
+        assert self._carry({"rope_theta": 10000.0, "partial_rotary_factor": 1.0}, reference)["rope_parameters"] == {
+            "rope_type": "default",
+            "rope_theta": 10000.0,
+            "partial_rotary_factor": 1.0,
+        }
+
+    def test_missing_partial_rotary_factor_reads_as_one(self):
+        emitted = {"rope_theta": 10000.0, "partial_rotary_factor": 1.0}
+        conformed = conform_config_to_reference(emitted, self.REFERENCE)
+
+        assert carry_rope_into_rope_parameters(emitted, conformed) is conformed
+        assert self._carry({"rope_theta": 10000.0, "partial_rotary_factor": 0.25})["rope_parameters"] == {
+            "rope_type": "default",
+            "rope_theta": 10000.0,
+            "partial_rotary_factor": 0.25,
+        }
+
+    def test_top_level_partial_rotary_factor_is_left_to_the_projection(self):
+        reference = {"partial_rotary_factor": 0.5, "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0}}
+
+        carried = self._carry({"rope_theta": 10000.0, "partial_rotary_factor": 0.25}, reference)
+
+        assert carried["partial_rotary_factor"] == 0.25
+        assert carried["rope_parameters"] == {"rope_type": "default", "rope_theta": 10000.0}
+
     def test_model_keys_such_as_mrope_section_are_kept(self):
         reference = {"rope_parameters": {"rope_type": "default", "rope_theta": 1e6, "mrope_section": [16, 24, 24]}}
 

@@ -440,14 +440,17 @@ def carry_rope_into_rope_parameters(
 ) -> dict[str, object]:
     """Carry the legacy RoPE keys of ``hf_config_dict`` into the ``rope_parameters`` of ``conformed_dict``.
 
-    ``megatron_to_hf_config`` emits ``rope_theta`` and ``rope_scaling``, but transformers 5 configs keep their
-    RoPE settings only in ``rope_parameters``. :func:`conform_config_to_reference` therefore drops both keys
-    and backfills the reference model's ``rope_parameters``, and an explicit ``rope_parameters`` overrides
-    the legacy keyword arguments in the config constructor. This writes the Megatron-side ``rope_theta`` and
-    ``rope_scaling`` values into the reference's flat ``rope_parameters`` where they differ. A scaling of a
-    different type replaces the reference's scaling entries. Equal values are left as the reference has them,
-    so an unchanged model keeps the reference's ``rope_parameters`` exactly. Nested ``rope_parameters`` (one
-    dict per attention type) and configs without them are returned unchanged.
+    ``megatron_to_hf_config`` emits ``rope_theta``, ``partial_rotary_factor`` and ``rope_scaling``, but
+    transformers 5 configs keep their RoPE settings in ``rope_parameters`` (``partial_rotary_factor`` only there
+    since transformers 5.20). :func:`conform_config_to_reference` therefore drops these keys and backfills the
+    reference model's ``rope_parameters``, and an explicit ``rope_parameters`` overrides the legacy keyword
+    arguments in the config constructor. This writes the Megatron-side values into the reference's flat
+    ``rope_parameters`` where they differ, reading a missing ``partial_rotary_factor`` as 1.0. A scaling of a
+    different type replaces the reference's scaling entries, so a bridge reports a model without scaling as
+    ``{"rope_type": "default"}``. Where the reference keeps ``partial_rotary_factor`` as a top-level key and
+    not in ``rope_parameters``, the projection has already carried it. Equal values are left as the reference
+    has them, so an unchanged model keeps the reference's ``rope_parameters`` exactly. Nested
+    ``rope_parameters`` (one dict per attention type) and configs without them are returned unchanged.
 
     Args:
         hf_config_dict: HF config dict emitted by ``megatron_to_hf_config``, before conforming.
@@ -460,8 +463,9 @@ def carry_rope_into_rope_parameters(
     if not isinstance(rope_parameters, dict) or "rope_theta" not in rope_parameters:
         return conformed_dict
     rope_theta = hf_config_dict.get("rope_theta")
+    partial_rotary_factor = hf_config_dict.get("partial_rotary_factor")
     rope_scaling = hf_config_dict.get("rope_scaling")
-    if rope_theta is None and not isinstance(rope_scaling, dict):
+    if rope_theta is None and partial_rotary_factor is None and not isinstance(rope_scaling, dict):
         return conformed_dict
 
     carried = dict(rope_parameters)
@@ -474,6 +478,12 @@ def carry_rope_into_rope_parameters(
             carried.update({key: value for key, value in scaling.items() if key in carried and carried[key] != value})
     if rope_theta is not None and carried["rope_theta"] != rope_theta:
         carried["rope_theta"] = rope_theta
+    if (
+        partial_rotary_factor is not None
+        and ("partial_rotary_factor" in carried or "partial_rotary_factor" not in conformed_dict)
+        and carried.get("partial_rotary_factor", 1.0) != partial_rotary_factor
+    ):
+        carried["partial_rotary_factor"] = partial_rotary_factor
     if carried == rope_parameters:
         return conformed_dict
     return {**conformed_dict, "rope_parameters": carried}
