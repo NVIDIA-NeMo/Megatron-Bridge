@@ -564,7 +564,7 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     ("recipe_func", "expert_capacity"),
     [
         (_super_vl_h100_recipe_module.nemotron_35_super_vl_sft_64gpu_h100_bf16_config, 1.10),
-        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_64gpu_gb200_bf16_config, 1.10),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_64gpu_gb200_bf16_config, None),
         (_super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config, None),
         (_super_vl_gb200_recipe_module.nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config, None),
         (_super_vl_h100_recipe_module.nemotron_35_super_vl_peft_16gpu_h100_bf16_config, None),
@@ -948,6 +948,8 @@ def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
     assert cfg.model.sequence_parallel is True
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms_preprocessing is None
