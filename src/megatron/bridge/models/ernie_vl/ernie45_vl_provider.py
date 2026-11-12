@@ -81,6 +81,11 @@ class Ernie45VLModelProvider(GPTModelProvider):
     # This is passed to ErnieMultiTypeMoE which creates separate configs per pool.
     moe_intermediate_size: Tuple[int, int] = (1536, 512)
 
+    # The dual-pool expert spec and HF parameter mappings use SequentialMLP
+    # (``experts.local_experts.{j}``), so keep grouped GEMM off explicitly now that
+    # Megatron-Core defaults ``moe_grouped_gemm`` to True.
+    moe_grouped_gemm: bool = False
+
     # Token IDs (from Ernie4_5_VLMoeConfig defaults)
     image_start_token_id: int = 101304
     image_end_token_id: int = 101305
