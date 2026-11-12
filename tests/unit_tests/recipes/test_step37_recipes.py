@@ -126,7 +126,7 @@ def test_step37_smoke_recipe_builds_model_config(monkeypatch):
     assert m.expert_model_parallel_size == 1
     assert m.variable_seq_lengths is True
     assert m.rotary_percent == 0.5
-    assert m.window_size == [512, 0]
+    assert m.window_size == [511, 0]
     # The per-layer lists cover the 45 Step-3.7 decoder layers and live on the nested transformer config.
     assert len(m.transformer.rotary_base_per_layer) == 45
     assert len(m.transformer.window_attn_skip_freq) == 45

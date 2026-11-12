@@ -269,7 +269,7 @@ def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.attention_dropout = 0.0
     cfg.model.rotary_percent = 0.5
-    cfg.model.window_size = [512, 0]
+    cfg.model.window_size = [511, 0]
     cfg.model.window_attn_skip_freq = [
         0,
         1,

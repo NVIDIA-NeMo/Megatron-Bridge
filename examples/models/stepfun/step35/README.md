@@ -117,9 +117,9 @@ Before launching, ensure the following environment variables are set:
   `torch.distributed` env vars inside the container,
 * overrides the recipe to PP=8 with the tail stages thinned out via
   `model.num_layers_in_last_pipeline_stage=3`,
-* turns on the Step-3.5-Flash sliding-attention skip pattern
-  (`model.window_size=[512,0]` and the `model.window_attn_skip_freq` mask
-  matching `layer_types`), and
+* keeps the global window consistent with the per-layer 512-token HF window
+  (`model.window_size=[511,0]`) and sets `model.window_attn_skip_freq` to
+  match `layer_types`, and
 * loads the pre-converted Megatron checkpoint as a fine-tune source
   (`checkpoint.finetune=true`, `load_optim=false`, `load_rng=false`,
   `exit_on_missing_checkpoint=true`).
@@ -164,6 +164,16 @@ sliding_attention_setting = {
 `Step35DecoderLayer` deep-copies the config and overrides
 `window_size` / `num_attention_heads` / `num_query_groups` / `kv_channels`
 when the resolved global layer index is marked `"sliding_attention"` in
-`layer_types`. The training-time sliding-window mask is controlled separately
-through `model.window_size` and `model.window_attn_skip_freq` (see the
-slurm_pretrain.sh defaults).
+`layer_types`. The nested `sliding_attention_setting["window_size"]` takes
+precedence over the global `model.window_size` for sliding layers; full-attention
+layers set their window to `None`. `model.window_attn_skip_freq` can additionally
+disable window attention on selected layers, so it must stay consistent with
+`layer_types` (see the `slurm_pretrain.sh` defaults).
+
+Existing Megatron checkpoints retain the nested window saved in their
+`run_config.yaml`. Upgrading Bridge does not change a saved `[512, 0]` into
+`[511, 0]`. For checkpoints converted from HF that should use the HF 512-token
+window, reconvert from HF or explicitly set the saved nested
+`sliding_attention_setting["window_size"]` to `[511, 0]` before constructing the
+model. Changing only the global window does not override the nested value.
+Preserve the saved window when resuming a model intentionally trained with it.
