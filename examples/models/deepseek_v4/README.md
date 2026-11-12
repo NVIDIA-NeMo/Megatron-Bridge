@@ -132,6 +132,7 @@ launcher. Hardware-qualified library recipes are defined under
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config` | MXFP8 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config` | BF16 Muon |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config` | MXFP8 Adam |
+| GB200, 8 GPUs | `deepseek_v4_flash_proxy_pretrain_8gpu_gb200_bf16_config` | BF16 Adam, six-layer proxy |
 | GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config` | BF16 Adam |
 | GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config` | MXFP8 Adam |
 
