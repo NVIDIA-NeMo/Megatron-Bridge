@@ -587,3 +587,44 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(socket, "create_connection", reject_network)
     monkeypatch.setattr(socket.socket, "connect", reject_network)
+
+
+def assert_ncclep_bounds_packed_tokens(cfg: object) -> None:
+    """Assert that a config feeding packed (THD) sequences to NCCL EP bounds the tokens per rank.
+
+    NCCL EP sizes its dispatch buffers once. Packed inputs vary in length per rank and step, so
+    Megatron-Core takes the bound from ``max_seqlen_per_dp_cp_rank`` or else from
+    ``max_seq_length_per_sample``, and raises at the first dispatch when neither is set. The packing
+    modes checked here are the ones ``ConfigContainer.validate`` treats as THD.
+    """
+    from megatron.bridge.data.builders import EnergonDatasetConfig
+
+    model = getattr(cfg.model, "transformer", cfg.model)
+    if getattr(model, "moe_token_dispatcher_type", None) != "flex":
+        return
+    if getattr(model, "moe_flex_dispatcher_backend", None) != "ncclep":
+        return
+
+    dataset = cfg.dataset
+    if getattr(dataset, "enable_offline_packing", False):
+        # Each offline pack is one micro-batch: packed training requires micro_batch_size 1.
+        packed_tokens = dataset.offline_packing_specs.packed_sequence_size
+    elif (
+        getattr(dataset, "enable_in_batch_packing", False)
+        or getattr(dataset, "enable_global_batch_packing", False)
+        or (isinstance(dataset, EnergonDatasetConfig) and dataset.packing_buffer_size is not None)
+    ):
+        packed_tokens = cfg.train.micro_batch_size * dataset.seq_length
+    else:
+        return
+
+    if getattr(model, "max_seqlen_per_dp_cp_rank", None) is not None:
+        return
+    max_seq_length_per_sample = getattr(model, "max_seq_length_per_sample", None)
+    assert max_seq_length_per_sample is not None, (
+        "NCCL EP with packed sequences needs model.max_seq_length_per_sample (the packed sequence length) "
+        "or model.max_seqlen_per_dp_cp_rank."
+    )
+    assert max_seq_length_per_sample >= packed_tokens, (
+        f"model.max_seq_length_per_sample={max_seq_length_per_sample} is below the {packed_tokens} tokens of one pack."
+    )

@@ -653,8 +653,8 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.num_layers_in_first_pipeline_stage == 16
-    assert cfg.model.num_layers_in_last_pipeline_stage == 24
+    assert cfg.model.num_layers_in_first_pipeline_stage == 32
+    assert cfg.model.num_layers_in_last_pipeline_stage == 48
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.checkpoint.pretrained_checkpoint is None
     assert cfg.model.freeze_language_model is False
@@ -701,8 +701,8 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.virtual_pipeline_model_parallel_size is None
-    assert cfg.model.num_layers_in_first_pipeline_stage == 17
-    assert cfg.model.num_layers_in_last_pipeline_stage == 23
+    assert cfg.model.num_layers_in_first_pipeline_stage == 34
+    assert cfg.model.num_layers_in_last_pipeline_stage == 46
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.model.sequence_parallel is False
@@ -761,6 +761,27 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 0
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 0
     assert cfg.optimizer.lr == 2e-5
+
+
+def test_qwen35_vl_27b_sft_fits_16_h100(monkeypatch: pytest.MonkeyPatch):
+    """The dense 27B SFT recipe should carry the layout that fits 80 GB H100s at its own batch."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_h100_module.qwen35_vl_27b_sft_16gpu_h100_bf16_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.sequence_parallel is True
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 4
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out", "mlp"]
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    # No CUDA graph scope can split a recomputed module.
+    assert cfg.model.cuda_graph_impl == "none"
 
 
 def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -969,8 +990,8 @@ def test_qwen35_vl_35b_a3b_peft_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPa
     assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.num_layers_in_first_pipeline_stage == 17
-    assert cfg.model.num_layers_in_last_pipeline_stage == 23
+    assert cfg.model.num_layers_in_first_pipeline_stage == 34
+    assert cfg.model.num_layers_in_last_pipeline_stage == 46
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.moe_token_dispatcher_type == "flex"
@@ -1730,6 +1751,8 @@ def test_gb200_long_context_validates_with_real_model_config(monkeypatch, recipe
         "gdn_gated_output_norm_fusion",
     } <= {field.name for field in fields(config.model.transformer)}
     assert config.model.gdn_kernel_backend == "transformer_engine"
+    # NCCL EP reads its packed-token bound from the nested transformer config.
+    assert config.model.transformer.max_seq_length_per_sample == config.dataset.seq_length == 131072
     assert config.ddp.overlap_grad_reduce is False
     assert config.ddp.overlap_param_gather is False
     assert config.optimizer.overlap_param_gather is False
@@ -1828,3 +1851,25 @@ def test_qwen35_vl_recipes_build_strict_model_config(recipe_func: Callable, monk
     assert cfg.model.position_embedding_type == "mrope"
     assert cfg.model.vision_config is not None
     assert cfg.model.experimental_attention_variant == "gdn"
+
+
+@pytest.mark.parametrize(
+    "recipe_func, expected_blocks",
+    [
+        (_qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_config, (16, 24)),
+        (_qwen35_vl_h100_module.qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config, (17, 23)),
+        (_qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config, (17, 23)),
+    ],
+)
+def test_h100_35b_pipeline_preserves_hf_block_placement(monkeypatch, recipe_func, expected_blocks):
+    """The actual Hybrid config must cover every block across both pipeline stages."""
+    from megatron.bridge.models.qwen.modeling_qwen35.model_config import prepare_qwen35_pipeline_config
+
+    monkeypatch.setattr(_FakeAutoBridge, "get_model_config", lambda self: _real_moe_model_config())
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+    config = recipe_func().model
+    prepared = prepare_qwen35_pipeline_config(config)
+    stages = prepared.hybrid_layer_pattern.partition("/")[0].split("|")
+    assert tuple(len(stage) // 2 for stage in stages) == expected_blocks
+    assert "".join(stages) == config.hybrid_layer_pattern.partition("/")[0]
+    assert sum(map(len, stages)) == config.num_layers
