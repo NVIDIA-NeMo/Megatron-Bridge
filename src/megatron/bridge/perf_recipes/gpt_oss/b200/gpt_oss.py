@@ -13,6 +13,7 @@
 # limitations under the License.
 """B200 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     ConfigContainer,
@@ -23,7 +24,7 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
 
 
 def gpt_oss_120b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× B200, BF16, GBS=1280."""
+    """GPT-OSS 120B pretrain: 64× B200, BF16, GBS=1280, NCCL EP."""
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.moe_router_fusion = True
@@ -40,6 +41,9 @@ def gpt_oss_120b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = "selective"
 
     _benchmark_common(cfg)
+    _enable_ncclep(cfg)
+    # Grouped tensors ran slower on this eager (no CUDA graph) BF16 recipe, so keep the default grouped MLP path.
+    cfg.model.moe_use_grouped_tensor = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -51,6 +55,8 @@ def gpt_oss_120b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
+        # Pull/push mode requires each EP8 group to stay within one NVL8 domain.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

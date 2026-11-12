@@ -16,11 +16,29 @@ from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (  # noqa: F401
     MiniMaxM3Bridge,
     MiniMaxM3VLModelProvider,
 )
+from megatron.bridge.models.minimax_m3.minimax_m3_builder import (  # noqa: F401
+    MiniMaxM3ModelBuilder,
+    MiniMaxM3VLModelBuilder,
+)
+from megatron.bridge.models.minimax_m3.minimax_m3_config import (  # noqa: F401
+    MiniMaxM3ModelConfig,
+    MiniMaxM3VLModelConfig,
+    MiniMaxM3VLTransformerConfig,
+)
 from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3VLModel  # noqa: F401
+from megatron.bridge.models.minimax_m3.transformers_compat import patch_minimax_m3_vision_rope
+
+
+patch_minimax_m3_vision_rope()
 
 
 __all__ = [
     "MiniMaxM3Bridge",
+    "MiniMaxM3ModelBuilder",
+    "MiniMaxM3ModelConfig",
     "MiniMaxM3VLModel",
+    "MiniMaxM3VLModelBuilder",
+    "MiniMaxM3VLModelConfig",
     "MiniMaxM3VLModelProvider",
+    "MiniMaxM3VLTransformerConfig",
 ]

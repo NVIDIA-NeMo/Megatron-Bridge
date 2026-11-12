@@ -65,9 +65,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """
     use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg = _pretrain_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).get_model_config()
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -91,6 +89,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -171,6 +170,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -214,7 +214,6 @@ def deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision.fp8_param_gather = False
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.model.moe_router_padding_for_fp8 = True
-    cfg.model.mtp_eval_in_bf16 = True
     cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
@@ -243,6 +242,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config() -> ConfigContainer:
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -306,9 +306,7 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     sequences with Adam/bf16.
     """
     cfg = _sft_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).get_model_config()
 
     # --- parallelism (DSv4 hybrid attention requires TP=1) ---
     cfg.model.tensor_model_parallel_size = 1
@@ -328,6 +326,7 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.mhc_norm_eps_inside_sqrt = not cfg.model.use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -376,9 +375,7 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     Prediction layer (fused mHC only on Blackwell, bf16, SBHD).
     """
     cfg = _sft_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).get_model_config()
 
     # --- parallelism (DSv4 hybrid attention requires TP=1) ---
     cfg.model.tensor_model_parallel_size = 1
@@ -398,6 +395,7 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.mhc_norm_eps_inside_sqrt = not cfg.model.use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 

@@ -126,6 +126,26 @@ class TestTokenizers:
         assert config.tokenizer_model == model_id
         assert config.hf_tokenizer_kwargs == hf_tokenizer_kwargs
 
+    @pytest.mark.parametrize("hf_hub_offline", [False, True])
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    @patch("huggingface_hub.snapshot_download")
+    def test_build_hf_tokenizer_revision_reads_local_cache_when_offline(
+        self, mock_snapshot_download, mock_build_mcore_tokenizer, hf_hub_offline
+    ):
+        revision = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+        mock_snapshot_download.return_value = f"/cache/models--resolved/snapshots/{revision}"
+        mock_build_mcore_tokenizer.return_value = sentinel.tokenizer
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="Qwen/Qwen3-8B",
+            hf_tokenizer_kwargs={"revision": revision},
+        )
+
+        with patch("huggingface_hub.constants.HF_HUB_OFFLINE", hf_hub_offline):
+            assert build_tokenizer(config) is sentinel.tokenizer
+
+        assert mock_snapshot_download.call_args.kwargs["local_files_only"] is hf_hub_offline
+
     @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
     @patch("huggingface_hub.snapshot_download")
     def test_build_tokenizer_skips_snapshot_resolution_without_remote_hf_revision(
@@ -189,6 +209,22 @@ class TestTokenizers:
             tokenizer_path="tokenizer.model",
             metadata_path={"library": "sft"},
             prompt_format="nemotron-h-aligned",
+            use_gigatoken=False,
+        )
+
+    @patch("megatron.core.tokenizers.utils.build_tokenizer.MegatronTokenizer.from_pretrained")
+    def test_build_sft_tokenizer_uses_prompt_format_set_after_construction(self, mock_from_pretrained):
+        """A prompt format overridden after construction reaches MCore's SFT builder."""
+        mock_from_pretrained.return_value = sentinel.tokenizer
+        config = TokenizerConfig(tokenizer_type="SFTTokenizer", tokenizer_model="tokenizer.model")
+        config.tokenizer_prompt_format = "chatml"
+
+        assert build_tokenizer(config) is sentinel.tokenizer
+
+        mock_from_pretrained.assert_called_once_with(
+            tokenizer_path="tokenizer.model",
+            metadata_path={"library": "sft"},
+            prompt_format="chatml",
             use_gigatoken=False,
         )
 
@@ -300,7 +336,7 @@ class TestChatTemplatePathOverride:
         template_file.write_text(CHAT_TEMPLATE)
         config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
+            tokenizer_model="meta-llama/Llama-3.1-8B-Instruct",
             chat_template_path=str(template_file),
         )
 

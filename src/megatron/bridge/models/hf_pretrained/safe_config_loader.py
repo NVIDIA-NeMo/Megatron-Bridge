@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Union
 
 import filelock
+from huggingface_hub import constants as hf_constants
 from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 
@@ -59,8 +60,10 @@ def safe_load_config_with_retry(
 
     Environment Variables:
         MEGATRON_CONFIG_LOCK_DIR: Override the directory where lock files are created.
-            Default: ~/.cache/huggingface/
-            Useful for multi-node setups where a shared lock directory is needed.
+            Default: the Hugging Face home directory (``HF_HOME``, normally
+            ``~/.cache/huggingface``), so the lock lives next to the cache it protects.
+            Set it to a shared directory when ``HF_HOME`` is not shared across the ranks
+            of a multi-node job.
 
     Example:
         >>> config = safe_load_config_with_retry("meta-llama/Meta-Llama-3-8B")
@@ -88,12 +91,12 @@ def safe_load_config_with_retry(
             path_hash = hashlib.md5(str(path).encode()).hexdigest()
 
             # Allow override of lock directory via environment variable
-            # This is useful for multi-node setups where a shared lock directory is needed
-            lock_dir = os.getenv("MEGATRON_CONFIG_LOCK_DIR")
-            if lock_dir:
-                lock_file = Path(lock_dir) / f".megatron_config_lock_{path_hash}"
-            else:
-                lock_file = Path.home() / ".cache" / "huggingface" / f".megatron_config_lock_{path_hash}"
+            # (useful for multi-node setups where a shared lock directory is needed).
+            # Otherwise follow HF_HOME: that is where the config cache being protected
+            # lives, and on containerised clusters $HOME is often an ephemeral,
+            # per-container layer that is neither shared nor persistent.
+            lock_dir = os.getenv("MEGATRON_CONFIG_LOCK_DIR") or hf_constants.HF_HOME
+            lock_file = Path(lock_dir) / f".megatron_config_lock_{path_hash}"
 
             lock_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -131,8 +134,14 @@ def safe_load_config_with_retry(
                 break
 
     # All retries exhausted
+    hint = ""
+    if isinstance(last_exception, filelock.Timeout):
+        hint = (
+            " The config file lock could not be acquired; on multi-node jobs set "
+            "MEGATRON_CONFIG_LOCK_DIR to a directory on a shared filesystem."
+        )
     raise ValueError(
         f"Failed to load configuration from {path} after {max_retries + 1} attempts. "
-        f"This might be due to network issues or concurrent access conflicts. "
+        f"This might be due to network issues or concurrent access conflicts.{hint} "
         f"Last error: {last_exception}"
     ) from last_exception

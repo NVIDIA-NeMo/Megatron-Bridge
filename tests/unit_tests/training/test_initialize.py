@@ -16,6 +16,7 @@ import os
 import tempfile
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -28,6 +29,8 @@ from megatron.bridge.training.config import DistributedInitConfig
 from megatron.bridge.training.initialize import (
     _initialize_tp_communicators,
     _setup_flight_recorder_env,
+    destroy_global_state,
+    initialize_megatron,
     set_jit_fusion_options,
 )
 
@@ -41,6 +44,28 @@ _FR_ENV_VARS = [
     "TORCH_INCLUDE_ONLY_ACTIVE",
     "TORCH_NCCL_EXTRA_DUMP_ON_EXEC",
 ]
+
+
+@pytest.mark.parametrize("has_initializer", [False, True])
+def test_destroy_global_state_resets_fixed_dsa_tracker(has_initializer):
+    tracker = {"agreed_size": 8, "values": object(), "pp_group": object()}
+    module = SimpleNamespace(DSAIndexerLossLoggingHelper=SimpleNamespace(tracker=tracker))
+    if has_initializer:
+        module.initialize_dsa_metric_tracker = Mock()
+    with (
+        patch("megatron.core.transformer.experimental_attention_variant.dsa_logging", module, create=True),
+        patch("megatron.bridge.training.initialize.destroy_num_microbatches_calculator"),
+        patch("megatron.bridge.training.initialize.parallel_state"),
+        patch("megatron.core.rerun_state_machine.destroy_rerun_state_machine"),
+    ):
+        destroy_global_state()
+        if has_initializer:
+            assert tracker == {}
+            tracker.update(agreed_size=16, values=object(), pp_group=object())
+            destroy_global_state()
+            assert tracker == {}
+        else:
+            assert tracker["agreed_size"] == 8
 
 
 def test_set_jit_fusion_options_preserves_builder_config_for_warmup() -> None:
@@ -561,3 +586,33 @@ def test_torch_dist_init_resets_default_logging_ranks(lazy):
                 assert get_default_log_ranks() == (0,)
     finally:
         set_default_log_ranks(original)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("deterministic_mode", [True, False])
+def test_initialize_megatron_pins_triton_autotune_only_in_deterministic_mode(deterministic_mode: bool) -> None:
+    """Timed Triton autotuning is pinned before any kernel runs, only when deterministic_mode is on."""
+    cfg = Mock()
+    cfg.model.deterministic_mode = deterministic_mode
+    cfg.inprocess_restart = None
+    cfg.profiling = None
+
+    with (
+        patch("megatron.bridge.training.initialize.init_num_microbatches_calculator"),
+        patch("megatron.bridge.training.initialize.init_rerun_state"),
+        patch("megatron.bridge.training.initialize.torch_dist_init", return_value=None) as torch_dist_init,
+        patch("megatron.bridge.training.initialize.tuning") as tuning,
+        patch("megatron.bridge.training.initialize.torch.distributed.is_initialized", return_value=False),
+    ):
+        calls = Mock()
+        calls.attach_mock(tuning, "tuning")
+        calls.attach_mock(torch_dist_init, "torch_dist_init")
+        initialize_megatron(cfg, allow_no_cuda=True)
+
+    called = [name for name, _, _ in calls.mock_calls]
+    if deterministic_mode:
+        tuning.install.assert_called_once_with(deterministic=True)
+        assert called.index("tuning.install") < called.index("torch_dist_init")
+    else:
+        tuning.install.assert_not_called()
+    torch_dist_init.assert_called_once()

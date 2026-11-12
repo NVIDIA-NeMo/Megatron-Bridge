@@ -14,6 +14,8 @@
 # ruff: noqa: F401
 """Common helpers for qwen_vl performance recipes."""
 
+from typing import Literal
+
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
     _perf_precision,
@@ -111,6 +113,38 @@ def _enable_partial_cuda_graphs(cfg: ConfigContainer) -> None:
     # at model build. The h100 library recipe sets both for the same reason.
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True
+
+
+def _select_gdn_kernel_backend(cfg: ConfigContainer, backend: Literal["transformer_engine", "fla"]) -> None:
+    """Select the kernel for the GatedDeltaNet (GDN) layers when Megatron-Core exposes the choice.
+
+    ``"transformer_engine"`` runs GDN through Transformer Engine's GatedDeltaNetAttention on cuDNN frontend
+    kernels; ``"fla"`` is Megatron-Core's default FLA Triton kernel. Qwen3.5-VL runs 3 of every 4 language
+    layers as GDN (30 of 40 at 35B-A3B, 45 of 60 at 397B-A17B), so with 16 microbatches per step the GB300
+    35B and 397B recipes run 480 and 720 GDN forward+backward passes per rank per step.
+
+    On GB300 at these recipes' shapes (35B: MBS 4 x 4096 tokens x 32 heads x 128; 397B: MBS 1 x 4096 x 64 x 128),
+    cuDNN frontend 1.29 takes 54% (35B) and 39% (397B) less time than FLA for the GDN layer forward+backward. End to
+    end with MXFP8, one run per arm on launch configurations close to (not exactly) these recipes, throughput rises
+    by 9.6% at 397B-A17B on 64 GPUs (EP 32, forced load balancing) and by 12.0% to 19.4% at 35B-A3B on 16 GPUs
+    (EP 4, real routing, two images).
+
+    The cuDNN path needs a Megatron-Core with ``TransformerConfig.gdn_kernel_backend`` (NVIDIA/Megatron-LM#6645,
+    re-landing as NVIDIA/Megatron-LM#7583); transformer-engine >= 2.19; nvidia-cudnn-frontend >= 1.29.0 (older GDN
+    kernels can return NaN); and nvidia-cutlass-dsl >= 4.7.0. With an older CuTe DSL, cuDNN silently runs GDN on its
+    cuTile engine, which takes 86% longer than FLA at the 35B shape. Transformer Engine 2.19 also raises under the FP8
+    autocast that the FP8-CS and MXFP8 recipes enable unless Megatron-Core turns it off around the GDN call, which
+    #7583 does not; 2.20.2 and later ignore FP8 autocast in GDN. ``ConfigContainer.validate`` warns about missing or
+    too-old packages, and about Transformer Engine 2.19 with FP8 or FP4, instead of this helper switching backends, so
+    a recipe builds the same config in every environment. Compare against FLA with ``model.gdn_kernel_backend=fla``.
+
+    Assigning an unknown field on the model config does not raise: on a Megatron-Core without the field it would
+    create an unused attribute and leave the recipe looking enabled while running FLA, so the assignment is
+    guarded, as in ``_enable_gdn_conv_fusion`` (``recipes/qwen_vl/h100/qwen35_vl.py``).
+    """
+    model = cfg.model
+    if hasattr(type(model), "gdn_kernel_backend") or hasattr(model, "gdn_kernel_backend"):
+        model.gdn_kernel_backend = backend
 
 
 def _qwen35_vl_post_clear_scope(cfg: ConfigContainer) -> None:

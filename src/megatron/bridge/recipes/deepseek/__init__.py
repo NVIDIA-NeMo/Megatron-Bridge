@@ -15,14 +15,8 @@
 """DeepSeek recipe exports.
 
 This module re-exports AutoBridge-based pretrain config helpers for DeepSeek
-models (V2, V2-Lite, V3, V4).
+models (V3, V4).
 """
-
-# DeepSeek V2/V2-Lite
-from .deepseek_v2 import (
-    deepseek_v2_lite_pretrain_config,
-    deepseek_v2_pretrain_config,
-)
 
 # DeepSeek V3
 from .deepseek_v3 import (
@@ -53,6 +47,7 @@ from .gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config,
+    deepseek_v4_flash_proxy_pretrain_8gpu_gb200_bf16_config,
     deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config,
 )
 from .gb300.deepseek_v4 import (
@@ -62,9 +57,6 @@ from .gb300.deepseek_v4 import (
 
 
 __all__ = [
-    # DeepSeek V2/V2-Lite
-    "deepseek_v2_pretrain_config",
-    "deepseek_v2_lite_pretrain_config",
     # DeepSeek V3
     "deepseek_v3_pretrain_config",
     "deepseek_v3_pretrain_config_32nodes",
@@ -87,6 +79,7 @@ __all__ = [
     "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config",
     "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config",
     "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config",
+    "deepseek_v4_flash_proxy_pretrain_8gpu_gb200_bf16_config",
     "deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config",
     "deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config",
     "deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config",

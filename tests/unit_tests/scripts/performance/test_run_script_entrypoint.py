@@ -29,8 +29,17 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
 import bootstrap
 import run_recipe
 import run_script
-import setup_experiment
 from utils import utils
+
+
+# setup_experiment imports utils.executors, which references nemo_run.KubeflowExecutor at import time; the locked
+# nemo-run 0.4.0 does not have it.
+try:
+    from nemo_run import KubeflowExecutor  # noqa: F401
+except ImportError:
+    setup_experiment = None
+else:
+    import setup_experiment
 
 
 def test_nemo_ci_legacy_variants_select_the_default_flat_recipe_name():
@@ -41,6 +50,7 @@ def test_nemo_ci_legacy_variants_select_the_default_flat_recipe_name():
     assert utils._recipe_variant_suffix("large_scale") == "_large_scale"
 
 
+@pytest.mark.skipif(setup_experiment is None, reason="setup_experiment needs a nemo-run release with KubeflowExecutor")
 def test_gpu_tuning_options_are_not_forwarded_to_rank_local_scripts():
     assert setup_experiment._filter_run_script_args(
         [

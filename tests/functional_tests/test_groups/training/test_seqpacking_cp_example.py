@@ -58,6 +58,7 @@ def _make_functional_test_model_small(model: object) -> None:
         _set_existing_attr(model, name, value)
 
 
+@pytest.mark.usefixtures("reset_distributed")
 class TestPeftSftExample:
     """Run the PEFT SFT example as a functional test with packed sequences + CP."""
 

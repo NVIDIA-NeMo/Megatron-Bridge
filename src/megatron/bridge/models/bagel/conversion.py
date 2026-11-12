@@ -60,7 +60,6 @@ class BagelBridge(MegatronModelBridge):
     """Import official BAGEL tensors with the strict native checkpoint mapper."""
 
     SUPPORTS_HF_PRETRAINED_EXPORT = False
-    MODEL_CONFIG_CLASS = None
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> BagelModelProvider:
         """Build the BAGEL provider from the nested official configuration."""

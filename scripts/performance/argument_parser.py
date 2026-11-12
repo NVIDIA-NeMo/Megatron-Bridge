@@ -33,9 +33,13 @@ NUM_GPUS_PER_NODE_MAP = {
     "b300": 8,
     "gb200": 4,
     "gb300": 4,
-    "vr200": 4,
+    "vrnvl72": 4,
     "r100": 1,
 }
+
+# Deprecated --gpu names and their replacements. When the deprecation window ends, drop an entry together with
+# its counterpart in LEGACY_HARDWARE_ALIASES (scripts/training/recipe_metadata.py).
+LEGACY_GPU_ALIASES = {"vr200": "vrnvl72"}
 
 
 def list_of_strings(arg):
@@ -78,6 +82,16 @@ def lower_str(arg):
     """Lowercase a CLI string argument with a runtime type check."""
     assert isinstance(arg, str), f"Argument {arg} is not a string"
     return arg.lower()
+
+
+def canonical_gpu(arg: str) -> str:
+    """Map a deprecated GPU name to its replacement before argparse checks the choices."""
+    if arg in LEGACY_GPU_ALIASES:
+        # Every rank re-parses the forwarded argv, so only the launcher and global rank 0 warn.
+        if os.environ.get("RANK", os.environ.get("SLURM_PROCID", "0")) == "0":
+            logger.warning("--gpu %s is deprecated; use --gpu %s.", arg, LEGACY_GPU_ALIASES[arg])
+        return LEGACY_GPU_ALIASES[arg]
+    return arg
 
 
 def bool_arg(arg):
@@ -787,9 +801,9 @@ def parse_cli_args():
     performance_args.add_argument(
         "-g",
         "--gpu",
-        type=str,
+        type=canonical_gpu,
         choices=NUM_GPUS_PER_NODE_MAP.keys(),
-        help="Target gpu type.",
+        help="Target gpu type. vr200 is a deprecated alias for vrnvl72.",
         required=True,
     )
     performance_args.add_argument(
@@ -831,8 +845,8 @@ def parse_cli_args():
         "--peak_mem_clk",
         help="Lock GPU memory clock to the specified peak frequency in MHz via "
         "`sudo nvidia-smi -lmc <freq>,<freq>`. Runs once per node before training. "
-        "Defaults to 4752 MHz for VR200 and is disabled by default for other GPUs. "
-        "Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VR200 default.",
+        "Defaults to 4752 MHz for VRNVL72 and is disabled by default for other GPUs. "
+        "Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VRNVL72 default.",
         type=int,
         required=False,
         default=None,

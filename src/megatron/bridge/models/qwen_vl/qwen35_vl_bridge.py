@@ -33,8 +33,10 @@ This module provides three bridges:
 """
 
 import logging
+from typing import Any
 
 import torch
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -43,17 +45,17 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
-from megatron.bridge.models.qwen.qwen35_bridge import (
-    Qwen35Bridge,
-    Qwen35MoEBridge,
-    _apply_qwen35_common_config,
-    _apply_qwen35_moe_config,
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import qwen35_hf_layer_config, qwen35_hybrid_mappings
+from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import (
+    Qwen35HybridForTokenClassification,
+    Qwen35VLHybridModel,
+    qwen35_vl_hybrid_stack_spec,
 )
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
+from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
@@ -66,6 +68,48 @@ logger = logging.getLogger(__name__)
 _QWEN3_5_DENSE_HF_CLASS_NAME = "Qwen3_5ForConditionalGeneration"
 _QWEN3_5_MOE_HF_CLASS_NAME = "Qwen3_5MoeForConditionalGeneration"
 _QWEN3_5_TOKEN_CLASSIFICATION_HF_CLASS_NAME = "Qwen3_5ForTokenClassification"
+
+
+def _qwen35_vl_config_kwargs(
+    hf_config: PretrainedConfig, *, params_dtype: torch.dtype, eos_token_id: int
+) -> dict[str, Any]:
+    """Return the vision-language fields added to the language model's config kwargs.
+
+    Args:
+        hf_config: Hugging Face vision-language config with ``text_config`` and ``vision_config``.
+        params_dtype: Language-model parameter dtype, recorded on the vision config.
+        eos_token_id: EOS token ID used when ``text_config`` does not declare one.
+
+    Returns:
+        Megatron config fields keyed by name.
+    """
+    text_config = hf_config.text_config
+    vision_config = hf_config.vision_config
+    vision_config.torch_dtype = params_dtype
+    return dict(
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        # text_config inherits PretrainedConfig's default of True which is wrong for 9B/27B.
+        share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+        position_embedding_type="mrope",
+        hybrid_stack_spec=qwen35_vl_hybrid_stack_spec,
+        # Qwen3.5/3.6 use mRoPE with [11, 11, 10] sections (Qwen3-VL uses [24, 20, 20]).
+        # The sections correspond to [temporal, height, width] dimensions.
+        # With partial_rotary_factor=0.25 and head_dim=256, rotary_dim=64,
+        # so each pair needs 32 dims total → sections [11, 11, 10].
+        mrope_section=getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10]),
+        vision_config=vision_config,
+        bos_token_id=getattr(text_config, "bos_token_id", 248045),
+        eos_token_id=getattr(text_config, "eos_token_id", eos_token_id),
+        vision_start_token_id=getattr(hf_config, "vision_start_token_id", 248053),
+        vision_end_token_id=getattr(hf_config, "vision_end_token_id", 248054),
+        image_token_id=getattr(hf_config, "image_token_id", 248056),
+        video_token_id=getattr(hf_config, "video_token_id", 248057),
+        # Settings the VL models keep where the text models differ. finalize() resolves an
+        # unset autocast_dtype to params_dtype.
+        attention_softmax_in_fp32=True,
+        bias_activation_fusion=True,
+        autocast_dtype=None,
+    )
 
 
 def _get_vision_mappings():
@@ -144,7 +188,7 @@ def _get_vision_mappings():
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_MOE_HF_CLASS_NAME,
-    target=Qwen3VLModel,
+    target=Qwen35VLHybridModel,
     provider=Qwen35VLMoEModelProvider,
     model_type="qwen3_5_moe",
 )
@@ -172,61 +216,44 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-397B-A17B")
         >>> qwen36_bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.6-35B-A3B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
+    MODEL_CONFIG_CLASS = Qwen35VLModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen35VLMoEModelProvider:
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3.5/3.6-VL MoE config to builder config kwargs.
+
+        The language-model fields are the MoE text bridge's, read from ``text_config``.
         """
-        Create a Qwen35VLMoEModelProvider from a HuggingFace pretrained model.
+        config_kwargs = Qwen35MoEBridge().hf_config_to_model_config_kwargs(hf_config.text_config)
+        config_kwargs.update(
+            _qwen35_vl_config_kwargs(hf_config, params_dtype=config_kwargs["params_dtype"], eos_token_id=248046)
+        )
+        return config_kwargs
 
-        Extracts both language model and vision model configurations from the
-        HuggingFace config and maps them to Megatron provider parameters.
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        for name in ("hybrid_layer_pattern", "hybrid_stack_spec", "mtp_hybrid_override_pattern"):
+            kwargs.pop(name, None)
+        kwargs.update(
+            num_layers=hf_config.text_config.num_hidden_layers,
+            is_hybrid_model=False,
+            linear_attention_freq=full_attention_interval_from_hf(hf_config.text_config),
+            moe_layer_freq=1,
+        )
+        return kwargs
 
-        Args:
-            hf_pretrained: HuggingFace pretrained VLM model
-
-        Returns:
-            Qwen35VLMoEModelProvider configured with the HF model's parameters
-        """
-        hf_config = hf_pretrained.config
-        text_config = hf_config.text_config
-
-        # Use base class utility to extract common config fields
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-
-        vision_config = hf_config.vision_config
-        vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
-
-        provider = Qwen35VLMoEModelProvider(**provider_kwargs)
-
-        # LM parameters
-        _apply_qwen35_moe_config(provider, text_config)
-
-        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
-        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
-
-        # --- VL-specific overrides ---
-        provider.position_embedding_type = "mrope"
-        provider.vision_config = vision_config
-        provider.hf_text_config = text_config
-        provider.head_dim = getattr(text_config, "head_dim", 256)
-        provider.bos_token_id = getattr(text_config, "bos_token_id", 248045)
-        provider.eos_token_id = getattr(text_config, "eos_token_id", 248046)
-        provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 248053)
-        provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 248054)
-        provider.image_token_id = getattr(hf_config, "image_token_id", 248056)
-        provider.video_token_id = getattr(hf_config, "video_token_id", 248057)
-        provider.audio_token_id = getattr(hf_config, "audio_token_id", 248076)
-
-        # Qwen3.5/3.6 use mRoPE with [11, 11, 10] sections (Qwen3-VL uses [24, 20, 20]).
-        # The sections correspond to [temporal, height, width] dimensions.
-        # With partial_rotary_factor=0.25 and head_dim=256, rotary_dim=64,
-        # so each pair needs 32 dims total → sections [11, 11, 10].
-        provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10])
-
-        return provider
+    @classmethod
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Preserve the HF language block count when exporting a Hybrid config."""
+        config = super().megatron_to_hf_config(model_config)
+        if getattr(model_config, "hybrid_layer_pattern", None):
+            config.update(qwen35_hf_layer_config(model_config.hybrid_layer_pattern))
+        return config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -277,13 +304,14 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
                 megatron_prefix="language_model.", mtp_experts_packed=mtp_experts_packed
             )
         )
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         return MegatronMappingRegistry(*mapping_list)
 
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_DENSE_HF_CLASS_NAME,
-    target=Qwen3VLModel,
+    target=Qwen35VLHybridModel,
     provider=Qwen35VLModelProvider,
     model_type="qwen3_5",
 )
@@ -307,45 +335,45 @@ class Qwen35VLBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-27B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
+    MODEL_CONFIG_CLASS = Qwen35VLModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
     PROVIDER_CLASS = Qwen35VLModelProvider
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen35VLModelProvider:
-        """Create a Qwen35VLModelProvider from a HuggingFace pretrained model."""
-        hf_config = hf_pretrained.config
-        text_config = hf_config.text_config
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3.5-VL dense config to builder config kwargs.
 
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+        The language-model fields are the dense text bridge's, read from ``text_config``.
+        """
+        config_kwargs = Qwen35Bridge().hf_config_to_model_config_kwargs(hf_config.text_config)
+        config_kwargs.update(
+            _qwen35_vl_config_kwargs(hf_config, params_dtype=config_kwargs["params_dtype"], eos_token_id=248044)
+        )
+        return config_kwargs
 
-        vision_config = hf_config.vision_config
-        vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        for name in ("hybrid_layer_pattern", "hybrid_stack_spec", "mtp_hybrid_override_pattern"):
+            kwargs.pop(name, None)
+        kwargs.update(
+            num_layers=hf_config.text_config.num_hidden_layers,
+            is_hybrid_model=False,
+            linear_attention_freq=full_attention_interval_from_hf(hf_config.text_config),
+            moe_layer_freq=1,
+        )
+        return kwargs
 
-        provider = self.PROVIDER_CLASS(**provider_kwargs)
-
-        # LM parameters
-        _apply_qwen35_common_config(provider, text_config)
-
-        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
-        # text_config inherits PretrainedConfig's default of True which is wrong for 9B/27B.
-        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
-
-        # --- VL-specific overrides ---
-        provider.position_embedding_type = "mrope"
-        provider.vision_config = vision_config
-        provider.hf_text_config = text_config
-        provider.head_dim = getattr(text_config, "head_dim", 256)
-        provider.bos_token_id = getattr(text_config, "bos_token_id", 248045)
-        provider.eos_token_id = getattr(text_config, "eos_token_id", 248044)
-        provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 248053)
-        provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 248054)
-        provider.image_token_id = getattr(hf_config, "image_token_id", 248056)
-        provider.video_token_id = getattr(hf_config, "video_token_id", 248057)
-        provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10])
-
-        return provider
+    @classmethod
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Preserve the HF language block count when exporting a Hybrid config."""
+        config = super().megatron_to_hf_config(model_config)
+        if getattr(model_config, "hybrid_layer_pattern", None):
+            config.update(qwen35_hf_layer_config(model_config.hybrid_layer_pattern))
+        return config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -363,20 +391,42 @@ class Qwen35VLBridge(MegatronModelBridge):
             Qwen35Bridge._get_dense_lm_mappings(hf_prefix="model.language_model.", megatron_prefix="language_model.")
         )
         mapping_list.extend(Qwen35Bridge._get_dense_mtp_mappings(megatron_prefix="language_model."))
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         return MegatronMappingRegistry(*mapping_list)
 
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_TOKEN_CLASSIFICATION_HF_CLASS_NAME,
-    target=Qwen3VLForTokenClassification,
+    target=Qwen35HybridForTokenClassification,
     provider=Qwen35TokenClassificationModelProvider,
     model_type="qwen3_5",
 )
 class Qwen35TokenClassificationBridge(Qwen35VLBridge):
-    """Bridge for Qwen3.5 VL models with a replicated per-token classification head."""
+    """Bridge for Qwen3.5 VL models with a replicated per-token classification head.
 
+    The classification model still builds through its provider, so this bridge opts out of the
+    builder-backed config that ``Qwen35VLBridge`` uses.
+    """
+
+    # Restore the base rejection instead of inheriting the Qwen3.5-VL builder mapping.
+    MODEL_CONFIG_CLASS = None
+    USE_MODEL_CONFIG_FOR_CONVERSION = False
+    hf_config_to_model_config_kwargs = MegatronModelBridge.hf_config_to_model_config_kwargs
     PROVIDER_CLASS = Qwen35TokenClassificationModelProvider
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Map the base Qwen3.5-VL fields for the classification provider."""
+        kwargs = Qwen35VLBridge.hf_config_to_model_config_kwargs(self, hf_config)
+        for name in ("hybrid_layer_pattern", "hybrid_stack_spec", "mtp_hybrid_override_pattern"):
+            kwargs.pop(name, None)
+        kwargs.update(
+            num_layers=hf_config.text_config.num_hidden_layers,
+            is_hybrid_model=False,
+            linear_attention_freq=full_attention_interval_from_hf(hf_config.text_config),
+            moe_layer_freq=1,
+        )
+        return kwargs
 
     def provider_bridge(
         self,
@@ -414,6 +464,7 @@ class Qwen35TokenClassificationBridge(Qwen35VLBridge):
             megatron_prefix="language_model.",
             output_layer_hf_param=None,
         )
+        mapping_list = qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.text_config.num_hidden_layers)
         mapping_list.extend(_get_vision_mappings())
         mapping_list.append(
             ReplicatedMapping(

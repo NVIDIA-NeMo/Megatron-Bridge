@@ -33,9 +33,8 @@ class MergeTestHelper:
 
     def __init__(self):
         self.media_placeholder_token_id = IMAGE_TOKEN_ID
-        self.config = Mock()
-        self.config.pad_token_id = PAD_TOKEN_ID
-        self.config.ignore_index = IGNORE_INDEX
+        self.pad_token_id = PAD_TOKEN_ID
+        self.ignore_index = IGNORE_INDEX
 
     def merge(
         self, image_features, inputs_embeds, input_ids, attention_mask=None, labels=None, target_seq_length=None
@@ -229,8 +228,8 @@ def test_packed_cp_forward_partitions_each_logical_row(monkeypatch):
             self.forward_kwargs = kwargs
             return torch.zeros_like(kwargs["labels"], dtype=torch.float32)
 
-    def _partition_each_row(batch, *, is_hybrid_cp, cp_group):
-        assert is_hybrid_cp is False
+    def _partition_each_row(batch, *, dynamic_cp, cp_group):
+        assert dynamic_cp is False
         assert cp_group.size() == 2
         boundaries = batch["cu_seqlens"].squeeze(0).tolist()
         indices = []
@@ -278,6 +277,47 @@ def test_packed_cp_forward_partitions_each_logical_row(monkeypatch):
     assert torch.equal(language_model.forward_kwargs["labels"].squeeze(), expected_indices)
     assert torch.equal(language_model.forward_kwargs["position_ids"].squeeze(), expected_indices)
     assert torch.equal(language_model.forward_kwargs["loss_mask"].squeeze(), expected_indices.float() + 100)
+
+
+@pytest.mark.parametrize("built_by_builder", [False, True])
+def test_sequence_parallel_scatter_uses_the_model_process_groups(monkeypatch, built_by_builder):
+    """A builder passes the model its process groups; a provider carries them as ``_pg_collection``."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.models.kimi_vl import modeling_kimi_k25_vl as kimi_model
+
+    class _LanguageModel:
+        def embedding(self, input_ids, position_ids):  # noqa: ARG002
+            return input_ids.transpose(0, 1).unsqueeze(-1).float()
+
+        def forward(self, **kwargs):
+            return kwargs["decoder_input"]
+
+    scatter_groups = []
+
+    def _scatter(tensor, group=None):
+        scatter_groups.append(group)
+        return tensor
+
+    monkeypatch.setattr(kimi_model.parallel_state, "get_context_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(kimi_model, "scatter_to_sequence_parallel_region", _scatter)
+    if built_by_builder:
+        model = SimpleNamespace(
+            pre_process=True,
+            language_model=_LanguageModel(),
+            config=SimpleNamespace(sequence_parallel=True),
+            pg_collection=SimpleNamespace(tp="builder-tp"),
+        )
+    else:
+        model = SimpleNamespace(
+            pre_process=True,
+            language_model=_LanguageModel(),
+            config=SimpleNamespace(sequence_parallel=True, _pg_collection=SimpleNamespace(tp="provider-tp")),
+        )
+
+    kimi_model.KimiK25VLModel.forward(model, input_ids=torch.arange(4).unsqueeze(0))
+
+    assert scatter_groups == ["builder-tp" if built_by_builder else "provider-tp"]
 
 
 # ===========================================================================
@@ -637,6 +677,97 @@ class TestKimiK25VLModelInit:
         assert not hasattr(model, "vision_tower")
         assert not hasattr(model, "mm_projector")
         assert hasattr(model, "language_model")
+
+    def test_init_reads_builder_settings(self):
+        """A builder passes the settings, a language-model factory and its process groups."""
+        from types import SimpleNamespace
+
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
+
+        # The transformer config declares no vision-language settings, so none may be read from it.
+        transformer_config = Mock(spec=["sequence_parallel"])
+        model_config = SimpleNamespace(
+            hf_model_path="/path/to/model",
+            trust_remote_code=False,
+            share_embeddings_and_output_weights=False,
+            media_placeholder_token_id=7,
+            pad_token_id=8,
+            ignore_index=-9,
+        )
+        language_model = Mock()
+        build_language_model = Mock(return_value=language_model)
+        pg_collection = SimpleNamespace(tp=Mock())
+
+        model = KimiK25VLModel(
+            transformer_config,
+            pre_process=False,
+            post_process=True,
+            vp_stage=1,
+            model_config=model_config,
+            build_language_model=build_language_model,
+            pg_collection=pg_collection,
+        )
+
+        build_language_model.assert_called_once_with(pre_process=False, post_process=True, vp_stage=1)
+        assert model.config is transformer_config
+        assert model.language_model is language_model
+        assert model.pg_collection is pg_collection
+        assert model.share_embeddings_and_output_weights is False
+        assert (model.media_placeholder_token_id, model.pad_token_id, model.ignore_index) == (7, 8, -9)
+
+    @patch("megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.get_class_from_dynamic_module")
+    @patch("megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.hook_hf_module_setattr_for_tp_grad_sync")
+    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.safe_load_config_with_retry")
+    def test_init_with_pre_process_loads_vision_from_builder_settings(self, mock_safe_load, mock_hook, mock_get_class):
+        """The builder config names the checkpoint, grants its code and receives the reloaded vision config."""
+        from types import SimpleNamespace
+
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
+
+        transformer_config = Mock(spec=["sequence_parallel"])
+        model_config = SimpleNamespace(
+            hf_model_path="/path/to/builder/model",
+            trust_remote_code=True,
+            vision_config=None,
+            share_embeddings_and_output_weights=False,
+            media_placeholder_token_id=IMAGE_TOKEN_ID,
+            pad_token_id=PAD_TOKEN_ID,
+            ignore_index=IGNORE_INDEX,
+        )
+        vision_config = Mock()
+        mock_safe_load.return_value = SimpleNamespace(vision_config=vision_config)
+        encoder_cls = type("MoonViT3dEncoder", (), {"_bridge_init_patched": True})
+        loaded_paths = []
+
+        def _load_class(name, path, **kwargs):
+            loaded_paths.append((path, kwargs))
+            if "MoonViT3dPretrainedModel" in name:
+                cls = Mock(return_value=Mock())
+                cls.__module__ = "test_module"
+                return cls
+            if "MoonViT3dEncoder" in name:
+                return encoder_cls
+            return Mock(return_value=Mock())
+
+        mock_get_class.side_effect = _load_class
+
+        with patch("importlib.import_module", return_value=SimpleNamespace(MoonViT3dEncoder=encoder_cls)):
+            model = KimiK25VLModel(
+                transformer_config,
+                pre_process=True,
+                post_process=True,
+                model_config=model_config,
+                build_language_model=Mock(return_value=Mock()),
+                pg_collection=SimpleNamespace(tp=Mock()),
+            )
+
+        assert hasattr(model, "vision_tower") and hasattr(model, "mm_projector")
+        assert loaded_paths
+        assert all(
+            path == "/path/to/builder/model" and kwargs == {"trust_remote_code": True} for path, kwargs in loaded_paths
+        )
+        mock_safe_load.assert_called_once_with("/path/to/builder/model", trust_remote_code=True)
+        assert model_config.vision_config is vision_config
 
     def test_set_input_tensor_delegates(self):
         """Test set_input_tensor delegates to language model."""

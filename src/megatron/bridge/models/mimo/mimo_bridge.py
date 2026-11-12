@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Mapping
+from typing import Any, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -31,20 +32,18 @@ from megatron.bridge.models.qwen.qwen2_bridge import Qwen2Bridge
 class MimoBridge(Qwen2Bridge):
     """Megatron Bridge for MiMo Causal LM."""
 
-    def provider_bridge(self, hf_pretrained):
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face MiMo config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
 
         # MiMo follows Qwen2 attention behavior and adds MTP on top.
-        provider.qk_layernorm = False
-        provider.add_qkv_bias = True
+        config_kwargs.update(qk_layernorm=False, add_qkv_bias=True)
 
         num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
         if num_mtp_layers > 0:
-            provider.mtp_num_layers = num_mtp_layers
-            provider.mtp_loss_scaling_factor = 0.1
+            config_kwargs.update(mtp_num_layers=num_mtp_layers, mtp_loss_scaling_factor=0.1)
 
-        return provider
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = list(super().mapping_registry().mappings)

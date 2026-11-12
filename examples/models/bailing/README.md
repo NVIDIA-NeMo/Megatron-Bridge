@@ -53,7 +53,7 @@ bash examples/models/bailing/inference.sh
 
 ## Ling 3.0
 
-Conversion and SFT require native MCore `HybridModel` KDA and head-wise MLA output gating. The default main pin does not yet provide both features. Selecting `bash scripts/switch_mcore.sh dev` alone is also insufficient: the latest PR validation was blocked by shared Bridge imports unavailable in that dev pin. See [Ling 3.0 requirements](../../../docs/models/bailing/ling-3.md#megatron-core-requirements) for the limitations and `examples/model_verification_cards/ling-3.0-tiny-base/card.yaml` for the historical Bridge/MCore combination used in completed conversion validation. That combination does not establish compatibility with the current Bridge; SFT remains unverified. Ling 2.0 does not have this requirement.
+Conversion and SFT require native MCore `HybridModel` KDA and head-wise MLA output gating. The default main pin does not yet provide both features. Selecting `bash scripts/switch_mcore.sh dev` alone does not establish compatibility. Historical validation with Bridge `faf7687e` and MCore dev `4a4de865` was blocked by shared Bridge imports unavailable in that dev pin. See [Ling 3.0 requirements](../../../docs/models/bailing/ling-3.md#megatron-core-requirements) for the limitations and `examples/model_verification_cards/ling-3.0-tiny-base/card.yaml` for the historical Bridge/MCore combination used in completed conversion validation. That combination does not establish compatibility with the current Bridge; SFT remains unverified. Ling 2.0 does not have this requirement.
 
 | Variant | Hugging Face ID | Architecture notes |
 |---------|-----------------|--------------------|

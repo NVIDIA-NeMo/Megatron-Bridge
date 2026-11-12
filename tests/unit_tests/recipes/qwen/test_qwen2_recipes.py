@@ -16,7 +16,10 @@ import importlib
 from typing import Callable
 
 import pytest
+from transformers import Qwen2Config
 
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -79,12 +82,41 @@ class _FakeBridge:
     def __init__(self):
         pass
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Qwen2 recipes must use get_model_config(), not the legacy provider API")
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self) -> BridgeGPTModelConfig:
+        config = Qwen2Config(
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=80,
+            num_attention_heads=8,
+            num_key_value_heads=4,
+            max_position_embeddings=32768,
+            vocab_size=151936,
+        )
+        config.architectures = ["Qwen2ForCausalLM"]
+        model_config = AutoBridge.from_hf_config(config).get_model_config()
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        return model_config
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Qwen2 recipes must not call the legacy provider API")
 
 
 def _assert_basic_config(cfg):
@@ -450,3 +482,19 @@ def test_qwen25_72b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     # For LoRA, 72B should use TP=8, PP=1
     assert cfg.model.tensor_model_parallel_size == 8
     assert cfg.model.pipeline_model_parallel_size == 1
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN2_RECIPE_FUNCS, ids=lambda func: func.__name__)
+def test_each_qwen2_recipe_uses_strict_builder_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every Qwen2/2.5 recipe should configure a ModelConfig without provider fallback."""
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _BuilderOnlyBridge)
+
+    if "peft" in recipe_func.__name__.lower():
+        cfg = recipe_func(peft_scheme="lora")
+    else:
+        cfg = recipe_func()
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.normalization == "RMSNorm"
+    assert cfg.model.add_qkv_bias is True
+    assert cfg.model.position_embedding_type == "rope"

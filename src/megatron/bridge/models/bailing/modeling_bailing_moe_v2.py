@@ -236,12 +236,9 @@ class BailingMoeV2RotaryEmbedding(nn.Module):
     @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
     def forward(self, x, position_ids):
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
-        position_ids_expanded = position_ids[:, None, :].float()
-
         device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):  # Force float32
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+            freqs = position_ids[..., None].float() * self.inv_freq.to(device=x.device, dtype=torch.float)
             emb = torch.cat((freqs, freqs), dim=-1)
             cos = emb.cos() * self.attention_scaling
             sin = emb.sin() * self.attention_scaling
@@ -482,7 +479,10 @@ class BailingMoeV2Attention(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
         self.head_dim = config.head_dim or self.hidden_size // self.num_heads
-        partial_rotary_factor = config.partial_rotary_factor if hasattr(config, "partial_rotary_factor") else 1.0
+        partial_rotary_factor = getattr(config, "partial_rotary_factor", None)
+        if partial_rotary_factor is None:
+            # Transformers 5.20+ keeps partial_rotary_factor only in rope_parameters.
+            partial_rotary_factor = (getattr(config, "rope_parameters", None) or {}).get("partial_rotary_factor", 1.0)
         self.rope_dim = int(self.head_dim * partial_rotary_factor)
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads

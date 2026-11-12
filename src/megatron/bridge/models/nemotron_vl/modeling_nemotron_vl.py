@@ -18,7 +18,7 @@ import torch
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 
 
 class NemotronVLModel(MegatronModule):
@@ -31,7 +31,7 @@ class NemotronVLModel(MegatronModule):
 
     def __init__(
         self,
-        config: Optional["NemotronVLModelProvider"] = None,
+        config: Optional["HybridModelProvider"] = None,
         *,
         llava_model: Optional[LLaVAModel] = None,
         pre_process: bool | None = True,

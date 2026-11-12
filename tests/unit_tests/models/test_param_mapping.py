@@ -14,7 +14,8 @@
 
 from functools import partial
 from types import SimpleNamespace
-from unittest.mock import patch
+from typing import Callable
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -28,7 +29,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    GDNConv1dMapping,
     KVMapping,
+    MambaConv1dMapping,
+    MambaInProjMapping,
+    MegatronParamMapping,
     QKVMapping,
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
@@ -104,7 +109,8 @@ def transformer_config():
     )
 
 
-def test_local_hf_param_specs_cover_gated_and_expert_views():
+@pytest.mark.parametrize("transpose_on_export", [False, True])
+def test_local_hf_param_specs_cover_gated_and_expert_views(transpose_on_export):
     logical = torch.arange(32).reshape(8, 4)
     gated = GatedMLPMapping(
         "decoder.mlp.linear_fc1.weight",
@@ -124,12 +130,14 @@ def test_local_hf_param_specs_cover_gated_and_expert_views():
     down = FusedExpertMapping(
         "decoder.mlp.experts.linear_fc2.weight3",
         "model.mlp.experts.down_proj",
+        transpose_on_export=transpose_on_export,
     )
     assert [spec.name for spec in down.local_hf_param_specs()] == ["model.mlp.experts.3.down_proj.weight"]
 
     gate_up = FusedGatedExpertMapping(
         "decoder.mlp.experts.linear_fc1.weight3",
         "model.mlp.experts.gate_up_proj",
+        transpose_on_export=transpose_on_export,
     )
     assert [spec.name for spec in gate_up.local_hf_param_specs()] == [
         "model.mlp.experts.3.gate_proj.weight",
@@ -137,8 +145,8 @@ def test_local_hf_param_specs_cover_gated_and_expert_views():
     ]
 
 
-def test_local_hf_param_specs_reject_grouped_or_transformed_views():
-    """Mappings that need export transforms must use the normal Bridge path."""
+def test_local_hf_param_specs_reject_unsupported_local_transforms():
+    """Canonical local specs do not support arbitrary mapping transforms."""
 
     class GroupedAutoMapping(AutoMapping):
         is_grouped_export = True
@@ -178,17 +186,7 @@ def test_local_hf_param_specs_reject_grouped_or_transformed_views():
     assert not FusedExpertMapping(
         "decoder.mlp.experts.linear_fc2.weight3",
         "model.mlp.experts.down_proj",
-        transpose_on_export=True,
-    ).local_hf_param_specs()
-    assert not FusedExpertMapping(
-        "decoder.mlp.experts.linear_fc2.weight3",
-        "model.mlp.experts.down_proj",
         permute_dims=(1, 0),
-    ).local_hf_param_specs()
-    assert not FusedGatedExpertMapping(
-        "decoder.mlp.experts.linear_fc1.weight3",
-        "model.mlp.experts.gate_up_proj",
-        transpose_on_export=True,
     ).local_hf_param_specs()
     assert not FusedGatedExpertMapping(
         "decoder.mlp.experts.linear_fc1.weight3",
@@ -381,6 +379,110 @@ class TestColumnParallelMapping:
             assert "hf.weight" in result
             assert torch.equal(result["hf.weight"], full_weight)
 
+    @staticmethod
+    def _module_with_param(param_path, tensor):
+        root = torch.nn.Module()
+        module = root
+        *parents, leaf = param_path.split(".")
+        for name in parents:
+            child = torch.nn.Module()
+            module.add_module(name, child)
+            module = child
+        module.register_parameter(leaf, torch.nn.Parameter(tensor))
+        return root
+
+    @pytest.mark.parametrize(
+        "megatron_param",
+        [
+            "embedding.word_embeddings.weight",
+            "language_model.embedding.word_embeddings.weight",
+            "language_model.output_layer.weight",
+        ],
+    )
+    def test_hf_to_megatron_zero_pads_vocab_under_wrapper_prefix(self, mock_distributed_env, megatron_param):
+        _, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = ColumnParallelMapping(megatron_param, "hf.weight")
+        # Local shard of a vocabulary padded from 1280 to 2560 rows for TP2.
+        module = self._module_with_param(megatron_param, torch.empty(1280, 4))
+        hf_weight = torch.randn(1280, 4)
+        mock_dist.scatter.side_effect = lambda output, scatter_list, src, group: output.copy_(scatter_list[0])
+
+        local = mapping.hf_to_megatron(hf_weight, module)
+
+        scattered = torch.cat(mock_dist.scatter.call_args[0][1], dim=0)
+        assert local.shape == (1280, 4)
+        assert scattered.shape == (2560, 4)
+        assert torch.equal(scattered[:1280], hf_weight)
+        assert torch.count_nonzero(scattered[1280:]) == 0
+
+    @pytest.mark.parametrize(
+        "megatron_param",
+        [
+            "language_model.decoder.layers.0.mlp.linear_fc1.weight",
+            "language_model.extra_output_layer.weight",
+        ],
+    )
+    def test_hf_to_megatron_rejects_padding_for_non_vocab_params(self, mock_distributed_env, megatron_param):
+        mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = ColumnParallelMapping(megatron_param, "hf.weight")
+        module = self._module_with_param(megatron_param, torch.empty(1280, 4))
+        with pytest.raises(AssertionError):
+            mapping.hf_to_megatron(torch.randn(1280, 4), module)
+
+    def test_current_pp_stage_only_export_keeps_tp_gather(self, mock_distributed_env):
+        _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)
+        mapping = ColumnParallelMapping("col.weight", "hf.weight")
+        local_shard = torch.randn(4, 3)
+        remote_shard = torch.randn(4, 3)
+
+        with patch.object(mapping, "gather_from_tp_ranks", return_value=[local_shard, remote_shard]) as gather:
+            with MegatronParamMapping.skip_pp_broadcast():
+                result = mapping.megatron_to_hf(local_shard, None)
+
+        gather.assert_called_once_with(local_shard)
+        mock_dist.all_gather_object.assert_not_called()
+        mock_dist.broadcast.assert_not_called()
+        assert torch.equal(result["hf.weight"], torch.cat([local_shard, remote_shard], dim=0))
+
+    def test_current_pp_stage_only_export_keeps_ep_gather(self, mock_distributed_env):
+        _, mock_dist = mock_distributed_env(tp_size=1, pp_size=2)
+        mapping = ColumnParallelMapping(
+            "decoder.layers.0.mlp.experts.linear_fc1.weight0",
+            "model.layers.0.mlp.experts.0.gate_proj.weight",
+        )
+
+        class _MockGroup:
+            def __init__(self, size, rank):
+                self._size = size
+                self._rank = rank
+
+            def size(self):
+                return self._size
+
+            def rank(self):
+                return self._rank
+
+        mapping._etp_group = _MockGroup(1, 0)
+        mapping.ep_group = _MockGroup(2, 0)
+        local_expert = torch.randn(4, 3)
+        remote_expert = torch.randn(4, 3)
+
+        def all_gather(outputs, tensor, group):
+            assert group is mapping.ep_group
+            outputs[0].copy_(tensor)
+            outputs[1].copy_(remote_expert)
+
+        mock_dist.all_gather.side_effect = all_gather
+        module = SimpleNamespace(config=SimpleNamespace(num_moe_experts=4))
+        with MegatronParamMapping.skip_pp_broadcast():
+            result = mapping.megatron_to_hf(local_expert, module)
+
+        mock_dist.all_gather.assert_called_once()
+        mock_dist.all_gather_object.assert_not_called()
+        mock_dist.broadcast_object_list.assert_not_called()
+        assert torch.equal(result["model.layers.0.mlp.experts.0.gate_proj.weight"], local_expert)
+        assert torch.equal(result["model.layers.0.mlp.experts.2.gate_proj.weight"], remote_expert)
+
 
 class TestRowParallelMapping:
     @pytest.mark.parametrize("tp_rank", [0, 1])
@@ -418,6 +520,76 @@ class TestRowParallelMapping:
 
 
 class TestAutoMapping:
+    @pytest.mark.parametrize("pp_size", [1, 2])
+    def test_local_export_without_owner_does_not_weaken_full_export(self, mock_distributed_env, pp_size):
+        _, mock_dist = mock_distributed_env(pp_size=pp_size)
+        mapping = AutoMapping("decoder.layers.0.norm.weight", "model.layers.0.norm.weight")
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [False] * pp_size
+        )
+
+        with MegatronParamMapping.skip_pp_broadcast():
+            assert mapping.megatron_to_hf(None, None) == {}
+
+        mock_dist.all_gather_object.assert_not_called()
+        mock_dist.broadcast_object_list.assert_not_called()
+        assert mapping._mapping is None
+        assert not mapping._broadcast_obj_cache
+
+        with pytest.raises(ValueError, match=r"decoder\.layers\.0\.norm\.weight.*Object must exist"):
+            mapping.megatron_to_hf(None, None)
+
+    @pytest.mark.parametrize("pp_size", [1, 2])
+    @pytest.mark.parametrize("quantized", [False, True])
+    def test_export_rejects_unowned_parameter(
+        self, mock_distributed_env: Callable[..., tuple[Mock, Mock]], pp_size: int, quantized: bool
+    ) -> None:
+        _, mock_dist = mock_distributed_env(pp_size=pp_size)
+        mapping = AutoMapping("decoder.layers.0.norm.weight", "model.layers.0.norm.weight")
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [False] * pp_size
+        )
+
+        with pytest.raises(ValueError, match=r"decoder\.layers\.0\.norm\.weight.*Object must exist"):
+            if quantized:
+                mapping.megatron_to_hf_quant(None, None, lambda _: False, lambda *args: args)
+            else:
+                mapping.megatron_to_hf(None, None)
+
+        assert mapping._mapping is None
+        assert not mapping._broadcast_obj_cache
+        mock_dist.broadcast_object_list.assert_not_called()
+
+    @pytest.mark.parametrize("quantized", [False, True])
+    def test_export_receives_owned_parameter(
+        self, mock_distributed_env: Callable[..., tuple[Mock, Mock]], quantized: bool
+    ) -> None:
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = AutoMapping("decoder.layers.0.norm.weight", "model.layers.0.norm.weight")
+        weight = torch.arange(8, dtype=torch.float32)
+        spec = (weight.shape, weight.dtype, None, None)
+
+        def gather(output: list[object], obj: object, group: object) -> None:
+            output[:] = [False, True] if obj is False else [None, spec]
+
+        mock_dist.all_gather_object.side_effect = gather
+        mock_dist.broadcast_object_list.side_effect = lambda objects, src, group: objects.__setitem__(0, "replicated")
+        mock_dist.broadcast.side_effect = lambda tensor, src, group: tensor.copy_(weight.to(tensor.device))
+
+        for _ in range(2):
+            if quantized:
+                result = mapping.megatron_to_hf_quant(None, None, lambda _: False, lambda *args: args)
+            else:
+                result = mapping.megatron_to_hf(None, None)
+            assert set(result) == {mapping.hf_param}
+            assert torch.equal(result[mapping.hf_param].cpu(), weight)
+
+        assert isinstance(mapping._mapping, ReplicatedMapping)
+        assert mock_dist.all_gather_object.call_count == 2  # Type and tensor metadata are each cached.
+        mock_dist.broadcast_object_list.assert_called_once()
+        assert mock_dist.broadcast_object_list.call_args.kwargs["src"] == 1
+        assert mock_dist.broadcast.call_count == 2
+
     def test_detect_parallelism_type(self, mock_distributed_env, transformer_config):
         mock_distributed_env()
         mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
@@ -447,6 +619,52 @@ class TestAutoMapping:
 
         with pytest.raises(ValueError):
             mapping._detect_parallelism_type(torch.nn.Linear(5, 5))
+
+    def test_current_pp_stage_only_export_reaches_lazy_delegate(self, mock_distributed_env):
+        _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)
+        mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
+
+        class MyColumnParallel(torch.nn.Module):
+            tensor_model_parallel = True
+            partition_dim = 0
+
+        local_shard = torch.randn(4, 3)
+        remote_shard = torch.randn(4, 3)
+
+        def all_gather(outputs, tensor, group):
+            outputs[0].copy_(tensor)
+            outputs[1].copy_(remote_shard)
+
+        mock_dist.all_gather.side_effect = all_gather
+        with MegatronParamMapping.skip_pp_broadcast():
+            result = mapping.megatron_to_hf(local_shard, MyColumnParallel())
+
+        # Local export must not cache a delegate only on the owning PP stage;
+        # otherwise reusing these tasks for a later full export can make ranks
+        # enter different PP collectives.
+        assert mapping._mapping is None
+        mock_dist.all_gather.assert_called_once()
+        mock_dist.all_gather_object.assert_not_called()
+        mock_dist.broadcast_object_list.assert_not_called()
+        assert torch.equal(result["hf.weight"], torch.cat([local_shard, remote_shard], dim=0))
+
+        mock_dist.reset_mock()
+        mock_dist.all_gather.side_effect = all_gather
+
+        def all_gather_object(outputs, value, group):
+            if isinstance(value, bool):
+                outputs[:] = [True, False]
+            else:
+                outputs[:] = [value, None]
+
+        mock_dist.all_gather_object.side_effect = all_gather_object
+        full_result = mapping.megatron_to_hf(local_shard, MyColumnParallel())
+
+        assert isinstance(mapping._mapping, ColumnParallelMapping)
+        assert mock_dist.all_gather_object.call_count == 2
+        mock_dist.broadcast_object_list.assert_called_once()
+        mock_dist.broadcast.assert_called_once()
+        assert torch.equal(full_result["hf.weight"], torch.cat([local_shard, remote_shard], dim=0))
 
     def test_detect_parallelism_type_dynamic_module(self):
         mtq = pytest.importorskip("modelopt.torch.quantization")
@@ -559,6 +777,25 @@ class TestQKVMapping:
             merged_weight = mock_hf_to_megatron.call_args[0][0]
             assert merged_weight.shape == (64, 32)
 
+    def test_current_pp_stage_only_export_keeps_qkv_split(self, mock_distributed_env, transformer_config):
+        _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)
+        mapping = QKVMapping(megatron_param="qkv.weight", q="q.weight", k="k.weight", v="v.weight")
+        q = torch.randn(32, 32)
+        k = torch.randn(16, 32)
+        v = torch.randn(16, 32)
+        packed_qkv = merge_qkv_weights(transformer_config, q, k, v)
+        megatron_module = MockModule(transformer_config, weight_shape=packed_qkv.shape)
+
+        with patch.object(mapping._tp_mapping, "megatron_to_hf", return_value={"qkv.weight": packed_qkv}):
+            with MegatronParamMapping.skip_pp_broadcast():
+                result = mapping.megatron_to_hf(packed_qkv, megatron_module)
+
+        mock_dist.all_gather_object.assert_not_called()
+        mock_dist.broadcast_object_list.assert_not_called()
+        assert torch.equal(result["q.weight"], q)
+        assert torch.equal(result["k.weight"], k)
+        assert torch.equal(result["v.weight"], v)
+
     def test_megatron_to_hf_scale_uses_explicit_mxfp8_row_block_size(self, mock_distributed_env, transformer_config):
         mock_distributed_env()
         mapping = QKVMapping(megatron_param="qkv.weight", q="q.weight", k="k.weight", v="v.weight")
@@ -609,6 +846,45 @@ class TestKVMapping:
         assert result["v.weight"].shape == (16, 32)
         assert torch.equal(result["k.weight"], k)
         assert torch.equal(result["v.weight"], v)
+
+
+class TestSSMMappings:
+    config = SimpleNamespace(
+        hidden_size=8,
+        mamba_num_heads=4,
+        mamba_head_dim=2,
+        mamba_state_dim=2,
+        mamba_num_groups=1,
+        linear_key_head_dim=2,
+        linear_num_key_heads=2,
+        linear_value_head_dim=2,
+        linear_num_value_heads=2,
+    )
+
+    @pytest.mark.parametrize(
+        "mapping, hf_weight",
+        [
+            (MambaInProjMapping("mixer.in_proj.weight", "hf.in_proj.weight"), torch.randn(24, 8)),
+            (MambaConv1dMapping("mixer.conv1d.weight", "hf.conv1d.weight"), torch.randn(12, 1, 4)),
+            (MambaConv1dMapping("mixer.conv1d.bias", "hf.conv1d.bias"), torch.randn(12)),
+            (GDNConv1dMapping("mixer.conv1d.weight", "hf.conv1d.weight"), torch.randn(12, 1, 4)),
+        ],
+    )
+    def test_round_trip_builds_shard_idx_on_input_device(self, mock_distributed_env, mapping, hf_weight):
+        mock_distributed_env()
+        megatron_module = MockModule(self.config, weight_shape=hf_weight.shape)
+
+        with (
+            patch.object(mapping._tp_mapping, "hf_to_megatron", side_effect=lambda weight, module: weight),
+            patch("torch.arange", wraps=torch.arange) as mock_arange,
+        ):
+            megatron_weight = mapping.hf_to_megatron(hf_weight, megatron_module)
+            result = mapping.megatron_to_hf(megatron_weight, megatron_module)
+
+        assert torch.equal(result[mapping.hf_param], hf_weight)
+        assert mock_arange.call_count > 0
+        for call in mock_arange.call_args_list:
+            assert call.kwargs.get("device") == hf_weight.device
 
 
 class TestGatedMLPMapping:
@@ -898,6 +1174,19 @@ class TestMappingEdgeCases:
         assert mock_dist.all_gather_object.call_count == 1
         # broadcast should be called twice (once per call)
         assert mock_dist.broadcast.call_count == 2
+
+    @pytest.mark.parametrize("pp_size", [1, 2])
+    @pytest.mark.parametrize("value", [False, 0])
+    def test_broadcast_obj_preserves_false_and_zero(
+        self, mock_distributed_env: Callable[..., tuple[Mock, Mock]], pp_size: int, value: bool | int
+    ) -> None:
+        _, mock_dist = mock_distributed_env(pp_size=pp_size)
+        mapping = DirectMapping("weight", "hf.weight")
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [True] * pp_size
+        )
+
+        assert mapping.broadcast_obj_from_pp_rank(value, cache_key="metadata") is value
 
     def test_broadcast_obj_from_pp_rank_multi_owner(self, mock_distributed_env):
         """Test PP object broadcast handles objects present on multiple PP ranks.

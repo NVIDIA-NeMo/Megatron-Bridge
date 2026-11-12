@@ -269,7 +269,7 @@ def test_bailing_moe3_registration_uses_architecture_and_model_type() -> None:
 def test_bailing_moe3_disables_incompatible_default_gpt_builder_config() -> None:
     bridge = BailingMoeV3Bridge()
 
-    with pytest.raises(ModelConfigNotSupportedError, match="sets MODEL_CONFIG_CLASS to None"):
+    with pytest.raises(ModelConfigNotSupportedError, match="MODEL_CONFIG_CLASS is None"):
         bridge.hf_config_to_model_config(_tiny_config())
 
 
@@ -365,6 +365,22 @@ def test_tiny_validation_fails_closed(override) -> None:
 def test_flash_validation_fails_closed(override) -> None:
     with pytest.raises(ValueError):
         BailingMoeV3Bridge._validate_config(_flash_config(**override))
+
+
+@pytest.mark.parametrize("config_factory", [_tiny_config, _flash_config])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("factor", [0.5, 0.25, None])
+def test_rotary_factor_validation_supports_hf_config_formats(config_factory, nested, factor) -> None:
+    config = config_factory(partial_rotary_factor=factor)
+    if nested:
+        del config.partial_rotary_factor
+        config.rope_parameters = {"rope_type": "default", "partial_rotary_factor": factor}
+
+    if factor == 0.5:
+        BailingMoeV3Bridge._validate_config(config)
+    else:
+        with pytest.raises(ValueError, match="partial_rotary_factor"):
+            BailingMoeV3Bridge._validate_config(config)
 
 
 @requires_ling_mcore

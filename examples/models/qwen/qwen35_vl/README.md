@@ -116,8 +116,8 @@ Before training, ensure the following environment variables are set:
 
 ### Vision activation recomputation
 
-Qwen3.5 dense and MoE providers expose vision recomputation independently of
-the decoder. `vision_recompute_granularity` selects the policy:
+The Qwen3.5-VL model config exposes vision recomputation independently of
+the decoder, for dense and MoE models. `vision_recompute_granularity` selects the policy:
 
 - `"inherit"` (default): preserve the existing decoder granularity, method, and
   layer-count inheritance. Selective vision modules retain the vision default

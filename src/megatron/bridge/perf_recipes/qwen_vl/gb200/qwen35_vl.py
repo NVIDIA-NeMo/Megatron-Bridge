@@ -122,6 +122,9 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     # Transformer Engine graphs for the Qwen35-VL router and preprocessing scopes.
     cfg.model.cuda_graph_impl = "transformer_engine"
     set_cuda_graph_modules(cfg.model, ["moe_router", "moe_preprocess"])
+    # CUDA graphs require the TE RNG trackers, which _benchmark_common disabled while graphs were off.
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

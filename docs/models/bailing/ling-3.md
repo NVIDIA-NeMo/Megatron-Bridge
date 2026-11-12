@@ -6,7 +6,7 @@ Tiny and Tiny Base have 24 logical KDA/MLA blocks, 128 routed experts, and low-r
 
 <a id="megatron-core-requirements"></a>
 
-**Megatron-Core requirements.** Conversion and SFT require native HybridModel KDA and head-wise MLA output gating, which the default main pin does not yet provide. Selecting `bash scripts/switch_mcore.sh dev` alone is also insufficient: the latest PR validation was blocked by shared Bridge imports (`set_default_log_ranks` and `FullyShardedDataParallelV1`) unavailable in that dev pin. Unsupported native capabilities are rejected before Ling provider construction.
+**Megatron-Core requirements.** Conversion and SFT require native HybridModel KDA and head-wise MLA output gating, which the default main pin does not yet provide. Selecting `bash scripts/switch_mcore.sh dev` alone does not establish compatibility. Historical validation with Bridge `faf7687e` and MCore dev `4a4de865` was blocked by shared Bridge imports (`set_default_log_ranks` and `FullyShardedDataParallelV1`) unavailable in that dev pin. Unsupported native capabilities are rejected before Ling provider construction.
 
 The Tiny Base verification card (`examples/model_verification_cards/ling-3.0-tiny-base/card.yaml`) records the exact historical Bridge/MCore combination used for successful conversion. These results do not validate the current Bridge with its dev pin or with the historical MCore revision alone. SFT remains unverified; Megatron KDA text generation is unsupported. Ling uses native MCore layers rather than Kimi K3 because the direct KDA forget-gate projection, RoPE-enabled MLA, and head-wise output gate have different layouts and semantics.
 

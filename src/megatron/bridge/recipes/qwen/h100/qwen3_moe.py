@@ -16,7 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.common import _dpo_common, _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -39,7 +39,7 @@ def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     # Model config
     cfg.model = AutoBridge.from_hf_pretrained(
         _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
@@ -204,7 +204,6 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     # HybridEP dispatcher
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_a2a_overlap = False
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_hybridep_num_sms = 32
     cfg.model.moe_router_force_load_balancing = False
@@ -235,7 +234,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-235B-A22B"
@@ -357,7 +356,7 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Model config
     cfg.model = AutoBridge.from_hf_pretrained(
         _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
@@ -525,7 +524,6 @@ def qwen3_30b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_flex_dispatcher_num_sms = None
-    cfg.model.moe_a2a_overlap = False
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.bias_activation_fusion = True
     cfg.model.apply_rope_fusion = True
@@ -549,7 +547,7 @@ def qwen3_235b_a22b_sft_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-235B-A22B"
@@ -696,7 +694,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Model config
     cfg.model = AutoBridge.from_hf_pretrained(
         _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
@@ -859,7 +857,7 @@ def qwen3_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-235B-A22B"
@@ -997,7 +995,74 @@ def qwen3_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
     return cfg
 
 
+def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a DPO config for Qwen3-30B-A3B MoE.
+
+    Recommended parallelism: TP=4, PP=2, EP=4 (1 node, 8 GPUs with SP=True). Requires
+    ``--pretrained_checkpoint`` and ``dataset.ref_artifact`` scored by
+    ``scripts/dpo/score_reference_logprobs.py --recipe qwen3_30b_a3b_dpo_config``.
+    """
+    cfg = _dpo_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
+    ).get_model_config()
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
+
+    # Parallelism settings (MoE-specific: includes expert parallelism)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
+
+    # Sequence length: pairs are right-padded rows, never packed; must match the scoring run
+    cfg.model.seq_length = cfg.dataset.seq_length
+
+    # DPO loss contract (ConfigContainer.validate enforces all but the CE-fusion knob). The
+    # scorer builds from this recipe, so the reference is scored with the same unfused CE.
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.mtp_num_layers = None  # an MTP head would backpropagate its own next-token CE on top of the DPO loss
+
+    # Row-denominated (one pair == two rows, so mbs must be even): gbs 128 rows = 64 pairs
+    # = DP1 x mbs2 x accum64.
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 2
+
+    # MoE kernels and dispatcher, as in the SFT recipes. Routing must stay natural: forced
+    # load balancing would change the policy's logprobs relative to the scored reference.
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+
+    # Fits without recompute at seq 4096 / mbs 2 rows (46 GB per H100); TP8 / PP1 needs full
+    # recompute for the same memory and runs about 40% slower.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+
+    # A no-op at DP=1; shards the Adam state as soon as the run adds nodes.
+    cfg.ddp.use_distributed_optimizer = True
+
+    cfg.optimizer.lr = 5e-7
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+    return cfg
+
+
 __all__ = [
+    "qwen3_30b_a3b_dpo_8gpu_h100_bf16_config",
     "qwen3_235b_a22b_peft_16gpu_h100_bf16_config",
     "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",  # pragma: allowlist secret
     "qwen3_235b_a22b_sft_64gpu_h100_bf16_config",

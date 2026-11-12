@@ -35,6 +35,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import partial_rotary_factor_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -137,12 +138,14 @@ def _validate_common_config(hf_config: Any) -> None:
         "score_function": "sigmoid",
         "norm_topk_prob": True,
         "topk_method": "noaux_tc",
-        "partial_rotary_factor": 0.5,
         "rope_interleave": True,
     }
     for name, supported in supported_modes.items():
         if getattr(hf_config, name, None) != supported:
             raise ValueError(f"Ling 3.0 Bridge only supports {name}={supported!r}.")
+
+    if partial_rotary_factor_from_hf(hf_config) != 0.5:
+        raise ValueError("Ling 3.0 Bridge only supports partial_rotary_factor=0.5.")
 
     # Transformers 5 exposes an unscaled default RoPE config through the
     # ``rope_scaling`` compatibility property even when config.json stores

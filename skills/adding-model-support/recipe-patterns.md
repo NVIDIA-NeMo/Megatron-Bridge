@@ -4,7 +4,7 @@ Recipes provide pre-configured `ConfigContainer` objects for training each model
 
 Reference implementations:
 - **VLM:** `src/megatron/bridge/recipes/qwen_vl/qwen35_vl.py`
-- **LLM:** `src/megatron/bridge/recipes/gpt_oss/gpt_oss.py`
+- **LLM (builder-backed config):** `src/megatron/bridge/recipes/qwen/h100/qwen3.py`
 
 ## File Structure
 
@@ -24,7 +24,7 @@ def <model>_<size>_sft_config() -> ConfigContainer:
     cfg = _sft_common()  # or _sft_common_vlm() for VLMs
 
     # Model
-    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 4
@@ -52,7 +52,7 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
     """PEFT config for <Model> <Size>."""
     cfg = _peft_common()  # or _peft_common_vlm() for VLMs
 
-    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
 
     # PEFT typically uses smaller parallelism
     cfg.model.tensor_model_parallel_size = 1
@@ -67,6 +67,11 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
 
     return cfg
 ```
+
+`get_model_config()` returns a builder-backed `ModelConfig`. Flat assignments such as
+`cfg.model.tensor_model_parallel_size` route to the nested transformer config, and assigning a field
+that neither config declares raises `AttributeError`. Families that have not migrated to the builder
+path still use `.to_megatron_provider(load_weights=False)`.
 
 Keep each recipe function self-contained: start from the shared `_*_common()` base and set every other option inside the function, repeating lines rather than adding family-private helpers or calling another recipe, since users usually read and copy a single recipe.
 
@@ -138,15 +143,33 @@ Add entry to `config_map` dict, docstring model list, and `--model` argparse cho
 
 ### Unit test (no GPU)
 
-Monkeypatch `AutoBridge` to return a mock provider. Verify `ConfigContainer` structure:
+Patch the recipe module's `AutoBridge` with a fake bridge that returns a real, strict model config
+built from a tiny HF config, and make the legacy provider API fail. Then verify the
+`ConfigContainer` structure:
 
 ```python
+class _BuilderOnlyBridge:
+    @staticmethod
+    def from_hf_pretrained(hf_path, **kwargs):
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self):
+        return AutoBridge.from_hf_config(_tiny_hf_config()).get_model_config()
+
+    def to_megatron_provider(self, load_weights=False):
+        raise AssertionError("recipes must use get_model_config()")
+
+
 def test_sft_config(monkeypatch):
-    monkeypatch.setattr("megatron.bridge.AutoBridge.from_hf_pretrained", mock_bridge)
+    monkeypatch.setattr(my_model_recipes, "AutoBridge", _BuilderOnlyBridge)
     cfg = model_size_sft_config()
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
     assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.training.global_batch_size == 128
 ```
+
+Shared recipe tests in other directories may stub `AutoBridge` too. When a family moves to
+`get_model_config()`, search `tests/unit_tests/recipes/` for those stubs and add the method.
 
 ### Functional test (GPU)
 
