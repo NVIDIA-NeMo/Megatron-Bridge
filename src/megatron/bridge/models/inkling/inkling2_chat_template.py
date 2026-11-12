@@ -28,7 +28,7 @@ declares tools first, writes a ``Thinking effort level`` system line (the ``reas
 assistant turn is the supervised span and the template adds no generation prompt.
 """
 
-INKLING2_CHAT_TEMPLATE_REVISION = "78cb6c0ef68e1f089b77e78cfd94783d05b5c41b"
+INKLING2_CHAT_TEMPLATE_REVISION = "78cb6c0ef68e1f089b77e78cfd94783d05b5c41b"  # pragma: allowlist secret
 INKLING2_CHAT_TEMPLATE = """{%- set effort_map = {"none": 0.0, "minimal": 0.1, "low": 0.2, "medium": 0.7, "high": 0.9, "xhigh": 0.99, "max": 0.99} -%}
 {%- set role_token = {"user": "<|message_user|>", "assistant": "<|message_model|>", "system": "<|message_system|>", "tool": "<|message_tool|>"} -%}
 
