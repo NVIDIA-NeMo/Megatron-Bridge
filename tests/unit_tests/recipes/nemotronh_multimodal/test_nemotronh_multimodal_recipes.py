@@ -458,6 +458,7 @@ def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
     assert cfg.model.seq_length == 8192
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.calculate_per_token_loss is True
+    assert cfg.model.attention_backend == "fused"
     assert cfg.train.global_batch_size == 64
     assert cfg.train.micro_batch_size == 2
     assert cfg.model.moe_token_dispatcher_type == "alltoall"
