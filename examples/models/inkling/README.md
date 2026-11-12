@@ -20,8 +20,8 @@ a time. Megatron checkpoints reshard on load, so later runs may use another layo
 
 ```bash
 ./scripts/conversion/convert.sh import --executor slurm --device gpu \
-  --nodes 8 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small \
-  --megatron-path work/inkling2/megatron --torch-dtype bfloat16 --tp 1 --pp 4 --ep 32 --etp 1
+  --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small \
+  --megatron-path work/inkling2/megatron --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1
 ```
 
 Export writes the routed experts back in their source format and scales, so exporting an
@@ -29,9 +29,9 @@ unchanged model reproduces the released tensors byte for byte:
 
 ```bash
 ./scripts/conversion/convert.sh export --executor slurm --device gpu \
-  --nodes 8 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small \
+  --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small \
   --megatron-path work/inkling2/megatron/iter_0000000 --hf-path work/inkling2/hf-export \
-  --torch-dtype bfloat16 --tp 1 --pp 4 --ep 32 --etp 1 --distributed-save
+  --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-save
 ```
 
 After training, the export quantizes the trained experts with the original scales, so
