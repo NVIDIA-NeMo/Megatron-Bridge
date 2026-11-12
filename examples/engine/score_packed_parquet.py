@@ -104,6 +104,7 @@ def main() -> None:
     datums = packs_to_datums(args.parquet, args.num_packs)
     tokens = sum(d.num_tokens for d in datums)
     print_rank_0(f"[data] {len(datums)} datums from {args.num_packs} packs, {tokens:,} tokens")
+    print_rank_0(f"[data] datum lengths: {[d.num_tokens for d in datums]}")
 
     engine = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=False)
     print_rank_0(f"[reference] built; parallel_info={engine.parallel_info}")
@@ -125,10 +126,24 @@ def main() -> None:
     print_rank_0(f"[score] local shards reconstruct the gathered result ({checked} positions on rank 0)")
 
     reversed_out = engine.forward_only(list(reversed(datums)), gather_output=True)
+    for label, logprobs in (("input order", gathered.logprobs), ("reversed", reversed_out.logprobs[::-1])):
+        per_datum = [float((-v.cpu() * d.loss_mask).sum() / d.loss_mask.sum()) for d, v in zip(datums, logprobs)]
+        print_rank_0(f"[score] per-datum NLL, {label}: {[round(x, 4) for x in per_datum]}")
+    worst = 0.0
     for reversed_index, values in enumerate(reversed_out.logprobs):
-        reference = gathered.logprobs[len(datums) - 1 - reversed_index]
-        max_diff = (values - reference).abs().max().item()
-        assert max_diff < 1e-3, f"reordering changed logprobs by {max_diff}"
+        index = len(datums) - 1 - reversed_index
+        diff = (values - gathered.logprobs[index]).abs()
+        changed = (diff >= 1e-3).nonzero().flatten()
+        if changed.numel():
+            supervised = datums[index].loss_mask.to(diff.device)[changed].bool().sum().item()
+            first = changed[0].item()
+            print_rank_0(
+                f"[score] datum {index} ({diff.numel()} tokens): {changed.numel()} positions differ "
+                f"({supervised} supervised), first {first}, last {changed[-1].item()}, max {diff.max().item():.4f}; "
+                f"at {first}: {gathered.logprobs[index][first].item():.4f} vs {values[first].item():.4f}"
+            )
+        worst = max(worst, diff.max().item())
+    assert worst < 1e-3, f"reordering changed logprobs by {worst}"
     print_rank_0("[score] reversed input order gives the same per-datum logprobs (tolerance 1e-3)")
 
     if args.with_trainable:

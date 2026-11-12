@@ -70,7 +70,7 @@ from megatron.bridge.engine.export import ExportState, export_hf_adapter, export
 from megatron.bridge.engine.lora import build_lora, make_lora_hook
 from megatron.bridge.engine.offload import HostState, check_movable, offload_to_cpu, reload_to_cuda
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
-from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe
+from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe, is_multimodal
 from megatron.bridge.engine.recipes.registry import apply_recipe_overrides, resolve_recipe
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
@@ -351,6 +351,9 @@ class TrainingEngine:
             if checkpoint_path is None:
                 raise ValueError("lora needs checkpoint_path: the pretrained base weights the adapters train on.")
             peft = build_lora(lora, recipe)
+        if output_head == "value" and is_multimodal(recipe):
+            # TODO(multimodal): the value head replaces the language model's output layer inside the wrapper.
+            raise NotImplementedError("output_head='value' is not implemented for multimodal models yet.")
         if output_head == "value":
             apply_value_head_model_settings(recipe.model)
         finalize_recipe(recipe)
@@ -672,6 +675,14 @@ class TrainingEngine:
             routed_shape=routed_shape,
             num_experts=getattr(self._recipe.model, "num_moe_experts", None),
         )
+        if is_multimodal(self._recipe):
+            # TODO(multimodal): image and video inputs (pixel data and grid positions on the Datum).
+            visual_ids = torch.tensor(
+                [self._recipe.model.image_token_id, self._recipe.model.video_token_id],
+                device=microbatches[0].input_ids.device,
+            )
+            if any(torch.isin(mb.input_ids, visual_ids).any() for mb in microbatches):
+                raise NotImplementedError("Image and video tokens in input_ids are not supported yet; text only.")
 
     def optim_step(self, adam_params: AdamParams, *, normalize_gradients: bool = True) -> dict[str, float]:
         """Normalize the accumulated gradients once, finalize, and step the optimizer.

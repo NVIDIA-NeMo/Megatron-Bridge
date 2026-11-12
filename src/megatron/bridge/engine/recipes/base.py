@@ -77,8 +77,9 @@ class TrainingRecipe:
             term then carries more total weight relative to the primary loss (it is still divided by the
             primary denominator). Padding is excluded either way; the user's loss methods are unaffected.
         hf_path: HF checkpoint directory or model ID matching ``model``; ``export`` reads its config,
-            tokenizer files and weight layout from it. ``None`` disables ``export``. It must be the
-            text-only causal-LM checkpoint; a multimodal wrapper (one with ``text_config``) is rejected.
+            tokenizer files and weight layout from it. ``None`` disables ``export``. A text-only model
+            needs the text-only causal-LM checkpoint; a multimodal wrapper (one with ``text_config``)
+            is accepted only for a multimodal model.
         hf_revision: HF revision of ``hf_path`` when it is a model ID; ``None`` for a local directory.
         router_replay: Rollout routing replay for MoE models. ``True`` builds the routers with Megatron's
             ``moe_enable_routing_replay`` and turns the fused router off (the fused top-k ignores
@@ -142,6 +143,11 @@ def data_parallel_size(recipe: TrainingRecipe) -> int:
             f"(TP x PP x CP = {dense}, ETP x EP x PP = {expert})."
         )
     return world_size // dense
+
+
+def is_multimodal(recipe: TrainingRecipe) -> bool:
+    """Whether the recipe builds a multimodal model (its provider carries a vision config)."""
+    return getattr(recipe.model, "vision_config", None) is not None
 
 
 def check_supported(recipe: TrainingRecipe) -> None:

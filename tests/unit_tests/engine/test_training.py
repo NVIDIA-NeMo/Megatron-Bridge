@@ -16,7 +16,13 @@ from megatron.bridge.engine.losses import (
     value_loss,
 )
 from megatron.bridge.engine.optim import apply_adam_params
-from megatron.bridge.engine.schedule import model_loss_mask, scored_tensor, split_loss_return, to_model_output
+from megatron.bridge.engine.schedule import (
+    call_model,
+    model_loss_mask,
+    scored_tensor,
+    split_loss_return,
+    to_model_output,
+)
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
 
 
@@ -358,3 +364,24 @@ def test_model_loss_mask_follows_mtp_target_scope_and_never_includes_padding():
     assert all_valid.tolist() == [[1.0, 1.0, 1.0, 0.0]]
     with pytest.raises(ValueError, match="mtp_target_scope"):
         model_loss_mask(batch, "response")
+
+
+class _RecordingModel:
+    pre_process = True
+
+    def __init__(self, position_embedding_type: str):
+        self.config = SimpleNamespace(position_embedding_type=position_embedding_type, sequence_parallel=False)
+        self.kwargs = None
+
+    def __call__(self, **kwargs):
+        self.kwargs = kwargs
+        return torch.zeros(1, 4)
+
+
+@pytest.mark.parametrize("embedding, shape", [("rope", (1, 4)), ("mrope", (3, 1, 4))])
+def test_call_model_hands_mrope_models_three_position_rows(embedding, shape):
+    model = _RecordingModel(embedding)
+    call_model(model, _rl_batch(), None, mtp_target_scope="primary")
+    position_ids = model.kwargs["position_ids"]
+    assert position_ids.shape == shape
+    assert (position_ids == torch.arange(4)).all()

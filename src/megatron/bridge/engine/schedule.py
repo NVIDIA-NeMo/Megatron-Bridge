@@ -64,9 +64,14 @@ def call_model(
     padding_mask = _prepare_packed_padding_mask(
         microbatch.padding_mask, config=config, model=model, pg_collection=pg_collection
     )
+    position_ids = microbatch.position_ids
+    if getattr(config, "position_embedding_type", None) == "mrope":
+        # Text tokens have the same position on the temporal, height and width axes: [3, B, T_local].
+        # TODO(multimodal): image and video tokens need grid positions and pixel inputs from the Datum.
+        position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
     common = dict(
         input_ids=microbatch.input_ids,
-        position_ids=microbatch.position_ids,
+        position_ids=position_ids,
         attention_mask=None,
         packed_seq_params=microbatch.packed_seq_params,
         padding_mask=padding_mask,
