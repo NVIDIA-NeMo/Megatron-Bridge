@@ -36,6 +36,7 @@ from megatron.bridge.models.hybrid import (
     BridgeHybridModelConfig,
     HybridModelConfig,
 )
+from megatron.bridge.models.inkling.inkling2_config import Inkling2ModelConfig
 from megatron.bridge.models.muse_spark_open.muse_spark_open_config import MuseSparkModelConfig
 from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
@@ -105,7 +106,7 @@ class TestStrictOverrides:
         assert config.transformer.specialized_field is True
         assert config.get_builder_cls() is BridgeHybridModelBuilder
 
-    @pytest.mark.parametrize("config_class", [BeamModelConfig, MuseSparkModelConfig])
+    @pytest.mark.parametrize("config_class", [BeamModelConfig, Inkling2ModelConfig, MuseSparkModelConfig])
     def test_hybrid_family_configs_share_the_strict_config(self, config_class) -> None:
         assert issubclass(config_class, BridgeHybridModelConfig)
         assert config_class.get_builder_cls is BridgeHybridModelConfig.get_builder_cls

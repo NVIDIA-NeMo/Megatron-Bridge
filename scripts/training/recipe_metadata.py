@@ -88,6 +88,9 @@ TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})
 # Qwen3-VL Energon recipe emits canonical THD metadata through ``vlm_step``;
 # the other Qwen3-VL recipes retain their legacy model-specific step.
 RECIPE_FORWARD_STEPS = {
+    # Inkling2's text recipes keep the LLM step; its image-text recipes feed images through the VLM step.
+    "inkling2_small_peft_32gpu_gb200_bf16_multimodal_config": "vlm_step",
+    "inkling2_small_sft_128gpu_gb200_bf16_multimodal_config": "vlm_step",
     "qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config": "vlm_step",
     "qwen3_vl_8b_peft_energon_config": "vlm_step",
 }

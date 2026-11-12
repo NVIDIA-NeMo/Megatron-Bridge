@@ -2440,3 +2440,28 @@ def test_mapping_reads_partial_rotary_factor_from_hf_config():
     kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
 
     assert kwargs["rotary_percent"] == 0.5
+
+
+def test_plain_export_casts_every_float_weight_by_default():
+    assert MegatronModelBridge.PLAIN_EXPORT_KEEPS_FLOAT32 is False
+    assert MegatronModelBridge.PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES == ("_scale_inv",)
+    weights = {"router": torch.randn(4), "proj": torch.randn(4).half(), "ids": torch.arange(4)}
+
+    cast = MegatronModelBridge._cast_export_weight_dtype(weights, torch.bfloat16)
+
+    assert {name: tensor.dtype for name, tensor in cast.items()} == {
+        "router": torch.bfloat16,
+        "proj": torch.bfloat16,
+        "ids": torch.int64,
+    }
+
+
+def test_plain_export_keeps_float32_weights_when_requested():
+    weights = {"router": torch.randn(4), "proj": torch.randn(4).half(), "ids": torch.arange(4)}
+
+    cast = MegatronModelBridge._cast_export_weight_dtype(weights, torch.bfloat16, keep_float32=True)
+
+    assert cast["router"] is weights["router"]
+    assert cast["proj"].dtype == torch.bfloat16
+    assert cast["ids"] is weights["ids"]
+    assert MegatronModelBridge._cast_export_weight_dtype(weights, None, keep_float32=True) is weights
