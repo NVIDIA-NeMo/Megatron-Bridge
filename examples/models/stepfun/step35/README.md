@@ -117,9 +117,8 @@ Before launching, ensure the following environment variables are set:
   `torch.distributed` env vars inside the container,
 * overrides the recipe to PP=8 with the tail stages thinned out via
   `model.num_layers_in_last_pipeline_stage=3`,
-* keeps the global window consistent with the per-layer 512-token HF window
-  (`model.window_size=[511,0]`) and sets `model.window_attn_skip_freq` to
-  match `layer_types`, and
+* inherits the attention windows, layer types, and RoPE settings from the HF
+  model config through `AutoBridge`, and
 * loads the pre-converted Megatron checkpoint as a fine-tune source
   (`checkpoint.finetune=true`, `load_optim=false`, `load_rng=false`,
   `exit_on_missing_checkpoint=true`).
@@ -167,8 +166,8 @@ when the resolved global layer index is marked `"sliding_attention"` in
 `layer_types`. The nested `sliding_attention_setting["window_size"]` takes
 precedence over the global `model.window_size` for sliding layers; full-attention
 layers set their window to `None`. `model.window_attn_skip_freq` can additionally
-disable window attention on selected layers, so it must stay consistent with
-`layer_types` (see the `slurm_pretrain.sh` defaults).
+disable window attention on selected layers. Recipes leave it unset and use
+`layer_types` from the HF config.
 
 Existing Megatron checkpoints retain the nested window saved in their
 `run_config.yaml`. Upgrading Bridge does not change a saved `[512, 0]` into
