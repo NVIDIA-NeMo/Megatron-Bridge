@@ -186,6 +186,8 @@ def test_inkling2_megatron_checkpoint_roundtrip(
     assert (hf_path / "hf_quant_config.json").read_text() == (
         Path(inkling2_toy_model_path) / "hf_quant_config.json"
     ).read_text()
+    # As in the release, config.json has no transformers_version, so Transformers applies the release's quantization.
+    assert "transformers_version" not in json.loads((hf_path / "config.json").read_text())
 
 
 def _dequantized_bf16(name: str, source: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -261,6 +263,8 @@ def test_inkling2_bf16_export(inkling2_toy_model_path: str, inkling2_toy_megatro
     assert {group["compute_dtype"] for group in groups} <= {"float32", "bfloat16"}
     listed = {name: group["output_dtype"] for group in groups for name in group["tensors"]}
     assert {name: str(exported[name].dtype).removeprefix("torch.") for name in listed} == listed
+    # The recorded version tells Transformers that the BF16 experts are not quantized.
+    assert "transformers_version" in json.loads((hf_path / "config.json").read_text())
 
     report_path = tmp_path / "report.json"
     cmd = [

@@ -375,6 +375,19 @@ def test_plain_export_keeps_float32_and_skips_expert_scales():
         assert not name.endswith(suffixes), name
 
 
+# The config.json an export saves through Transformers, which records its version.
+_SAVED_HF_CONFIG = {
+    "architectures": ["Inkling2ForConditionalGeneration"],
+    "model_type": "inkling2",
+    "transformers_version": "5.20.2",
+}
+
+
+def _transformers_json(config: dict) -> str:
+    """A config dict laid out as Transformers writes ``config.json``."""
+    return json.dumps(config, indent=2, sort_keys=True) + "\n"
+
+
 def _write_export(path, tensors_by_shard, groups):
     path.mkdir()
     weight_map = {}
@@ -384,6 +397,7 @@ def _write_export(path, tensors_by_shard, groups):
     (path / "model.safetensors.index.json").write_text(json.dumps({"metadata": {}, "weight_map": weight_map}))
     config = {"model": {"parameter_groups": groups}, "quant_method": "inkling2"}
     (path / "hf_quant_config.json").write_text(json.dumps(config, indent=2))
+    (path / "config.json").write_text(_transformers_json(_SAVED_HF_CONFIG))
 
 
 _PLAIN = {"required_activation_quantization": None, "weight_block_shape": [], "weight_transform": "cast"}
@@ -394,6 +408,18 @@ _NVFP4_GROUP = {
     "weight_block_shape": [1, 16],
     "weight_scale_format": "amax_denominator",
     "weight_transform": "nvfp4_nearest",
+}
+_MXFP8_GROUP = {
+    "compute_dtype": "mxfp8",
+    "output_dtype": "float8_e4m3fn",
+    "required_activation_quantization": {
+        "block_size": 32,
+        "format": "mxfp8_e4m3",
+        "rounding": "nearest",
+        "scale_dtype": "ue8m0",
+    },
+    "weight_block_shape": [],
+    "weight_transform": "mxfp8_nearest",
 }
 
 
@@ -439,25 +465,33 @@ def test_postprocess_lists_plain_experts_as_bf16(tmp_path):
         },
     ]
     assert config["quant_method"] == "inkling2"
+    # The recorded version tells Transformers that the BF16 experts are not quantized.
+    assert (tmp_path / "export" / "config.json").read_text() == _transformers_json(_SAVED_HF_CONFIG)
 
 
-def test_postprocess_leaves_a_quantized_export_unchanged(tmp_path):
+@pytest.mark.parametrize("fmt", ["nvfp4", "mxfp8"])
+def test_postprocess_keeps_a_quantized_export_in_the_release_format(tmp_path, fmt):
     expert = "model.llm.layers.0.mlp.experts.w13_weight"
-    groups = [{**_NVFP4_GROUP, "tensors": [expert]}]
-    _write_export(
-        tmp_path / "export",
-        {
-            "model.safetensors": {
-                expert: torch.zeros(2, 4, 16, dtype=torch.uint8),
-                f"{expert}_scale": torch.zeros(2, 4, 2).to(torch.float8_e4m3fn),
-                f"{expert}_amax": torch.ones(2),
-                f"{expert}_outer_scale_denominator": torch.ones(1),
-            }
-        },
-        groups,
-    )
+    if fmt == "nvfp4":
+        group = _NVFP4_GROUP
+        tensors = {
+            expert: torch.zeros(2, 4, 16, dtype=torch.uint8),
+            f"{expert}_scale": torch.zeros(2, 4, 2).to(torch.float8_e4m3fn),
+            f"{expert}_amax": torch.ones(2),
+            f"{expert}_outer_scale_denominator": torch.ones(1),
+        }
+    else:
+        group = _MXFP8_GROUP
+        tensors = {
+            expert: torch.zeros(2, 4, 32).to(torch.float8_e4m3fn),
+            f"{expert}_scale": torch.zeros(2, 4, 1, dtype=torch.uint8),
+        }
+    _write_export(tmp_path / "export", {"model.safetensors": tensors}, [{**group, "tensors": [expert]}])
     before = (tmp_path / "export" / "hf_quant_config.json").read_bytes()
 
     Inkling2Bridge().postprocess_hf_export_weights(tmp_path / "export")
 
     assert (tmp_path / "export" / "hf_quant_config.json").read_bytes() == before
+    # Without the version, as the release's config.json, which Transformers loads with the release's quantization.
+    release_like = {key: value for key, value in _SAVED_HF_CONFIG.items() if key != "transformers_version"}
+    assert (tmp_path / "export" / "config.json").read_text() == _transformers_json(release_like)

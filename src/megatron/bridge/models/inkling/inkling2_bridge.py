@@ -74,6 +74,13 @@ _SAFETENSORS_DTYPES = {
 }
 
 
+def _replace_text(path: Path, text: str) -> None:
+    """Write ``text`` to a staged file and move it over ``path``, so a reader never sees a partial file."""
+    staged = path.with_name(f".{path.name}.tmp")
+    staged.write_text(text)
+    staged.replace(path)
+
+
 def _vision_config_dict(vision_config: Mapping[str, Any] | PretrainedConfig | None) -> dict[str, Any]:
     """Return the image encoder settings under the release's keys.
 
@@ -458,13 +465,20 @@ class Inkling2Bridge(MegatronModelBridge):
         return result
 
     def postprocess_hf_export_weights(self, path: Path) -> None:
-        """List the tensors of a plain export under their written dtype in ``hf_quant_config.json``.
+        """Describe the experts as the export wrote them, in ``hf_quant_config.json`` and ``config.json``.
 
         The precision config copied from the source still names the experts
         NVFP4 or MXFP8 after a plain export writes them in BF16. Runtimes that
         read it, such as the reference SGLang runtime, check each tensor's dtype
         against it, so the experts move to the BF16 group. A default export
         writes the source dtypes and leaves the file unchanged.
+
+        Transformers, from v5.23.0, applies the release's MXFP8 quantization to
+        an Inkling2 ``config.json`` without ``transformers_version``, which marks
+        the release's own. A default export writes the experts as the source
+        stores them, so its ``config.json`` drops the version, as the release's
+        has none; a plain export's BF16 experts keep it, which tells Transformers
+        that they are not quantized.
         """
         path = Path(path)
         config_path = path / "hf_quant_config.json"
@@ -483,6 +497,14 @@ class Inkling2Bridge(MegatronModelBridge):
                     written_dtypes[name] = _SAFETENSORS_DTYPES.get(dtype, dtype.lower())
         config = json.loads(config_path.read_text())
         if align_precision_config(config, written_dtypes):
-            staged = config_path.with_name(f".{config_path.name}.tmp")
-            staged.write_text(json.dumps(config, indent=2) + "\n")
-            staged.replace(config_path)
+            _replace_text(config_path, json.dumps(config, indent=2) + "\n")
+        hf_config_path = path / "config.json"
+        quantized = any(
+            name.endswith(_EXPERT_SUFFIXES) and dtype in ("uint8", "float8_e4m3fn")
+            for name, dtype in written_dtypes.items()
+        )
+        if quantized and hf_config_path.is_file():
+            hf_config = json.loads(hf_config_path.read_text())
+            if hf_config.pop("transformers_version", None) is not None:
+                # Laid out as Transformers writes it.
+                _replace_text(hf_config_path, json.dumps(hf_config, indent=2, sort_keys=True) + "\n")

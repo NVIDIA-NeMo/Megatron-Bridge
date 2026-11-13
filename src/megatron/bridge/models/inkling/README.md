@@ -81,7 +81,10 @@ Megatron model. Export copies it unchanged, with the quantization config, proces
 config, chat template, and tokenizer files. Export writes `config.json` from the
 checkpoint's saved model config, so a model whose architecture differs from the
 `--hf-model` reference keeps its own settings; the reference supplies only what the
-Megatron model does not hold, such as `mtp_config` and `eos_token_id`.
+Megatron model does not hold, such as `mtp_config` and `eos_token_id`. Transformers (from
+v5.23.0) applies the release's MXFP8 quantization to a `config.json` without
+`transformers_version`, as the release's is, so a default export, whose experts keep the
+source's formats, leaves the version out, and a plain export keeps it.
 
 ## Parallelism and limits
 
