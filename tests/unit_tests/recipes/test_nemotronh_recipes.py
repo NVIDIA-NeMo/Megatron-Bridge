@@ -375,14 +375,18 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
     assert training_cfg.train.global_batch_size == benchmark_cfg.train.global_batch_size == 512
     assert training_cfg.train.micro_batch_size == benchmark_cfg.train.micro_batch_size == 1
 
-    # The GB200 benchmark dispatches through NCCL EP; the training recipe keeps HybridEP. Apart from the
-    # dispatcher topology settings, both declare the same process environment.
-    assert training_cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    # Both the GB200 benchmark and the training recipe dispatch through NCCL EP with device-side expert
+    # token counts, and neither carries HybridEP NVLink-domain variables. Apart from the dispatcher mode,
+    # both declare the same process environment.
+    assert training_cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert benchmark_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert training_cfg.model.moe_use_grouped_tensor is True
     assert benchmark_cfg.model.moe_use_grouped_tensor is True
-    assert training_cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert training_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert benchmark_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
-    dispatcher_env_names = HYBRID_EP_ENV_NAMES | {"NCCL_EP_HT_EM_PULL_PUSH"}
+    assert HYBRID_EP_ENV_NAMES.isdisjoint(training_cfg.env_vars)
+    assert HYBRID_EP_ENV_NAMES.isdisjoint(benchmark_cfg.env_vars)
+    dispatcher_env_names = {"NCCL_EP_HT_EM_PULL_PUSH"}
     assert {name: value for name, value in training_cfg.env_vars.items() if name not in dispatcher_env_names} == {
         name: value for name, value in benchmark_cfg.env_vars.items() if name not in dispatcher_env_names
     }
@@ -710,7 +714,7 @@ def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.sequence_parallel is False
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
@@ -739,8 +743,9 @@ def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.optimizer.overlap_param_gather is True
     assert cfg.checkpoint.async_save is False
 
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
 
 
 def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_policy():
@@ -761,6 +766,8 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
         "moe_flex_dispatcher_backend",
         "moe_flex_dispatcher_num_sms",
         "moe_hybridep_num_sms",
+        "moe_use_grouped_tensor",
+        "max_seq_length_per_sample",
         "recompute_granularity",
         "recompute_modules",
         "recompute_method",
@@ -779,6 +786,43 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
     gb200.env_vars = h100.env_vars
 
     assert gb200 == h100
+
+
+def test_nemotron_3_5_lightning_32k_sft_differs_from_sft_only_in_long_context_layout():
+    """The 32K SFT recipe keeps the Lightning SFT contract apart from its sequence length and layout."""
+    from megatron.bridge.recipes.nemotronh import (
+        nemotron_3_5_lightning_sft_32k_config,
+        nemotron_3_5_lightning_sft_config,
+    )
+
+    base = nemotron_3_5_lightning_sft_config()
+    long_context = nemotron_3_5_lightning_sft_32k_config()
+
+    # Remove the 32K sequence length and its execution layout. Any other
+    # difference, including a convergence-setting drift, must fail.
+    model_layout_fields = {
+        "seq_length",
+        "context_parallel_size",
+        "cp_comm_type",
+        "moe_flex_dispatcher_backend",
+        "cross_entropy_loss_fusion",
+        "recompute_granularity",
+        "recompute_modules",
+        "recompute_method",
+        "recompute_num_layers",
+    }
+    base_model = {key: value for key, value in _model_fields(base.model).items() if key not in model_layout_fields}
+    long_context_model = {
+        key: value for key, value in _model_fields(long_context.model).items() if key not in model_layout_fields
+    }
+    assert long_context_model == base_model
+
+    long_context.model = base.model
+    long_context.dataset.seq_length = base.dataset.seq_length
+    long_context.dataset.offline_packing_specs = base.dataset.offline_packing_specs
+    long_context.ddp.overlap_param_gather = base.ddp.overlap_param_gather
+
+    assert long_context == base
 
 
 # --- Nemotron 3 Super tests ---

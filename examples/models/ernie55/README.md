@@ -103,6 +103,11 @@ MEGATRON_BRIDGE_PATH=/path/to/Megatron-Bridge WORKSPACE=/path/to/workspace CONTA
   weights, and a resubmission continues from the last saved step. Use a new `CHECKPOINT_DIR` for a fresh run.
 * `TRAIN_ITERS` overrides the number of steps (default 2065, with 103 warmup steps). The cosine schedule still
   decays over 2065 steps; to change that too, also pass `scheduler.lr_decay_iters=<N>`.
+* Pipeline parallelism (`model.pipeline_model_parallel_size=<N>`): `Ernie55ModelConfig` splits the layer pattern at
+  ERNIE-layer boundaries and enables `variable_seq_lengths`, because the SFT rows have data-dependent lengths and the
+  stages must exchange tensor shapes before each transfer (this rules out the `allgather` MoE token dispatcher; the
+  default is `alltoall`); the hyper-connections also require `model.pipeline_dtype=torch.float32` (the stages
+  exchange the fp32 residual streams).
 
 Without SLURM, start the same command on every node with `torch.distributed.run`:
 

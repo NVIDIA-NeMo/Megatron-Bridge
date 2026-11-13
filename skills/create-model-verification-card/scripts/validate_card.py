@@ -789,6 +789,7 @@ def _resume_reference_settings(command: str) -> list[tuple[str, str, str | None]
         "checkpoint.save_rng",
     }
     ignored_runtime_overrides = {
+        "checkpoint.stage_precision_aware_optimizer_state_on_cpu",
         "logger.save_config_filepath",
         "train.empty_unused_memory_level",
     }

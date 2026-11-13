@@ -20,9 +20,10 @@ from unittest.mock import Mock
 import pytest
 import torch
 import yaml
-from megatron.core.transformer.attention import SelfAttention
+from megatron.core.dist_checkpointing.mapping import ShardedTensor
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import Qwen35VLHybridLanguageModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.qwen35_vl_builder import Qwen35VLModelBuilder
 from megatron.bridge.models.qwen_vl.qwen35_vl_config import Qwen35VLModelConfig, Qwen35VLTransformerConfig
@@ -37,7 +38,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 _BUILDER_MODULE = "megatron.bridge.models.qwen_vl.qwen35_vl_builder"
-_PROVIDER_MODULE = "megatron.bridge.models.qwen_vl.qwen35_vl_provider"
 
 
 def _model_config(**overrides) -> Qwen35VLModelConfig:
@@ -89,53 +89,13 @@ def _pg_collection(pp_rank: int = 0, pp_size: int = 1) -> SimpleNamespace:
     return SimpleNamespace(pp=_FakeGroup(pp_rank, pp_size))
 
 
-def _attention_spec() -> ModuleSpec:
-    return ModuleSpec(module=SelfAttention, submodules=SimpleNamespace())
-
-
 @pytest.fixture
 def build_calls(monkeypatch):
-    """Replace the model and spec factories, recording the arguments the builder passes."""
-    calls = {}
-    gdn_attention = ModuleSpec(module=object, submodules=SimpleNamespace())
-    block_spec = SimpleNamespace(
-        layer_specs=[
-            ModuleSpec(module=object, submodules=SimpleNamespace(self_attention=gdn_attention)),
-            ModuleSpec(module=object, submodules=SimpleNamespace(self_attention=_attention_spec())),
-        ]
-    )
-    mtp_spec = SimpleNamespace(
-        layer_specs=[
-            ModuleSpec(
-                module=object,
-                submodules=SimpleNamespace(
-                    mtp_model_layer=ModuleSpec(
-                        module=object, submodules=SimpleNamespace(self_attention=_attention_spec())
-                    )
-                ),
-            )
-        ]
-    )
-
-    def block_spec_factory(config, vp_stage=None, pp_rank=None):
-        calls["block_spec"] = dict(config=config, vp_stage=vp_stage, pp_rank=pp_rank)
-        return block_spec
-
-    def mtp_spec_factory(config, transformer_layer_spec, vp_stage=None, pp_rank=None):
-        calls["mtp_spec"] = dict(
-            config=config, transformer_layer_spec=transformer_layer_spec, vp_stage=vp_stage, pp_rank=pp_rank
-        )
-        return mtp_spec
-
+    """Replace the model class, recording the arguments the builder passes."""
     model = Mock()
     model_class = Mock(return_value=model)
-    monkeypatch.setattr(
-        f"{_PROVIDER_MODULE}.get_transformer_block_with_experimental_attention_variant_spec", block_spec_factory
-    )
-    monkeypatch.setattr(f"{_BUILDER_MODULE}.mtp_block_spec", mtp_spec_factory)
-    monkeypatch.setattr(f"{_BUILDER_MODULE}.Qwen3VLModel", model_class)
-    calls.update(model=model, model_class=model_class, gdn_attention=gdn_attention)
-    return calls
+    monkeypatch.setattr(f"{_BUILDER_MODULE}.Qwen35VLHybridModel", model_class)
+    return dict(model=model, model_class=model_class)
 
 
 class TestQwen35VLModelConfig:
@@ -213,6 +173,9 @@ class TestQwen35VLModelConfig:
             "attention_softmax_in_fp32",
             "activation_func",
             "params_dtype",
+            "num_layers",
+            "hybrid_layer_pattern",
+            "hybrid_stack_spec",
         ):
             assert getattr(restored, name) == getattr(config, name), name
         assert yaml.safe_load((tmp_path / "run_config.yaml").read_text())["model"]["_builder_"] == config.builder
@@ -228,22 +191,18 @@ class TestQwen35VLModelBuilder:
 
         assert model is build_calls["model"]
         kwargs = build_calls["model_class"].call_args.kwargs
-        assert kwargs["language_transformer_config"] is config.transformer
-        assert kwargs["model_config"] is config
+        assert kwargs["language_transformer_config"] is not config.transformer
+        assert kwargs["language_transformer_config"].num_layers == config.num_layers
+        assert kwargs["model_config"] is not config
+        assert kwargs["language_model_kwargs"]["hybrid_layer_pattern"].startswith(config.hybrid_layer_pattern)
         assert kwargs["vision_transformer_config"] is config.vision_config
         assert config.vision_config.dtype == config.params_dtype
         assert (kwargs["pre_process"], kwargs["post_process"], kwargs["vp_stage"]) == (False, True, None)
-        assert build_calls["block_spec"] == dict(config=config.transformer, vp_stage=None, pp_rank=1)
-        assert build_calls["mtp_spec"]["config"] is config
-        assert build_calls["mtp_spec"]["transformer_layer_spec"] is kwargs["language_transformer_layer_spec"]
-        assert build_calls["mtp_spec"]["pp_rank"] == 1
-        # Standard attention layers, including MTP's, take mRoPE; GDN layers are untouched.
-        language_layers = kwargs["language_transformer_layer_spec"].layer_specs
-        assert language_layers[0].submodules.self_attention is build_calls["gdn_attention"]
-        assert build_calls["gdn_attention"].module is object
-        assert language_layers[1].submodules.self_attention.module is Qwen3VLSelfAttention
-        mtp_layer = kwargs["mtp_block_spec"].layer_specs[0].submodules.mtp_model_layer
-        assert mtp_layer.submodules.self_attention.module is Qwen3VLSelfAttention
+        assert "mtp_block_spec" not in kwargs
+        # Attention layers take mRoPE; the GDN mixer keeps Core's module. HybridModel builds MTP from these specs.
+        stack = kwargs["language_transformer_layer_spec"].submodules
+        assert stack.attention_layer.submodules.self_attention.module is Qwen3VLSelfAttention
+        assert stack.gdn_layer.submodules.self_attention.module is not Qwen3VLSelfAttention
         build_calls["model"].freeze.assert_not_called()
         # Without a Float16Module wrapper the vision encoder would stay in fp32.
         build_calls["model"].vision_model.to.assert_called_once_with(dtype=config.params_dtype)
@@ -272,12 +231,25 @@ class TestQwen35VLModelBuilder:
     ):
         # Megatron-Core reads stage ranks from the process group only once distributed is initialized.
         monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
-        config = _model_config(virtual_pipeline_model_parallel_size=vp_size)
+        config = _model_config(
+            pipeline_model_parallel_size=pp_size,
+            virtual_pipeline_model_parallel_size=vp_size,
+            pipeline_dtype=torch.bfloat16,
+        )
+        original_pattern = config.hybrid_layer_pattern
 
         model = Qwen35VLModelBuilder(config).build_model(_pg_collection(pp_rank, pp_size), vp_stage=vp_stage)
 
         kwargs = build_calls["model_class"].call_args.kwargs
         assert (kwargs["pre_process"], kwargs["post_process"]) == (pre_process, post_process)
+        pattern = kwargs["language_model_kwargs"]["hybrid_layer_pattern"]
+        main, mtp = pattern.split("/", 1)
+        segments = main.split("|")
+        assert len(segments) == pp_size * (vp_size or 1)
+        assert all(len(segment) == config.num_layers // len(segments) for segment in segments)
+        assert "".join(segments) == original_pattern
+        assert mtp == config.mtp_hybrid_override_pattern
+        assert config.hybrid_layer_pattern == original_pattern
         if vp_stage is not None:
             assert model.vp_stage == vp_stage
 
@@ -310,3 +282,25 @@ class TestQwen35VLModelBuilder:
 
         with pytest.raises(ValueError, match="transformer_layer_spec"):
             Qwen35VLModelBuilder(config).build_model(_pg_collection())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("pre_process", [False, True])
+def test_vl_tied_mtp_checkpoint_uses_embedding_on_last_pipeline_stage(pre_process):
+    model = Qwen35VLHybridLanguageModel.__new__(Qwen35VLHybridLanguageModel)
+    torch.nn.Module.__init__(model)
+    model.mtp_process = True
+    model.pre_process = pre_process
+    model.post_process = True
+    embedding_key = "language_model.embedding.word_embeddings.weight"
+    output_key = "language_model.output_layer.weight"
+    embedding = ShardedTensor.from_rank_offsets(embedding_key, torch.ones(2, 2))
+    state = {
+        embedding_key: embedding,
+        output_key: ShardedTensor.from_rank_offsets(output_key, torch.ones(2, 2)),
+    }
+
+    model.tie_embeddings_and_output_weights_state_dict(state, output_key, embedding_key)
+
+    assert state[embedding_key] is embedding
+    assert (output_key in state) is pre_process
