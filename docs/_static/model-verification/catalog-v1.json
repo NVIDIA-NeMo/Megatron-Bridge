@@ -12125,6 +12125,302 @@
       "title": "step35_flash"
     },
     {
+      "architecture": "Inkling2ForConditionalGeneration",
+      "base_container": "nvcr.io/nvidia/nemo:26.10",
+      "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+      "entries": [
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "inkling-2-small-hf-to-megatron-cpu",
+          "expected_result": "CPU import of the complete 594B checkpoint has not been attempted. GPU import is recorded separately.\n",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_cpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "hf_to_megatron_cpu"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [
+            {
+              "expert_parallel": "16",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "4",
+              "nodes": "4",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "1",
+              "total_gpus": 16
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b --megatron-path work/model-verification/inkling-2-small/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "inkling-2-small-hf-to-megatron-gpu",
+          "expected_result": "With 16 GB200 GPUs the command builds the complete HybridModel with the image encoder, dequantizes the NVFP4 and MXFP8 experts one layer at a time, and persists an iter_0000000 distributed checkpoint from all 16 ranks. The export audit under megatron_to_hf_gpu establishes its tensor content. Not yet run through this launcher.\n",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_gpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "hf_to_megatron_gpu"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "inkling-2-small-megatron-to-hf-cpu",
+          "expected_result": "CPU export of the complete 594B checkpoint has not been attempted. GPU export is recorded separately.\n",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_cpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "megatron_to_hf_cpu"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [
+            {
+              "expert_parallel": "16",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "4",
+              "nodes": "4",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "1",
+              "total_gpus": 16
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b --megatron-path work/model-verification/inkling-2-small/gpu-megatron/iter_0000000 --hf-path work/model-verification/inkling-2-small/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-save"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "inkling-2-small-megatron-to-hf-gpu",
+          "expected_result": "The export re-quantizes the routed experts against the source scales, so an exhaustive comparison against the release must find all 1,770 tensors byte-identical, including the NVFP4 and MXFP8 experts and their scales, with no missing or extra keys. The tokenizer files, chat template, processor and quantization configurations, and the MTP draft must also be byte-identical. Not yet run through this launcher.\n",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_gpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "megatron_to_hf_gpu"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "inkling-2-small-manual-forward-pass",
+          "expected_result": "Released Transformers versions do not implement Inkling 2, so there is no Hugging Face reference for the model-comparison task. huggingface/transformers#50682 adds one but loads only the MXFP8 checkpoint, not this NVFP4 revision. Record this item once a Transformers release can load the pinned revision.\n",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.manual_forward_pass",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "manual_forward_pass"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [
+            {
+              "expert_parallel": "16",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "4",
+              "nodes": "4",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "1",
+              "total_gpus": 16
+            }
+          ],
+          "commands": [
+            "./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4 --task legacy-full-prefix-generation --legacy-full-prefix --hf_model_path thinkingmachines/Inkling-2-Small --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b --megatron_model_path work/model-verification/inkling-2-small/gpu-megatron/iter_0000000 --prompt \"The capital of France is\" --max_new_tokens 32 --tp 1 --pp 1 --ep 16 --etp 1"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "inkling-2-small-inference",
+          "expected_result": "Megatron's KV-cache inference is not implemented for Inkling2, so generation uses the slow legacy full-prefix task. The text-generation helper builds models through the provider API, and Inkling2 is builder-backed, so the exact command must complete deterministic greedy generation before this item is promoted.\n",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.inference",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "inference"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {
+            "moe_dispatcher": "hybridep"
+          },
+          "entry_id": "inkling-2-small-pretrain-gb200",
+          "expected_result": "Planned: inkling2_small_pretrain_128gpu_gb200_bf16_config on 128 GB200 GPUs (TP1/PP4/EP32, stages of 13, 13, 12, and 10 decoder blocks, HybridEP dispatch), warm-started from the imported checkpoint with --pretrained_checkpoint, 100 steps with saves at steps 50 and 100.\n",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "pretrain"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {
+            "moe_dispatcher": "hybridep",
+            "sequence_packing": "offline"
+          },
+          "entry_id": "inkling-2-small-sft-gb200",
+          "expected_result": "Planned: inkling2_small_sft_128gpu_gb200_bf16_config on 128 GB200 GPUs (TP4/PP4/EP32, HybridEP dispatch), 100 steps of full SFT on Tulu 3 packed to 8K at GBS 8, saving the final checkpoint for sft_export_inference.\n",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "inkling-2-small-sft-export-inference-gb200",
+          "expected_result": "Bridge exports the SFT checkpoint, but released Transformers versions cannot reload it for the hf-inference task: they do not implement Inkling 2. Record this item once a Transformers release that includes huggingface/transformers#50682 is available.\n",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.sft_export_inference.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft_export_inference"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {
+            "context_parallel_size": 4,
+            "moe_dispatcher": "hybridep",
+            "sequence_packing": "offline"
+          },
+          "entry_id": "inkling-2-small-sft-long-context-gb200",
+          "expected_result": "Planned: inkling2_small_sft_128gpu_gb200_bf16_long_context_config on 128 GB200 GPUs (TP4/PP4/EP32/CP4, HybridEP dispatch), full SFT on Tulu 3 packed to 32K at GBS 8.\n",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft_long_context.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft_long_context"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {
+            "moe_dispatcher": "hybridep",
+            "sequence_packing": "offline"
+          },
+          "entry_id": "inkling-2-small-peft-gb200",
+          "expected_result": "Planned: inkling2_small_peft_32gpu_gb200_bf16_config on 32 GB200 GPUs (TP4/PP1/EP32, HybridEP dispatch), 100 steps of rank-8 LoRA on the attention projections linear_q, linear_k, linear_v, and linear_proj, on Tulu 3 packed to 8K at GBS 8.\n",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.peft.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "peft"
+        },
+        {
+          "bridge_commit": "f78022b188b053a031080b875a2a61943d3fb4ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "inkling-2-small-checkpoint-resume-gb200",
+          "expected_result": "Planned: resume the pretrain reference from its step-50 checkpoint on the same 128 GPUs and layout, train steps 51-100 into a new root, and compare steps 51 and 100 with the reference within 1e-6 absolute plus 1% relative.\n",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.checkpoint_resume.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "checkpoint_resume"
+        }
+      ],
+      "hf_id": "thinkingmachines/Inkling-2-Small",
+      "hf_revision": "78cb6c0ef68e1f089b77e78cfd94783d05b5c41b",
+      "min_transformers_version": "5.20.2",
+      "slug": "inkling-2-small",
+      "source_card": "examples/model_verification_cards/inkling-2-small/card.yaml",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This card covers Thinking Machines' Inkling 2 Small image-and-text checkpoint at its public Hugging Face revision through the builder-backed Inkling2 model-config, model-builder, and model-bridge path: a native Megatron-Core HybridModel decoder with 48 blocks of Inkling2 attention and MoE (96 Hybrid positions, 384 routed experts, top-8 routing, Block Attention Residuals instead of a residual stream) and a ported image encoder. The release stores the routed experts in NVFP4 and MXFP8; import dequantizes them and export re-quantizes them against the source scales. No item has run through the public launchers yet. Released Transformers versions do not implement Inkling 2, so the Hugging Face forward comparison and the reload of an SFT export wait for a Transformers release that includes huggingface/transformers#50682, which loads only the MXFP8 checkpoint.\n",
+      "title": "inkling_2_small"
+    },
+    {
       "architecture": "GlmMoeDsaForCausalLM",
       "base_container": "nvcr.io/nvidia/nemo:26.08.rc3",
       "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",

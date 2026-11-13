@@ -1,0 +1,388 @@
+# Inkling 2
+
+[Inkling 2 Small](https://huggingface.co/thinkingmachines/Inkling-2-Small) is Thinking Machines' image-and-text
+mixture-of-experts model with 594B total and about 17B active parameters. Its 48 decoder layers replace the residual
+stream with Block Attention Residuals, interleave 1,024-token sliding-window attention with full attention on every
+sixth layer, and route each token to 8 of 384 experts. The release stores the routed experts in NVFP4 and MXFP8.
+Megatron Bridge builds it as a native Megatron-Core `HybridModel` through the builder-backed `Inkling2ModelConfig`,
+converts the complete checkpoint including the image encoder, and keeps the speculative-decoding draft network outside
+the Megatron model.
+
+- Examples: [`examples/models/inkling`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/inkling)
+  (conversion, GB200 recipes, image-text SFT)
+- Implementation: [`src/megatron/bridge/models/inkling`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/inkling)
+  (architecture, quantized-expert conversion, parallelism and limits)
+- Verification: [model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/inkling-2-small/card.yaml)
+
+<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+
+## Verified configurations
+
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
+
+<a id="verified-inkling-2-small"></a>
+### Run a configuration
+
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
+
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
+    </div>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="GB200">GB200</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="inkling-2-small-hf-to-megatron-cpu" aria-controls="inkling-2-small-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="inkling-2-small-hf-to-megatron-gpu" aria-controls="inkling-2-small-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="inkling-2-small-megatron-to-hf-cpu" aria-controls="inkling-2-small-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="inkling-2-small-megatron-to-hf-gpu" aria-controls="inkling-2-small-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="inkling-2-small-pretrain-gb200" aria-controls="inkling-2-small-pretrain-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="inkling-2-small-sft-gb200" aria-controls="inkling-2-small-sft-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="inkling-2-small-sft-long-context-gb200" aria-controls="inkling-2-small-sft-long-context-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="inkling-2-small-peft-gb200" aria-controls="inkling-2-small-peft-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="inkling-2-small-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="inkling-2-small-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>CPU import of the complete 594B checkpoint has not been attempted. GPU import is recorded separately.
+</p>
+      </section>
+    </article>
+    <article id="inkling-2-small-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="inkling-2-small-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b --megatron-path work/model-verification/inkling-2-small/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>With 16 GB200 GPUs the command builds the complete HybridModel with the image encoder, dequantizes the NVFP4 and MXFP8 experts one layer at a time, and persists an iter_0000000 distributed checkpoint from all 16 ranks. The export audit under megatron_to_hf_gpu establishes its tensor content. Not yet run through this launcher.
+</p>
+      </section>
+    </article>
+    <article id="inkling-2-small-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="inkling-2-small-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>CPU export of the complete 594B checkpoint has not been attempted. GPU export is recorded separately.
+</p>
+      </section>
+    </article>
+    <article id="inkling-2-small-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="inkling-2-small-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b --megatron-path work/model-verification/inkling-2-small/gpu-megatron/iter_0000000 --hf-path work/model-verification/inkling-2-small/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-save</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The export re-quantizes the routed experts against the source scales, so an exhaustive comparison against the release must find all 1,770 tensors byte-identical, including the NVFP4 and MXFP8 experts and their scales, with no missing or extra keys. The tokenizer files, chat template, processor and quantization configurations, and the MTP draft must also be byte-identical. Not yet run through this launcher.
+</p>
+      </section>
+    </article>
+    <article id="inkling-2-small-pretrain-gb200" class="verification-model-detail" data-entry-detail="inkling-2-small-pretrain-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Planned: inkling2_small_pretrain_128gpu_gb200_bf16_config on 128 GB200 GPUs (TP1/PP4/EP32, stages of 13, 13, 12, and 10 decoder blocks, HybridEP dispatch), warm-started from the imported checkpoint with --pretrained_checkpoint, 100 steps with saves at steps 50 and 100.
+</p>
+      </section>
+    </article>
+    <article id="inkling-2-small-sft-gb200" class="verification-model-detail" data-entry-detail="inkling-2-small-sft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Planned: inkling2_small_sft_128gpu_gb200_bf16_config on 128 GB200 GPUs (TP4/PP4/EP32, HybridEP dispatch), 100 steps of full SFT on Tulu 3 packed to 8K at GBS 8, saving the final checkpoint for sft_export_inference.
+</p>
+      </section>
+    </article>
+    <article id="inkling-2-small-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="inkling-2-small-sft-long-context-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Planned: inkling2_small_sft_128gpu_gb200_bf16_long_context_config on 128 GB200 GPUs (TP4/PP4/EP32/CP4, HybridEP dispatch), full SFT on Tulu 3 packed to 32K at GBS 8.
+</p>
+      </section>
+    </article>
+    <article id="inkling-2-small-peft-gb200" class="verification-model-detail" data-entry-detail="inkling-2-small-peft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Planned: inkling2_small_peft_32gpu_gb200_bf16_config on 32 GB200 GPUs (TP4/PP1/EP32, HybridEP dispatch), 100 steps of rank-8 LoRA on the attention projections linear_q, linear_k, linear_v, and linear_proj, on Tulu 3 packed to 8K at GBS 8.
+</p>
+      </section>
+    </article>
+  </div>
+</div>
+
+<!-- END GENERATED VERIFIED CONFIGURATIONS -->

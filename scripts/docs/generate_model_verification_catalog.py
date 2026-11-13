@@ -100,6 +100,7 @@ MODEL_PAGE_PATHS = {
     "glm5-2": "models/glm/glm5-2.md",
     "gpt-oss-120b": "models/gpt_oss/gpt-oss-120b.md",
     "gpt-oss-20b": "models/gpt_oss/gpt-oss-20b.md",
+    "inkling-2-small": "models/inkling/inkling2.md",
     "k-exaone-2": "models/exaone/exaone.md",
     "kimi-k3": "models/kimi/kimi-k3.md",
     "minimax-m3": "models/minimax/minimax-m3.md",

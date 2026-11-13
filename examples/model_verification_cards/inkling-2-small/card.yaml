@@ -1,0 +1,224 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: inkling_2_small
+summary: >
+  Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
+  This card covers Thinking Machines' Inkling 2 Small image-and-text checkpoint at its public Hugging Face revision
+  through the builder-backed Inkling2 model-config, model-builder, and model-bridge path: a native Megatron-Core
+  HybridModel decoder with 48 blocks of Inkling2 attention and MoE (96 Hybrid positions, 384 routed experts, top-8
+  routing, Block Attention Residuals instead of a residual stream) and a ported image encoder. The release stores the
+  routed experts in NVFP4 and MXFP8; import dequantizes them and export re-quantizes them against the source scales.
+  No item has run through the public launchers yet. Released Transformers versions do not implement Inkling 2, so the
+  Hugging Face forward comparison and the reload of an SFT export wait for a Transformers release that includes
+  huggingface/transformers#50682, which loads only the MXFP8 checkpoint.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    GB200:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: thinkingmachines/Inkling-2-Small
+  hf_revision: 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b  # pragma: allowlist secret
+  architecture: Inkling2ForConditionalGeneration
+  min_transformers_version: "5.20.2"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.10
+  bridge_commit: f78022b188b053a031080b875a2a61943d3fb4ca  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      CPU import of the complete 594B checkpoint has not been attempted. GPU import is recorded separately.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small
+      --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b
+      --megatron-path work/model-verification/inkling-2-small/gpu-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1
+    last_verified: null
+    expected_result: >
+      With 16 GB200 GPUs the command builds the complete HybridModel with the image encoder, dequantizes the NVFP4 and
+      MXFP8 experts one layer at a time, and persists an iter_0000000 distributed checkpoint from all 16 ranks. The
+      export audit under megatron_to_hf_gpu establishes its tensor content. Not yet run through this launcher.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      CPU export of the complete 594B checkpoint has not been attempted. GPU export is recorded separately.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small
+      --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b
+      --megatron-path work/model-verification/inkling-2-small/gpu-megatron/iter_0000000
+      --hf-path work/model-verification/inkling-2-small/gpu-hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-save
+    last_verified: null
+    expected_result: >
+      The export re-quantizes the routed experts against the source scales, so an exhaustive comparison against the
+      release must find all 1,770 tensors byte-identical, including the NVFP4 and MXFP8 experts and their scales, with
+      no missing or extra keys. The tokenizer files, chat template, processor and quantization configurations, and
+      the MTP draft must also be byte-identical. Not yet run through this launcher.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Released Transformers versions do not implement Inkling 2, so there is no Hugging Face reference for the
+      model-comparison task. huggingface/transformers#50682 adds one but loads only the MXFP8 checkpoint, not this
+      NVFP4 revision. Record this item once a Transformers release can load the pinned revision.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4
+      --task legacy-full-prefix-generation --legacy-full-prefix
+      --hf_model_path thinkingmachines/Inkling-2-Small
+      --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b
+      --megatron_model_path work/model-verification/inkling-2-small/gpu-megatron/iter_0000000
+      --prompt "The capital of France is" --max_new_tokens 32
+      --tp 1 --pp 1 --ep 16 --etp 1
+    last_verified: null
+    expected_result: >
+      Megatron's KV-cache inference is not implemented for Inkling2, so generation uses the slow legacy full-prefix
+      task. The text-generation helper builds models through the provider API, and Inkling2 is builder-backed, so the
+      exact command must complete deterministic greedy generation before this item is promoted.
+
+  pretrain:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Planned: inkling2_small_pretrain_128gpu_gb200_bf16_config on 128 GB200 GPUs (TP1/PP4/EP32, stages of 13, 13,
+        12, and 10 decoder blocks, HybridEP dispatch), warm-started from the imported checkpoint with
+        --pretrained_checkpoint, 100 steps with saves at steps 50 and 100.
+
+  sft:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        moe_dispatcher: hybridep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Planned: inkling2_small_sft_128gpu_gb200_bf16_config on 128 GB200 GPUs (TP4/PP4/EP32, HybridEP dispatch),
+        100 steps of full SFT on Tulu 3 packed to 8K at GBS 8, saving the final checkpoint for sft_export_inference.
+
+  sft_export_inference:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        Bridge exports the SFT checkpoint, but released Transformers versions cannot reload it for the hf-inference
+        task: they do not implement Inkling 2. Record this item once a Transformers release that includes
+        huggingface/transformers#50682 is available.
+
+  sft_long_context:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        context_parallel_size: 4
+        moe_dispatcher: hybridep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Planned: inkling2_small_sft_128gpu_gb200_bf16_long_context_config on 128 GB200 GPUs (TP4/PP4/EP32/CP4,
+        HybridEP dispatch), full SFT on Tulu 3 packed to 32K at GBS 8.
+
+  peft:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        moe_dispatcher: hybridep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Planned: inkling2_small_peft_32gpu_gb200_bf16_config on 32 GB200 GPUs (TP4/PP1/EP32, HybridEP dispatch), 100
+        steps of rank-8 LoRA on the attention projections linear_q, linear_k, linear_v, and linear_proj, on Tulu 3
+        packed to 8K at GBS 8.
+
+  checkpoint_resume:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        Planned: resume the pretrain reference from its step-50 checkpoint on the same 128 GPUs and layout, train
+        steps 51-100 into a new root, and compare steps 51 and 100 with the reference within 1e-6 absolute plus 1%
+        relative.
