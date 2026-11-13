@@ -32,6 +32,12 @@ from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_co
 class TestSafeLoadConfigWithRetry:
     """Test suite for safe_load_config_with_retry function."""
 
+    @pytest.fixture(autouse=True)
+    def isolate_loader_time(self):
+        """Keep retry clock patches local to the loader, including jitter patches."""
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time", wraps=time):
+            yield
+
     def setup_method(self):
         """Set up test fixtures before each test method."""
         self.mock_config = MagicMock(spec=PretrainedConfig)
@@ -98,15 +104,23 @@ class TestSafeLoadConfigWithRetry:
 
                 assert result == self.mock_config
 
-    def test_retry_on_transient_failure(self):
+    @pytest.mark.parametrize("unrelated_sleep", [False, True])
+    def test_retry_on_transient_failure(self, unrelated_sleep):
         """Test retry mechanism on transient network failures."""
         with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             # First two calls fail, third succeeds
-            mock_auto_config.from_pretrained.side_effect = [
-                Exception("Connection timeout"),
-                Exception("Temporary network error"),
-                self.mock_config,
-            ]
+            outcomes = iter([Exception("Connection timeout"), Exception("Temporary network error"), self.mock_config])
+
+            def from_pretrained(*args, **kwargs):
+                # Other consumers of time must not affect the loader's retry accounting.
+                if unrelated_sleep:
+                    time.sleep(0)
+                outcome = next(outcomes)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+            mock_auto_config.from_pretrained.side_effect = from_pretrained
 
             with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.sleep") as mock_sleep:
                 result = safe_load_config_with_retry(self.test_path, max_retries=3, base_delay=0.1)

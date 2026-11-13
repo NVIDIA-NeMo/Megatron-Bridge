@@ -160,6 +160,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         position_ids: torch.Tensor,
         mrope_section: List[int] | None,
         packed_seq_params: Optional[PackedSeqParams] = None,
+        *,
+        cp_group: torch.distributed.ProcessGroup | None = None,
         **kwargs,
     ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
@@ -169,6 +171,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             mrope_section (list[int]): Multimodal rope section is for channel dimension of temporal,
                 height and width in rope calculation.
             packed_seq_params (PackedSeqParams, optional): Packed sequence params. Defaults to None.
+            cp_group (ProcessGroup, optional): Runtime CP group; defaults to the construction group.
         Returns:
             Tensor: Embeddings after applying RoPE.
         """
@@ -180,12 +183,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         if self.seq_len_interpolation_factor is not None:
             seq *= 1 / self.seq_len_interpolation_factor
 
-        # shape (3, bs, dim, 1)
-        inv_freq_expanded = self.inv_freq[None, None, :, None].expand(3, seq.shape[1], -1, 1)
-        # shape (3, bs, 1, seq_length)
-        seq_expanded = seq[:, :, None, :].float()
         # shape (3, bs, seq_length, dim)
-        freqs = (inv_freq_expanded @ seq_expanded).transpose(2, 3)
+        freqs = seq[..., None] * self.inv_freq
         if mrope_section is not None:
             freqs = self.apply_interleaved_mrope(freqs, mrope_section)
         else:
@@ -195,10 +194,11 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
 
         # shape (seq_length, bs, 1, 2 * dim)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
-        if self.cp_group.size() > 1 and not self.is_thd_format:
+        cp_group = self.cp_group if cp_group is None else cp_group
+        if cp_group.size() > 1 and not self.is_thd_format:
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
-            emb = get_pos_emb_on_this_cp_rank(emb, 0, self.cp_group)
+            emb = get_pos_emb_on_this_cp_rank(emb, 0, cp_group)
         return emb
 
     def get_rotary_seq_len(

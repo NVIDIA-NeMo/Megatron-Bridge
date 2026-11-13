@@ -25,6 +25,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.utils import unwrap_model
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.base import PEFT
@@ -34,7 +35,7 @@ from megatron.bridge.training.checkpointing import (
     apply_peft_adapter_filter_to_state_dict,
     load_checkpoint,
 )
-from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, OptimizerConfig
 from megatron.bridge.training.state import GlobalState
 
 
@@ -519,6 +520,7 @@ class TestPEFTCheckpointLoading:
         mock_state = Mock(spec=GlobalState)
         mock_cfg = Mock(spec=ConfigContainer)
         mock_cfg.peft = MockPEFT()
+        mock_cfg.optimizer = OptimizerConfig(optimizer="adam", use_distributed_optimizer=False)
         mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
         mock_cfg.checkpoint.pretrained_checkpoint = "/path/to/pretrained"
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
@@ -570,7 +572,7 @@ class TestPEFTCheckpointLoading:
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
-            mock_unwrap_model.return_value = mock_model
+            mock_unwrap_model.side_effect = unwrap_model
 
             # Create mock pg_collection
             mock_pg_collection = Mock()
@@ -645,6 +647,7 @@ class TestPEFTCheckpointLoading:
         mock_state = Mock(spec=GlobalState)
         mock_cfg = Mock(spec=ConfigContainer)
         mock_cfg.peft = None  # No PEFT
+        mock_cfg.optimizer = OptimizerConfig(optimizer="adam", use_distributed_optimizer=False)
         mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
         mock_cfg.checkpoint.pretrained_checkpoint = None
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
@@ -696,7 +699,7 @@ class TestPEFTCheckpointLoading:
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
-            mock_unwrap_model.return_value = mock_model
+            mock_unwrap_model.side_effect = unwrap_model
 
             # Create mock pg_collection
             mock_pg_collection = Mock()
@@ -787,6 +790,7 @@ class TestPEFTCheckpointLoading:
         mock_cfg = Mock(spec=ConfigContainer)
         mock_cfg.peft = MockPEFT()
         mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
+        mock_cfg.optimizer = OptimizerConfig(optimizer="adam", use_distributed_optimizer=False)
         mock_cfg.checkpoint.pretrained_checkpoint = "/path/to/pretrained"
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
         mock_cfg.checkpoint.finetune = False
@@ -840,7 +844,7 @@ class TestPEFTCheckpointLoading:
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
-            mock_unwrap_model.return_value = mock_model
+            mock_unwrap_model.side_effect = unwrap_model
 
             # Create mock pg_collection
             mock_pg_collection = Mock()

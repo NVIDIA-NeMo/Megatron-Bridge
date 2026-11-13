@@ -43,7 +43,7 @@ def _nemotron_35_super_vl_base() -> ConfigContainer:
         NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
         revision=NEMOTRON_35_SUPER_VL_HF_REVISION,
         trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
     cfg.model.seq_length = 4096
 
     cfg.model.tensor_model_parallel_size = 4

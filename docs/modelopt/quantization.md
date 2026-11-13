@@ -12,6 +12,7 @@ This guide covers model quantization in Megatron Bridge using NVIDIA ModelOpt, i
 - [Overview](#overview)
 - [Post-Training Quantization (PTQ)](#post-training-quantization-ptq)
 - [Programmatic ModelOpt Export](#programmatic-modelopt-export)
+- [Fake-Quantized Hugging Face Export](#fake-quantized-hugging-face-export)
 - [Quantization-Aware Training (QAT)](#quantization-aware-training-qat)
 
 ## Overview
@@ -59,10 +60,10 @@ Use the `examples/quantization/quantize.py` script for LLM PTQ:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/quantize.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
+    --hf-model-id Qwen/Qwen3-0.6B \
     --export-quant-cfg fp8 \
     --tp 2 \
-    --megatron-save-path ./llama3_2_1b_fp8
+    --megatron-save-path ./qwen3_0_6b_fp8
 ```
 
 Use the `examples/quantization/quantize_vlm.py` script for VLM PTQ:
@@ -94,8 +95,8 @@ Resume the quantized checkpoint and test with text generation using `examples/qu
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/ptq_generate.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
     --tp 2
 ```
 
@@ -119,20 +120,33 @@ uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/
 
 ### Export
 
-Export the quantized checkpoint to unified HuggingFace format using `examples/quantization/export.py`:
+Export the quantized checkpoint to a quantized HuggingFace checkpoint using `examples/quantization/export.py`:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/export.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-load-path ./llama3_2_1b_fp8 \
-    --export-dir ./llama3_2_1b_fp8_hf \
-    --tp 2 \
-    --dtype bfloat16
+    --hf-model-id Qwen/Qwen3-0.6B \
+    --megatron-load-path ./qwen3_0_6b_fp8 \
+    --export-dir ./qwen3_0_6b_fp8_hf \
+    --tp 2
 ```
 
+The export runs at any tensor, pipeline, expert and expert-tensor parallelism and writes the same checkpoint for all
+of them: packed quantized weights with their scales, and the `quantization_config` in `config.json` that vLLM, SGLang
+and TensorRT-LLM read. Unquantized linear layers are listed in its `ignore` list, derived from the disabled weight
+quantizers. Fused projections are split the way the bridge's own weight mapping splits them, and each quantized
+weight's scales follow its rows. For unsupported configurations (e.g. KV-cache quantization, or a mapping that transposes
+or slices the columns of a quantized weight), the script falls back to ModelOpt's Megatron exporter, which supports TP=1
+only.
+
 **Key Arguments:**
-- `--export-dir` - Output directory for unified HuggingFace checkpoint
-- `--dtype` - Export data type
+- `--export-dir` - Output directory for the quantized HuggingFace checkpoint
+- `--export-extra-modules` - Also export EAGLE / Medusa heads, through ModelOpt's Megatron exporter (TP=1 only)
+
+From Python, save a quantized model directly:
+
+```python
+bridge.save_hf_pretrained_modelopt(megatron_model, "./qwen3_0_6b_fp8_hf")
+```
 
 ### Programmatic ModelOpt Export
 
@@ -185,14 +199,36 @@ Plan construction and export-stream iteration perform WORLD and model-parallel c
 must therefore build the plan and fully consume each export stream in the same task order, without rank-local early
 termination. The streaming API supports canonical per-expert layouts and grouped expert mappings that expose local
 expert specifications. Grouped mappings are resolved to per-expert gate, up, and down tensors before ModelOpt packing
-and EP collection. Unsupported custom grouped mappings fail explicitly.
+and EP collection. Unsupported custom grouped mappings fail explicitly. GPT-OSS experts, which Hugging Face stores
+as one tensor per projection, export only as weight-only MXFP4 (e.g. ModelOpt's `mxfp4_mlp_weight_only` recipe), in
+the format of OpenAI's released checkpoints: `*_blocks` / `*_scales` tensors and `"quant_method": "mxfp4"`, which keeps
+every other layer in BF16. This needs a ModelOpt release that packs weight-only MXFP4 (NVIDIA/Model-Optimizer#3221).
 
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
 or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
 their ordinary conversion path. Custom QKV mappings that change row layout are rejected for quantized weights.
-Post-mapping key renames of quantized weights are not supported, including legacy DeepSeek-V4 indexer scorer names;
-excluded weights retain their normal renaming behavior. This API requires a ModelOpt release that provides the
+Post-mapping key renames of quantized weights are not supported; excluded weights retain their normal renaming
+behavior. This API requires a ModelOpt release that provides the
 functional quantized-weight export interface.
+
+### Fake-Quantized Hugging Face Export
+
+`AutoBridge.save_hf_pretrained()` and `save_hf_weights()` also save a fake-quantized ModelOpt model, for
+example to evaluate a format that inference engines have no kernels for in vLLM's ModelOpt fake-quant serving.
+Weights are saved as they are in the model, so fold the weight quantizers into them first with
+`modelopt.torch.quantization.fold_weight`. The enabled quantizers are written next to the weights under
+Hugging Face names:
+
+- `quantizer_state.pth`: their tensors (e.g. `model.layers.0.self_attn.q_proj.input_quantizer._amax`), in their
+  original precision;
+- `quant_recipe.yaml`: their settings, one ModelOpt `get_modelopt_state(properties_only=True)` per quantizer, under
+  a `format: modelopt_quantizer_recipe`, `version: 1` header.
+
+Neither file is written when no quantizer is enabled, e.g. a weight-only format after folding. The export fails if
+an enabled quantizer has no Hugging Face name or holds tensors other than `_amax`, or if a disabled quantizer
+still rotates or scales its input (e.g. the query rotation of rotated KV-cache quantization). See the
+[ModelOpt Megatron-Bridge example](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge)
+for the export and serving commands.
 
 ### Supported Models For PTQ
 

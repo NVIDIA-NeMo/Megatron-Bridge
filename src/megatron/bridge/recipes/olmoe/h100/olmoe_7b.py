@@ -15,7 +15,7 @@
 
 import torch
 
-from megatron.bridge.models.olmoe import OlMoEModelProvider
+from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -54,20 +54,19 @@ def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - uses OlMoEModelProvider
-    cfg.model = OlMoEModelProvider(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        expert_model_parallel_size=8,
-        sequence_parallel=False,
-        recompute_granularity="selective",
-        recompute_modules=None,
-        recompute_method=None,
-        recompute_num_layers=None,
-    )
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0125").get_model_config()
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.sequence_parallel = False
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     # Pipeline layout
     cfg.model.pipeline_model_parallel_layout = _get_olmoe_pipeline_layout(1, 1)
@@ -126,7 +125,7 @@ def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
-    # Memory saving (recompute & offloading) - already set in OlMoEModelProvider
+    # Memory saving (recompute & offloading) - recompute is set with the model config above
     # cfg.model.recompute_granularity = "selective"
     # cfg.model.recompute_modules = None
     cfg.model.apply_rope_fusion = False  # Set to True for RoPE fusion (requires experimental flag)
@@ -198,20 +197,19 @@ def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _sft_common()
 
-    # Model config - uses OlMoEModelProvider
-    cfg.model = OlMoEModelProvider(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        expert_model_parallel_size=8,
-        sequence_parallel=False,
-        recompute_granularity="selective",
-        recompute_modules=None,
-        recompute_method=None,
-        recompute_num_layers=None,
-    )
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0125").get_model_config()
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.sequence_parallel = False
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     # Pipeline layout
     cfg.model.pipeline_model_parallel_layout = _get_olmoe_pipeline_layout(1, 1)
@@ -252,7 +250,7 @@ def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
-    # recompute_granularity is set in OlMoEModelProvider
+    # recompute_granularity is set with the model config above
     cfg.model.apply_rope_fusion = False
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
@@ -354,19 +352,18 @@ def olmoe_7b_peft_1gpu_h100_bf16_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses EP=1 instead of EP=8 for efficiency
-    cfg.model = OlMoEModelProvider(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        expert_model_parallel_size=1,
-        sequence_parallel=False,
-        recompute_granularity="selective",
-        recompute_modules=None,
-        recompute_method=None,
-        recompute_num_layers=None,
-    )
+    cfg.model = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0125").get_model_config()
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     # Pipeline layout
     cfg.model.pipeline_model_parallel_layout = _get_olmoe_pipeline_layout(1, 1)

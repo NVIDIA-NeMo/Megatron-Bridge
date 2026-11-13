@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
 import json
+import re
 import runpy
 from pathlib import Path
 
@@ -61,6 +62,17 @@ def test_text_dataset_tutorial_uses_config_builder_primary_path(tutorial, config
 def test_text_only_sft_tutorial_uses_standard_distributed_launcher():
     readme = (TEXT_ONLY_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
     assert "uv run python -m torch.distributed.run" in readme
+
+
+def test_text_only_sft_tutorial_uses_current_dataset_selector():
+    readme = (TEXT_ONLY_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
+    assert "--dataset local-jsonl" in readme
+    assert "--dataset llm-finetune-preloaded" not in readme
+    # One global batch must fit in the rows that prepare_example_data.py generates.
+    batch = re.search(r"train\.global_batch_size=(\d+)", readme)
+    assert batch is not None
+    examples = runpy.run_path(str(TEXT_ONLY_SFT_TUTORIAL / "prepare_example_data.py"))["EXAMPLES"]
+    assert int(batch.group(1)) <= len(examples["training"])
 
 
 def test_hf_text_only_tutorial_documents_hosted_native_messages_source():

@@ -40,6 +40,7 @@ models/beam/beam.md
 models/bert/index.md
 models/deepseek/index.md
 models/ernie/ernie45.md
+models/ernie/ernie55.md
 models/exaone/exaone.md
 models/falcon/index.md
 models/gemma/index.md
@@ -48,6 +49,7 @@ models/gpt_oss/index.md
 models/hy_v3/hy-v3.md
 models/kimi/index.md
 models/llama/index.md
+models/minicpmo/minicpmo-4.5.md
 models/minimax/index.md
 models/mistral/index.md
 models/mimo/index.md

@@ -56,7 +56,10 @@ def _apply_qwen35_vl_397b_a17b_64gpu_gb300_execution_config(cfg: ConfigContainer
     cfg.model.apply_rope_fusion = False
     cfg.model.bias_activation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_permute_fusion_into_hybridep = True
@@ -110,14 +113,8 @@ def _apply_qwen35_vl_397b_a17b_64gpu_gb300_execution_config(cfg: ConfigContainer
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        # Must equal expert_model_parallel_size or HybridEP splits the NVLink
-        # domain wrongly. Unset does NOT auto-detect.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 128,
-        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
@@ -200,7 +197,10 @@ def _apply_qwen35_vl_35b_a3b_16gpu_gb300_execution_config(cfg: ConfigContainer) 
     cfg.model.apply_rope_fusion = False
     cfg.model.bias_activation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_permute_fusion_into_hybridep = True
     cfg.model.moe_shared_expert_overlap = False
@@ -259,14 +259,8 @@ def _apply_qwen35_vl_35b_a3b_16gpu_gb300_execution_config(cfg: ConfigContainer) 
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        # Must equal expert_model_parallel_size or HybridEP splits the NVLink
-        # domain wrongly. Unset does NOT auto-detect.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 128,
-        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # 0, not the 397B recipe's 20. The LayerNorm SM margin trades SM time
         # against communication headroom, so its sign follows the comm share:
         # measured +3.2% at 35B and -13.4% at 397B.
@@ -398,14 +392,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config() -> ConfigContai
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # Must equal expert_model_parallel_size or HybridEP splits the NVLink
-        # domain wrongly. Unset does NOT auto-detect.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # 0, as in the 16-GPU recipe: the LayerNorm SM margin follows the communication share (see there).
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,

@@ -135,8 +135,9 @@ TrainMode = Literal["pretrain", "finetune", "dpo"]
 # Recipe environment variables that are read when a library is imported, before this script applies the recipe
 # environment. A library recipe that declares one of them (and the user has not set it) is re-executed with the
 # recipe environment in place. Transformer Engine reads NVTE_CUTEDSL_FUSED_GROUPED_MLP once, when it registers the
-# CuTe DSL fused grouped MLP at import time; set any later, it is ignored and the unfused grouped GEMM runs.
-IMPORT_TIME_RECIPE_ENV_VARS = frozenset({"NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"})
+# CuTe DSL fused grouped MLP at import time; set any later, it is ignored and the unfused grouped GEMM runs. Python
+# reads PYTHONHASHSEED when the interpreter starts (deterministic recipes pin the str hash seed).
+IMPORT_TIME_RECIPE_ENV_VARS = frozenset({"NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP", "PYTHONHASHSEED"})
 
 
 COMMON_OVERRIDE_FIELDS = (

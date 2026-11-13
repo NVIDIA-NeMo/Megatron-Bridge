@@ -235,9 +235,20 @@ def _configure_model_config(
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
     """Generate a bridge-specific pipeline layout when the model requires one.
 
-    A bridge returns ``None`` when the default pipeline split already applies.
+    A bridge returns ``None`` when the default pipeline split already applies. A bridge whose
+    stage boundaries also live in other fields, such as the ``|`` segments of a hybrid layer
+    pattern, implements ``configure_pipeline_layout`` to update the model config in place instead.
     """
-    if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
+    if pp <= 1:
+        return False
+    if hasattr(bridge._model_bridge, "configure_pipeline_layout"):
+        bridge._model_bridge.configure_pipeline_layout(model_provider)
+        from megatron.bridge.utils.common_utils import print_rank_0
+
+        stage_sizes = [stage.count("decoder") for stage in model_provider.pipeline_model_parallel_layout or []]
+        print_rank_0(f"Configured pipeline layout for PP={pp} ({stage_sizes} decoder layers per stage)")
+        return True
+    if not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
         return False
     num_layers = bridge.hf_pretrained.config.num_hidden_layers
     # The layout must match the model being built, which may omit the checkpoint's MTP layers.

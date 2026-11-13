@@ -148,6 +148,12 @@ Consider the re-run state machine when:
 
 ## In-Process Restart
 
+This integration requires an NVRx version that includes
+`nvidia_resiliency_ext.inprocess`. NVRx deprecated in-process restart in v0.6.0
+and removed it from upstream `main` after v0.7.0; the v0.6.0 and v0.7.0 releases
+still include the deprecated APIs. For new deployments, use in-job restart
+through `ft_launcher` instead (see [Fault Tolerance](#fault-tolerance)).
+
 In-process restart provides automatic fault recovery by restarting the training
 function within the same OS process. This avoids the overhead of launching new
 jobs, starting containers, and creating new CUDA contexts.
@@ -189,4 +195,4 @@ with job-level fault tolerance.
 - [skills/nemo-mbridge-resiliency/SKILL.md](../skills/nemo-mbridge-resiliency/SKILL.md)
 - [skills/nemo-mbridge-resiliency/card.yaml](../skills/nemo-mbridge-resiliency/card.yaml)
 - [NVIDIA Resiliency Extension](https://github.com/NVIDIA/nvidia-resiliency-ext)
-- [In-Process Restart Guide](https://nvidia.github.io/nvidia-resiliency-ext/inprocess/index.html)
+- [NVRx Fault Tolerance Usage Guide](https://nvidia.github.io/nvidia-resiliency-ext/fault_tolerance/usage_guide.html)

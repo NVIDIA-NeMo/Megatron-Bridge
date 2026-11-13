@@ -515,6 +515,34 @@ class TestErnieMultimodalRotaryEmbedding:
         assert output.shape == (4, 1, 1, 4)
         get_cp_embedding.assert_not_called()
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize("num_positions", [4096, 10922, 10923, 32768])
+    def test_angles_exact_when_tf32_allowed(self, num_positions):
+        """Test that RoPE angles stay fp32-exact when TF32 is allowed for fp32 matmuls."""
+        rotary_embedding = ErnieMultimodalRotaryEmbedding.__new__(ErnieMultimodalRotaryEmbedding)
+        torch.nn.Module.__init__(rotary_embedding)
+        rotary_embedding.inv_freq = 1.0 / (
+            500000 ** (torch.arange(0, 128, 2, dtype=torch.float32, device="cuda") / 128)
+        )
+        rotary_embedding.seq_len_interpolation_factor = None
+        rotary_embedding.freq_allocation = 20
+        rotary_embedding.cp_group = None
+        positions = torch.arange(90000 - num_positions, 90000, device="cuda", dtype=torch.float32)
+        position_ids = positions[None, None, :].expand(3, 1, -1)
+        allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+        try:
+            outputs = {}
+            for tf32 in (True, False):
+                torch.backends.cuda.matmul.allow_tf32 = tf32
+                outputs[tf32] = rotary_embedding(position_ids, None)
+        finally:
+            torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        # With identical T/H/W rows the ERNIE band layout keeps frequency order, each band doubled.
+        angles = positions.double()[:, None] * rotary_embedding.inv_freq.double()[None, :]
+        expected = angles.repeat_interleave(2, dim=-1)
+        torch.testing.assert_close(outputs[True][:, 0, 0].double(), expected, rtol=0, atol=1e-2)
+        assert torch.equal(outputs[True], outputs[False])
+
 
 class TestErnie45VLModelProvider:
     """Test Ernie45VLModelProvider class."""

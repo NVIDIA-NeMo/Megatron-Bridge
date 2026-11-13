@@ -374,6 +374,128 @@ class TestSaveHfAdapter:
         for name, tensor in zip(names, tensors):
             torch.testing.assert_close(exported[f"base_model.model.{name}"], tensor, rtol=0, atol=0)
 
+    @pytest.mark.unit
+    def test_non_zero_rank_drives_export_without_retaining_weights_or_writing(self, tmp_path):
+        """Ranks other than 0 must consume the collective export generator, keep nothing, write nothing, and join the status broadcast."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        exports = [_adapter_export(name, torch.randn(2, 4)) for name in names]
+        consumed = []
+
+        def export_generator(*args, **kwargs):
+            for export in exports:
+                consumed.append(export.param_name)
+                yield export
+
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.export_adapter_weights.side_effect = export_generator
+        output = tmp_path / "adapter"
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=1),
+            patch("torch.distributed.barrier") as barrier,
+            patch("torch.distributed.broadcast_object_list") as broadcast,
+            patch("megatron.bridge.models.conversion.peft_bridge.convert_adapter_weights_to_peft_state") as convert,
+        ):
+            AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        assert consumed == names
+        convert.assert_not_called()
+        barrier.assert_called_once()
+        broadcast.assert_called_once_with([None], src=0)
+        assert not output.exists()
+
+    @pytest.mark.unit
+    def test_rank_zero_of_a_process_group_writes_the_adapter(self, tmp_path):
+        """With a process group, rank 0 keeps the gathered weights and writes the same files as a single process."""
+        from safetensors.torch import load_file
+
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        tensors = [torch.randn(2, 4), torch.randn(4, 2)]
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.hf_pretrained = SimpleNamespace(model_name_or_path="org/text-base")
+        bridge.export_adapter_weights.return_value = iter(
+            [_adapter_export(name, tensor) for name, tensor in zip(names, tensors)]
+        )
+        output = tmp_path / "adapter"
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.barrier"),
+            patch("torch.distributed.broadcast_object_list") as broadcast,
+        ):
+            AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        broadcast.assert_called_once_with([None], src=0)
+        exported = load_file(output / "adapter_model.safetensors")
+        assert set(exported) == {f"base_model.model.{name}" for name in names}
+        for name, tensor in zip(names, tensors):
+            torch.testing.assert_close(exported[f"base_model.model.{name}"], tensor, rtol=0, atol=0)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("rank", [0, 1])
+    def test_empty_export_raises_on_every_rank(self, tmp_path, rank):
+        """An export that yields nothing is an error on every rank, not only on the writing rank."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.export_adapter_weights.return_value = iter([])
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=rank),
+            patch("torch.distributed.barrier"),
+        ):
+            with pytest.raises(RuntimeError, match="No adapter weights"):
+                AutoBridge.save_hf_adapter(bridge, model=[], path=tmp_path / "adapter", peft_config=FakeLoRA(dim=2))
+
+    @pytest.mark.unit
+    def test_rank_zero_write_failure_is_broadcast_and_re_raised(self, tmp_path):
+        """A conversion or write error on rank 0 is sent to every rank and re-raised on rank 0 as is."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.export_adapter_weights.return_value = iter([_adapter_export(name, torch.randn(2, 4)) for name in names])
+        output = tmp_path / "adapter"
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.barrier"),
+            patch("torch.distributed.broadcast_object_list") as broadcast,
+            patch(
+                "megatron.bridge.models.conversion.peft_bridge.convert_adapter_weights_to_peft_state",
+                side_effect=ValueError("Incomplete adapter export for target parameter: x"),
+            ),
+        ):
+            with pytest.raises(ValueError, match="Incomplete adapter export"):
+                AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        broadcast.assert_called_once_with(["ValueError: Incomplete adapter export for target parameter: x"], src=0)
+        assert not output.exists()
+
+    @pytest.mark.unit
+    def test_non_zero_rank_raises_when_rank_zero_failed(self, tmp_path):
+        """A non-zero rank learns about rank 0's failure from the status broadcast and raises instead of hanging."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
+        bridge.export_adapter_weights.return_value = iter([_adapter_export(name, torch.randn(2, 4)) for name in names])
+        output = tmp_path / "adapter"
+
+        def deliver_rank_zero_failure(status, src=0):
+            status[0] = "ValueError: Incomplete adapter export for target parameter: x"
+
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=1),
+            patch("torch.distributed.barrier"),
+            patch("torch.distributed.broadcast_object_list", side_effect=deliver_rank_zero_failure),
+        ):
+            with pytest.raises(RuntimeError, match="Rank zero failed to write the HF adapter: ValueError: Incomplete"):
+                AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        assert not output.exists()
+
     def test_convert_packed_expert_adapter_to_target_parameters(self):
         down_a = torch.tensor(
             [

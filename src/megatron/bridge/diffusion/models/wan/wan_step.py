@@ -34,24 +34,41 @@ from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata,
 logger = logging.getLogger(__name__)
 
 
+def _same_cpu_sequence_lengths(lengths: torch.Tensor, padded_lengths: torch.Tensor) -> bool:
+    """Check all lengths, including the final sequence, without synchronizing CUDA."""
+    return lengths.device.type == padded_lengths.device.type == "cpu" and torch.equal(lengths, padded_lengths)
+
+
 def wan_data_step(qkv_format, dataloader_iter):  # noqa: D103
     batch = next(dataloader_iter)
+    has_packed_sequences = ("seq_len_q" in batch) and ("seq_len_kv" in batch)
+    if has_packed_sequences:
+        q_is_unpadded = _same_cpu_sequence_lengths(batch["seq_len_q"], batch["seq_len_q_padded"])
+        kv_is_unpadded = _same_cpu_sequence_lengths(batch["seq_len_kv"], batch["seq_len_kv_padded"])
     batch = {k: v.to(device="cuda", non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
     # Construct packed sequence parameters
-    if ("seq_len_q" in batch) and ("seq_len_kv" in batch):
+    if has_packed_sequences:
         zero = torch.zeros(1, dtype=torch.int32, device="cuda")
 
         cu_seqlens = batch["seq_len_q"].cumsum(dim=0).to(torch.int32)
         cu_seqlens = torch.cat((zero, cu_seqlens))
 
-        cu_seqlens_padded = batch["seq_len_q_padded"].cumsum(dim=0).to(torch.int32)
-        cu_seqlens_padded = torch.cat((zero, cu_seqlens_padded))
+        # TE detects padding by tensor identity. Share boundaries only when every
+        # sequence is unpadded; CP partitioning still enforces its alignment rules.
+        if q_is_unpadded:
+            cu_seqlens_padded = cu_seqlens
+        else:
+            cu_seqlens_padded = batch["seq_len_q_padded"].cumsum(dim=0).to(torch.int32)
+            cu_seqlens_padded = torch.cat((zero, cu_seqlens_padded))
 
         cu_seqlens_kv = batch["seq_len_kv"].cumsum(dim=0).to(torch.int32)
         cu_seqlens_kv = torch.cat((zero, cu_seqlens_kv))
 
-        cu_seqlens_kv_padded = batch["seq_len_kv_padded"].cumsum(dim=0).to(torch.int32)
-        cu_seqlens_kv_padded = torch.cat((zero, cu_seqlens_kv_padded))
+        if kv_is_unpadded:
+            cu_seqlens_kv_padded = cu_seqlens_kv
+        else:
+            cu_seqlens_kv_padded = batch["seq_len_kv_padded"].cumsum(dim=0).to(torch.int32)
+            cu_seqlens_kv_padded = torch.cat((zero, cu_seqlens_kv_padded))
 
         batch["packed_seq_params"] = {
             "self_attention": PackedSeqParams(

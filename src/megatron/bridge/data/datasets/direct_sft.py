@@ -15,7 +15,7 @@
 """Runtime dataset for direct SFT examples."""
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import torch
@@ -58,7 +58,7 @@ class DirectSFTDataset(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        base_examples: list[dict[str, Any]],
+        base_examples: Sequence[dict[str, Any]],
         target_length: int,
         processor: Any,
         collate_impl: Callable[..., dict[str, torch.Tensor]] | None = None,
@@ -69,7 +69,9 @@ class DirectSFTDataset(torch.utils.data.Dataset):
         defer_in_batch_packing_to_step: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
     ) -> None:
-        assert isinstance(base_examples, list) and len(base_examples) > 0, "base_examples must be a non-empty list"
+        assert isinstance(base_examples, Sequence) and len(base_examples) > 0, (
+            "base_examples must be a non-empty sequence"
+        )
         self._base_examples = base_examples
         self._length = int(max(0, target_length))
         self._processor = processor

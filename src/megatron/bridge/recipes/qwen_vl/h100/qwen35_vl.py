@@ -57,15 +57,6 @@ def _enable_gdn_conv_fusion(model) -> None:
         model.gdn_pre_gated_delta_rule_fusion = True
 
 
-def _qwen35_vl_provider(hf_path: str):
-    """Build the Qwen3.5/Qwen3.6-VL Megatron provider.
-
-    Construction only -- shared so the AutoBridge boilerplate is written once.
-    Performance defaults are applied by the recipes, not here.
-    """
-    return AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
-
-
 def _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg: ConfigContainer) -> None:
     """Apply the measured 16-H100 execution policy for Qwen3.5/Qwen3.6-VL 35B-A3B."""
     cfg.model.tensor_model_parallel_size = 1
@@ -73,8 +64,9 @@ def _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg: ConfigContainer) -
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.num_layers_in_first_pipeline_stage = 17
-    cfg.model.num_layers_in_last_pipeline_stage = 23
+    # Hybrid counts the attention/GDN and MLP positions separately for each HF block.
+    cfg.model.num_layers_in_first_pipeline_stage = 34
+    cfg.model.num_layers_in_last_pipeline_stage = 46
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
@@ -141,7 +133,7 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-9B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
@@ -190,7 +182,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-27B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
@@ -245,7 +237,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 2
@@ -324,8 +316,8 @@ def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
     # The first pipeline stage also owns the vision encoder. Move one language
     # layer to the loss stage to retain activation headroom for variable-shape
     # DataComp images without checkpointing the complete MoE forward.
-    cfg.model.num_layers_in_first_pipeline_stage = 16
-    cfg.model.num_layers_in_last_pipeline_stage = 24
+    cfg.model.num_layers_in_first_pipeline_stage = 32
+    cfg.model.num_layers_in_last_pipeline_stage = 48
     # Variable-shape DataComp images retain more activation memory than the
     # fixed-shape benchmark. Recompute only the measured activation-heavy
     # outputs while retaining the leader's scoped language CUDA graphs.
@@ -365,7 +357,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-122B-A10B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 8
@@ -418,7 +410,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-397B-A17B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 16
@@ -485,7 +477,7 @@ def qwen35_vl_800m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-0.8B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -586,7 +578,7 @@ def qwen35_vl_2b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-2B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -687,7 +679,7 @@ def qwen35_vl_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-4B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -788,7 +780,7 @@ def qwen35_vl_9b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-9B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -879,7 +871,8 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 27B (dense).
 
     Default configuration: 16 GPUs
-    - TP=4, PP=4
+    - TP=4, PP=4, sequence parallel
+    - Selective activation recompute: core_attn, gdn_norm_out and mlp
     - LR=5e-6 (full SFT)
     - Sequence length: 4096
     """
@@ -887,7 +880,7 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-27B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -897,7 +890,7 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
 
     # VLM-specific settings
     cfg.model.freeze_language_model = False
@@ -918,9 +911,13 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
-    # Memory saving
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
+    # Memory saving: at MBS 4 the first pipeline stage runs out of 80 GB H100 memory in the first
+    # iteration without activation recompute, even with sequence parallelism, and also when only
+    # core_attn and gdn_norm_out are recomputed. Adding the dense MLP fits, at about 72.6 of 79.1 GiB
+    # reserved on the first stage and 5.7 s per step for MedPix SFT on 16 H100s (2026-11-02). For more
+    # headroom, one-layer full-uniform recompute peaks at about 51 GiB at 6.2 s per step.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn", "gdn_norm_out", "mlp"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
@@ -992,7 +989,7 @@ def _qwen35_vl_35b_a3b_sft_base_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1202,7 +1199,7 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1325,7 +1322,7 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-122B-A10B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1438,7 +1435,7 @@ def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config
     hf_path = "Qwen/Qwen3.5-397B-A17B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1559,7 +1556,7 @@ def qwen35_vl_800m_peft_1gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-0.8B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1661,7 +1658,7 @@ def qwen35_vl_2b_peft_1gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-2B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1763,7 +1760,7 @@ def qwen35_vl_4b_peft_1gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-4B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1865,7 +1862,7 @@ def qwen35_vl_9b_peft_1gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-9B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1967,7 +1964,7 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-27B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -2074,7 +2071,7 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -2217,7 +2214,7 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-122B-A10B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -2333,7 +2330,7 @@ def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config(
 
     # Model config
     hf_path = "Qwen/Qwen3.5-397B-A17B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 

@@ -13,6 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for DeepSeek V4."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
 )
@@ -21,8 +22,9 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8 (alias of GB300)."""
+    """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8, NCCL EP (alias of GB300)."""
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
+    _enable_ncclep(cfg)
 
     # Rubin's grouped GLU kernel does not support DeepSeek V4's SwiGLU clamp parameters. This is a
     # benchmark-only override that preserves the lower-memory CutDSL fusion and full CUDA graph.
@@ -38,10 +40,8 @@ def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

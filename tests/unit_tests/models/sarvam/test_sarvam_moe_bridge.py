@@ -16,14 +16,23 @@
 Unit tests for Sarvam MoE bridge.
 """
 
+import functools
+from dataclasses import fields
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+from megatron.training.models.gpt import default_layer_spec
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.sarvam.common import get_common_config
+from megatron.bridge.models.sarvam.sarvam_config import SarvamMoEModelConfig
 from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMoEModelProvider
 
@@ -80,9 +89,8 @@ class TestSarvamMoEBridge:
 
     @pytest.fixture
     def mock_pretrained_moe(self, sarvam_moe_config_dict_small):
-        cfg = Mock()
-        for k, v in sarvam_moe_config_dict_small.items():
-            setattr(cfg, k, v)
+        # The shared config mapping reads every attribute a Mock() would invent, so mirror the HF config instead.
+        cfg = SimpleNamespace(**sarvam_moe_config_dict_small)
 
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
@@ -138,9 +146,7 @@ class TestSarvamMoEBridge:
         assert provider.params_dtype == torch.bfloat16
 
     def test_provider_bridge_dtype_handling_multiple_precisions(self, sarvam_moe_config_dict_small):
-        cfg = Mock()
-        for k, v in sarvam_moe_config_dict_small.items():
-            setattr(cfg, k, v)
+        cfg = SimpleNamespace(**sarvam_moe_config_dict_small)
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
@@ -171,9 +177,7 @@ class TestSarvamMoEBridge:
 
     @pytest.mark.parametrize("first_k_dense_replace", [0, 1, 4])
     def test_provider_bridge_moe_layer_freq_edge_cases(self, sarvam_moe_config_dict_small, first_k_dense_replace):
-        cfg = Mock()
-        for k, v in sarvam_moe_config_dict_small.items():
-            setattr(cfg, k, v)
+        cfg = SimpleNamespace(**sarvam_moe_config_dict_small)
         cfg.first_k_dense_replace = first_k_dense_replace
         cfg.num_hidden_layers = 6
 
@@ -187,9 +191,7 @@ class TestSarvamMoEBridge:
         assert provider.moe_layer_freq == expected
 
     def test_provider_bridge_second_config_variant(self, sarvam_moe_config_dict_large):
-        cfg = Mock()
-        for k, v in sarvam_moe_config_dict_large.items():
-            setattr(cfg, k, v)
+        cfg = SimpleNamespace(**sarvam_moe_config_dict_large)
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
@@ -393,3 +395,183 @@ class TestSarvamMoEBridge:
         m = registry.hf_to_megatron_lookup("model.layers.2.mlp.gate.weight")
         assert m is not None
         assert m.megatron_param == "decoder.layers.2.mlp.router.weight"
+
+
+# The published sarvamai/sarvam-30b architecture.
+_SARVAM_30B_CONFIG = dict(
+    architectures=["SarvamMoEForCausalLM"],
+    num_hidden_layers=19,
+    hidden_size=4096,
+    intermediate_size=8192,
+    moe_intermediate_size=1024,
+    num_attention_heads=64,
+    num_key_value_heads=4,
+    head_dim=64,
+    num_experts=128,
+    num_experts_per_tok=6,
+    num_shared_experts=1,
+    first_k_dense_replace=1,
+    n_group=1,
+    topk_group=1,
+    routed_scaling_factor=2.5,
+    score_function="sigmoid",
+    router_dtype="fp32",
+    use_qk_norm=True,
+    hidden_act="silu",
+    rms_norm_eps=1e-6,
+    initializer_range=0.006,
+    attention_dropout=0.0,
+    tie_word_embeddings=False,
+    vocab_size=262144,
+    max_position_embeddings=131072,
+    rope_theta=8_000_000,
+    torch_dtype="float32",
+)
+
+
+def _sarvam_30b_config(**overrides) -> PretrainedConfig:
+    """Return the published Sarvam 30B architecture as a Hugging Face config."""
+    return PretrainedConfig(**{**_SARVAM_30B_CONFIG, **overrides})
+
+
+def _legacy_provider(hf_config) -> SarvamMoEModelProvider:
+    """Build the provider the way SarvamMoEBridge.provider_bridge() did before builder-backed conversion."""
+    config = get_common_config(hf_config)
+    params_dtype = SarvamMoEBridge().dtype_from_hf(hf_config, default=torch.float32)
+    config["fp16"] = params_dtype == torch.float16
+    config["bf16"] = params_dtype == torch.bfloat16
+    config["params_dtype"] = params_dtype
+    config["num_query_groups"] = hf_config.num_key_value_heads
+    config["kv_channels"] = hf_config.head_dim
+    return SarvamMoEModelProvider(**config)
+
+
+def _comparable(value):
+    """Partials and parsed pipeline layouts compare by identity, so compare their contents instead."""
+    if isinstance(value, functools.partial):
+        return value.func, value.args, value.keywords
+    if isinstance(value, PipelineParallelLayerLayout):
+        return value.input_data
+    return value
+
+
+def _shared_field_names(model_config, provider) -> list[str]:
+    model_config_fields = {field.name for field in fields(model_config)}
+    model_config_fields.update(field.name for field in fields(model_config.transformer))
+    return sorted(({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"})
+
+
+class TestSarvamMoEBuilderConfig:
+    """Builder-backed ModelConfig path for Sarvam MoE."""
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in SarvamMoEBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert SarvamMoEBridge.MODEL_CONFIG_CLASS is SarvamMoEModelConfig
+        assert issubclass(SarvamMoEModelConfig, BridgeGPTModelConfig)
+        assert SarvamMoEBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+        assert SarvamMoEBridge.PROVIDER_CLASS is SarvamMoEModelProvider
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        config = _sarvam_30b_config()
+        bridge = SarvamMoEBridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            result = bridge.hf_config_to_model_config(config)
+
+        assert type(result) is SarvamMoEModelConfig
+        # The builder's default MoE spec is the decoder block spec, so none is configured here.
+        assert result.transformer_layer_spec is None
+        assert result.moe_layer_freq == [0] + [1] * 18
+        assert result.moe_shared_expert_intermediate_size == 1024
+        assert result.num_query_groups == 4
+        assert result.kv_channels == 64
+        assert result.qk_layernorm is True
+        assert result.position_embedding_type == "rope"
+        assert result.moe_router_score_function == "sigmoid"
+        assert result.moe_router_topk_scaling_factor == 2.5
+        assert result.attention_softmax_in_fp32 is True
+        assert result.recompute_modules == ["layernorm", "shared_experts", "mlp", "moe_act"]
+        # n_group = topk_group = 1 in the checkpoint: no group-limited routing, as on the provider path.
+        assert result.moe_router_num_groups is None
+        assert result.moe_router_group_topk is None
+        # The published checkpoint is float32.
+        assert result.params_dtype == torch.float32
+        assert result.bf16 is False
+
+    @pytest.mark.parametrize("torch_dtype", ["float32", "bfloat16", "float16"])
+    def test_model_config_matches_branch_and_legacy_provider(self, torch_dtype):
+        config = _sarvam_30b_config(torch_dtype=torch_dtype)
+        bridge = SarvamMoEBridge()
+
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(SimpleNamespace(config=config))
+        legacy_provider = _legacy_provider(config)
+
+        assert type(provider) is SarvamMoEModelProvider
+        # The provider path is unchanged on every provider field.
+        for field in fields(legacy_provider):
+            assert getattr(provider, field.name) == getattr(legacy_provider, field.name), field.name
+        shared_fields = _shared_field_names(model_config, provider)
+        assert len(shared_fields) > 300
+        for field_name in shared_fields:
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+    @pytest.mark.parametrize("pp_size", [1, 2, 4, 8])
+    def test_finalized_model_config_matches_provider(self, pp_size):
+        config = _sarvam_30b_config()
+        bridge = SarvamMoEBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(SimpleNamespace(config=config))
+
+        for cfg in (model_config, provider):
+            cfg.pipeline_model_parallel_size = pp_size
+            cfg.finalize()
+
+        for field_name in _shared_field_names(model_config, provider):
+            assert _comparable(getattr(model_config, field_name)) == _comparable(getattr(provider, field_name)), (
+                field_name
+            )
+        if pp_size == 1:
+            assert model_config.pipeline_model_parallel_layout is None
+        else:
+            assert isinstance(model_config.pipeline_model_parallel_layout, PipelineParallelLayerLayout)
+
+    def test_default_layer_spec_matches_provider_decoder_block_spec(self):
+        config = _sarvam_30b_config(num_hidden_layers=4, num_experts=8, num_experts_per_tok=2)
+        bridge = SarvamMoEBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(SimpleNamespace(config=config))
+        assert provider.transformer_layer_spec.func is get_gpt_decoder_block_spec
+
+        with patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank", return_value=0):
+            builder_spec = default_layer_spec(model_config, vp_stage=None)
+            provider_spec = provider.transformer_layer_spec(provider, vp_stage=None)
+
+        # Layer 0 is dense and the rest are MoE on both paths.
+        assert len(builder_spec.layer_specs) == 4
+        assert "MoELayer" not in repr(builder_spec.layer_specs[0].submodules.mlp)
+        assert all("MoELayer" in repr(spec.submodules.mlp) for spec in builder_spec.layer_specs[1:])
+        # functools.partial compares by identity, so compare structure.
+        assert repr(builder_spec) == repr(provider_spec)
+
+    def test_yarn_rope_scaling_matches_between_paths(self):
+        # The remote SarvamMoEConfig stores rope_scaling as a plain attribute.
+        config = SimpleNamespace(
+            **_SARVAM_30B_CONFIG,
+            rope_scaling={"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768},
+        )
+        bridge = SarvamMoEBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(SimpleNamespace(config=config))
+
+        assert model_config.position_embedding_type == "yarn"
+        assert provider.position_embedding_type == "yarn"
+        assert model_config.yarn_rotary_scaling_factor == provider.yarn_rotary_scaling_factor == 4.0

@@ -17,6 +17,13 @@ from megatron.bridge.models.gemma.gemma3_bridge import Gemma3ModelBridge  # noqa
 from megatron.bridge.models.gemma.gemma3_provider import (
     Gemma3ModelProvider,
 )
+from megatron.bridge.models.gemma.gemma4_builder import Gemma4DenseModelBuilder, Gemma4ModelBuilder
+from megatron.bridge.models.gemma.gemma4_config import (
+    Gemma4DenseModelConfig,
+    Gemma4DenseTransformerConfig,
+    Gemma4ModelConfig,
+    Gemma4TransformerConfig,
+)
 from megatron.bridge.models.gemma.gemma4_provider import (
     Gemma4DenseProvider,
     Gemma4ModelProvider,
@@ -25,6 +32,12 @@ from megatron.bridge.models.gemma.gemma4_provider import (
 
 __all__ = [
     "Gemma3ModelProvider",
+    "Gemma4DenseModelBuilder",
+    "Gemma4DenseModelConfig",
     "Gemma4DenseProvider",
+    "Gemma4DenseTransformerConfig",
+    "Gemma4ModelBuilder",
+    "Gemma4ModelConfig",
     "Gemma4ModelProvider",
+    "Gemma4TransformerConfig",
 ]

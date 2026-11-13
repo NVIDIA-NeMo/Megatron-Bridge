@@ -188,7 +188,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         # providers whose ``build_language_model_spec`` actually wires the MTP
         # block advertise ``mimo_supports_mtp``. Others keep MTP disabled so the
         # constructed model and the HF export agree on the absence of MTP weights.
-        if hasattr(standard_provider, "mtp_num_layers") and not getattr(standard_provider, "mimo_supports_mtp", False):
+        # A zero layer count also becomes None, so "no MTP" has a single spelling.
+        if hasattr(standard_provider, "mtp_num_layers") and (
+            not getattr(standard_provider, "mimo_supports_mtp", False) or not standard_provider.mtp_num_layers
+        ):
             setattr(standard_provider, "mtp_num_layers", None)
 
         if self.language_model_spec is None:
@@ -509,6 +512,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ]
         ] = None,
         post_wrap_hook: Optional[Callable[[List[MegatronModule]], List[MegatronModule]]] = None,
+        *,
+        use_layer_wise_distributed_optimizer: bool = False,
+        use_layer_wise_param_layout: bool = False,
     ) -> List[MegatronModule]:
         """Build MegatronMIMO model with heterogeneous parallelism and DDP wrapping.
 
@@ -542,6 +548,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             init_model_with_meta_device: Initialize model on meta device.
             pre_wrap_hook: Callable(s) to modify model before wrapping.
             post_wrap_hook: Callable to modify model after wrapping.
+            use_layer_wise_distributed_optimizer: Build shard-aligned layouts for layer-wise optimizers.
+            use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+                False retains compact DDP buffers and variable-size parameter synchronization.
 
         Returns:
             List containing the wrapped MimoModel.
@@ -622,6 +631,8 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     megatron_mimo_parallelism_config=self.megatron_mimo_parallelism_config,
                     grids=infra.module_to_grid_map,
                     pg_collections=infra.pg_collections,
+                    use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+                    use_layer_wise_param_layout=use_layer_wise_param_layout,
                 )
                 for m in model_list
             ]

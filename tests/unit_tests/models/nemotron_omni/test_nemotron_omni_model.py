@@ -299,7 +299,10 @@ def test_cuda_graph_helper_discovers_nested_language_layers(single_rank_model_pa
         micro_batch_size=1,
     )
 
-    assert helper.chunks_with_decoder == [model]
+    # MCore locates the exposed root ``decoder`` and then unwraps multimodal
+    # roots to their nested language model for layer discovery.
+    assert helper.chunks_with_decoder == [model.language_model]
+    assert helper.chunks_with_decoder[0].decoder is model.decoder
     assert helper.num_layers_per_chunk[0] > 0
 
 

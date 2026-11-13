@@ -390,6 +390,40 @@ def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.Monkey
     assert encoder_cls.call_args.kwargs["max_pixels"] == 200
 
 
+def test_generic_hf_padding_mask_request_reaches_the_encoder(monkeypatch: pytest.MonkeyPatch):
+    config = EnergonDatasetConfig(
+        path="/data/shards",
+        seq_length=2048,
+        micro_batch_size=4,
+        task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
+        pad_to_max_length=True,
+    )
+    restored = instantiate(ConfigContainer._convert_value_to_dict(config))
+    process_config_with_overrides(restored, cli_overrides=["task_encoder.return_padding_mask=true"])
+    encoder_cls = MagicMock(return_value=object())
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", lambda **_: False)
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.AutoProcessor.from_pretrained", MagicMock())
+    monkeypatch.setattr("megatron.bridge.data.energon.hf_task_encoder.HFTaskEncoder", encoder_cls)
+
+    build_energon_task_encoder(restored)
+
+    assert restored.task_encoder.return_padding_mask is True
+    assert encoder_cls.call_args.kwargs["return_padding_mask"] is True
+
+
+def test_generic_hf_padding_mask_request_rejects_in_batch_packing():
+    config = EnergonDatasetConfig(
+        path="/data/shards",
+        seq_length=2048,
+        micro_batch_size=1,
+        task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model", return_padding_mask=True),
+        enable_in_batch_packing=True,
+    )
+
+    with pytest.raises(ValueError, match="padded batches only"):
+        build_energon_task_encoder(config)
+
+
 def test_generic_hf_config_rejects_empty_processor_revision():
     config = EnergonDatasetConfig(
         path="/data/shards",
