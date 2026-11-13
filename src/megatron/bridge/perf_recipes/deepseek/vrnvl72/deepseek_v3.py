@@ -333,8 +333,8 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     # Match the receive capacity and stash buffer sizing of the Rubin benchmark.
     cfg.model.moe_flex_dispatcher_num_sms = 64
     cfg.model.moe_combine_bwd_dtype = "mxfp8"
-    cfg.model.moe_expert_rank_capacity_factor = 4
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_router_dtype = "bf16"
     cfg.model.moe_router_padding_for_quantization = True
 
@@ -402,17 +402,18 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 VRNVL72 GPUs.
 
     Shrinks ``deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config`` for bring-up on fewer GPUs. Keeps
-    GBS=4096, per-layer shapes, EP=32 and one MTP layer. Uses the nightly benchmark's MXFP8 forward
-    dispatch, expert receive-capacity factor 4 and CUDA stash multiplier 1.1. Other NCCL EP tuning,
+    GBS=4096, per-layer shapes, EP=32 and one MTP layer. Uses MXFP8 forward dispatch and the parent's
+    receive-capacity factor 1.5 and CUDA stash-buffer factor 1.2. Other NCCL EP tuning,
     fusions, CUDA graphs, runtime and environment follow the parent. PP=1 without virtual
     pipelining gives dense DP=64, expert DP=2 and 64 microbatches. This reduced-depth model does
     not reproduce the parent's PP=2 x VP=8 schedule,
     at-scale pipeline traffic, convergence or memory use; GPU validation is required.
     """
     cfg = deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config()
+    # Use MXFP8 forward dispatch and match the parent's buffer sizing.
     cfg.model.moe_dispatch_fwd_dtype = "mxfp8"
-    cfg.model.moe_expert_rank_capacity_factor = 4
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.num_layers = 13
     # Retain DeepSeek V3's three leading dense layers; shorten its MoE pattern.
     cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)

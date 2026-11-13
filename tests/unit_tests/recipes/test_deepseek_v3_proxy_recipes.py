@@ -101,8 +101,8 @@ def test_proxy_preserves_parent_except_depth_layout_and_mxfp8_tuning(
             }
         )
         assert proxy.model.moe_dispatch_fwd_dtype == "mxfp8"
-        assert proxy.model.moe_expert_rank_capacity_factor == 4
-        assert proxy.model.moe_paged_stash_buffer_size_factor_cuda == 1.1
+        assert proxy.model.moe_expert_rank_capacity_factor == 1.5
+        assert proxy.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
     assert {key: value for key, value in vars(proxy.model).items() if key not in proxy_fields} == {
         key: value for key, value in vars(parent.model).items() if key not in proxy_fields
     }
