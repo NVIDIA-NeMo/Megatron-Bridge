@@ -15,8 +15,9 @@
 """Inkling2 image preprocessing for training.
 
 The ``thinkingmachines/Inkling-2-Small`` release names an ``Inkling2ImageProcessor`` in its
-``processor_config.json`` but ships no implementation, and released Transformers versions have none, so this
-implements the release's settings: an image keeps its native size, is padded on the
+``processor_config.json`` but ships no implementation, and the Transformers version Bridge pins has none
+(Transformers adds one in v5.23.0), so this implements the release's settings: an image keeps its native size,
+is padded on the
 right and bottom to a multiple of 40 pixels with a value just below black, rescaled by 1/255 and normalized
 with mean and standard deviation 0.5 (to [-1, 1]), and cut into 40x40-pixel patches in row-major order.
 Each patch repeats twice in time, and each one becomes one image token for the language model. The vision

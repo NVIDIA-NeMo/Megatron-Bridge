@@ -31,6 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
+from megatron.bridge.models.inkling.configuration_inkling2 import Inkling2TextConfig
 from megatron.bridge.models.inkling.inkling2_bridge import _InterleavedGatedExpertMapping, _vision_config_dict
 from megatron.bridge.models.inkling.inkling2_quantization import companion_keys
 from megatron.bridge.training.config import ConfigContainer
@@ -92,7 +93,7 @@ def bridge(hf_config):
     return bridge
 
 
-# A Transformers version that implements Inkling2 keeps its own config classes; Bridge registers its own otherwise.
+# Transformers implements Inkling2 from v5.23.0 and keeps its own config classes; Bridge registers its own otherwise.
 NATIVE_INKLING2 = "inkling2" in CONFIG_MAPPING_NAMES
 
 
@@ -109,6 +110,11 @@ def test_config_types_are_registered():
     )
     assert config.model_type == "inkling2" and isinstance(config, Inkling2Config) != NATIVE_INKLING2
     assert config.text_config.sliding_window_size == 16
+    # Bridge's classes take Transformers' model types, so a saved config.json names the decoder section as
+    # Transformers does.
+    assert type(config.text_config) is CONFIG_MAPPING["inkling2_text"]
+    assert isinstance(config.text_config, Inkling2TextConfig) != NATIVE_INKLING2
+    assert json.loads(config.to_json_string())["text_config"]["model_type"] == "inkling2_text"
 
 
 def test_vision_config_reads_a_config_object_like_the_release_dict():

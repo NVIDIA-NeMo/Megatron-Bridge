@@ -14,12 +14,11 @@
 
 """Hugging Face configuration classes for Inkling2 checkpoints.
 
-The ``thinkingmachines/Inkling-2-Small`` release ships no configuration code, and the Transformers version Bridge
-pins does not implement Inkling2 (its ``inkling`` model is the first Inkling generation, a different architecture),
-so Bridge registers these classes for the release's ``inkling2`` model type. They only parse and serialize
-``config.json``; the defaults are the release's values. A Transformers version that implements Inkling2
-(huggingface/transformers#50682) keeps its own ``inkling2`` classes: they read every key of the release's
-``config.json`` as an attribute too, and Bridge accepts them.
+The ``thinkingmachines/Inkling-2-Small`` release ships no configuration code. Transformers implements Inkling2 from
+v5.23.0, but the version Bridge pins does not (its ``inkling`` model is the first Inkling generation, a different
+architecture), so Bridge registers these classes under Transformers' model types, ``inkling2`` and
+``inkling2_text``. They only parse and serialize ``config.json``; the defaults are the release's values. With a
+Transformers version that implements Inkling2, its own classes stay registered.
 """
 
 from typing import Any
@@ -36,7 +35,7 @@ INKLING2_IMAGE_TOKEN_ID = 200054
 class Inkling2TextConfig(PretrainedConfig):
     """Language decoder configuration nested as ``text_config``."""
 
-    model_type = "inkling2_model"
+    model_type = "inkling2_text"
 
     def __init__(
         self,
@@ -155,10 +154,10 @@ class Inkling2Config(PretrainedConfig):
         super().__init__(**kwargs)
 
 
-AutoConfig.register(Inkling2TextConfig.model_type, Inkling2TextConfig, exist_ok=True)
-# Registering over a native implementation would hand Transformers' own Inkling2 models this class.
-if Inkling2Config.model_type not in CONFIG_MAPPING_NAMES:
-    AutoConfig.register(Inkling2Config.model_type, Inkling2Config, exist_ok=True)
+# Registering over Transformers' own implementation would hand its Inkling2 models these classes.
+for _config_class in (Inkling2TextConfig, Inkling2Config):
+    if _config_class.model_type not in CONFIG_MAPPING_NAMES:
+        AutoConfig.register(_config_class.model_type, _config_class, exist_ok=True)
 
 
 __all__ = ["INKLING2_IMAGE_TOKEN_ID", "Inkling2Config", "Inkling2TextConfig"]

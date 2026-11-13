@@ -12,8 +12,9 @@ summary: >
   The verified items carry caveats, stated in each result. Their workloads ran on GB200 through private srun wrappers
   around the same Bridge entry points rather than through the public launchers in the commands. The training runs
   used a pre-release tree of this support and an imported checkpoint of the pre-release weights, which are
-  SHA-256-identical to this revision. Released Transformers versions do not implement Inkling 2, so the Hugging Face
-  reference logits come from huggingface/transformers#50682, and the SFT export's Hugging Face reload is not recorded.
+  SHA-256-identical to this revision. The Hugging Face reference logits come from huggingface/transformers#50682 at a
+  pre-release commit whose modeling code Transformers v5.23.0 ships unchanged, and the SFT export's Hugging Face
+  reload is not recorded.
   CPU conversion and checkpoint resume of the complete model are not verified.
 verification_index:
   model_level:
@@ -108,9 +109,9 @@ items:
       --tp 1 --pp 1 --ep 16 --etp 1
     last_verified: 2026-11-12
     expected_result: >
-      With 16 GB200 GPUs. Released Transformers versions do not implement Inkling 2, so the reference logits come from
-      huggingface/transformers#50682 at commit 64ccab4b, run as a separate Hugging Face forward with Transformers'
-      expert parallelism over 16 GPUs (EP16, lm_head replicated). That pull request does not load NVFP4 experts, so it
+      With 16 GB200 GPUs. The reference logits come from huggingface/transformers#50682 at commit 64ccab4b, whose
+      modeling code Transformers v5.23.0 ships unchanged, run as a separate Hugging Face forward with Transformers'
+      expert parallelism over 16 GPUs (EP16, lm_head replicated). That code does not load NVFP4 experts, so it
       read Bridge's plain BF16 export of this revision, while Bridge ran the release itself at TP1/PP1/EP16. On the
       prompt's 5 tokens, prefixed with three begin-of-text tokens to 8 positions, the next token matches
       (" Paris"). Logit cosine similarity is 0.998684, above the 0.99 gate; maximum and mean absolute logit
@@ -224,13 +225,13 @@ items:
       commands: null
       last_verified: null
       expected_result: >
-        Not verified: released Transformers versions do not implement Inkling 2, and the single-process Hugging Face
-        inference verifier cannot hold the 1.2 TB BF16 export on one GB200 node. Recorded so far, on older code: the
-        step-100 checkpoint of the 100-step SFT run described under sft, saved at TP4/PP4/EP32, exported at TP1/EP16
-        with --export-weight-dtype bfloat16 (1,514 tensors: 1,370 BF16 and 144 FP32, with no scale tensors, a
-        consistent hf_quant_config.json, and side files identical to the release). Reloaded into Bridge, the export
-        gives logits bit-identical to the Megatron checkpoint's on four inputs, and two greedy generations per prompt
-        are identical.
+        Not verified: Transformers implements Inkling 2 only from v5.23.0, newer than the version Bridge pins, and the
+        single-process Hugging Face inference verifier cannot hold the 1.2 TB BF16 export on one GB200 node. Recorded
+        so far, on older code: the step-100 checkpoint of the 100-step SFT run described under sft, saved at
+        TP4/PP4/EP32, exported at TP1/EP16 with --export-weight-dtype bfloat16 (1,514 tensors: 1,370 BF16 and 144
+        FP32, with no scale tensors, a consistent hf_quant_config.json, and side files identical to the release).
+        Reloaded into Bridge, the export gives logits bit-identical to the Megatron checkpoint's on four inputs, and
+        two greedy generations per prompt are identical.
 
   sft_long_context:
     GB200:
