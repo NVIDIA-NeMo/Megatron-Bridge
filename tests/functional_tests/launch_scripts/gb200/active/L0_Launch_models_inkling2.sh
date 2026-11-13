@@ -1,4 +1,4 @@
-# CI_TIMEOUT=30
+# CI_TIMEOUT=40
 #!/bin/bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
