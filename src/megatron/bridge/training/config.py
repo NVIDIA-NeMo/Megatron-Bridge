@@ -126,34 +126,16 @@ def _apply_megatron_fsdp_grad_dtype_policy(ddp_config: MCoreDistributedDataParal
 
 @dataclass
 class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
-    """Megatron Core DistributedDataParallelConfig with deferred post-init.
+    """MCore DDP configuration with Bridge's Megatron-FSDP precision policy.
 
-    This class inherits from Megatron Core's DistributedDataParallelConfig but defers the
-    execution of post_init() until finalize() is explicitly called. This allows
-    for field modifications after construction but before computed fields are calculated.
+    MCore resolves defaults and validates settings in ``finalize()``, after recipes
+    and runtime configuration have finished editing the fields.
     """
 
-    param_name_patterns_for_fp32_local_accumulation: Tuple[str, ...] = ()
-    """fnmatch patterns selecting parameters whose gradients should be locally
-    accumulated in FP32. The special pattern ``'all'`` matches every parameter.
-    Synced from MCore c586f6d56 (#4028); field will be inherited from the base
-    class after the next mcore bump."""
-
-    def __post_init__(self) -> None:
-        """Skip MCore post_init during initial construction.
-
-        The original post_init logic is deferred until finalize() is called.
-        """
-        pass
-
     def finalize(self) -> None:
-        """Execute the deferred MCore post-init logic.
-
-        This method calls the original Megatron Core DistributedDataParallelConfig.__post_init__()
-        to compute derived fields based on the current field values.
-        """
+        """Apply Bridge's precision policy, then finalize the MCore configuration."""
         _apply_megatron_fsdp_grad_dtype_policy(self)
-        super().__post_init__()
+        super().finalize()
 
 
 @dataclass
@@ -199,6 +181,9 @@ class OptimizerConfig(MCoreOptimizerConfig):
 @dataclass(kw_only=True)
 class DistributedInitConfig(MTrainDistributedInitConfig):
     """Configuration settings for distributed training initialization."""
+
+    use_torch_fsdp2: bool = False
+    """Select Torch FSDP2 in Bridge's model-provider and checkpoint setup APIs."""
 
     external_gpu_device_mapping: bool = False
     """If True, indicates that GPU device mapping has been externally managed
@@ -1639,15 +1624,13 @@ class ConfigContainer(Container):
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
-        if hasattr(self.ddp, "finalize"):
-            self.ddp.finalize()
-        elif isinstance(self.ddp, MCoreDistributedDataParallelConfig):
-            # Recipes may construct Megatron Core's DDP config directly. It has no deferred
-            # finalize(), so apply the Megatron-FSDP gradient dtype policy before its post-init
-            # is re-run below.
-            _apply_megatron_fsdp_grad_dtype_policy(self.ddp)
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
+        if isinstance(self.ddp, MCoreDistributedDataParallelConfig):
+            # Recipes may use MCore's config directly, bypassing Bridge's subclass.
+            _apply_megatron_fsdp_grad_dtype_policy(self.ddp)
+        if hasattr(self.ddp, "finalize"):
+            self.ddp.finalize()
 
         # Guard post-construction CUDA graph overrides before MCore post-init can
         # migrate deprecated scope fields into a different implementation.
@@ -2440,6 +2423,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
         cfg.dataset.finalize()
     if hasattr(cfg.optimizer, "finalize"):
         cfg.optimizer.finalize()
+    if isinstance(cfg.ddp, MCoreDistributedDataParallelConfig):
+        _apply_megatron_fsdp_grad_dtype_policy(cfg.ddp)
     if hasattr(cfg.ddp, "finalize"):
         cfg.ddp.finalize()
     cfg.logger.finalize()
