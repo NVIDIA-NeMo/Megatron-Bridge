@@ -24,7 +24,19 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 # Bound the processor workaround to the releases whose loading behavior we tested.
 # Future releases use their own loader and surface errors rather than silently
 # dropping a required VLM artifact during conversion/export.
-_PROCESSOR_ADAPTER_RELEASES = ("5.18.0", "5.19.0", "5.20.0", "5.20.1", "5.20.2")
+_PROCESSOR_ADAPTER_RELEASES = (
+    "5.18.0",
+    "5.19.0",
+    "5.20.0",
+    "5.20.1",
+    "5.20.2",
+    "5.21.0",
+    "5.21.1",
+    "5.22.0",
+    "5.22.1",
+    "5.22.2",
+    "5.23.0",
+)
 
 
 class Nemotron35VLPretrained(PreTrainedCausalLM):

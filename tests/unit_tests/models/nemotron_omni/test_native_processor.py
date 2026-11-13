@@ -116,7 +116,7 @@ def test_native_processor_version_bounds():
     ):
         wrapper.processor
     with (
-        patch.object(transformers, "__version__", "5.21.0"),
+        patch.object(transformers, "__version__", "5.24.0"),
         patch.object(transformers.AutoProcessor, "from_pretrained") as load,
     ):
         assert wrapper.processor is load.return_value
