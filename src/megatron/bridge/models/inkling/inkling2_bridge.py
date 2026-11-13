@@ -234,6 +234,71 @@ class Inkling2Bridge(MegatronModelBridge):
         )
         return config_kwargs
 
+    @classmethod
+    def megatron_to_hf_config(cls, model_config: Inkling2ModelConfig) -> dict[str, Any]:
+        """Translate a saved ``Inkling2ModelConfig`` back into the release's nested config layout.
+
+        This inverts ``hf_config_to_model_config_kwargs``. ``AutoBridge.from_auto_config`` projects the
+        result onto the reference config and takes what the Megatron model does not hold from it: the
+        draft model's ``mtp_config``, ``model_max_length``, ``dtype``, and ``eos_token_id``.
+        """
+        if not isinstance(model_config, Inkling2ModelConfig):
+            raise TypeError(f"Expected Inkling2ModelConfig, got {type(model_config).__name__}.")
+        transformer = model_config.transformer
+        n_floor = transformer.inkling2_log_scaling_n_floor
+        text_config = {
+            "hidden_size": transformer.hidden_size,
+            # Each decoder block is a Hybrid attention layer followed by a MoE layer.
+            "num_hidden_layers": transformer.num_layers // 2,
+            "num_attention_heads": transformer.num_attention_heads,
+            "num_key_value_heads": transformer.num_query_groups,
+            "head_dim": transformer.kv_channels,
+            "vocab_size": model_config.vocab_size,
+            "unpadded_vocab_size": transformer.inkling2_unpadded_vocab_size,
+            "d_rel": transformer.inkling2_rel_dim,
+            "rel_extent": transformer.inkling2_rel_extent,
+            # The import rejects attention biases, pre-affine norms, shared experts, and distinct local attention
+            # shapes, so the Megatron model has none of them.
+            "q_bias": False,
+            "o_bias": False,
+            "log_scaling_n_floor": int(n_floor) if float(n_floor).is_integer() else n_floor,
+            "log_scaling_alpha": transformer.inkling2_log_scaling_alpha,
+            "rms_norm_eps": transformer.layernorm_epsilon,
+            "pre_norm_pre_affine": False,
+            "final_norm_pre_affine": False,
+            "use_value_norm_no_gamma": transformer.inkling2_value_norm,
+            "qk_l2_clip_threshold": transformer.inkling2_qk_clip_threshold,
+            "rel_l2_clip_threshold": transformer.inkling2_rel_clip_threshold,
+            "local_layer_ids": list(transformer.inkling2_local_layers),
+            "sconv_kernel_size": transformer.inkling2_sconv_kernel_size,
+            "final_logit_softcapping": transformer.inkling2_final_logit_softcap,
+            "swa_head_dim": transformer.kv_channels,
+            "swa_num_attention_heads": transformer.num_attention_heads,
+            "swa_num_key_value_heads": transformer.num_query_groups,
+            "sliding_window_size": transformer.inkling2_sliding_window,
+            "n_layers_per_attn_res_block": transformer.inkling2_attn_res_block_size,
+            "attn_res_normalize_values": transformer.inkling2_attn_res_normalize_values,
+            "n_routed_experts": transformer.num_moe_experts,
+            "num_experts_per_tok": transformer.moe_router_topk,
+            "n_shared_experts": 0,
+            "intermediate_size": transformer.moe_ffn_hidden_size,
+            "mlp_gate_softcap": transformer.inkling2_mlp_gate_softcap,
+            "mlp_up_softcap": transformer.inkling2_mlp_up_softcap,
+            "route_scale": transformer.moe_router_topk_scaling_factor,
+            "use_gate_bias": transformer.moe_router_enable_expert_bias,
+        }
+        hf_config = {
+            "architectures": ["Inkling2ForConditionalGeneration"],
+            "model_type": "inkling2",
+            "text_config": text_config,
+            # A model built without the image encoder exports without one.
+            "vision_config": dict(model_config.vision_config) if model_config.vision_config else None,
+            "tie_word_embeddings": model_config.share_embeddings_and_output_weights,
+        }
+        if model_config.image_token_id is not None:
+            hf_config["image_token_id"] = model_config.image_token_id
+        return hf_config
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Map each Inkling2 block to its Hybrid attention and MoE layers, the AttnRes queries, and the image encoder.
 

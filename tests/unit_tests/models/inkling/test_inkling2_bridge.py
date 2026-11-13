@@ -15,6 +15,7 @@
 """Unit tests for the Inkling2 bridge configuration and parameter mappings."""
 
 import json
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from safetensors.torch import save_file
 from transformers import AutoConfig, PretrainedConfig
 from transformers.models.auto.configuration_auto import CONFIG_MAPPING, CONFIG_MAPPING_NAMES
 
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -31,6 +33,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
 from megatron.bridge.models.inkling.inkling2_bridge import _InterleavedGatedExpertMapping, _vision_config_dict
 from megatron.bridge.models.inkling.inkling2_quantization import companion_keys
+from megatron.bridge.training.config import ConfigContainer
 
 
 pytestmark = pytest.mark.unit
@@ -205,6 +208,88 @@ def test_saved_config_keeps_every_release_field(tmp_path):
     assert {key: saved[key] for key in ("architectures", "model_type", "eos_token_id")} == {
         key: RELEASE_CONFIG[key] for key in ("architectures", "model_type", "eos_token_id")
     }
+
+
+def _save_run_config(checkpoint_dir: Path, model_config: Inkling2ModelConfig) -> None:
+    """Write the run config of a Megatron checkpoint, which the export reads through ``from_auto_config``."""
+    checkpoint_dir.mkdir()
+    ConfigContainer(
+        model=model_config,
+        train=None,
+        optimizer=None,
+        scheduler=None,
+        dataset=None,
+        logger=None,
+        tokenizer=None,
+        checkpoint=None,
+    ).to_yaml(str(checkpoint_dir / "run_config.yaml"))
+
+
+def _plain_fields(config, *, exclude: tuple[str, ...] = ()) -> dict:
+    """Return the config fields that hold plain values, which compare across instances."""
+    plain = (bool, int, float, str, tuple, list, dict, type(None), torch.dtype)
+    return {
+        f.name: getattr(config, f.name)
+        for f in fields(config)
+        if f.name not in exclude and isinstance(getattr(config, f.name), plain)
+    }
+
+
+@pytest.fixture
+def release_dir(tmp_path) -> Path:
+    release_dir = tmp_path / "release"
+    release_dir.mkdir()
+    (release_dir / "config.json").write_text(json.dumps(RELEASE_CONFIG))
+    return release_dir
+
+
+@pytest.mark.skipif(NATIVE_INKLING2, reason="Transformers' own Inkling2 classes write their own config layout")
+def test_checkpoint_export_reproduces_the_release_config(tmp_path, release_dir):
+    reference = AutoConfig.from_pretrained(release_dir)
+    _save_run_config(tmp_path / "checkpoint", AutoBridge.from_hf_config(reference).get_model_config())
+
+    rebuilt = AutoBridge.from_auto_config(str(tmp_path / "checkpoint"), str(release_dir)).hf_pretrained
+
+    # The export writes this JSON as config.json.
+    assert rebuilt.to_json_string() == reference.to_json_string()
+
+
+def test_checkpoint_export_keeps_the_saved_architecture(tmp_path, release_dir):
+    """A checkpoint unlike the reference exports its own settings, and the reference fills only the rest."""
+    vision = dict(RELEASE_CONFIG["vision_config"], hidden_size=32, num_hidden_layers=2, native_patch_size=4)
+    saved = Inkling2Config(
+        text_config=dict(TEXT, final_logit_softcapping=12.0),
+        vision_config=vision,
+        image_token_id=500,
+        architectures=["Inkling2ForConditionalGeneration"],
+    )
+    model_config = AutoBridge.from_hf_config(saved).get_model_config()
+    _save_run_config(tmp_path / "checkpoint", model_config)
+
+    rebuilt = AutoBridge.from_auto_config(str(tmp_path / "checkpoint"), str(release_dir)).hf_pretrained
+
+    text = {key: value for key, value in TEXT.items() if key != "torch_dtype"}
+    assert {key: getattr(rebuilt.text_config, key) for key in text} == dict(text, final_logit_softcapping=12.0)
+    assert rebuilt.vision_config == vision and rebuilt.image_token_id == 500
+    # The Megatron model holds neither the draft model nor the token IDs of the tokenizer.
+    assert rebuilt.mtp_config == RELEASE_CONFIG["mtp_config"]
+    assert rebuilt.eos_token_id == RELEASE_CONFIG["eos_token_id"]
+
+    reimported = AutoBridge.from_hf_config(rebuilt).get_model_config()
+    assert _plain_fields(reimported.transformer) == _plain_fields(model_config.transformer)
+    # Only the recorded source differs: the rebuilt config names the reference.
+    source = ("extra_checkpoint_metadata",)
+    assert _plain_fields(reimported, exclude=source) == _plain_fields(model_config, exclude=source)
+
+
+def test_model_without_the_image_encoder_exports_no_vision_config():
+    config = Inkling2Config(text_config=dict(TEXT), architectures=["Inkling2ForConditionalGeneration"])
+    bridge = Inkling2Bridge()
+    bridge.hf_config = config
+
+    exported = Inkling2Bridge.megatron_to_hf_config(bridge.hf_config_to_model_config(config))
+
+    assert exported["vision_config"] is None and "image_token_id" not in exported
 
 
 @pytest.mark.parametrize(

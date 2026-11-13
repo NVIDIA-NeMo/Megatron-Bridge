@@ -78,7 +78,10 @@ FP32 through training and conversion.
 
 The speculative-decoding draft network in `mtp.safetensors` is not part of the
 Megatron model. Export copies it unchanged, with the quantization config, processor
-config, chat template, and tokenizer files.
+config, chat template, and tokenizer files. Export writes `config.json` from the
+checkpoint's saved model config, so a model whose architecture differs from the
+`--hf-model` reference keeps its own settings; the reference supplies only what the
+Megatron model does not hold, such as `mtp_config` and `eos_token_id`.
 
 ## Parallelism and limits
 
