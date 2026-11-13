@@ -9,21 +9,26 @@ summary: >
   HybridModel decoder with 48 blocks of Inkling2 attention and MoE (96 Hybrid positions, 384 routed experts, top-8
   routing, Block Attention Residuals instead of a residual stream) and a ported image encoder. The release stores the
   routed experts in NVFP4 and MXFP8; import dequantizes them and export re-quantizes them against the source scales.
-  No item has run through the public launchers yet. Released Transformers versions do not implement Inkling 2, so the
-  Hugging Face forward comparison and the reload of an SFT export wait for a Transformers release that includes
-  huggingface/transformers#50682, which loads only the MXFP8 checkpoint.
+  The verified items carry caveats, stated in each result. Their workloads ran on GB200 through private srun wrappers
+  around the same Bridge entry points rather than through the public launchers in the commands. The training runs
+  used a pre-release tree of this support and an imported checkpoint of the pre-release weights, which are
+  SHA-256-identical to this revision. Released Transformers versions do not implement Inkling 2, so the Hugging Face
+  reference logits come from huggingface/transformers#50682, and the SFT export's Hugging Face reload is not recorded.
+  CPU conversion and checkpoint resume of the complete model are not verified.
 verification_index:
   model_level:
-    unverified:
-      - hf_to_megatron_cpu
+    verified:
       - hf_to_megatron_gpu
-      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
+    unverified:
+      - hf_to_megatron_cpu
+      - megatron_to_hf_cpu
   training:
     GB200:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain, sft, sft_long_context, peft]
+      unverified: [sft_export_inference, checkpoint_resume]
 model:
   hf_id: thinkingmachines/Inkling-2-Small
   hf_revision: 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b  # pragma: allowlist secret
@@ -31,7 +36,7 @@ model:
   min_transformers_version: "5.20.2"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.10
-  bridge_commit: f78022b188b053a031080b875a2a61943d3fb4ca  # pragma: allowlist secret
+  bridge_commit: 4c0e4224000bfc0b9f8978edb1a242b9f3d00cb9  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -43,7 +48,7 @@ items:
       CPU import of the complete 594B checkpoint has not been attempted. GPU import is recorded separately.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -51,11 +56,14 @@ items:
       --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b
       --megatron-path work/model-verification/inkling-2-small/gpu-megatron
       --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1
-    last_verified: null
+    last_verified: 2026-11-12
     expected_result: >
-      With 16 GB200 GPUs the command builds the complete HybridModel with the image encoder, dequantizes the NVFP4 and
-      MXFP8 experts one layer at a time, and persists an iter_0000000 distributed checkpoint from all 16 ranks. The
-      export audit under megatron_to_hf_gpu establishes its tensor content. Not yet run through this launcher.
+      Observed with 16 GB200 GPUs at TP1/PP1/EP16/ETP1: the release loads by its Hub ID, builds the complete
+      HybridModel with the image encoder, and dequantizes the NVFP4 and MXFP8 experts to BF16 one layer at a time, in
+      200.6 s. The export audit under megatron_to_hf_gpu establishes its tensor content. Caveats: this ran through a
+      private srun wrapper that imports and exports in memory rather than through this launcher, so it persisted no
+      iter_0000000 checkpoint. The training items start from a distributed checkpoint of the same weights that a
+      pre-release tree of this support imported and saved.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -66,7 +74,7 @@ items:
       CPU export of the complete 594B checkpoint has not been attempted. GPU export is recorded separately.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -75,77 +83,138 @@ items:
       --megatron-path work/model-verification/inkling-2-small/gpu-megatron/iter_0000000
       --hf-path work/model-verification/inkling-2-small/gpu-hf-export
       --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-save
-    last_verified: null
+    last_verified: 2026-11-12
     expected_result: >
-      The export re-quantizes the routed experts against the source scales, so an exhaustive comparison against the
-      release must find all 1,770 tensors byte-identical, including the NVFP4 and MXFP8 experts and their scales, with
-      no missing or extra keys. The tokenizer files, chat template, processor and quantization configurations, and
-      the MTP draft must also be byte-identical. Not yet run through this launcher.
+      Observed with 16 GB200 GPUs at TP1/PP1/EP16/ETP1: the export re-quantizes the routed experts against the source
+      scales, and an exhaustive comparison against the release finds all 1,770 tensors byte-identical, including the
+      NVFP4 and MXFP8 experts and their scales, with no missing or extra keys. The tokenizer files, chat template,
+      processor and quantization configurations, and the MTP draft are byte-identical to the release; config.json
+      keeps every release key and adds dtype, image_token_id, tie_word_embeddings, and transformers_version. Caveats:
+      the export ran in memory from the model imported under hf_to_megatron_gpu, through a private srun wrapper,
+      rather than from a saved iter_0000000 checkpoint through this launcher. Export from a saved checkpoint was
+      exercised by the plain BF16 export of an SFT checkpoint described under sft_export_inference.
 
   manual_forward_pass:
-    status: unverified
-    precision: bf16
-    command: null
-    last_verified: null
-    expected_result: >
-      Released Transformers versions do not implement Inkling 2, so there is no Hugging Face reference for the
-      model-comparison task. huggingface/transformers#50682 adds one but loads only the MXFP8 checkpoint, not this
-      NVFP4 revision. Record this item once a Transformers release can load the pinned revision.
-
-  inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4
-      --task legacy-full-prefix-generation --legacy-full-prefix
+      --task model-comparison
       --hf_model_path thinkingmachines/Inkling-2-Small
       --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b
       --megatron_model_path work/model-verification/inkling-2-small/gpu-megatron/iter_0000000
-      --prompt "The capital of France is" --max_new_tokens 32
+      --hf-logits-path work/model-verification/inkling-2-small/hf-reference.pt
+      --prompt "The capital of France is"
       --tp 1 --pp 1 --ep 16 --etp 1
-    last_verified: null
+    last_verified: 2026-11-12
     expected_result: >
-      Megatron's KV-cache inference is not implemented for Inkling2, so generation uses the slow legacy full-prefix
-      task. The text-generation helper builds models through the provider API, and Inkling2 is builder-backed, so the
-      exact command must complete deterministic greedy generation before this item is promoted.
+      With 16 GB200 GPUs. Released Transformers versions do not implement Inkling 2, so the reference logits come from
+      huggingface/transformers#50682 at commit 64ccab4b, run as a separate Hugging Face forward with Transformers'
+      expert parallelism over 16 GPUs (EP16, lm_head replicated). That pull request does not load NVFP4 experts, so it
+      read Bridge's plain BF16 export of this revision, while Bridge ran the release itself at TP1/PP1/EP16. On the
+      prompt's 5 tokens, prefixed with three begin-of-text tokens to 8 positions, the next token matches
+      (" Paris"). Logit cosine similarity is 0.998684, above the 0.99 gate; maximum and mean absolute logit
+      differences are 1.747549 and 0.307396. Three more inputs also match on the next token: a 32-token chat
+      prompt, a 1,496-token text, and the docs/images/tp1.png image prompt (280 positions), with last-position cosine
+      similarities of 0.99994, 0.99842, and 0.99988. Caveats: both forwards ran through private scripts on the same
+      token IDs rather than through this command, and Bridge loaded the Hugging Face checkpoint directly instead of an
+      imported Megatron checkpoint.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4
+      --task vlm-generation
+      --hf_model_path thinkingmachines/Inkling-2-Small
+      --hf-revision 78cb6c0ef68e1f089b77e78cfd94783d05b5c41b
+      --image_path docs/images/tp1.png --prompt "Describe this image."
+      --max_new_tokens 64 --pad_to_length 384 --tp 1 --pp 1 --ep 16 --etp 1 --deterministic
+    last_verified: 2026-11-12
+    expected_result: |-
+      With 16 GB200 GPUs the release loads by its Hub ID at TP1/PP1/EP16/ETP1 with deterministic kernels. The prompt,
+      rendered by the checkpoint's chat template at the default thinking effort, takes 287 tokens, 264 of them for
+      the 850x477 image at its native size, and every step is padded to 384 tokens so that FlexAttention compiles
+      once. Greedy generation runs all 64 steps without reaching end of sequence and produces exactly 64 new tokens;
+      a second run gives the same tokens. The model opens its thinking block and describes the slide correctly. The
+      literal completion, written as a JSON string with Unicode escapes for the control-token brackets, was:
+      "\u003c|message_model|\u003e\u003c|content_thinking|\u003eThe user wants a description of the image. Need describe accurately. Need inspect image content.\n\nImage shows a slide titled \"Transformers\" with subtitle in green: “Pre-Layernorm” Transformer Block. A large rounded rectangle encloses block, labeled Nx at top right. In"
+      Caveat: the command ran as scripts/inference/vlm_generation.py with the same arguments, one task per GPU
+      under a private srun wrapper, rather than through infer.sh, on a tree whose code matches the recorded commit.
 
   pretrain:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         moe_dispatcher: hybridep
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
+        --recipe inkling2_small_pretrain_128gpu_gb200_bf16_config --mode pretrain
+        --pretrained_checkpoint work/model-verification/inkling-2-small/gpu-megatron
+        --max_steps 50
+        'dataset.blend=[["work/data/rp2/head_01_inkling2_text_document"],null]'
+        checkpoint.save=null checkpoint.load=null checkpoint.async_save=false
+        ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/inkling-2-small/pretrain-resolved.yaml
+      last_verified: 2026-11-12
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.827345
+        final_loss: 1.745319
+        last_10_steps_step_time_ms_avg: 18019.69
+        last_10_steps_model_tflops_per_gpu_avg: 203.27
+        last_10_steps_tokens_per_second_per_gpu_avg: 1818.455
       expected_result: >
-        Planned: inkling2_small_pretrain_128gpu_gb200_bf16_config on 128 GB200 GPUs (TP1/PP4/EP32, stages of 13, 13,
-        12, and 10 decoder blocks, HybridEP dispatch), warm-started from the imported checkpoint with
-        --pretrained_checkpoint, 100 steps with saves at steps 50 and 100.
+        Observed with 128 GB200 GPUs at TP1/PP4/EP32/ETP1 (pipeline stages of 13, 13, 12, and 10 decoder blocks; each
+        EP32 group on eight consecutive nodes of one NVL72 rack; HybridEP dispatch; full activation recompute;
+        compiled Inkling2 operators; expandable segments set in the environment as the example README instructs): the
+        command warm-starts from the imported checkpoint with natural expert routing, keeps the image encoder frozen,
+        and runs the first 50 of the recipe's 100 steps on the RedPajama2 head_01 prefix at GBS 1024 and sequence
+        length 4096, at the recipe's peak LR of 3e-5 after 40 warmup steps (2.82e-5 at step 50). All 50 steps finish
+        with finite losses and 0 skipped or NaN iterations. Caveats: run on 2026-11-12 through a private srun wrapper
+        around scripts/training/run_recipe.py rather than train.sh, on a pre-release tree whose model code and recipe
+        match the recorded commit. Checkpoint saving was off, so the run saved no step-50 or step-100 checkpoint and
+        checkpoint_resume stays unverified. An earlier 100-step run of the same data and schedule on older code
+        reached a loss of 1.7301 at step 100.
 
   sft:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: hybridep
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
+        --recipe inkling2_small_sft_128gpu_gb200_bf16_config --mode sft
+        --pretrained_checkpoint work/model-verification/inkling-2-small/gpu-megatron
+        --max_steps 30
+        checkpoint.save=null checkpoint.load=null checkpoint.async_save=false
+        ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/inkling-2-small/sft-resolved.yaml
+      last_verified: 2026-11-11
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.323619
+        final_loss: 0.6976618
+        last_10_steps_step_time_ms_avg: 1481.15
+        last_10_steps_model_tflops_per_gpu_avg: 37.74
+        last_10_steps_tokens_per_second_per_gpu_avg: 345.677
       expected_result: >
-        Planned: inkling2_small_sft_128gpu_gb200_bf16_config on 128 GB200 GPUs (TP4/PP4/EP32, HybridEP dispatch),
-        100 steps of full SFT on Tulu 3 packed to 8K at GBS 8, saving the final checkpoint for sft_export_inference.
+        Observed with 128 GB200 GPUs at TP4/PP4/EP32/ETP1 with sequence parallelism, no activation recompute, HybridEP
+        dispatch, and compiled Inkling2 operators: the command warm-starts from the imported checkpoint and runs the
+        first 30 of the recipe's 100 steps of full SFT on the first 10,000 Tulu 3 conversations, rendered with the
+        release's chat template and packed to 8,192 tokens, at GBS 8 (eight data-parallel replicas with one pack each)
+        and peak LR 5e-6 after 10 warmup steps. All 30 steps finish with finite losses and 0 skipped or NaN
+        iterations. Caveats: run on 2026-11-11 through a private srun wrapper around scripts/training/run_recipe.py
+        rather than train.sh, with checkpoint saving off, on a pre-release tree whose model code matches the recorded
+        commit; its recipe reached the recorded recipe's settings through recompute overrides and rendered the data
+        with a copy of the release's chat template that gives the same tokens and loss masks. A 100-step run of the
+        same data and schedule on older code reached a loss of 0.5446 at step 100; sft_export_inference describes the
+        export of its checkpoint.
 
   sft_export_inference:
     GB200:
@@ -155,49 +224,88 @@ items:
       commands: null
       last_verified: null
       expected_result: >
-        Bridge exports the SFT checkpoint, but released Transformers versions cannot reload it for the hf-inference
-        task: they do not implement Inkling 2. Record this item once a Transformers release that includes
-        huggingface/transformers#50682 is available.
+        Not verified: released Transformers versions do not implement Inkling 2, and the single-process Hugging Face
+        inference verifier cannot hold the 1.2 TB BF16 export on one GB200 node. Recorded so far, on older code: the
+        step-100 checkpoint of the 100-step SFT run described under sft, saved at TP4/PP4/EP32, exported at TP1/EP16
+        with --export-weight-dtype bfloat16 (1,514 tensors: 1,370 BF16 and 144 FP32, with no scale tensors, a
+        consistent hf_quant_config.json, and side files identical to the release). Reloaded into Bridge, the export
+        gives logits bit-identical to the Megatron checkpoint's on four inputs, and two greedy generations per prompt
+        are identical.
 
   sft_long_context:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 4
         moe_dispatcher: hybridep
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
+        --recipe inkling2_small_sft_128gpu_gb200_bf16_long_context_config --mode sft
+        --pretrained_checkpoint work/model-verification/inkling-2-small/gpu-megatron
+        --max_steps 20
+        checkpoint.save=null checkpoint.load=null checkpoint.async_save=false
+        ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/inkling-2-small/sft-long-context-resolved.yaml
+      last_verified: 2026-11-11
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.153563
+        final_loss: 0.8579385
+        last_10_steps_step_time_ms_avg: 4711.28
+        last_10_steps_model_tflops_per_gpu_avg: 47.46
+        last_10_steps_tokens_per_second_per_gpu_avg: 434.701
       expected_result: >
-        Planned: inkling2_small_sft_128gpu_gb200_bf16_long_context_config on 128 GB200 GPUs (TP4/PP4/EP32/CP4,
-        HybridEP dispatch), full SFT on Tulu 3 packed to 32K at GBS 8.
+        Observed with 128 GB200 GPUs at TP4/PP4/EP32/CP4/ETP1 with sequence parallelism, Inkling2's own context
+        parallelism, recompute of the first 20 of 24 layers per stage, HybridEP dispatch, and compiled Inkling2
+        operators: the command warm-starts from the imported checkpoint and runs all 20 recipe steps of full SFT on
+        Tulu 3 packed to 32,768 tokens at GBS 8 (two data-parallel replicas running four packs each), at peak LR 5e-6
+        after 2 warmup steps with decay to 0 at step 20. All 20 steps finish with finite losses and 0 skipped or NaN
+        iterations. Caveats: run on 2026-11-11 through a private srun wrapper around scripts/training/run_recipe.py
+        rather than train.sh, on a pre-release tree whose model code matches the recorded commit; its recipe reached
+        the recorded recipe's settings through recompute overrides and rendered the data with a copy of the release's
+        chat template that gives the same tokens and loss masks. The pre-release checkpoint's configuration starts
+        full-attention length scaling at 8,192 tokens instead of this revision's 128,000, so tokens past position
+        8,192 of a document were scaled where this revision would not scale them.
 
   peft:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: hybridep
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 8 --gpus-per-node 4
+        --recipe inkling2_small_peft_32gpu_gb200_bf16_config --mode lora
+        --pretrained_checkpoint work/model-verification/inkling-2-small/gpu-megatron
+        --max_steps 30
+        checkpoint.save=null checkpoint.load=null checkpoint.async_save=false
+        ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/inkling-2-small/peft-resolved.yaml
+      last_verified: 2026-11-11
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.324133
+        final_loss: 0.7994129
+        last_10_steps_step_time_ms_avg: 1427.08
+        last_10_steps_model_tflops_per_gpu_avg: 142.31
+        last_10_steps_tokens_per_second_per_gpu_avg: 1435.098
       expected_result: >
-        Planned: inkling2_small_peft_32gpu_gb200_bf16_config on 32 GB200 GPUs (TP4/PP1/EP32, HybridEP dispatch), 100
-        steps of rank-8 LoRA on the attention projections linear_q, linear_k, linear_v, and linear_proj, on Tulu 3
-        packed to 8K at GBS 8.
+        Observed with 32 GB200 GPUs at TP4/PP1/EP32/ETP1 with sequence parallelism, no activation recompute, HybridEP
+        dispatch, and compiled Inkling2 operators: the command loads the imported checkpoint, freezes the base model,
+        and trains rank-8, alpha-16 LoRA adapters on linear_q, linear_k, linear_v, and linear_proj for the first 30 of
+        the recipe's 100 steps on the packed 8K Tulu 3 data of the sft item at GBS 8 and peak LR 1e-4 after 10 warmup
+        steps. All 30 steps finish with finite losses and 0 skipped or NaN iterations. The TFLOP/s value is Bridge's
+        generic estimate, which counts a full backward pass. Caveats: run on 2026-11-11 through a private srun wrapper
+        around scripts/training/run_recipe.py rather than train.sh, with checkpoint saving off, on a pre-release tree
+        whose model code matches the recorded commit; its recipe reached the recorded recipe's settings through
+        recompute overrides and rendered the data with a copy of the release's chat template that gives the same
+        tokens and loss masks. A 100-step run of the same data and schedule on older code reached a loss of 0.7560 at
+        step 100.
 
   checkpoint_resume:
     GB200:
@@ -219,6 +327,9 @@ items:
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: null
       expected_result: >
-        Planned: resume the pretrain reference from its step-50 checkpoint on the same 128 GPUs and layout, train
-        steps 51-100 into a new root, and compare steps 51 and 100 with the reference within 1e-6 absolute plus 1%
+        Not verified on the complete model: the verified pretrain run saved no checkpoints. On a 12-layer, 64-expert
+        cut of the real weights at TP2/PP2/EP2 on 4 GB200 GPUs, resuming SFT from a step-5 checkpoint reproduced steps
+        6 to 10 of the uninterrupted run exactly (loss, gradient norm, and learning rate). Planned: run the pretrain
+        recipe for its 100 steps with saves at steps 50 and 100, resume from the step-50 checkpoint on the same 128
+        GPUs and layout into a new root, and compare steps 51 and 100 with the reference within 1e-6 absolute plus 1%
         relative.
