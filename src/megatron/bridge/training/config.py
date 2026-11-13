@@ -132,10 +132,16 @@ class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
     and runtime configuration have finished editing the fields.
     """
 
+    def __post_init__(self) -> None:
+        """Defer validation on Core versions that still use constructor checks."""
+
     def finalize(self) -> None:
         """Apply Bridge's precision policy, then finalize the MCore configuration."""
         _apply_megatron_fsdp_grad_dtype_policy(self)
-        super().finalize()
+        if hasattr(MCoreDistributedDataParallelConfig, "finalize"):
+            super().finalize()
+        else:
+            super().__post_init__()
 
 
 @dataclass
@@ -170,12 +176,30 @@ class OptimizerConfig(MCoreOptimizerConfig):
         ``OptimizerConfig.validate()`` and then ``finalize_optimizer_config()`` to
         resolve dtypes and derived fields based on the current field values.
         """
-        normalize_optimizer_config(self)
-        if hasattr(MCoreOptimizerConfig, "finalize_optimizer_config"):
-            self.validate()
-            self.finalize_optimizer_config()
-        else:
-            super().__post_init__()
+        _finalize_core_optimizer_config(self)
+
+
+def _finalize_core_optimizer_config(config: MCoreOptimizerConfig) -> None:
+    """Resolve current recipe values for either the Core or Bridge optimizer type."""
+    normalize_optimizer_config(config)
+    if hasattr(config, "finalize_optimizer_config"):
+        config.validate()
+        config.finalize_optimizer_config()
+    else:
+        MCoreOptimizerConfig.__post_init__(config)
+
+
+def _finalize_optimizer_and_ddp(optimizer: MCoreOptimizerConfig, ddp: MCoreDistributedDataParallelConfig) -> None:
+    """Finalize native Core configs and Bridge extensions at the same boundary."""
+    if hasattr(optimizer, "finalize"):
+        optimizer.finalize()
+    else:
+        _finalize_core_optimizer_config(optimizer)
+    _apply_megatron_fsdp_grad_dtype_policy(ddp)
+    if hasattr(ddp, "finalize"):
+        ddp.finalize()
+    else:
+        ddp.__post_init__()
 
 
 @dataclass(kw_only=True)
@@ -558,18 +582,6 @@ class CheckpointConfig(MTrainCheckpointConfig):
     checkpoints.
     """
 
-    pretrained_checkpoint: Optional[str] = None
-    """Directory containing a pretrained model checkpoint for finetuning.
-
-    This can be either:
-      - A parent checkpoint directory (e.g. ``/checkpoints/my_model/``) that
-        contains tracker files (``latest_train_state.pt``) and ``iter_*``
-        subdirectories.
-      - A specific iteration directory (e.g.
-        ``/checkpoints/my_model/iter_0001000/``) that directly contains the
-        checkpoint payload (``run_config.yaml``, weight shards, etc.).
-    """
-
     storage_writers_per_rank: int = 1
     """Number of storage writers per rank for torch_dist checkpoint format.
     Affects the number of checkpoint files: saving_ranks * storage_writers_per_rank."""
@@ -746,11 +758,10 @@ class LoggerConfig(MTrainLoggerConfig):
     comet_tags: Optional[list[str]] = None
     """Optional list of tags to apply to the Comet ML experiment."""
 
-    logging_level: int | None = None
-    """Logging level. When unset, use the environment override or default to INFO."""
-
     def finalize(self) -> None:
         """Validate logger settings and optional MLFlow dependency."""
+        super().validate()
+
         if self.mlflow_experiment and (self.mlflow_run_name is None or self.mlflow_run_name == ""):
             raise ValueError("Set logger.mlflow_run_name when enabling MLFlow logging.")
 
@@ -1624,13 +1635,8 @@ class ConfigContainer(Container):
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
-        if hasattr(self.optimizer, "finalize"):
-            self.optimizer.finalize()
-        if isinstance(self.ddp, MCoreDistributedDataParallelConfig):
-            # Recipes may use MCore's config directly, bypassing Bridge's subclass.
-            _apply_megatron_fsdp_grad_dtype_policy(self.ddp)
-        if hasattr(self.ddp, "finalize"):
-            self.ddp.finalize()
+        _finalize_optimizer_and_ddp(self.optimizer, self.ddp)
+        self.rng.validate()
 
         # Guard post-construction CUDA graph overrides before MCore post-init can
         # migrate deprecated scope fields into a different implementation.
@@ -1693,6 +1699,8 @@ class ConfigContainer(Container):
         # Re-run post-inits of sub-configs
         for f in fields(self):
             sub_cfg = getattr(self, f.name)
+            if isinstance(sub_cfg, (MCoreOptimizerConfig, MCoreDistributedDataParallelConfig)):
+                continue  # Already finalized above, including Core's constructor-based versions.
             if hasattr(sub_cfg, "__post_init__") and not hasattr(sub_cfg, "finalize"):
                 sub_cfg.__post_init__()
 
@@ -2421,12 +2429,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     # config and is called inside setup_megatron_mimo() right before build_infra().
     if hasattr(cfg.dataset, "finalize"):
         cfg.dataset.finalize()
-    if hasattr(cfg.optimizer, "finalize"):
-        cfg.optimizer.finalize()
-    if isinstance(cfg.ddp, MCoreDistributedDataParallelConfig):
-        _apply_megatron_fsdp_grad_dtype_policy(cfg.ddp)
-    if hasattr(cfg.ddp, "finalize"):
-        cfg.ddp.finalize()
+    _finalize_optimizer_and_ddp(cfg.optimizer, cfg.ddp)
+    cfg.rng.validate()
     cfg.logger.finalize()
     cfg.train.finalize()
     cfg.scheduler.finalize()
