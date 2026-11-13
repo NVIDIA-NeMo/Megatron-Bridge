@@ -17,6 +17,9 @@ implementation, the conversion of the quantized experts, and the supported paral
 
 Import the checkpoint into a Megatron checkpoint; the import dequantizes one expert at
 a time. Megatron checkpoints reshard on load, so later runs may use another layout.
+At EP16 each GPU holds about 87 GB of BF16 weights, a sixteenth of the 587B routed-expert
+parameters plus the replicated rest. That is more than an 80 GB GPU has, so these
+layouts need GB200-class GPUs.
 
 ```bash
 ./scripts/conversion/convert.sh import --executor slurm --device gpu \
@@ -34,8 +37,19 @@ unchanged model reproduces the released tensors byte for byte:
   --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-save
 ```
 
-After training, the export quantizes the trained experts with the original scales, so
-updates smaller than one quantization step of an expert block do not survive the export.
+Exported this way, a trained model's experts are quantized onto the source scales, so
+updates smaller than one quantization step of an expert block are lost. After training,
+export the model as Bridge trained it instead: `--export-weight-dtype bfloat16` writes the
+experts in BF16 without scale tensors, keeps the AttnRes queries and router biases in FP32,
+and lists the experts as BF16 in `hf_quant_config.json`. For the SFT recipe's
+checkpoint after its 100 steps:
+
+```bash
+./scripts/conversion/convert.sh export --executor slurm --device gpu \
+  --nodes 4 --gpus-per-node 4 --hf-model thinkingmachines/Inkling-2-Small \
+  --megatron-path nemo_experiments/default/checkpoints/iter_0000100 --hf-path work/inkling2/hf-sft \
+  --torch-dtype bfloat16 --export-weight-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-save
+```
 
 ## Training recipes
 
@@ -129,6 +143,20 @@ padded to the full sequence length, without packing.
 
 ## Inference
 
-Megatron's KV-cache inference is not implemented for Inkling2, so generation must
-recompute the full prefix at every step. Logit comparisons use the full-prefix forward
-(`--legacy-full-prefix`).
+`scripts/inference/vlm_generation.py` generates greedily, from a text prompt or an image
+and a prompt. It renders the prompt with the checkpoint's chat template and stops at the
+end-of-sampling token, `<|content_model_end_sampling|>`. Megatron's KV-cache inference is
+not implemented for Inkling2, so each step runs the whole sequence through the model.
+FlexAttention compiles once per sequence length, so `--pad_to_length` pads every step's
+input to one length that must cover the prompt and the new tokens. At its native 850x477
+size the example image takes 264 tokens, and the rendered prompt 287:
+
+```bash
+./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4 --task vlm-generation \
+  --hf_model_path thinkingmachines/Inkling-2-Small \
+  --image_path docs/images/tp1.png --prompt "Describe this image." \
+  --max_new_tokens 64 --pad_to_length 384 --tp 1 --pp 1 --ep 16 --etp 1
+```
+
+To generate from a fine-tuned model, export it in BF16 as above and pass the export as
+`--hf_model_path`.

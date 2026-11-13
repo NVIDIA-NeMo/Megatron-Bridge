@@ -86,7 +86,7 @@ class Inkling2ModelConfig(BridgeHybridModelConfig):
     """HF ``vision_config`` of the checkpoint; empty for a text-only model."""
 
     image_token_id: int | None = None
-    """Placeholder token ID replaced by image features; Bridge uses the first padded vocabulary row."""
+    """Placeholder token ID replaced by image features: ``<|unused_200054|>`` (200054) in the release."""
 
     freeze_language_model: bool = False
     freeze_vision_model: bool = False

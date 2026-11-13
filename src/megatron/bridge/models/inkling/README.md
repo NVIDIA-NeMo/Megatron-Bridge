@@ -101,8 +101,8 @@ context parallelism are rejected with CP above 1.
 Not yet supported, and rejected by `Inkling2ModelConfig.finalize()`: hierarchical
 context parallelism, virtual pipeline parallelism, CUDA graphs, expert-parallel
 communication overlap, FP8 and FP4 training, Megatron MTP layers, dropout, and linear
-biases. Megatron's KV-cache inference is not implemented, so generation recomputes the
-full prefix (the `--legacy-full-prefix` inference path).
+biases. Megatron's KV-cache inference is not implemented, so generation
+(`scripts/inference/vlm_generation.py`) runs the whole sequence at every step.
 
 FlexAttention is compiled for fixed shapes. The packed SFT recipes pad every pack to
 the full sequence length so that the attention kernel compiles once.
