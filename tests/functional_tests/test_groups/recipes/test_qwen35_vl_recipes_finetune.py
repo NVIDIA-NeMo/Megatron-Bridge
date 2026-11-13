@@ -35,7 +35,18 @@ pytestmark = pytest.mark.integration
 
 
 _TP2_PP1 = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1}
-_TINY_MODEL = {"num_layers": 4, "linear_attention_freq": [1, 1, 1, 0]}
+# Qwen3.5 configs count Hybrid positions: each HF block is a GDN (``G``) or attention (``*``)
+# mixer followed by its dense MLP (``-``). Four blocks keep the full model's 3:1 GDN/attention mix.
+_TINY_HYBRID_PATTERN = "G-G-G-*-"
+_TINY_MODEL = {
+    "num_layers": len(_TINY_HYBRID_PATTERN),
+    "hybrid_layer_pattern": _TINY_HYBRID_PATTERN,
+    "linear_attention_freq": [int(symbol == "G") for symbol in _TINY_HYBRID_PATTERN],
+    "moe_layer_freq": [int(symbol == "E") for symbol in _TINY_HYBRID_PATTERN],
+}
+# The recipe recomputes attention cores, the GDN output norm and the dense MLP to fit 80 GB H100s.
+# The tiny model runs the other scenarios without recompute, so Scenario 4 alone covers it.
+_NO_RECOMPUTE = {"recompute_granularity": None, "recompute_method": None, "recompute_num_layers": None}
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +60,7 @@ QWEN35_VL_SFT_NONE_FROZEN = [
         _TP2_PP1,
         {
             **_TINY_MODEL,
+            **_NO_RECOMPUTE,
             "freeze_language_model": False,
             "freeze_vision_model": False,
             "freeze_vision_projection": False,
@@ -67,6 +79,7 @@ QWEN35_VL_SFT_LM_FROZEN = [
         _TP2_PP1,
         {
             **_TINY_MODEL,
+            **_NO_RECOMPUTE,
             "freeze_language_model": True,
             "freeze_vision_model": False,
             "freeze_vision_projection": False,
@@ -85,6 +98,7 @@ QWEN35_VL_SFT_PROJ_ONLY = [
         _TP2_PP1,
         {
             **_TINY_MODEL,
+            **_NO_RECOMPUTE,
             "freeze_language_model": True,
             "freeze_vision_model": True,
             "freeze_vision_projection": False,
@@ -93,7 +107,7 @@ QWEN35_VL_SFT_PROJ_ONLY = [
 ]
 
 # ---------------------------------------------------------------------------
-# Scenario 4: SFT — activation recomputation
+# Scenario 4: SFT — the recipe's selective activation recomputation
 # ---------------------------------------------------------------------------
 
 QWEN35_VL_SFT_RECOMPUTE = [
@@ -101,12 +115,7 @@ QWEN35_VL_SFT_RECOMPUTE = [
         qwen35_vl_27b_sft_config,
         "qwen35_vl_27b_sft_recompute",
         _TP2_PP1,
-        {
-            **_TINY_MODEL,
-            "recompute_granularity": "full",
-            "recompute_method": "uniform",
-            "recompute_num_layers": 1,
-        },
+        _TINY_MODEL,
     ),
 ]
 
@@ -119,11 +128,12 @@ QWEN35_VL_SFT_QWEN3_VL_STEP = [
         qwen35_vl_27b_sft_config,
         "qwen35_vl_27b_sft_qwen3_vl_step",
         _TP2_PP1,
-        _TINY_MODEL,
+        {**_TINY_MODEL, **_NO_RECOMPUTE},
     ),
 ]
 
 
+@pytest.mark.usefixtures("reset_distributed")
 class TestQwen35VLFinetuneRecipes:
     """Functional tests covering SFT freeze combos and recompute."""
 

@@ -476,47 +476,38 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: ae0a1b026f52517c55cf19416510f7f895a24c0c  # pragma: allowlist secret
+      bridge_commit: a5abd32c092f989eef3bd633e6274fd2240d353f  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 2
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
-        --recipe nemotron_3_5_lightning_sft_config
-        --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768
+        --recipe nemotron_3_5_lightning_sft_32k_config
+        --mode sft --dataset openmathinstruct2 --max_steps 100
         --lr 5e-6 --min_lr 0 --warmup_iters 10
-        --context_parallel_size 2 --expert_tensor_parallel_size 1
-        --expert_model_parallel_size 8
         --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000
-        model.moe_flex_dispatcher_backend=hybridep
         'dataset.hf_dataset.load_kwargs={revision:"469216e3f46f4dacf476b382e192485ea51a143e"}'
         dataset.enable_offline_packing=true
         'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}'
-        model.cp_comm_type=a2a model.cross_entropy_loss_fusion=false
-        model.calculate_per_token_loss=true model.recompute_granularity=selective
-        'model.recompute_modules=[moe,layernorm,core_attn,mlp]'
-        model.recompute_method=null model.recompute_num_layers=null
-        model.moe_router_force_load_balancing=false ddp.average_in_collective=false
-        ddp.overlap_param_gather=false optimizer.overlap_param_gather=false
         scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
         checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false
         checkpoint.async_save=false
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-11-03
+      last_verified: 2026-11-06
       metrics:
         initial_loss: 0.4268937
-        final_loss: 0.2648855
-        last_10_steps_step_time_ms_avg: 31725.330
-        last_10_steps_model_tflops_per_gpu_avg: 440.660
-        last_10_steps_tokens_per_second_per_gpu_avg: 16525.849
+        final_loss: 0.2648948
+        last_10_steps_step_time_ms_avg: 31931.380
+        last_10_steps_model_tflops_per_gpu_avg: 437.850
+        last_10_steps_tokens_per_second_per_gpu_avg: 16419.209
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4268937 -> 0.2648855 and MTP-1 loss 0.5128821 ->
-        0.3132023. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. Steps 91-100 average 31,725.330 ms / 440.660
+        steps with LM loss 0.4268937 -> 0.2648948 and MTP-1 loss 0.5040868 ->
+        0.3120846. All 100 steps have finite LM/MTP losses and no skipped or
+        NaN iterations. Steps 91-100 average 31,931.380 ms / 437.850
         TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata,
         saved run configuration and training state, 12 files, and a latest
         marker of 100. This leaf's MTP losses cover completion tokens only (SFT
