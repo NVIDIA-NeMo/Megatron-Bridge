@@ -262,6 +262,8 @@ def nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config() -> ConfigCo
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # NCCL EP sizes its dispatch buffers once; packed (THD) batches take their per-rank bound from the pack length.
+    cfg.model.max_seq_length_per_sample = cfg.model.seq_length
     cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_flex_dispatcher_num_sms = None
     cfg.model.moe_hybridep_num_sms = 32

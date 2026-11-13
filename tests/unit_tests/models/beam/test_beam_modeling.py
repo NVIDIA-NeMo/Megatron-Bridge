@@ -1080,10 +1080,8 @@ def test_hybrid_stack_spec_uses_the_beam_modules():
 
 
 def test_hybrid_stack_spec_without_experts_has_no_moe_layer():
-    from megatron.core.transformer.identity_op import IdentityOp
-
     spec = beam_hybrid_stack_spec(_spec_config(num_moe_experts=None, moe_router_fp32_params=False))
-    assert spec.submodules.moe_layer is IdentityOp
+    assert spec.submodules.moe_layer is None
 
 
 def test_hybrid_stack_spec_validates_the_config():
