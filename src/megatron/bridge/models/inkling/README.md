@@ -107,6 +107,12 @@ communication overlap, FP8 and FP4 training, Megatron MTP layers, dropout, and l
 biases. Megatron's KV-cache inference is not implemented, so generation
 (`scripts/inference/vlm_generation.py`) runs the whole sequence at every step.
 
+Documents stay apart only in packed sequences: the attention and the short convolutions
+take document boundaries from `packed_seq_params` and never read `attention_mask`. The
+model therefore rejects an unpacked batch whose mask hides earlier tokens, as the GPT
+dataset's `reset_attention_mask` and left padding produce; pack the documents instead.
+Causal masks and padding at the end lose nothing.
+
 FlexAttention is compiled for fixed shapes. The packed SFT recipes pad every pack to
 the full sequence length so that the attention kernel compiles once.
 

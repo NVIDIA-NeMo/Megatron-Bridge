@@ -33,6 +33,43 @@ from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
+def reject_document_masks(
+    attention_mask: Tensor | None,
+    packed_seq_params: Any,
+    cp_group: torch.distributed.ProcessGroup | None = None,
+) -> None:
+    """Reject an attention mask that keeps documents apart, which Inkling2 would ignore.
+
+    Inkling2's attention and short convolutions are causal and separate documents only through
+    packed sequences (``packed_seq_params``); they never read ``attention_mask``. That loses
+    nothing for a causal mask or for padding at the end, but a mask that hides the first token
+    from a later one, as ``reset_attention_mask`` and left padding produce, would be ignored.
+    Context parallelism gives each rank different query rows, so the ranks agree on the verdict
+    over ``cp_group``.
+
+    Args:
+        attention_mask: Megatron-Core mask. In its query-by-key form, ``[b, 1, s_q, s_k]``, True hides
+            a key; a ``[b, s]`` padding mask is not checked.
+        packed_seq_params: Document boundaries of a packed batch, or None.
+        cp_group: Context-parallel group, whose ranks hold different query rows.
+
+    Raises:
+        ValueError: If an unpacked batch's mask hides the first token from a later one.
+    """
+    if attention_mask is None or packed_seq_params is not None or attention_mask.dim() < 3:
+        return
+    hides_first_token = attention_mask[..., 0].any()
+    if cp_group is not None and cp_group.size() > 1:
+        hides_first_token = hides_first_token.to(torch.int32)
+        torch.distributed.all_reduce(hides_first_token, op=torch.distributed.ReduceOp.MAX, group=cp_group)
+    if hides_first_token:
+        raise ValueError(
+            "Inkling2 separates documents only through packed sequences and does not apply attention masks, "
+            "so this mask, which hides earlier tokens as reset_attention_mask or left padding does, would be "
+            "ignored. Pack the documents, or set reset_attention_mask=False."
+        )
+
+
 class Inkling2OutputLayerMixin(nn.Module):
     """Soft-cap the logits and exclude the padded vocabulary rows from the softmax."""
 
@@ -157,6 +194,7 @@ class Inkling2Model(HybridModel):
         **kwargs: Any,
     ) -> Tensor | tuple[Tensor, Tensor]:
         """Embed tokens and images on the first stage, then run the decoder and output head."""
+        reject_document_masks(attention_mask, packed_seq_params, self.pg_collection.cp)
         if self.pre_process and decoder_input is None:
             if input_ids is None:
                 raise ValueError("input_ids are required on the embedding stage")

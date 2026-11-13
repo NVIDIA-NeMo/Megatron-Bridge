@@ -150,6 +150,7 @@ class Inkling2AttentionLayer(_Inkling2HybridLayer):
             ``[attention, *bank, partial]`` when the block starts a new AttnRes block,
             otherwise ``[partial, attention, *bank]``; and no context.
         """
+        # Attention is causal; Inkling2Model.forward rejects masks that would keep documents apart.
         del attention_mask, kwargs
         self._check_supported(inference_context)
         partial, *bank = unpack_attn_res_state(hidden_states, self.config.hidden_size, 1 + self.num_blocks_before)
