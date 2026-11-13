@@ -337,6 +337,20 @@ class TestProcessor:
 
         assert plain.input_ids.shape == (1, 4) and plain.get("pixel_values") is None
 
+    def test_rendered_text_takes_one_image_as_a_path_or_bytes(self, checkpoint: Path, tmp_path: Path) -> None:
+        processor = Inkling2Processor.from_pretrained(checkpoint)
+        path = tmp_path / "image.png"
+        _image(81, 41).save(path)
+        text = "<|message_user|><|content_image|>" + IMAGE_TOKEN + "<|end_message|>"
+        expected = processor(text=[text], images=[Image.open(path)])
+
+        # Strings and bytes are sequences, but each is one image here.
+        for image in (str(path), path, path.read_bytes()):
+            batch = processor(text=[text], images=image)
+            assert torch.equal(batch.input_ids, expected.input_ids)
+            assert torch.equal(batch["pixel_values"], expected["pixel_values"])
+            assert batch["image_grid_thw"].tolist() == [[1, 2, 3]]
+
     def test_generation_helper_formats_inkling2_prompts_at_native_size(self, checkpoint: Path, tmp_path: Path) -> None:
         spec = importlib.util.spec_from_file_location("vlm_generation_utils_under_test", _GENERATION_UTILS)
         utils = importlib.util.module_from_spec(spec)

@@ -390,7 +390,10 @@ class Inkling2Processor:
         texts = [text] if isinstance(text, str) else list(text)
         if images is None:
             images = []
-        elif isinstance(images, Image.Image) or not isinstance(images, Sequence):
+        # A path or encoded bytes is one image, although strings and bytes are sequences.
+        elif isinstance(images, (Image.Image, str, bytes, bytearray, memoryview, os.PathLike)) or not isinstance(
+            images, Sequence
+        ):
             images = [images]
         flat = [image for item in images for image in (item if isinstance(item, (list, tuple)) else [item])]
         encoded = [self.image_processor.encode(image) for image in flat]
@@ -445,7 +448,8 @@ class Inkling2Processor:
                 ``reasoning_effort``, the arguments the template reads; see :meth:`render`.
             text: Prompts already rendered, for example by :meth:`apply_chat_template`, with one image placeholder
                 per image. Given instead of ``conversations``.
-            images: The images for ``text``'s placeholders, in order.
+            images: The images for ``text``'s placeholders, in order: one image or a list of them, possibly
+                nested per prompt. An image is a PIL image, a local path, or encoded bytes.
             **kwargs: Transformers processor arguments such as ``return_tensors`` and ``padding``; the outputs are
                 always right-padded PyTorch tensors.
 
