@@ -156,12 +156,15 @@ def _openmathinstruct2_thinking_adapter(example: Mapping[str, Any], _: Mapping[s
         thinking = re.sub(r"\$?\s*$", "", solution[:index]).rstrip() if end != -1 else solution.rstrip()
     else:
         thinking = solution.rstrip()
+    reasoning = _strip_intermediate_boxed(thinking)
     return {
         "messages": [
             {"role": "user", "content": example["problem"]},
             {
                 "role": "assistant",
-                "thinking": _strip_intermediate_boxed(thinking),
+                # Chat templates read reasoning from ``reasoning_content``; gpt-oss templates read ``thinking``.
+                "thinking": reasoning,
+                "reasoning_content": reasoning,
                 "content": f"#### {expected_answer}",
             },
         ],

@@ -99,7 +99,12 @@ def test_openmath_thinking_adapter_separates_reasoning_and_answer():
 
     assert adapted[0]["messages"] == [
         {"role": "user", "content": "What is 2 + 3?"},
-        {"role": "assistant", "thinking": "We add 2 and 3 to get", "content": "#### 5"},
+        {
+            "role": "assistant",
+            "thinking": "We add 2 and 3 to get",
+            "reasoning_content": "We add 2 and 3 to get",
+            "content": "#### 5",
+        },
     ]
 
 
