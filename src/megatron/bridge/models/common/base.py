@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from dataclasses import InitVar, dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
 from typing import Any, ClassVar
@@ -114,6 +115,20 @@ class ModelConfigOverrideMixin:
             raise AttributeError(
                 f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
             )
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Any:
+        """Deep-copy the outer config together with its nested transformer config.
+
+        Megatron Core's builder configs forward attribute lookups they cannot resolve to the nested
+        transformer config, and ``copy.deepcopy`` looks ``__deepcopy__`` up on the instance. Without this
+        method it would find the transformer config's own and return a copy of the nested config alone,
+        dropping the outer fields (``seq_length``, ``vocab_size``, hooks and builder settings).
+        """
+        result = type(self).__new__(type(self))
+        memo[id(self)] = result
+        for name, value in vars(self).items():
+            object.__setattr__(result, name, copy.deepcopy(value, memo))
+        return result
 
 
 class _TransformerOwnedField:

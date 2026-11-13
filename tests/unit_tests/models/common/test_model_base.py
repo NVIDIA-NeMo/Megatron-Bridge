@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import ClassVar
@@ -20,6 +21,9 @@ import pytest
 import torch
 
 from megatron.bridge.models.common.base import ModelBuilder, ModelConfig, compose_hooks
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.instantiate_utils import (
     _ALLOWED_TARGET_PREFIXES,
     InstantiationException,
@@ -144,6 +148,37 @@ def test_model_config_from_dict_rejects_disallowed_builder() -> None:
 
     with pytest.raises(InstantiationException, match="is not allowed"):
         ModelConfig.from_dict(data)
+
+
+def identity_hook(model: list[torch.nn.Module]) -> list[torch.nn.Module]:
+    """Pre-wrap hook that returns the model unchanged."""
+    return model
+
+
+@pytest.mark.parametrize("config_cls", [BridgeGPTModelConfig, BridgeHybridModelConfig])
+def test_builder_config_deepcopy_keeps_outer_fields(
+    config_cls: type[BridgeGPTModelConfig | BridgeHybridModelConfig],
+) -> None:
+    original = config_cls(
+        transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+        seq_length=64,
+        vocab_size=128,
+    )
+    original.pre_wrap_hooks.append(identity_hook)
+
+    copied = copy.deepcopy(original)
+
+    assert type(copied) is config_cls
+    assert copied.seq_length == 64
+    assert copied.vocab_size == 128
+    assert copied.num_layers == 2
+    assert copied.transformer is not original.transformer
+    assert copied.pre_wrap_hooks == [identity_hook]
+    assert copied.pre_wrap_hooks is not original.pre_wrap_hooks
+
+    copied.hidden_size = 32
+    assert copied.transformer.hidden_size == 32
+    assert original.hidden_size == 16
 
 
 def test_compose_hooks_preserves_order() -> None:
