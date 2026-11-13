@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import functools
 import importlib.util
+import os
 import pathlib
 import sys
 import types
+from unittest import mock
 
 import pytest
 import torch
@@ -140,6 +142,47 @@ def test_distributed_cpu_initialization_uses_gloo(cli, monkeypatch):
 
     assert calls[0]["backend"] == "gloo"
     assert calls[0]["timeout"].total_seconds() == 45 * 60
+
+
+def test_distributed_gpu_initialization_keeps_nccl_communicators_lazy(cli, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(cli.torch.cuda, "set_device", lambda device: calls.append(("set_device", device)))
+    monkeypatch.setattr(
+        cli.torch.distributed,
+        "init_process_group",
+        lambda **kwargs: calls.append(("init_process_group", kwargs, os.environ.get("TORCH_DIST_USE_NCCL2"))),
+    )
+
+    with mock.patch.dict(os.environ, {"WORLD_SIZE": "8", "LOCAL_RANK": "3"}):
+        os.environ.pop("TORCH_DIST_USE_NCCL2", None)
+        cli._ensure_distributed_initialized(110)
+
+    assert calls[0] == ("set_device", 3)
+    _, kwargs, use_nccl2 = calls[1]
+    assert kwargs["backend"] == "nccl"
+    assert kwargs["timeout"].total_seconds() == 110 * 60
+    # A bound device would make every new group create its communicator immediately.
+    assert "device_id" not in kwargs
+    # ProcessGroupNCCL2 creates a communicator for every Megatron-Core group up front; the switch must be set
+    # before init_process_group registers the NCCL backend.
+    assert use_nccl2 == "0"
+
+
+def test_distributed_gpu_initialization_keeps_explicit_nccl_backend_choice(cli, monkeypatch):
+    seen = []
+    monkeypatch.setattr(cli.torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(cli.torch.cuda, "set_device", lambda device: None)
+    monkeypatch.setattr(
+        cli.torch.distributed,
+        "init_process_group",
+        lambda **kwargs: seen.append(os.environ.get("TORCH_DIST_USE_NCCL2")),
+    )
+
+    with mock.patch.dict(os.environ, {"WORLD_SIZE": "8", "TORCH_DIST_USE_NCCL2": "1"}):
+        cli._ensure_distributed_initialized(None)
+
+    assert seen == ["1"]
 
 
 def test_distributed_cpu_output_barrier_does_not_query_cuda(cli, monkeypatch, tmp_path):

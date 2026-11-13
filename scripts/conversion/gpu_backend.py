@@ -69,6 +69,13 @@ def _ensure_distributed_initialized(timeout_minutes: int | None, *, use_cpu: boo
     if not use_cpu:
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         torch.cuda.set_device(local_rank)
+        # Conversion creates every Megatron-Core model-parallel group but communicates over only a few of them.
+        # PyTorch builds that back "nccl" with ProcessGroupNCCL2 by default create a communicator for each group
+        # when the group is created, which costs several GiB per GPU up front (about 6 GiB for an 8-GPU EP8
+        # export) and can leave large exports without room for their weight gathers. Selecting ProcessGroupNCCL
+        # keeps each communicator lazy until the group's first collective. torch reads this variable when the
+        # first NCCL group registers the backend; builds without the switch ignore it, and an explicit value wins.
+        os.environ.setdefault("TORCH_DIST_USE_NCCL2", "0")
     kwargs: dict[str, object] = {"backend": "gloo" if use_cpu else "nccl"}
     if timeout_minutes is not None:
         kwargs["timeout"] = datetime.timedelta(minutes=timeout_minutes)
