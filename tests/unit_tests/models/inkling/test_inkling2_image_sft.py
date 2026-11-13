@@ -141,6 +141,14 @@ def _assistant_turns(tokens: list[str]) -> list[int]:
     return mask
 
 
+def _generation_utils():
+    """Import ``scripts/inference/vlm_generation_utils.py``, which is not part of a package."""
+    spec = importlib.util.spec_from_file_location("vlm_generation_utils_under_test", _GENERATION_UTILS)
+    utils = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(utils)
+    return utils
+
+
 class TestImageProcessing:
     def test_patches_cover_the_image_in_row_major_order(self) -> None:
         encoded = Inkling2ImageProcessor().encode(_image(81, 41))
@@ -352,9 +360,7 @@ class TestProcessor:
             assert batch["image_grid_thw"].tolist() == [[1, 2, 3]]
 
     def test_generation_helper_formats_inkling2_prompts_at_native_size(self, checkpoint: Path, tmp_path: Path) -> None:
-        spec = importlib.util.spec_from_file_location("vlm_generation_utils_under_test", _GENERATION_UTILS)
-        utils = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(utils)
+        utils = _generation_utils()
         processor = Inkling2Processor.from_pretrained(checkpoint)
         processor.tokenizer.chat_template = RELEASE_TEMPLATE
         _image(81, 41).save(tmp_path / "image.png")
@@ -377,6 +383,21 @@ class TestProcessor:
         assert "<|message_user|><|content_text|>Describe a cat .<|end_message|>" in rendered
         assert input_ids.tolist() == [processor.tokenizer.encode(rendered, add_special_tokens=False)]
         assert pixel_values is None and grid is None and rest == [None, None, None]
+
+    def test_generation_helper_leaves_transparency_to_the_processor(self, checkpoint: Path, tmp_path: Path) -> None:
+        utils = _generation_utils()
+        processor = Inkling2Processor.from_pretrained(checkpoint)
+        processor.tokenizer.chat_template = RELEASE_TEMPLATE
+        path = tmp_path / "clear.png"
+        # Fully transparent, with red under the transparency.
+        Image.new("RGBA", (40, 40), (255, 0, 0, 0)).save(path)
+
+        _, pixel_values, *_ = utils.process_image_inputs(
+            processor, str(path), "Describe this image .", is_inkling2=True
+        )
+
+        # The processor's checkerboard, as in training, not the hidden red.
+        assert torch.equal(pixel_values, processor.image_processor.encode(path).patches)
 
     def test_batches_pad_right_and_keep_images_in_order(self, checkpoint: Path) -> None:
         processor = Inkling2Processor.from_pretrained(checkpoint)

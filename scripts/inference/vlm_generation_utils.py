@@ -265,7 +265,8 @@ def _process_inkling2_inputs(processor, image_path, prompt):
     images = None
     if image_path:
         content.insert(0, {"type": "image"})
-        images = [load_image(image_path).convert("RGB")]
+        # Unconverted, so that the processor composites transparent pixels onto its checkerboard as training does.
+        images = [load_image(image_path)]
     messages = [{"role": "user", "content": content}]
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = processor(text=[text], images=images, return_tensors="pt")
