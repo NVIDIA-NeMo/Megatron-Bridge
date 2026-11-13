@@ -140,7 +140,8 @@ the largest same-aspect size within that budget, resized with a Lanczos3 kernel 
 arithmetic that takes its sine from the C library's single-precision `sinf`; on smooth
 images it stays within one level of Pillow's `LANCZOS` filter.
 `Inkling2Processor` renders conversations token for token as the release's chat template
-does, with one `<|unused_200054|>` image placeholder per patch where the template writes
+does, including a row's `tools` and the `reasoning_effort` in its `chat_template_kwargs`, with
+one `<|unused_200054|>` image placeholder per patch where the template writes
 one per image, and marks the assistant turns for the loss; it is registered with
 `AutoProcessor` for `Inkling2Config`. `Inkling2Config.image_token_id`, which the release's
 `config.json` leaves out, defaults to that placeholder (token 200054).

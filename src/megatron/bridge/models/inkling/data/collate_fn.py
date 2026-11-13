@@ -22,6 +22,7 @@ from typing import Any
 import torch
 
 from megatron.bridge.data.collators.sequence import prepare_sequence_batch
+from megatron.bridge.data.conversation_processing import chat_template_kwargs_from_example
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.models.inkling.data.processor import Inkling2Processor
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
@@ -53,7 +54,8 @@ def inkling2_collate_fn(
     """Collate Inkling2 conversations with images into a padded training batch.
 
     Args:
-        examples: Rows with a ``conversation`` message list.
+        examples: Rows with a ``conversation`` message list, and optionally the ``tools`` and
+            ``chat_template_kwargs`` (``reasoning_effort``) it is rendered with.
         processor: The checkpoint's :class:`Inkling2Processor`.
         sequence_length: Longest sample, and the padded width with ``pad_to_max_length``.
         pad_to_max_length: Pad every batch to ``sequence_length``, which keeps one compiled attention shape.
@@ -66,12 +68,17 @@ def inkling2_collate_fn(
         turns, and ``visual_inputs``.
 
     Raises:
-        ValueError: If in-batch packing is requested.
+        ValueError: If in-batch packing is requested, or a row sets template arguments the chat template does
+            not read.
     """
     if enable_in_batch_packing:
         raise ValueError("Inkling2 image-text SFT does not support in-batch packing")
     del in_batch_packing_pad_to_multiple_of
-    rendered = processor([example["conversation"] for example in examples], max_length=sequence_length)
+    rendered = processor(
+        [example["conversation"] for example in examples],
+        max_length=sequence_length,
+        chat_template_kwargs=[chat_template_kwargs_from_example(example) for example in examples],
+    )
     input_ids = rendered["input_ids"]
     batch_size, width = input_ids.shape
     # Each position predicts the next token; the mask follows the predicted token.

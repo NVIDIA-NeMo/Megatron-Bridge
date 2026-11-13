@@ -61,15 +61,24 @@ FRAMING = (
     "<|content_model_end_sampling|>",
     "<|content_thinking|>",
     "<|content_invoke_tool_json|>",
+    "<|content_xml|>",
     "<|end_message|>",
     IMAGE_TOKEN,
 )
 WORDS = ("Describe", "this", "image", ".", "receipt", "total", "4", "What", "is", "2", "+", "?", "Thinking", "effort")
-WORDS += ("level", ":", "0", "9", "0.9")
+WORDS += ("level", ":", "0", "9", "0.9", "tool_declare", "add", "finish")
 TOKENS = ("<unk>", "<pad>", *FRAMING, *WORDS)
 IMAGE_TOKEN_ID = TOKENS.index(IMAGE_TOKEN)
 MEAN = np.array([0.5, 0.5, 0.5], dtype=np.float32)
 STD = np.array([0.5, 0.5, 0.5], dtype=np.float32)
+# One OpenAI-style tool and one bare function whose description, parameters and type take the template's defaults.
+TOOLS = [
+    {
+        "type": "function",
+        "function": {"name": "add", "description": "Addiert für 2 + 2 .", "parameters": {"type": "object"}},
+    },
+    {"name": "finish"},
+]
 
 
 @pytest.fixture
@@ -110,6 +119,26 @@ def _conversation(image: Image.Image | None) -> list[dict]:
         {"role": "user", "content": user},
         {"role": "assistant", "content": [{"type": "text", "text": "receipt total 4"}]},
     ]
+
+
+def _release_template_ids(processor: Inkling2Processor, conversation: list[dict], image_tokens: list[int], **kwargs):
+    """The release template's token IDs for a conversation, with each image placeholder repeated per patch."""
+    text = processor.tokenizer.apply_chat_template(
+        conversation, chat_template=RELEASE_TEMPLATE, tokenize=False, **kwargs
+    )
+    sizes = iter(image_tokens)
+    ids = processor.tokenizer.encode(text, add_special_tokens=False)
+    return [t for token in ids for t in ([token] * next(sizes) if token == IMAGE_TOKEN_ID else [token])]
+
+
+def _assistant_turns(tokens: list[str]) -> list[int]:
+    """1 for every token of an assistant turn, from its first ``<|message_model|>`` through end of sampling."""
+    mask, inside = [], False
+    for token in tokens:
+        inside = inside or token == "<|message_model|>"
+        mask.append(int(inside))
+        inside = inside and token != "<|content_model_end_sampling|>"
+    return mask
 
 
 class TestImageProcessing:
@@ -379,6 +408,44 @@ class TestCollator:
         model_inputs = visual.normalized_for_model()
         assert model_inputs["pixel_values"].shape == (6, 2, 40, 40, 3)
         assert model_inputs["image_grid_thw"].tolist() == [[1, 2, 3]]
+
+    @pytest.mark.parametrize("row_effort", [None, "none"])
+    def test_rows_render_with_their_tools_and_reasoning_effort(self, checkpoint: Path, row_effort) -> None:
+        processor = Inkling2Processor.from_pretrained(checkpoint, reasoning_effort="low")
+        call = {"id": "c", "type": "function", "function": {"name": "add", "arguments": {"a": 2, "b": 2}}}
+        conversation = [
+            {"role": "user", "content": [{"type": "image", "image": _image(81, 41)}, "What is 2 + 2 ?"]},
+            {"role": "assistant", "content": "", "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": "c", "content": "4"},
+            {"role": "assistant", "content": "4"},
+        ]
+        example = {"conversation": conversation, "tools": TOOLS}
+        if row_effort is not None:
+            example["chat_template_kwargs"] = {"reasoning_effort": row_effort}
+
+        batch = inkling2_collate_fn([example], processor, sequence_length=256)
+
+        # The row's effort replaces the processor's.
+        reference = _release_template_ids(
+            processor, conversation, [6], tools=TOOLS, reasoning_effort=row_effort or "low"
+        )
+        input_ids = batch["input_ids"][0, : len(reference)].tolist()
+        assert input_ids == reference
+        tokens = processor.tokenizer.convert_ids_to_tokens(input_ids)
+        assert tokens[:3] == ["<|message_system|>", "tool_declare", "<|content_xml|>"]
+        # Each position predicts the next token: the tool declaration, the effort line, the user turn and the tool
+        # result are context, and both assistant turns are supervised from their header through end of sampling.
+        assert batch["loss_mask"][0, : len(reference) - 1].tolist() == _assistant_turns(tokens)[1:]
+
+    def test_template_arguments_the_template_does_not_read_are_rejected(self, checkpoint: Path) -> None:
+        processor = Inkling2Processor.from_pretrained(checkpoint)
+        example = {"conversation": _conversation(None), "chat_template_kwargs": {"enable_thinking": False}}
+        with pytest.raises(ValueError, match="reads only tools and reasoning_effort"):
+            inkling2_collate_fn([example], processor, sequence_length=64)
+        with pytest.raises(ValueError, match="per conversation"):
+            processor([_conversation(None)], reasoning_effort="none")
+        with pytest.raises(ValueError, match="function name"):
+            processor.render(_conversation(None), tools=[{"type": "function", "function": {"description": "x"}}])
 
     def test_text_only_batches_have_no_visual_inputs(self, checkpoint: Path) -> None:
         processor = Inkling2Processor.from_pretrained(checkpoint)

@@ -17,9 +17,10 @@
 The ``thinkingmachines/Inkling-2-Small`` release names an ``Inkling2Processor`` in its
 ``processor_config.json`` but ships no implementation. This one renders a conversation straight to token
 IDs exactly as the release's ``chat_template.jinja`` does, then gives each image its patches: every
-content part is its own block, ``<|message_ROLE|>[name]<|content_KIND|>payload<|end_message|>``, a
-``Thinking effort level`` system line precedes the first non-system message, and every assistant turn ends
-with ``<|content_model_end_sampling|>``. Where the template writes one ``<|unused_200054|>`` image
+content part is its own block, ``<|message_ROLE|>[name]<|content_KIND|>payload<|end_message|>``, the
+conversation's tools are declared in a system block before every message, a ``Thinking effort level`` system
+line precedes the first non-system message, and every assistant turn ends with
+``<|content_model_end_sampling|>``. Where the template writes one ``<|unused_200054|>`` image
 placeholder, the processor writes one per 40x40-pixel patch, which the model replaces with the image's
 features. The whole assistant turn, headers and end-of-sampling token included, is the supervised span.
 
@@ -62,9 +63,12 @@ _FRAMING_TOKENS = (
     "<|content_image|>",
     "<|content_thinking|>",
     "<|content_invoke_tool_json|>",
+    "<|content_xml|>",
     "<|end_message|>",
     "<|content_model_end_sampling|>",
 )
+# The chat template arguments that change how a conversation renders.
+_TEMPLATE_KWARGS = frozenset({"tools", "reasoning_effort"})
 # The chat template's named thinking-effort levels and its default.
 REASONING_EFFORTS = {"none": 0.0, "minimal": 0.1, "low": 0.2, "medium": 0.7, "high": 0.9, "xhigh": 0.99, "max": 0.99}
 DEFAULT_REASONING_EFFORT = 0.9
@@ -109,7 +113,8 @@ class Inkling2Processor:
         image_processor: Image preprocessing for the checkpoint.
         image_token_id: Placeholder token the model replaces with image features.
         reasoning_effort: Thinking effort written before the first non-system message, as the chat template's
-            ``reasoning_effort`` argument; ``None`` writes the template's default.
+            ``reasoning_effort`` argument; ``None`` writes the template's default. A conversation's own
+            ``reasoning_effort`` replaces it.
     """
 
     def __init__(
@@ -234,8 +239,31 @@ class Inkling2Processor:
             ]
         return tokens
 
+    def _tool_declaration(self, tools: Sequence[Mapping[str, Any]]) -> list[int]:
+        """Declare the tools as the chat template does: one system block of their sorted JSON specifications."""
+        specs = []
+        for tool in tools:
+            function = tool.get("function", tool) if isinstance(tool, Mapping) else None
+            if not isinstance(function, Mapping) or not isinstance(function.get("name"), str):
+                raise ValueError(f"Each tool must be an object with a function name, got {tool!r}")
+            specs.append(
+                {
+                    "description": function.get("description") or "",
+                    "name": function["name"],
+                    "parameters": function.get("parameters") or {},
+                    "type": tool.get("type") or "function",
+                }
+            )
+        payload = json.dumps(specs, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        header = [self._ids["<|message_system|>"], *self._text("tool_declare")]
+        return self._block(header, "<|content_xml|>", self._text(payload))
+
     def render(
-        self, conversation: Sequence[Mapping[str, Any]]
+        self,
+        conversation: Sequence[Mapping[str, Any]],
+        *,
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        reasoning_effort: str | float | None = None,
     ) -> tuple[list[int], list[int], list[Inkling2EncodedImage]]:
         """Render one conversation.
 
@@ -244,21 +272,28 @@ class Inkling2Processor:
                 ``{"type": "text", "text": ...}`` and ``{"type": "image", "image": ...}`` parts. An assistant
                 message may carry its reasoning in ``reasoning_content``, ``thinking`` or ``reasoning`` and its calls in
                 ``tool_calls``.
+            tools: Tool specifications, as the chat template's ``tools`` argument, declared before every message.
+            reasoning_effort: This conversation's thinking effort, in place of the processor's.
 
         Returns:
-            Token IDs, a 0/1 mask of the supervised (assistant) tokens, and the images in order.
+            Token IDs, a 0/1 mask of the supervised (assistant) tokens, and the images in order. The tool
+            declaration and the thinking-effort line are not supervised.
 
         Raises:
-            ValueError: On an unsupported role or content part, an image outside a user or tool message, or
-                malformed tool calls.
+            ValueError: On an unsupported role or content part, an image outside a user or tool message,
+                malformed tool calls, a tool without a function name, or an unknown thinking effort.
         """
         input_ids: list[int] = []
         assistant_mask: list[int] = []
         images: list[Inkling2EncodedImage] = []
+        if tools:
+            input_ids += self._tool_declaration(tools)
+            assistant_mask += [0] * len(input_ids)
+        level = self._effort_level if reasoning_effort is None else reasoning_effort_level(reasoning_effort)
         effort = self._block(
             [self._ids["<|message_system|>"]],
             "<|content_text|>",
-            self._text(f"Thinking effort level: {self._effort_level}"),
+            self._text(f"Thinking effort level: {level}"),
         )
         effort_written = False
         for message in conversation:
@@ -395,6 +430,7 @@ class Inkling2Processor:
         conversations: Sequence[Sequence[Mapping[str, Any]]] | None = None,
         *,
         max_length: int | None = None,
+        chat_template_kwargs: Sequence[Mapping[str, Any]] | None = None,
         text: str | Sequence[str] | None = None,
         images: Any = None,
         **kwargs: Any,
@@ -405,6 +441,8 @@ class Inkling2Processor:
             conversations: One message list per sample.
             max_length: Longest allowed sample. Text after the last image is cut to fit; a sample whose
                 image placeholders would be cut is rejected, since its image features could not be placed.
+            chat_template_kwargs: One mapping of chat template arguments per conversation: ``tools`` and
+                ``reasoning_effort``, the arguments the template reads; see :meth:`render`.
             text: Prompts already rendered, for example by :meth:`apply_chat_template`, with one image placeholder
                 per image. Given instead of ``conversations``.
             images: The images for ``text``'s placeholders, in order.
@@ -417,8 +455,8 @@ class Inkling2Processor:
             batch's images in order, or ``None`` when the batch has none.
 
         Raises:
-            ValueError: If an image does not fit in ``max_length``, or the images do not match the text's image
-                placeholders.
+            ValueError: If an image does not fit in ``max_length``, the images do not match the text's image
+                placeholders, or a conversation's template arguments are ones the chat template does not read.
         """
         if text is not None:
             if conversations is not None:
@@ -426,9 +464,19 @@ class Inkling2Processor:
             return self._encode_text(text, images)
         if conversations is None:
             raise ValueError("Pass conversations or text")
+        misplaced = sorted(_TEMPLATE_KWARGS.intersection(kwargs))
+        if misplaced:
+            raise ValueError(f"Pass {misplaced} per conversation in chat_template_kwargs")
+        if chat_template_kwargs is None:
+            chat_template_kwargs = [{}] * len(conversations)
         rows, masks, images = [], [], []
-        for conversation in conversations:
-            input_ids, assistant_mask, conversation_images = self.render(conversation)
+        for conversation, template_kwargs in zip(conversations, chat_template_kwargs, strict=True):
+            unread = sorted(set(template_kwargs) - _TEMPLATE_KWARGS)
+            if unread:
+                raise ValueError(
+                    f"Inkling 2's chat template reads only tools and reasoning_effort, so {unread} would be ignored"
+                )
+            input_ids, assistant_mask, conversation_images = self.render(conversation, **template_kwargs)
             if max_length is not None and len(input_ids) > max_length:
                 cut = input_ids[max_length:]
                 if self.image_token_id in cut:
