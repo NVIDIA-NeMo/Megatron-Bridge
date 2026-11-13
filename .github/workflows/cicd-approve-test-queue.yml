@@ -138,6 +138,20 @@ jobs:
               print(f"Max retries ({max_retries}) exceeded for {endpoint}")
               return None
 
+          def get_workflow_runs(status):
+              """Fetch every page before using a status to make approval decisions."""
+              runs = []
+              page = 1
+              while True:
+                  response = make_request(f"actions/runs?status={status}&per_page=100&page={page}")
+                  if response is None:
+                      return None
+                  page_runs = response["workflow_runs"]
+                  runs.extend(page_runs)
+                  if len(page_runs) < 100:
+                      return runs
+                  page += 1
+
           def is_internal_contributor(pr_info):
               """Return True if the PR author is a member of NVIDIA or NVIDIA-NeMo org (is_org_member)."""
               login = pr_info.get("user", {}).get("login", "")
@@ -224,16 +238,14 @@ jobs:
           # Get current running and queued workflows
           print(f"\n=== Queue cell: branch=${{ matrix.branch }}, contributor_type={CONTRIBUTOR_TYPE} ===")
           print("Fetching workflow runs...")
-          queued_resp = make_request("actions/runs?status=queued")
-          if queued_resp is None:
+          queued_workflow_runs = get_workflow_runs("queued")
+          if queued_workflow_runs is None:
               print("Failed to fetch queued workflow runs after retries, exiting")
               exit(1)
-          queued_workflow_runs = queued_resp.get("workflow_runs", [])
-          in_progress_resp = make_request("actions/runs?status=in_progress")
-          if in_progress_resp is None:
+          in_progress_workflow_runs = get_workflow_runs("in_progress")
+          if in_progress_workflow_runs is None:
               print("Failed to fetch in-progress workflow runs after retries, exiting")
               exit(1)
-          in_progress_workflow_runs = in_progress_resp.get("workflow_runs", [])
 
           def log_and_filter(runs, label):
               cicd_runs = [r for r in runs if r["name"] == WORKFLOW_NAME]
@@ -263,11 +275,11 @@ jobs:
 
           # Get waiting CI workflows for test environment
           print("Fetching waiting deployments...")
-          waiting_resp = make_request("actions/runs?status=waiting")
-          if waiting_resp is None:
+          waiting_workflow_runs = get_workflow_runs("waiting")
+          if waiting_workflow_runs is None:
               print("Failed to fetch waiting workflow runs after retries, exiting")
               exit(1)
-          pending_workflows = log_and_filter(waiting_resp.get("workflow_runs", []), "waiting")
+          pending_workflows = log_and_filter(waiting_workflow_runs, "waiting")
 
           # Sort deployments by creation date (oldest first)
           print("Sorting workflows...")
