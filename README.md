@@ -11,6 +11,8 @@
 </div>
 
 ## 📣 News
+- [11/13/2026] [**Inkling 2 Small**](https://huggingface.co/thinkingmachines/Inkling-2-Small) from Thinking Machines is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, including the release's quantized experts, image-and-text inference, and GB200 recipes for pretraining, full SFT, 32K long-context SFT with context parallelism, LoRA, and image-text SFT and LoRA. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/inkling/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/inkling-2-small/card.yaml) for verified configurations and current limitations.
+
 - [11/05/2026] [**ERNIE-5.5-Flash-Base**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55/README.md) for sft training details.
 - [10/16/2026] [**Reflection AI Beam-1.0-501B-A23B**](https://huggingface.co/reflection/Beam-1.0-501B-A23B) is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, inference, and BF16 H200 recipes for pretraining, SFT, long-context SFT, and LoRA PEFT. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/beam/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/beam/card.yaml) for verified configurations and current limitations.
 

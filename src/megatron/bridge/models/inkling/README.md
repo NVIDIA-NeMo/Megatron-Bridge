@@ -89,10 +89,11 @@ source's formats, leaves the version out, and a plain export keeps it.
 
 ## Parallelism and limits
 
-Supported: tensor parallelism with sequence parallelism, pipeline parallelism,
-expert parallelism, context parallelism, and data parallelism with the distributed
-optimizer. A pipeline stage sends the completed AttnRes blocks together with its
-partial block, so stage boundaries may fall inside an AttnRes block; pipeline
+Supported: tensor parallelism of the attention heads, with sequence parallelism (the
+tensor-parallel size must divide the query and key-value head counts), pipeline
+parallelism, expert parallelism, context parallelism, and data parallelism with the
+distributed optimizer. A pipeline stage sends the completed AttnRes blocks together
+with its partial block, so stage boundaries may fall inside an AttnRes block; pipeline
 communication exchanges tensor shapes (`variable_seq_lengths`).
 
 Transformer Engine's context parallelism does not apply to the FlexAttention core, so
@@ -105,11 +106,12 @@ gather the three rows before each local chunk from the neighboring ranks, and le
 scaling uses document positions from the same layout. Image inputs and hierarchical
 context parallelism are rejected with CP above 1.
 
-Not yet supported, and rejected by `Inkling2ModelConfig.finalize()`: hierarchical
-context parallelism, virtual pipeline parallelism, CUDA graphs, expert-parallel
-communication overlap, FP8 and FP4 training, Megatron MTP layers, dropout, and linear
-biases. Megatron's KV-cache inference is not implemented, so generation
-(`scripts/inference/vlm_generation.py`) runs the whole sequence at every step.
+Not yet supported, and rejected by `Inkling2ModelConfig.finalize()`: expert tensor
+parallelism, hierarchical context parallelism, virtual pipeline parallelism, CUDA
+graphs, expert-parallel communication overlap, FP8 and FP4 training, Megatron MTP
+layers, dropout, and linear biases. Megatron's KV-cache inference is not implemented,
+so generation (`scripts/inference/vlm_generation.py`) runs the whole sequence at every
+step.
 
 Documents stay apart only in packed sequences: the attention and the short convolutions
 take document boundaries from `packed_seq_params` and never read `attention_mask`. The
