@@ -19,7 +19,10 @@ import torch
 from transformers import LlamaConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.recipes.llama import llama31_405b_pretrain_64gpu_gb200_fp8mx_config
+from megatron.bridge.recipes.llama import (
+    llama31_405b_pretrain_64gpu_gb200_fp8mx_config,
+    llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config,
+)
 from megatron.bridge.recipes.llama.h100.llama3 import llama31_405b_pretrain_256gpu_h100_bf16_config
 from megatron.bridge.training.config import runtime_config_update
 
@@ -54,11 +57,14 @@ def offline_llama405b():
 
 
 @pytest.mark.unit
-def test_llama405b_64gpu_runtime_contract(offline_llama405b, monkeypatch):
+@pytest.mark.parametrize(
+    "recipe", [llama31_405b_pretrain_64gpu_gb200_fp8mx_config, llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config]
+)
+def test_llama405b_64gpu_runtime_contract(offline_llama405b, monkeypatch, recipe):
     """Finalization must preserve the full model, precision, and measured execution settings."""
     monkeypatch.setenv("WORLD_SIZE", "64")
     monkeypatch.setenv("RANK", "0")
-    cfg = llama31_405b_pretrain_64gpu_gb200_fp8mx_config()
+    cfg = recipe()
     runtime_config_update(cfg)
     model = cfg.model
     assert (model.num_layers, model.hidden_size, model.ffn_hidden_size) == (126, 16384, 53248)
@@ -93,10 +99,13 @@ def test_llama405b_64gpu_runtime_contract(offline_llama405b, monkeypatch):
 
 
 @pytest.mark.unit
-def test_llama405b_64gpu_retains_training_defaults(offline_llama405b):
+@pytest.mark.parametrize(
+    "recipe", [llama31_405b_pretrain_64gpu_gb200_fp8mx_config, llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config]
+)
+def test_llama405b_64gpu_retains_training_defaults(offline_llama405b, recipe):
     """A capacity recipe must retain checkpointing, checks, and the training schedule."""
     baseline = llama31_405b_pretrain_256gpu_h100_bf16_config()
-    cfg = llama31_405b_pretrain_64gpu_gb200_fp8mx_config()
+    cfg = recipe()
     assert cfg.train.train_iters == baseline.train.train_iters
     assert cfg.scheduler == baseline.scheduler
     assert cfg.checkpoint == baseline.checkpoint
