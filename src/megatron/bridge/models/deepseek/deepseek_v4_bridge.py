@@ -446,9 +446,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         """
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         use_dsa_kernel_fusion = (
-            torch.cuda.is_available()
-            and torch.cuda.get_device_capability()[0] >= 9
-            and deepseek_v4_supports_fused_dsa_kernels()
+            deepseek_v4_supports_blackwell_fused_kernels() and deepseek_v4_supports_fused_dsa_kernels()
         )
 
         # ---- Rotary embeddings (YaRN) ----
