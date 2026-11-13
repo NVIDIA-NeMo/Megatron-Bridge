@@ -240,10 +240,10 @@ def test_deepseek_v3_vrnvl72_fp8mx_matches_rubin_execution_settings() -> None:
     assert cfg.scheduler.lr_decay_iters == gb300.scheduler.lr_decay_iters
     assert cfg.model.moe_router_force_load_balancing is gb300.model.moe_router_force_load_balancing is True
     assert cfg.mixed_precision.fp8_recipe == gb300.mixed_precision.fp8_recipe == "mxfp8"
-    # The bridge sets these on real providers; the offline provider used here may not carry them.
-    for name in ("moe_aux_loss_coeff", "moe_dispatch_fwd_dtype"):
-        assert getattr(cfg.model, name, None) == getattr(gb300.model, name, None), name
+    # The bridge sets this on real providers; the offline provider used here may not carry it.
+    assert getattr(cfg.model, "moe_aux_loss_coeff", None) == getattr(gb300.model, "moe_aux_loss_coeff", None)
     assert cfg.model.moe_router_dtype == "bf16"
+    assert cfg.model.moe_dispatch_fwd_dtype == "mxfp8"
     assert cfg.model.moe_combine_bwd_dtype == "mxfp8"
 
     # Keep the shared base's 16-stage PP=2 x VP=8 layout, EP and TP.

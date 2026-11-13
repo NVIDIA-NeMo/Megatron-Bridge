@@ -310,13 +310,12 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
     Starts from the shared GB300 MXFP8 base and keeps its training setup: mock data, NullTokenizer,
     GBS=4096, the LR schedule, forced load balancing and the auxiliary-loss coefficient. Uses
-    PP=2 x VP=8, BF16 routing and MXFP8 backward combine with the Rubin benchmark's receive and
-    stash buffer sizing. Fusions, CUDA graphs, runtime and process environment retain the
+    PP=2 x VP=8, BF16 routing and MXFP8 forward dispatch/backward combine with the Rubin benchmark's
+    receive and stash buffer sizing. Fusions, CUDA graphs, runtime and process environment retain the
     MLPerf DeepSeek-V3 execution settings.
 
-    MXFP8 backward combine requires Megatron Core support for quantized communication with
-    1F1B EP overlap and paged stashing. Forward dispatch retains the shared base's dtype unless
-    explicitly overridden. Megatron Bridge does not expose MLPerf's DataLoader prefetch factor.
+    MXFP8 dispatch and combine require Megatron Core support for quantized communication with
+    1F1B EP overlap and paged stashing. Megatron Bridge does not expose MLPerf's DataLoader prefetch factor.
     """
     cfg = _build_deepseek_v3_gb300_fp8mx()
 
@@ -332,6 +331,7 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     # MLPerf passes 64 SMs in the config; the NCCL_EP_* SM counts below are its per-phase settings.
     # Match the receive capacity and stash buffer sizing of the Rubin benchmark.
     cfg.model.moe_flex_dispatcher_num_sms = 64
+    cfg.model.moe_dispatch_fwd_dtype = "mxfp8"
     cfg.model.moe_combine_bwd_dtype = "mxfp8"
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
