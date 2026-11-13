@@ -255,8 +255,8 @@ def test_deepseek_v3_vrnvl72_fp8mx_matches_rubin_execution_settings() -> None:
 
     # Rubin buffer sizing and MLPerf-derived fusions, CUDA graphs and runtime settings.
     assert cfg.model.moe_flex_dispatcher_num_sms == 64
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert cfg.model.moe_expert_rank_capacity_factor == 4
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.1
     assert cfg.model.moe_router_padding_for_quantization is True
     assert cfg.model.fused_residual_rmsnorm is True
     assert cfg.model.mla_down_proj_fusion is True
