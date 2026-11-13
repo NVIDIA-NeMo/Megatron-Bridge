@@ -148,6 +148,7 @@ def _active_parameter_sum(model: torch.nn.Module, module_name: str) -> float:
 
 
 @pytest.mark.run_only_on("GPU")
+@pytest.mark.usefixtures("reset_distributed")
 def test_megatron_mimo_conversion_checkpoint_save_load_roundtrip(tmp_path):
     initialize_distributed()
     if not torch.cuda.is_available():

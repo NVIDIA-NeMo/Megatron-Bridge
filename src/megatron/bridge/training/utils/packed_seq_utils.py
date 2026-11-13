@@ -53,11 +53,11 @@ def get_thd_cp_partition_indices(
             THD partitioning through ``get_batch_on_this_cp_rank``.
     """
     mcore_version = PkgVersion(megatron.core.__version__)
-    supports_thd_partitioning = "is_hybrid_cp" in inspect.signature(get_batch_on_this_cp_rank).parameters
+    supports_thd_partitioning = "dynamic_cp" in inspect.signature(get_batch_on_this_cp_rank).parameters
     if mcore_version < _MIN_MCORE_THD_CP_VERSION or not supports_thd_partitioning:
         raise RuntimeError(
             "THD context-parallel partitioning requires Megatron-Core >= 0.18.0 with "
-            "get_batch_on_this_cp_rank(..., is_hybrid_cp=...); "
+            "get_batch_on_this_cp_rank(..., dynamic_cp=...); "
             f"found {megatron.core.__version__}. Please upgrade Megatron-Core."
         )
 
@@ -67,7 +67,7 @@ def get_thd_cp_partition_indices(
         "cu_seqlens": cu_seqlens.unsqueeze(0) if cu_seqlens.dim() == 1 else cu_seqlens,
         "cu_seqlens_padded": None,
     }
-    partitioned_batch = get_batch_on_this_cp_rank(index_batch, is_hybrid_cp=False, cp_group=cp_group)
+    partitioned_batch = get_batch_on_this_cp_rank(index_batch, dynamic_cp=False, cp_group=cp_group)
     return partitioned_batch["tokens"].squeeze(0).to(device=device, dtype=torch.long)
 
 
