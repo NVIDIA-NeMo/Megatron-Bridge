@@ -124,6 +124,20 @@ Mamba, and remove the workaround once the selected release supports the containe
 headers without patching. A plain `uv sync` run later does not apply this Docker-only
 workaround.
 
+### TransformerEngine backport
+
+The TransformerEngine pin comes from Megatron-LM, and `uv sync` builds it from source. After
+the last environment change, `common/patch_transformer_engine.sh` applies
+`patches/transformer-engine-layernorm-linear-dummy-wgrad.patch` to the installed package. It
+backports the Python-only fix from NVIDIA/TransformerEngine#3748 (LayerNormLinear dummy
+gradients for sharded weights) onto TE 2.21.0 without moving the pin or rebuilding TE.
+
+The script skips a TE that already contains the fix and a preserved base runtime, and fails
+the build if the patch no longer applies exactly. The installed version string stays
+`2.21.0+7457e47d`; the applied patch is recorded in `transformer_engine/MBRIDGE_DOCKER_PATCHES`.
+Environments installed without this Dockerfile do not get the fix. Remove the step, the
+script, and the patch once the pinned TE includes it.
+
 ---
 
 ## NeMo Framework image stack
@@ -264,8 +278,10 @@ docker build \
 | `common/install_mok.sh` | Build and verify the pinned Mixture of Kittens wheel |
 | `common/install_nsys.sh` | Reinstall Nsight Systems from the public NVIDIA CUDA apt repo |
 | `common/install_mamba.sh` | Build the locked Mamba sdist with the local C++ standard patch |
+| `common/patch_transformer_engine.sh` | Apply a Python-only TransformerEngine backport to the installed package |
 | `common/preserve_base_runtime.py` | Record and check selected base package metadata for opt-in runtime preservation |
 | `patches/deepep.patch` | Patch applied to DeepEP during CI image build |
+| `patches/transformer-engine-layernorm-linear-dummy-wgrad.patch` | Backport of NVIDIA/TransformerEngine#3748 onto the pinned TE 2.21.0 |
 | `patches/mok.patch` | MoK dual GPU target build support and PyTorch/CUDA namespace compatibility fix |
 | `patches/mamba.patch` | Let Mamba's CUDA extension inherit PyTorch's C++ standard |
 | `patches/vllm.patch` | Patch applied to vLLM after install in fw-base |
