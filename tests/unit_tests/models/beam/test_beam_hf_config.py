@@ -28,9 +28,9 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def native_transformers():
-    return pytest.importorskip(
-        "transformers", minversion="5.20.1", reason="Native Beam requires Transformers >= 5.20.1"
-    )
+    import transformers
+
+    return transformers
 
 
 @pytest.fixture

@@ -71,9 +71,8 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    # 5.21.0 normalizes rope_scaling as soon as a config assigns it, before Step-3.5's config sets
-    # max_position_embeddings; 5.21.1 fixed this (huggingface/transformers#50080).
-    "transformers>=5.15,!=5.21.0,<5.24",
+    # 5.21.1, not 5.21.0: 5.21.0 breaks Step-3.5's config (fixed by huggingface/transformers#50080).
+    "transformers>=5.21.1,<5.24",
     "mistral-common>=1.10.0",
     "peft>=0.20.0,<=0.21.0",
     "datasets>=2.20.0",

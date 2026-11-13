@@ -58,7 +58,6 @@ def test_model_loader_selection_preserves_shared_behavior(wrapper_cls, remote, r
     wrapper.config = config
     wrapper.generation_config = generation_config
     with (
-        patch.object(transformers, "__version__", "5.19.0"),
         patch.object(transformers.AutoModelForCausalLM, "from_pretrained") as causal_load,
         patch.object(transformers.AutoModelForImageTextToText, "from_pretrained") as vl_load,
     ):
@@ -75,11 +74,8 @@ def test_model_loader_selection_preserves_shared_behavior(wrapper_cls, remote, r
 
 
 @pytest.mark.unit
-def test_native_model_loader_version_and_filtered_text_guards():
+def test_native_model_loader_filtered_text_guard():
     wrapper = Nemotron35VLPretrained("unused")
-    with patch.object(transformers, "__version__", "5.17.0"):
-        with pytest.raises(ValueError, match="trust_remote_code=True"):
-            wrapper.model
     wrapper._text_only = True
     assert wrapper._get_auto_model_class() is transformers.AutoModelForCausalLM
     with pytest.raises(NotImplementedError, match="standalone HF export"):
@@ -87,34 +83,17 @@ def test_native_model_loader_version_and_filtered_text_guards():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("version", ["5.17.0", "5.19.0", "5.20.0"])
-def test_remote_processor_unchanged(version):
+def test_remote_processor_unchanged():
     wrapper = Nemotron35VLPretrained("unused", trust_remote_code=True)
     wrapper.config = SimpleNamespace(auto_map={"AutoModelForCausalLM": "modeling.RemoteVL"})
-    with (
-        patch.object(transformers, "__version__", version),
-        patch.object(PreTrainedCausalLM, "_load_processor") as load,
-    ):
+    with patch.object(PreTrainedCausalLM, "_load_processor") as load:
         assert wrapper.processor is load.return_value
         load.assert_called_once_with()
 
 
 @pytest.mark.unit
-def test_remote_model_loader_on_older_transformers():
-    wrapper = Nemotron35VLPretrained("unused", trust_remote_code=True)
-    wrapper.config = SimpleNamespace(auto_map={"AutoModelForCausalLM": "modeling.RemoteVL"})
-    with patch.object(transformers, "__version__", "5.17.0"):
-        assert wrapper._get_auto_model_class() is transformers.AutoModelForCausalLM
-
-
-@pytest.mark.unit
 def test_native_processor_version_bounds():
     wrapper = Nemotron35VLPretrained("unused", trust_remote_code=False)
-    with (
-        patch.object(transformers, "__version__", "5.17.0"),
-        pytest.raises(ValueError, match="trust_remote_code=True"),
-    ):
-        wrapper.processor
     with (
         patch.object(transformers, "__version__", "5.24.0"),
         patch.object(transformers.AutoProcessor, "from_pretrained") as load,
