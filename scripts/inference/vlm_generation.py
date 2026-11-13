@@ -247,6 +247,7 @@ def main(args) -> None:
     is_gemma4 = "gemma4" in model_type
     is_minimax = model_type == "minimax_m3_vl"
     is_mistral3 = model_type == "mistral3"
+    is_inkling2 = model_type == "inkling2"
     is_omni = is_nemotron_omni(config)
 
     # ------------------------------------------------------------------
@@ -417,6 +418,7 @@ def main(args) -> None:
             is_kimi=is_kimi,
             is_minimax=is_minimax,
             is_mistral3=is_mistral3,
+            is_inkling2=is_inkling2,
             image_token_id=image_token_id,
         )
 
@@ -455,11 +457,24 @@ def main(args) -> None:
             print_rank_0(f"Generation step {step}")
 
             real_seq_len = generated_ids.size(1)
-            input_ids = pad_input_ids_to_tp_multiple(generated_ids, tp, pad_token_id)
+            input_ids = generated_ids
+            if args.pad_to_length is not None:
+                if real_seq_len > args.pad_to_length:
+                    raise ValueError(
+                        f"The sequence reached {real_seq_len} tokens; raise --pad_to_length above "
+                        f"{args.pad_to_length} to cover the prompt and --max_new_tokens."
+                    )
+                # Positions before the padding do not see it, so the next token is unchanged.
+                input_ids = torch.nn.functional.pad(
+                    input_ids, (0, args.pad_to_length - real_seq_len), value=pad_token_id
+                )
+            input_ids = pad_input_ids_to_tp_multiple(input_ids, tp, pad_token_id)
 
             mm_ids_padded = None
             if mm_token_type_ids is not None:
-                mm_ids_padded = pad_input_ids_to_tp_multiple(mm_token_type_ids, tp, 0)
+                mm_ids_padded = torch.nn.functional.pad(
+                    mm_token_type_ids, (0, input_ids.size(1) - mm_token_type_ids.size(1)), value=0
+                )
 
             position_ids = (
                 torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device)
@@ -551,6 +566,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--prompt", type=str, default="Describe this image.", help="Input prompt.")
     parser.add_argument("--max_new_tokens", type=int, default=20, help="Maximum number of new tokens to generate.")
+    parser.add_argument(
+        "--pad_to_length",
+        type=int,
+        default=None,
+        help=(
+            "Right-pad every step's input to this many tokens, so that models whose attention is compiled for a "
+            "fixed sequence length, such as Inkling2's FlexAttention, compile once instead of at every step. It must "
+            "cover the prompt plus --max_new_tokens."
+        ),
+    )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")

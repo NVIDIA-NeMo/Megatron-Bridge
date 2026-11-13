@@ -211,6 +211,7 @@ def process_image_inputs(
     is_kimi: bool = False,
     is_minimax: bool = False,
     is_mistral3: bool = False,
+    is_inkling2: bool = False,
     image_token_id: Optional[int] = None,
 ):
     """Process image + prompt into model inputs.
@@ -223,6 +224,10 @@ def process_image_inputs(
     """
     if is_gemma4:
         return _process_gemma4_inputs(processor, image_path, prompt)
+
+    # Inkling 2 renders text-only prompts with its chat template too.
+    if is_inkling2:
+        return _process_inkling2_inputs(processor, image_path, prompt)
 
     if not image_path:
         inputs = processor(text=[prompt], return_tensors="pt")
@@ -252,6 +257,19 @@ def _process_kimi_inputs(processor, image_path, prompt, image_token_id):
     grid_thws = getattr(inputs, "grid_thws", None)
     input_ids = pre_expand_vision_tokens(inputs.input_ids, grid_thws, image_token_id)
     return input_ids, inputs.pixel_values, grid_thws, None, None, None
+
+
+def _process_inkling2_inputs(processor, image_path, prompt):
+    """Format an Inkling 2 prompt with the checkpoint's chat template; an image keeps its native size."""
+    content = [{"type": "text", "text": prompt}]
+    images = None
+    if image_path:
+        content.insert(0, {"type": "image"})
+        images = [load_image(image_path).convert("RGB")]
+    messages = [{"role": "user", "content": content}]
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = processor(text=[text], images=images, return_tensors="pt")
+    return inputs.input_ids, inputs.get("pixel_values"), inputs.get("image_grid_thw"), None, None, None
 
 
 def _process_minimax_inputs(processor, image_path, prompt):

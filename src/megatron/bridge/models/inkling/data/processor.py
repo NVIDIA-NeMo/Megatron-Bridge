@@ -39,7 +39,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import torch
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+from PIL import Image
+from transformers import AutoConfig, AutoProcessor, AutoTokenizer, BatchFeature
 
 from megatron.bridge.models.inkling.configuration_inkling2 import Inkling2Config
 from megatron.bridge.models.inkling.data.image_processing import (
@@ -315,27 +316,116 @@ class Inkling2Processor:
             assistant_mask += [0] * len(effort)
         return input_ids, assistant_mask, images
 
+    @property
+    def chat_template(self) -> str | None:
+        """The checkpoint's chat template, which Hugging Face-style callers render prompts with."""
+        return getattr(self.tokenizer, "chat_template", None)
+
+    def apply_chat_template(
+        self,
+        conversation: Sequence[Mapping[str, Any]],
+        *,
+        tokenize: bool = False,
+        add_generation_prompt: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        """Render a conversation with the checkpoint's chat template, as a Transformers processor does.
+
+        The template writes one image placeholder per image; ``processor(text=..., images=...)`` expands each into
+        one placeholder per patch. Inkling 2's template adds no generation prompt, since the model writes its own
+        message headers.
+
+        Args:
+            conversation: The messages.
+            tokenize: Return token IDs instead of text.
+            add_generation_prompt: Passed to the template, which ignores it.
+            **kwargs: Template arguments such as ``reasoning_effort`` or ``tools``.
+
+        Returns:
+            The rendered text, or token IDs with ``tokenize=True``.
+        """
+        if self.reasoning_effort is not None:
+            kwargs.setdefault("reasoning_effort", self.reasoning_effort)
+        return self.tokenizer.apply_chat_template(
+            conversation, tokenize=tokenize, add_generation_prompt=add_generation_prompt, **kwargs
+        )
+
+    def _encode_text(self, text: str | Sequence[str], images: Any) -> BatchFeature:
+        """Tokenize rendered prompts and give each image placeholder one position per patch."""
+        texts = [text] if isinstance(text, str) else list(text)
+        if images is None:
+            images = []
+        elif isinstance(images, Image.Image) or not isinstance(images, Sequence):
+            images = [images]
+        flat = [image for item in images for image in (item if isinstance(item, (list, tuple)) else [item])]
+        encoded = [self.image_processor.encode(image) for image in flat]
+        remaining = iter(encoded)
+        rows = []
+        for prompt in texts:
+            row: list[int] = []
+            for token in self._text(prompt):
+                if token != self.image_token_id:
+                    row.append(token)
+                    continue
+                image = next(remaining, None)
+                if image is None:
+                    raise ValueError("The text has more image placeholders than images")
+                row += [self.image_token_id] * image.num_tokens
+            rows.append(row)
+        if next(remaining, None) is not None:
+            raise ValueError("More images than image placeholders in the text")
+        length = max(len(row) for row in rows)
+        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        input_ids = torch.full((len(rows), length), pad_token_id, dtype=torch.long)
+        attention_mask = torch.zeros((len(rows), length), dtype=torch.long)
+        for index, row in enumerate(rows):
+            input_ids[index, : len(row)] = torch.tensor(row, dtype=torch.long)
+            attention_mask[index, : len(row)] = 1
+        return BatchFeature(
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "pixel_values": torch.cat([image.patches for image in encoded]) if encoded else None,
+                "image_grid_thw": torch.cat([image.grid_thw for image in encoded]) if encoded else None,
+            }
+        )
+
     def __call__(
         self,
-        conversations: Sequence[Sequence[Mapping[str, Any]]],
+        conversations: Sequence[Sequence[Mapping[str, Any]]] | None = None,
         *,
         max_length: int | None = None,
-    ) -> dict[str, torch.Tensor | None]:
-        """Render and right-pad a batch of conversations.
+        text: str | Sequence[str] | None = None,
+        images: Any = None,
+        **kwargs: Any,
+    ) -> dict[str, torch.Tensor | None] | BatchFeature:
+        """Render and right-pad a batch of conversations, or encode rendered text as a Transformers processor.
 
         Args:
             conversations: One message list per sample.
             max_length: Longest allowed sample. Text after the last image is cut to fit; a sample whose
                 image placeholders would be cut is rejected, since its image features could not be placed.
+            text: Prompts already rendered, for example by :meth:`apply_chat_template`, with one image placeholder
+                per image. Given instead of ``conversations``.
+            images: The images for ``text``'s placeholders, in order.
+            **kwargs: Transformers processor arguments such as ``return_tensors`` and ``padding``; the outputs are
+                always right-padded PyTorch tensors.
 
         Returns:
-            ``input_ids``, ``attention_mask`` and ``assistant_masks`` ``[B, L]``; ``pixel_values``
-            ``[patches, 2, 40, 40, 3]`` BF16 and ``image_grid_thw`` ``[images, 3]`` for the batch's images in
-            order, or ``None`` when the batch has none.
+            ``input_ids``, ``attention_mask`` and, for conversations, ``assistant_masks`` ``[B, L]``;
+            ``pixel_values`` ``[patches, 2, 40, 40, 3]`` BF16 and ``image_grid_thw`` ``[images, 3]`` for the
+            batch's images in order, or ``None`` when the batch has none.
 
         Raises:
-            ValueError: If an image does not fit in ``max_length``.
+            ValueError: If an image does not fit in ``max_length``, or the images do not match the text's image
+                placeholders.
         """
+        if text is not None:
+            if conversations is not None:
+                raise ValueError("Pass conversations or text, not both")
+            return self._encode_text(text, images)
+        if conversations is None:
+            raise ValueError("Pass conversations or text")
         rows, masks, images = [], [], []
         for conversation in conversations:
             input_ids, assistant_mask, conversation_images = self.render(conversation)

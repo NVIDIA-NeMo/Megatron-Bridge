@@ -14,6 +14,7 @@
 
 """Inkling2 image-text SFT data: image preprocessing, the processor, and the collator."""
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -42,6 +43,8 @@ from megatron.bridge.models.inkling.data.processor import reasoning_effort_level
 
 
 pytestmark = pytest.mark.unit
+
+_GENERATION_UTILS = Path(__file__).parents[4] / "scripts" / "inference" / "vlm_generation_utils.py"
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # The release's processor_config.json and chat template (thinkingmachines/Inkling-2-Small, revision 78cb6c0e).
@@ -277,6 +280,60 @@ class TestProcessor:
 
         assert input_ids == reference.input_ids.tolist()
         assert mask == [int(value) for value in reference.assistant_mask.tolist()]
+
+    def test_rendered_text_and_images_match_the_conversation_path(self, checkpoint: Path) -> None:
+        processor = Inkling2Processor.from_pretrained(checkpoint)
+        processor.tokenizer.chat_template = RELEASE_TEMPLATE
+        image = _image(81, 41)
+        prompt = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe this image ."}]}]
+        text = processor.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
+        batch = processor(text=[text], images=[image], return_tensors="pt")
+        prompt[0]["content"][0]["image"] = image
+        input_ids, _, images = processor.render(prompt)
+
+        assert processor.chat_template == RELEASE_TEMPLATE
+        assert text.count(IMAGE_TOKEN) == 1
+        assert batch.input_ids[0].tolist() == input_ids
+        assert batch["attention_mask"].tolist() == [[1] * len(input_ids)]
+        assert torch.equal(batch.get("pixel_values"), images[0].patches)
+        assert torch.equal(batch.get("image_grid_thw"), images[0].grid_thw)
+
+    def test_rendered_text_needs_one_image_per_placeholder(self, checkpoint: Path) -> None:
+        processor = Inkling2Processor.from_pretrained(checkpoint)
+        with pytest.raises(ValueError, match="more image placeholders than images"):
+            processor(text=["<|message_user|><|content_image|>" + IMAGE_TOKEN + "<|end_message|>"])
+        with pytest.raises(ValueError, match="More images than image placeholders"):
+            processor(text=["Describe this image ."], images=[_image(40, 40)])
+        plain = processor(text="Describe this image .")
+
+        assert plain.input_ids.shape == (1, 4) and plain.get("pixel_values") is None
+
+    def test_generation_helper_formats_inkling2_prompts_at_native_size(self, checkpoint: Path, tmp_path: Path) -> None:
+        spec = importlib.util.spec_from_file_location("vlm_generation_utils_under_test", _GENERATION_UTILS)
+        utils = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(utils)
+        processor = Inkling2Processor.from_pretrained(checkpoint)
+        processor.tokenizer.chat_template = RELEASE_TEMPLATE
+        _image(81, 41).save(tmp_path / "image.png")
+
+        input_ids, pixel_values, grid, *rest = utils.process_image_inputs(
+            processor, str(tmp_path / "image.png"), "Describe this image .", is_inkling2=True
+        )
+
+        # 81 x 41 pixels at native size: 3 x 2 patches of 40 pixels, one placeholder each.
+        assert grid.tolist() == [[1, 2, 3]]
+        assert int((input_ids == IMAGE_TOKEN_ID).sum()) == 6 == pixel_values.shape[0]
+        assert rest == [None, None, None]
+
+        # Without an image the prompt is text only.
+        input_ids, pixel_values, grid, *rest = utils.process_image_inputs(
+            processor, None, "Describe a cat .", is_inkling2=True
+        )
+
+        rendered = processor.apply_chat_template([{"role": "user", "content": "Describe a cat ."}])
+        assert "<|message_user|><|content_text|>Describe a cat .<|end_message|>" in rendered
+        assert input_ids.tolist() == [processor.tokenizer.encode(rendered, add_special_tokens=False)]
+        assert pixel_values is None and grid is None and rest == [None, None, None]
 
     def test_batches_pad_right_and_keep_images_in_order(self, checkpoint: Path) -> None:
         processor = Inkling2Processor.from_pretrained(checkpoint)
