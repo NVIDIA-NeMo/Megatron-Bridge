@@ -87,10 +87,12 @@ _DISALLOWED_TARGETS: set[str] = {
     "torch.ctypes.pydll.LoadLibrary",
     "torch.ctypes.windll.LoadLibrary",
     "torch.hub.load",
+    "torch.hub.load_state_dict_from_url",
     "torch.load",
     "torch.ops.load_library",
     "torch.utils.cpp_extension.load",
     "torch.utils.cpp_extension.load_inline",
+    "torch.utils.model_zoo.load_url",
     "transformers.pipeline",
     *{f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}" for method in _TARGET_ALLOWLIST_MUTATORS},
     *{
@@ -104,6 +106,8 @@ _DISALLOWED_TARGETS: set[str] = {
 # ``torch.serialization.load`` is the same callable as ``torch.load``.
 _DISALLOWED_CANONICAL_TARGETS: set[str] = {
     "numpy.load",
+    # Also reject re-exports of the downloader, which can deserialize arbitrary objects.
+    "torch.hub.load_state_dict_from_url",
     "torch.serialization.load",
 }
 
