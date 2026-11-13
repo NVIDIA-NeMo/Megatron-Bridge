@@ -72,4 +72,6 @@ from megatron.bridge.perf_recipes.deepseek.vrnvl72.deepseek_v3 import (
 )
 from megatron.bridge.perf_recipes.deepseek.vrnvl72.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config,
+    deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config,
+    deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config,
 )

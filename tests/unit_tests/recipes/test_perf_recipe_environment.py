@@ -54,6 +54,8 @@ _MLPERF_NVFP4_RECIPES_WITHOUT_FAST_MATH = {
     "llama31_8b_pretrain_72gpu_gb300_nvfp4_config",
 }
 _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config",
+    "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config",
     "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config",
     "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config",
     "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",

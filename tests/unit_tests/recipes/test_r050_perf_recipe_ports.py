@@ -24,6 +24,7 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.qwen import (
     qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config,
@@ -222,8 +223,13 @@ def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
     _assert_full_iteration_hybridep_mxfp8(cfg)
 
 
-def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:
-    cfg = deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config()
+@pytest.mark.parametrize(
+    "recipe",
+    [deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config],
+    ids=["gb300", "vrnvl72"],
+)
+def test_deepseek_v4_pro_matches_r050_performance_config(recipe) -> None:
+    cfg = recipe()
 
     assert cfg.train.global_batch_size == 4096
     assert cfg.train.micro_batch_size == 1
