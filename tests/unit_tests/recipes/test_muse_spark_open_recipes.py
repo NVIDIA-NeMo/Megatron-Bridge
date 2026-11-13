@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from megatron.bridge.recipes.muse_spark_open.gb200 import muse_spark_open as mus
 from megatron.bridge.recipes.muse_spark_open.gb200 import (
     muse_spark_open_peft_16gpu_gb200_bf16_multimodal_config,
     muse_spark_open_peft_64gpu_gb200_bf16_config,
+    muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config,
     muse_spark_open_pretrain_192gpu_gb200_bf16_config,
     muse_spark_open_pretrain_256gpu_gb200_bf16_config,
     muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config,
@@ -22,6 +24,7 @@ from megatron.bridge.recipes.muse_spark_open.gb200 import (
     muse_spark_open_sft_192gpu_gb200_bf16_multimodal_config,
     muse_spark_open_sft_256gpu_gb200_bf16_config,
 )
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -420,6 +423,100 @@ def test_muse_spark_pretrain_256gpu_recipe_changes_only_the_pipeline_split() -> 
     ):
         assert getattr(cfg.model, name) == getattr(reference.model, name), name
     assert cfg.checkpoint.pretrained_checkpoint is None
+
+
+def test_muse_spark_pretrain_proxy_keeps_the_first_six_blocks_on_one_rack() -> None:
+    cfg = muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config()
+
+    assert isinstance(cfg, ConfigContainer)
+    assert isinstance(cfg.dataset, GPTDatasetConfig)
+    assert cfg.peft is None
+    assert cfg.tokenizer.tokenizer_model == muse_spark_recipes._MODEL_ID
+    # Six of the 62 decoder blocks, each an attention position followed by an MoE position.
+    assert cfg.model.num_layers == 12
+    assert _stage_blocks(cfg) == [6]
+    # Blocks 0-5 of the released model: full attention without RoPE every fourth block counted back from block 61,
+    # sliding-window attention with RoPE otherwise. MoE positions take neither setting.
+    full_attention = [(61 - block) % 4 == 0 for block in range(6)]
+    assert full_attention == [False, True, False, False, False, True]
+    assert cfg.model.window_attn_skip_freq == [value for full in full_attention for value in (int(not full), 0)]
+    assert cfg.model.no_rope_freq == [value for full in full_attention for value in (int(full), 0)]
+    # TP1/PP1/EP16: the 16 GPUs are one HybridEP group in one NVL72 domain and 16 data-parallel replicas.
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.pipeline_dtype is None
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    _assert_hybridep(cfg, ep=16, pad_uneven=False)
+    assert _data_parallel_size(cfg, 16) == 16
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.global_batch_size % _data_parallel_size(cfg, 16) == 0
+    assert cfg.model.recompute_granularity is None
+    # The cut model relearns its output layer; see the recipe docstring for the 3e-4 peak.
+    assert cfg.optimizer.lr == pytest.approx(3e-4)
+    assert cfg.optimizer.min_lr == pytest.approx(3e-5)
+    assert cfg.scheduler.lr_warmup_iters == 40
+    assert cfg.scheduler.lr_decay_iters == 100
+    # Deterministic mode, with the kernels and collectives it requires.
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    for name, value in DETERMINISM_ENV_VARS.items():
+        assert cfg.env_vars[name] == value, name
+    # The CI case or card command supplies the cut checkpoint; the reusable recipe must not.
+    assert cfg.checkpoint.pretrained_checkpoint is None
+    assert cfg.checkpoint.load is None
+
+
+def _changed_fields(cfg: object, reference: object) -> set[str]:
+    return {field.name for field in fields(cfg) if getattr(cfg, field.name) != getattr(reference, field.name)}
+
+
+def test_muse_spark_pretrain_proxy_differs_from_the_192gpu_recipe_only_in_scale_lr_and_determinism() -> None:
+    reference = muse_spark_open_pretrain_192gpu_gb200_bf16_config()
+    cfg = muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config()
+
+    changed_model_fields = {
+        name
+        for name in vars(cfg.model).keys() | vars(reference.model).keys()
+        if getattr(cfg.model, name, None) != getattr(reference.model, name, None)
+    }
+    assert changed_model_fields == {
+        # Depth and its per-position attention schedule.
+        "num_layers",
+        "hybrid_layer_pattern",
+        "window_attn_skip_freq",
+        "no_rope_freq",
+        # One NVL72 rack instead of six pipeline stages, with room to keep every activation.
+        "pipeline_model_parallel_size",
+        "pipeline_dtype",
+        "expert_model_parallel_size",
+        "recompute_granularity",
+        "recompute_method",
+        "recompute_num_layers",
+        # Deterministic mode.
+        "deterministic_mode",
+        "cross_entropy_loss_fusion",
+        "moe_router_aux_loss_fusion",
+    }
+    assert _changed_fields(cfg.train, reference.train) == {"global_batch_size"}
+    assert _changed_fields(cfg.optimizer, reference.optimizer) == {"lr", "min_lr"}
+    for section in (
+        "scheduler",
+        "dataset",
+        "tokenizer",
+        "mixed_precision",
+        "ddp",
+        "checkpoint",
+        "rng",
+        "validation",
+        "logger",
+    ):
+        assert _changed_fields(getattr(cfg, section), getattr(reference, section)) == set(), section
+    assert cfg.env_vars == {
+        **reference.env_vars,
+        **DETERMINISM_ENV_VARS,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
+    }
 
 
 def test_muse_spark_sft_256gpu_recipe_keeps_the_8k_tulu3_contract() -> None:

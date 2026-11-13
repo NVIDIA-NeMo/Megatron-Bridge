@@ -24,10 +24,10 @@ import torch.nn.functional as F
 
 from megatron.bridge.models.deepseek.attention import get_deepseek_decoder_block_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.sarvam.sarvam_config import _get_sarvam_moe_pipeline_layout
 from megatron.bridge.models.sarvam.sarvam_provider import (
     SarvamMLAModelProvider,
     SarvamMoEModelProvider,
-    _get_sarvam_moe_pipeline_layout,
 )
 from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 

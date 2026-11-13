@@ -18,6 +18,7 @@ from typing import Dict, Iterable, Optional, Tuple
 import torch
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.utils import unwrap_model
 
 from megatron.bridge.data.megatron_mimo.dp_utils import slice_batch_for_megatron_mimo
 from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
@@ -78,6 +79,18 @@ def _get_module_dp_info(
             return dp_rank, dp_size
 
     return 0, 1
+
+
+def _language_stage_owns_mtp(megatron_mimo_model: MimoModel) -> bool:
+    """Return whether this rank's language stage runs the MTP block.
+
+    The MTP block re-embeds shifted token IDs, so its stage needs ``input_ids``
+    even when it is not the first language stage.
+    """
+    language_model = getattr(megatron_mimo_model, "language_model", None)
+    if language_model is None:
+        return False
+    return bool(getattr(unwrap_model(language_model), "mtp_process", False))
 
 
 def loss_func(
@@ -188,7 +201,8 @@ def forward_step(
     # Determine if this rank needs a data iterator.
     # - LLM ranks: all stages need metadata such as position_ids for models
     #   with position-dependent decoder blocks. First stage consumes input_ids;
-    #   last stage consumes labels/loss_mask.
+    #   last stage consumes labels/loss_mask. The stage that runs MTP also
+    #   consumes input_ids.
     # - Modality ranks: only first stage needs raw modality inputs.
     needs_data = True
     is_language_first_stage = False
@@ -260,7 +274,8 @@ def forward_step(
                     )
                 pack_lengths = mask.to(torch.bool).sum(dim=1).to(torch.long)
             if not is_language_first_stage:
-                data_batch["input_ids"] = None
+                if not _language_stage_owns_mtp(megatron_mimo_model):
+                    data_batch["input_ids"] = None
                 data_batch["modality_inputs"] = None
             if not is_language_last_stage:
                 data_batch["labels"] = None

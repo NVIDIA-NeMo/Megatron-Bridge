@@ -141,6 +141,14 @@ Use `load_weights=False` for random initialization. A bridge created with
 `from_hf_config()` has no weights, so it requires `load_weights=False` or an
 explicit `hf_path`.
 
+For bf16 and fp16 configs, `get_model()` wraps each stage in Megatron Core's
+`Float16Module` unless you pass `mixed_precision_wrapper=None`. Like the
+provider path, the wrap keeps MoE router expert biases, and parameters that a
+module lists in `_keep_in_float32_parameter_names`, in FP32. Training setup and
+`load_megatron_model()` build builder-backed configs through the same helper,
+`build_distributed_models()`, so router biases that PEFT loads from the base
+checkpoint before the wrap also stay exact.
+
 Training recipes for builder-backed families store the result of
 `get_model_config()` in `ConfigContainer.model`. The training setup recognizes
 `ModelConfig` and calls its `ModelBuilder` directly; it does not create a
@@ -253,6 +261,12 @@ Use `from_hf_pretrained()` when an existing Hugging Face repository or local
 directory provides the configuration, tokenizer, and other export artifacts.
 The pretrained wrapper loads these artifacts lazily; exporting Megatron weights
 does not require materializing the reference Hugging Face model weights.
+The export copies the source's tokenizer and processor files (such as
+`tokenizer.json`, `vocab.json` and `preprocessor_config.json`) unchanged. A
+tokenizer or processor that you assign to the wrapper or edit after loading,
+e.g. with `add_special_tokens()` or a new `chat_template`, is saved with
+`save_pretrained()` instead, as are artifacts loaded with arguments that change
+them, such as a tokenizer's `model_max_length`.
 
 ```python
 from megatron.bridge import AutoBridge

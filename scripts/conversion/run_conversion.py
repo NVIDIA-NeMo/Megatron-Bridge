@@ -78,6 +78,10 @@ def _validate_args(args: argparse.Namespace) -> None:
 
 def _run_import(args: argparse.Namespace) -> None:
     """Dispatch an import to the selected backend."""
+    if args.bagel_repo is not None:
+        from megatron.bridge.models.bagel.dependencies import configure_official_bagel_repo
+
+        configure_official_bagel_repo(args.bagel_repo)
     common_args = {
         "hf_model": args.hf_model,
         "hf_revision": args.hf_revision,

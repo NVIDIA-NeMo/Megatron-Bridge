@@ -386,3 +386,103 @@ class TestQwen3MoEBridge:
             if "experts" in mapping.hf_param and "down_proj" in mapping.hf_param
         ]
         assert len(expert_down_params) > 0
+
+
+def _qwen3_moe_config(**overrides):
+    from transformers import Qwen3MoeConfig
+
+    values = dict(
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        num_experts=4,
+        num_experts_per_tok=2,
+        max_position_embeddings=4096,
+        vocab_size=128,
+        torch_dtype="bfloat16",
+    )
+    values.update(overrides)
+    config = Qwen3MoeConfig(**values)
+    config.architectures = ["Qwen3MoeForCausalLM"]
+    return config
+
+
+class TestQwen3MoEBuilderConfig:
+    """Builder-backed ModelConfig path for Qwen3 MoE."""
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in Qwen3MoEBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        assert Qwen3MoEBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+        assert Qwen3MoEBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        from unittest.mock import patch
+
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        # Released Qwen3 MoE checkpoints normalize the top-k probabilities.
+        config = _qwen3_moe_config(norm_topk_prob=True)
+        bridge = Qwen3MoEBridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(config)
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.num_moe_experts == 4
+        assert model_config.moe_router_topk == 2
+        assert model_config.moe_ffn_hidden_size == 32
+        assert model_config.qk_layernorm is True
+        assert model_config.add_qkv_bias is False
+        assert model_config.normalization == "RMSNorm"
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.moe_router_pre_softmax is False
+        assert model_config.moe_aux_loss_coeff == 1e-3
+        # The builder's default MoE spec is selected from the config.
+        assert model_config.transformer_layer_spec is None
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {},
+            {"norm_topk_prob": False},
+            {"tie_word_embeddings": True, "torch_dtype": "float16"},
+            {"rope_scaling": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 1024}},
+        ],
+        ids=["default", "no_norm_topk_prob", "tied_fp16", "yarn"],
+    )
+    def test_model_config_matches_provider_runtime_config(self, overrides):
+        from dataclasses import fields
+
+        config = _qwen3_moe_config(**overrides)
+        bridge = Qwen3MoEBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = config
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(pretrained)
+
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        shared = ({field.name for field in fields(provider)} & model_config_fields) - {"transformer_layer_spec"}
+        for field_name in sorted(shared):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+    @pytest.mark.parametrize("norm_topk_prob", [True, False])
+    def test_megatron_to_hf_config_from_model_config(self, norm_topk_prob):
+        model_config = Qwen3MoEBridge().hf_config_to_model_config(_qwen3_moe_config(norm_topk_prob=norm_topk_prob))
+
+        hf_config = Qwen3MoEBridge.megatron_to_hf_config(model_config)
+
+        assert hf_config["norm_topk_prob"] is norm_topk_prob
+        assert hf_config["decoder_sparse_step"] == 1
+        assert hf_config["num_hidden_layers"] == 2

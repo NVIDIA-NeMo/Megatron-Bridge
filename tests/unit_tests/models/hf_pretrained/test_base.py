@@ -14,7 +14,9 @@
 # limitations under the License.
 
 
+import hashlib
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -324,6 +326,138 @@ def test_save_artifacts_preserves_generation_config_from_pinned_hub_revision(tmp
     assert (tmp_path / "target" / "generation_config.json").read_text() == generation_config
 
 
+_CACHED_REVISION = "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"  # pragma: allowlist secret
+
+
+def _write_hub_cache_snapshot(cache_dir, repo_id, revision, files, listed_missing=()):
+    """Lay out a Hugging Face Hub cache snapshot the way hf_hub_download leaves it.
+
+    Snapshot entries are symlinks to content-addressed blobs. When ``listed_missing`` names
+    repository files absent from the snapshot, a ``trees/<revision>.json`` listing that includes
+    them is written, as huggingface_hub caches after listing the repository online.
+    """
+    repo_dir = cache_dir / f"models--{repo_id.replace('/', '--')}"
+    snapshot_dir = repo_dir / "snapshots" / revision
+    (repo_dir / "blobs").mkdir(parents=True)
+    for name, content in files.items():
+        blob = repo_dir / "blobs" / hashlib.sha1(content.encode()).hexdigest()
+        blob.write_text(content)
+        link = snapshot_dir / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(os.path.relpath(blob, link.parent))
+    (repo_dir / "refs").mkdir()
+    (repo_dir / "refs" / "main").write_text(revision)
+    if listed_missing:
+        listing = {name: {"size": 1, "blob_id": "0" * 40} for name in [*files, *listed_missing]}
+        (repo_dir / "trees").mkdir()
+        (repo_dir / "trees" / f"{revision}.json").write_text(json.dumps({"format_version": 1, "files": listing}))
+
+
+@pytest.mark.parametrize("revision", [_CACHED_REVISION, None])
+def test_copy_custom_modeling_files_uses_hub_cache_when_hub_is_offline(tmp_path, monkeypatch, revision):
+    """Test Hub sources fall back to the cached snapshot when the Hub cannot be listed."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    _write_hub_cache_snapshot(
+        tmp_path / "hub",
+        "org/model",
+        _CACHED_REVISION,
+        {
+            "config.json": "{}\n",
+            "generation_config.json": '{"top_p": 0.95}\n',
+            "nano_v3_reasoning_parser.py": "# parser\n",
+            "sub/helper.py": "# helper\n",
+        },
+    )
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+
+    base = MockPreTrainedBase()
+    with patch("huggingface_hub.list_repo_files", side_effect=OfflineModeIsEnabled("offline")):
+        copied_files = base._copy_custom_modeling_files(
+            "org/model", target_dir, file_patterns=["generation_config.json", "*.py"], revision=revision
+        )
+
+    assert copied_files == ["generation_config.json", "nano_v3_reasoning_parser.py", "sub/helper.py"]
+    assert (target_dir / "generation_config.json").read_text() == '{"top_p": 0.95}\n'
+    assert (target_dir / "sub" / "helper.py").read_text() == "# helper\n"
+    assert not (target_dir / "generation_config.json").is_symlink()
+    assert not (target_dir / "config.json").exists()
+
+
+def test_copy_custom_modeling_files_uses_incomplete_hub_cache_per_pattern(tmp_path, monkeypatch):
+    """Test files missing from the cached snapshot only skip the patterns that need them."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    _write_hub_cache_snapshot(
+        tmp_path / "hub",
+        "org/model",
+        _CACHED_REVISION,
+        {"generation_config.json": '{"top_p": 0.95}\n', "nano_v3_reasoning_parser.py": "# parser\n"},
+        listed_missing=("model.safetensors", "modeling_custom.py"),
+    )
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+
+    base = MockPreTrainedBase()
+    with patch("huggingface_hub.list_repo_files", side_effect=OfflineModeIsEnabled("offline")):
+        copied_files = base._copy_custom_modeling_files(
+            "org/model", target_dir, file_patterns=["generation_config.json", "*.py"], revision=_CACHED_REVISION
+        )
+
+    assert copied_files == ["generation_config.json"]
+    assert (target_dir / "generation_config.json").read_text() == '{"top_p": 0.95}\n'
+    assert not (target_dir / "nano_v3_reasoning_parser.py").exists()
+
+
+def test_save_artifacts_preserves_generation_config_from_hub_cache_when_offline(tmp_path, monkeypatch):
+    """Test the rejected-generation-config fallback for a cached Hub model with HF_HUB_OFFLINE=1."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    generation_config = '{"temperature": 1.0, "top_p": 0.95}\n'
+    _write_hub_cache_snapshot(
+        tmp_path / "hub",
+        "org/model",
+        _CACHED_REVISION,
+        {"generation_config.json": generation_config},
+        listed_missing=("model.safetensors",),
+    )
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+
+    base = MockPreTrainedBase(model_name_or_path="org/model", revision=_CACHED_REVISION)
+    base._config = Mock()
+    base._generation_config = Mock()
+    base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
+
+    with patch("huggingface_hub.list_repo_files", side_effect=OfflineModeIsEnabled("offline")):
+        base.save_artifacts(tmp_path / "target")
+
+    assert (tmp_path / "target" / "generation_config.json").read_text() == generation_config
+
+
+def test_save_artifacts_reraises_generation_config_error_when_hub_revision_is_not_cached(tmp_path, monkeypatch):
+    """Test an offline export still fails loudly when the source revision is not in the local cache."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path / "empty-hub"))
+    base = MockPreTrainedBase(model_name_or_path="org/model", revision=_CACHED_REVISION)
+    base._config = Mock()
+    base._generation_config = Mock()
+    base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
+
+    with (
+        patch("huggingface_hub.list_repo_files", side_effect=OfflineModeIsEnabled("offline")),
+        pytest.raises(ValueError, match="invalid generation config"),
+    ):
+        base.save_artifacts(tmp_path / "target")
+
+
 def test_save_artifacts_reraises_generation_config_error_without_source_file():
     """Test generation config save errors are not hidden without a source artifact."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -593,6 +727,167 @@ def test_additional_files_empty_list():
         assert not (target_dir / "vocab.json").exists()
 
         print("✅ test_additional_files_empty_list passed")
+
+
+class MockPreTrainedProcessorBase(MockPreTrainedBase):
+    """Mock whose tokenizer and processor are loaded from the source, as the lazy properties load them."""
+
+    OPTIONAL_ARTIFACTS = ["generation_config", "processor"]
+
+    def __init__(self, model_name_or_path=None, **kwargs):
+        super().__init__(model_name_or_path=model_name_or_path, **kwargs)
+        self._tokenizer = self._load_artifact("tokenizer")
+        self._processor = self._load_artifact("processor")
+
+    def _load_tokenizer(self):
+        return Mock()
+
+    def _load_processor(self):
+        return Mock()
+
+    @property
+    def processor(self):
+        """Mock processor property."""
+        return self._processor
+
+
+def _writes(files):
+    """Return a save_pretrained side effect that writes ``files`` (name -> text) into the save directory."""
+
+    def save_pretrained(save_directory):
+        for name, text in files.items():
+            (Path(save_directory) / name).write_text(text)
+
+    return save_pretrained
+
+
+def test_save_artifacts_copies_unchanged_source_artifacts(tmp_path):
+    """Test unchanged artifacts loaded from the source get its files and are not re-serialized."""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source_files = {
+        "tokenizer.json": '{"source": "tokenizer"}',
+        "tokenizer_config.json": '{"added_tokens_decoder": {}}',
+        "vocab.json": "{}",
+        "merges.txt": "a b",
+        "chat_template.jinja": "{{ messages }}",
+        "preprocessor_config.json": '{"image_processor_type": "Qwen2VLImageProcessorFast"}',
+        "video_preprocessor_config.json": "{}",
+    }
+    for name, text in source_files.items():
+        (source_dir / name).write_text(text)
+    base = MockPreTrainedProcessorBase(model_name_or_path=str(source_dir))
+    base._config = Mock(save_pretrained=Mock())
+
+    base.save_artifacts(tmp_path / "target")
+
+    base._tokenizer.save_pretrained.assert_not_called()
+    base._processor.save_pretrained.assert_not_called()
+    assert {path.name: path.read_text() for path in (tmp_path / "target").iterdir()} == source_files
+
+
+def test_save_artifacts_keeps_files_saved_for_replaced_artifacts(tmp_path):
+    """Test a replaced processor's saved files win over the unchanged tokenizer's source copies."""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "tokenizer.json").write_text('{"source": "tokenizer"}')
+    (source_dir / "chat_template.jinja").write_text("source template")
+    base = MockPreTrainedProcessorBase(model_name_or_path=str(source_dir))
+    base._config = Mock(save_pretrained=Mock())
+    base._processor = Mock(
+        save_pretrained=Mock(
+            side_effect=_writes({"chat_template.jinja": "user template", "processor_config.json": "{}"})
+        )
+    )
+
+    base.save_artifacts(tmp_path / "target")
+
+    assert {path.name: path.read_text() for path in (tmp_path / "target").iterdir()} == {
+        "tokenizer.json": '{"source": "tokenizer"}',
+        "chat_template.jinja": "user template",
+        "processor_config.json": "{}",
+    }
+
+
+def test_save_artifacts_saves_artifacts_the_source_has_no_files_for(tmp_path):
+    """Test an unchanged processor is still saved when the source has none of its files."""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "tokenizer.json").write_text('{"source": "tokenizer"}')
+    base = MockPreTrainedProcessorBase(model_name_or_path=str(source_dir))
+    base._config = Mock(save_pretrained=Mock())
+
+    base.save_artifacts(tmp_path / "target")
+
+    base._tokenizer.save_pretrained.assert_not_called()
+    base._processor.save_pretrained.assert_called_once_with(tmp_path / "target")
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [None, "encode", "add_special_tokens", "chat_template", "normalizer", "load_kwargs", "setter"],
+)
+def test_causal_lm_save_artifacts_tokenizer_edits(tmp_path, edit):
+    """Test an unedited tokenizer is copied verbatim, while one edited, loaded with overrides or replaced is re-saved."""
+    from tokenizers import Tokenizer, models, normalizers
+    from transformers import AutoTokenizer, LlamaConfig, PreTrainedTokenizerFast
+
+    from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+    source_dir = tmp_path / "source"
+    LlamaConfig().save_pretrained(source_dir)
+    backend = Tokenizer(models.WordLevel({"a": 0, "<unk>": 1}, unk_token="<unk>"))
+    PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="<unk>").save_pretrained(source_dir)
+    # Formatting save_pretrained would not reproduce.
+    tokenizer_config = source_dir / "tokenizer_config.json"
+    tokenizer_config.write_text(json.dumps(json.loads(tokenizer_config.read_text()), indent=7))
+
+    model = PreTrainedCausalLM(str(source_dir), **({"model_max_length": 256} if edit == "load_kwargs" else {}))
+    if edit == "encode":  # Sets the backend's truncation, which is not saved.
+        model.tokenizer("a a", truncation=True, max_length=1)
+    elif edit == "add_special_tokens":
+        model.tokenizer.add_special_tokens({"additional_special_tokens": ["<x>"]})
+    elif edit == "chat_template":
+        model.tokenizer.chat_template = "{{ messages }}"
+    elif edit == "normalizer":
+        model.tokenizer.backend_tokenizer.normalizer = normalizers.Lowercase()
+    elif edit == "setter":
+        model.tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="<unk>")
+    model.save_artifacts(tmp_path / "target")
+
+    saved = (tmp_path / "target" / "tokenizer_config.json").read_text()
+    assert (saved == tokenizer_config.read_text()) == (edit in (None, "encode"))
+    reloaded = AutoTokenizer.from_pretrained(tmp_path / "target")
+    if edit == "add_special_tokens":
+        assert "<x>" in (tmp_path / "target" / "tokenizer.json").read_text()
+    elif edit == "normalizer":
+        assert reloaded.encode("A", add_special_tokens=False) == [0]
+    elif edit == "load_kwargs":
+        assert reloaded.model_max_length == 256
+
+
+def test_save_artifacts_copies_named_chat_templates(tmp_path):
+    """Test an unchanged tokenizer keeps its named chat templates, which live in a subdirectory."""
+    from tokenizers import Tokenizer, models
+    from transformers import AutoTokenizer, LlamaConfig, PreTrainedTokenizerFast
+
+    from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+    source_dir = tmp_path / "source"
+    LlamaConfig().save_pretrained(source_dir)
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=Tokenizer(models.WordLevel({"a": 0, "<unk>": 1}, unk_token="<unk>")), unk_token="<unk>"
+    )
+    tokenizer.chat_template = {"default": "{{ 'default' }}", "tool_use": "{{ 'tool use' }}"}
+    tokenizer.save_pretrained(source_dir)
+
+    PreTrainedCausalLM(str(source_dir)).save_artifacts(tmp_path / "target")
+
+    templates = sorted(path.relative_to(source_dir) for path in source_dir.rglob("*.jinja"))
+    assert len(templates) == 2
+    for template in templates:
+        assert (tmp_path / "target" / template).read_bytes() == (source_dir / template).read_bytes()
+    assert AutoTokenizer.from_pretrained(tmp_path / "target").chat_template == tokenizer.chat_template
 
 
 def main():

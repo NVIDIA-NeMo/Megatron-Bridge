@@ -26,6 +26,7 @@ import torch.distributed as dist
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
+from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 
 from megatron.bridge.training.checkpointing import CheckpointManager, DefaultCheckpointManager
 from megatron.bridge.training.eval import evaluate_and_print_results
@@ -61,6 +62,29 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _collect_mtp_losses(num_microbatches: int) -> Dict[str, torch.Tensor]:
+    """Reduce this step's MTP losses on the language last stage and reset the tracker.
+
+    The shared ``training_log`` reads MTP settings from ``cfg.model``, which is the
+    MegatronMIMOProvider, and logs on the last global rank, which may own an encoder.
+    Returning the losses lets them reach the logging rank with ``loss_dict``.
+
+    Args:
+        num_microbatches: Number of microbatches in this step.
+
+    Returns:
+        ``{"mtp_<depth> loss": loss}`` per MTP depth, or an empty dict if no MTP loss was tracked.
+    """
+    # MCore releases that track MTP loss per token already reduce it to a per-token mean;
+    # otherwise the tracker holds one normalized loss per microbatch.
+    per_token = MTPLossLoggingHelper.tracker.get("calculate_per_token_loss", False)
+    loss_scale = 1.0 if per_token else 1.0 / num_microbatches
+    mtp_losses: Dict[str, torch.Tensor] = {}
+    # Without writers this only reduces, scales and clears the tracker into mtp_losses.
+    MTPLossLoggingHelper.track_mtp_metrics(loss_scale, None, None, None, total_loss_dict=mtp_losses)
+    return mtp_losses
 
 
 def train_step_megatron_mimo(
@@ -168,6 +192,8 @@ def train_step_megatron_mimo(
 
             if zero_token_step is not None:
                 accumulate_zero_token_step(global_state, zero_token_step)
+
+            loss_dict.update(_collect_mtp_losses(num_microbatches))
 
     # Broadcast loss_dict to all ranks (the last rank is the logging rank for
     # W&B/TensorBoard). Use broadcast_object_list from the source rank so every

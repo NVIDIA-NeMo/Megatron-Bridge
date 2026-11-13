@@ -61,6 +61,17 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
     assert updated.dataset.seq_length == 128
 
 
+@pytest.mark.parametrize("create_attention_mask", [True, False])
+def test_mock_dataset_keeps_recipe_attention_mask_setting(tmp_path, create_attention_mask):
+    """--data mock rebuilds the dataset config but keeps the recipe's create_attention_mask."""
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.dataset.create_attention_mask = create_attention_mask
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--data", "mock"))
+
+    assert updated.dataset.create_attention_mask is create_attention_mask
+
+
 @pytest.mark.parametrize(
     ("backend", "visible", "expected"),
     [

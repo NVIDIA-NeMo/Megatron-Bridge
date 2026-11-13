@@ -25,6 +25,9 @@ import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.utils.omegaconf_utils import (
     OverridesError,
     _apply_overrides,
@@ -106,6 +109,20 @@ class ConfigWithOptionalProfilingConfig:
 
     name: str = "test"
     profiling: Optional[ProfilingConfig] = None
+
+
+@dataclasses.dataclass
+class ConfigWithBuilderModel:
+    """Training-style container whose model keeps transformer settings nested."""
+
+    model: BridgeGPTModelConfig = dataclasses.field(
+        default_factory=lambda: BridgeGPTModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=64, num_attention_heads=4),
+            vocab_size=128,
+            seq_length=64,
+        )
+    )
+    simple: SimpleConfig = dataclasses.field(default_factory=SimpleConfig)
 
 
 def dummy_function():
@@ -392,6 +409,51 @@ class TestTrackExcludedFields:
         excluded = _track_excluded_fields(config)
 
         assert "funcs.relu" in excluded
+
+
+@dataclasses.dataclass
+class ConfigWithHFConfig:
+    """Config holding a Hugging Face config, as vision-language model configs do."""
+
+    hf_config: Any = None
+    name: str = "test"
+
+
+def _heterogeneous_hf_config():
+    """Return a two-layer Hugging Face config whose second layer has fewer KV heads."""
+    transformers = pytest.importorskip("transformers")
+    hf_config = transformers.LlamaConfig(
+        num_hidden_layers=2, hidden_size=64, intermediate_size=128, num_attention_heads=4, num_key_value_heads=4
+    )
+    try:
+        hf_config.per_layer_config = {1: {"num_key_value_heads": 2}}
+    except AttributeError:
+        pytest.skip("this transformers version has no heterogeneous configs")
+    return hf_config
+
+
+class TestHeterogeneousHFConfig:
+    """Hugging Face configs with per-layer attributes (Transformers 5.20+), such as Gemma 4's text config."""
+
+    def test_tracking_does_not_read_per_layer_attributes(self):
+        """Tracking excluded fields must not walk into the HF config, whose per-layer attributes raise."""
+        config = ConfigWithHFConfig(hf_config=_heterogeneous_hf_config())
+
+        assert _track_excluded_fields(config, "root") == {}
+
+    def test_overrides_keep_heterogeneous_hf_config(self):
+        """CLI overrides apply, and the HF config comes back with the same per-layer settings."""
+        hf_config = _heterogeneous_hf_config()
+        original = hf_config.to_dict()
+        config = ConfigWithHFConfig(hf_config=hf_config)
+
+        process_config_with_overrides(config, cli_overrides=["name=changed"])
+
+        assert config.name == "changed"
+        assert config.hf_config.is_heterogeneous
+        assert config.hf_config.per_layer_config[1].num_key_value_heads == 2
+        assert config.hf_config.per_layer_config[0].num_key_value_heads == 4
+        assert config.hf_config.to_dict() == original
 
 
 class TestRestoreExcludedFields:
@@ -829,6 +891,110 @@ class TestParseHydraOverrides:
 
         with pytest.raises(OverridesError):
             parse_hydra_overrides(cfg, invalid_overrides)
+
+
+class TestBuilderTransformerOverrides:
+    """Flat spellings of a builder-backed model's transformer settings."""
+
+    def test_flat_cli_override_routes_to_transformer(self):
+        config = process_config_with_overrides(
+            ConfigWithBuilderModel(),
+            cli_overrides=["model.tensor_model_parallel_size=2", "model.seq_length=128", "simple.value=7"],
+        )
+
+        assert config.model.transformer.tensor_model_parallel_size == 2
+        assert config.model.seq_length == 128
+        assert config.simple.value == 7
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            (["model.transformer.tensor_model_parallel_size=4", "model.tensor_model_parallel_size=2"], 2),
+            (["model.tensor_model_parallel_size=2", "model.transformer.tensor_model_parallel_size=4"], 4),
+            (["++model.tensor_model_parallel_size=8"], 8),
+        ],
+    )
+    def test_cli_spellings_apply_in_order(self, overrides, expected):
+        config = process_config_with_overrides(ConfigWithBuilderModel(), cli_overrides=overrides)
+
+        assert config.model.transformer.tensor_model_parallel_size == expected
+
+    def test_flat_yaml_key_wins_within_the_file_and_cli_wins_over_yaml(self, tmp_path):
+        config_file = tmp_path / "overrides.yaml"
+        config_file.write_text(
+            "model:\n"
+            "  tensor_model_parallel_size: 2\n"
+            "  sequence_parallel: true\n"
+            "  transformer:\n"
+            "    tensor_model_parallel_size: 4\n"
+        )
+
+        config = process_config_with_overrides(ConfigWithBuilderModel(), config_filepath=str(config_file))
+        assert config.model.transformer.tensor_model_parallel_size == 2
+        assert config.model.transformer.sequence_parallel is True
+
+        config = process_config_with_overrides(
+            ConfigWithBuilderModel(),
+            config_filepath=str(config_file),
+            cli_overrides=["model.transformer.tensor_model_parallel_size=8"],
+        )
+        assert config.model.transformer.tensor_model_parallel_size == 8
+
+    def test_parse_hydra_overrides_nests_keys_from_a_separate_yaml_merge(self):
+        """Example scripts merge YAML themselves before applying CLI overrides."""
+        config = ConfigWithBuilderModel()
+        merged, excluded = create_omegaconf_dict_config(config)
+        merged = OmegaConf.merge(
+            merged,
+            OmegaConf.create({"model": {"tensor_model_parallel_size": 2, "context_parallel_size": 2}}),
+        )
+
+        merged = parse_hydra_overrides(merged, ["model.transformer.tensor_model_parallel_size=8"])
+
+        assert "tensor_model_parallel_size" not in merged.model
+        apply_overrides(config, OmegaConf.to_container(merged, resolve=True), excluded)
+        assert config.model.transformer.tensor_model_parallel_size == 8
+        assert config.model.transformer.context_parallel_size == 2
+
+    def test_flat_hf_source_overrides_route_to_checkpoint_metadata(self, tmp_path):
+        """Builder-backed configs record the provider's hf_model_id/hf_model_revision fields in metadata."""
+        config = process_config_with_overrides(ConfigWithBuilderModel(), cli_overrides=["model.hf_model_id=org/a"])
+        assert config.model.extra_checkpoint_metadata == {"hf_model_id": "org/a"}
+
+        config = ConfigWithBuilderModel()
+        config.model.extra_checkpoint_metadata = {"hf_model_id": "org/recipe", "hf_model_revision": "pinned"}
+        process_config_with_overrides(config, cli_overrides=["model.hf_model_id=org/a"])
+        assert config.model.extra_checkpoint_metadata == {"hf_model_id": "org/a", "hf_model_revision": "pinned"}
+
+        config_file = tmp_path / "overrides.yaml"
+        config_file.write_text("model:\n  hf_model_id: org/yaml\n  hf_model_revision: main\n")
+        config = process_config_with_overrides(ConfigWithBuilderModel(), config_filepath=str(config_file))
+        assert config.model.extra_checkpoint_metadata == {"hf_model_id": "org/yaml", "hf_model_revision": "main"}
+        assert not hasattr(config.model, "hf_model_id")
+
+    def test_unknown_flat_field_still_fails(self):
+        config = ConfigWithBuilderModel()
+
+        with pytest.raises(OverridesError):
+            process_config_with_overrides(config, cli_overrides=["model.not_a_real_field=true"])
+
+        assert not hasattr(config.model, "not_a_real_field")
+
+    def test_section_without_transformer_is_unchanged(self):
+        cfg = OmegaConf.create({"model": {"tensor_model_parallel_size": 1}})
+
+        result = parse_hydra_overrides(cfg, ["model.tensor_model_parallel_size=2"])
+
+        assert result.model.tensor_model_parallel_size == 2
+
+    @pytest.mark.parametrize("config_cls", [BridgeGPTModelConfig, BridgeHybridModelConfig])
+    def test_builder_configs_declare_each_field_once(self, config_cls):
+        """Routing treats a key on both levels, or an HF source field, as a flat override."""
+        outer = {field.name for field in dataclasses.fields(config_cls)}
+        nested = {field.name for field in dataclasses.fields(config_cls.transformer_config_class)}
+
+        assert outer.isdisjoint(nested)
+        assert outer.isdisjoint({"hf_model_id", "hf_model_revision"})
 
 
 class TestOverridesError:

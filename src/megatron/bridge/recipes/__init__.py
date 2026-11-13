@@ -25,6 +25,7 @@ from megatron.bridge.recipes.beam.h200 import *
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.deepseek.h100 import *
 from megatron.bridge.recipes.diffusion_gemma import *
+from megatron.bridge.recipes.ernie import *
 from megatron.bridge.recipes.exaone import *
 from megatron.bridge.recipes.exaone.h100 import *
 from megatron.bridge.recipes.flux import *

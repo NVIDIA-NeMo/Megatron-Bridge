@@ -34,6 +34,10 @@ try:
 except ImportError:
     HAS_NEMO_RUN = False
 
+# utils.executors references nemo_run.KubeflowExecutor at import time; the locked nemo-run 0.4.0 does not have it.
+if HAS_NEMO_RUN and not hasattr(nemo_run, "KubeflowExecutor"):
+    pytest.skip("scripts/performance needs a nemo-run release with KubeflowExecutor", allow_module_level=True)
+
 try:
     from nemo_run.core.execution.nvcre import NvcreExecutor
 

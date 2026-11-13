@@ -718,16 +718,17 @@ def _model_combination_detail(entry: dict[str, object], *, heading_level: int, f
             )
     else:
         lines.append("    <p>No runnable command is recorded for this status.</p>")
-    expected_result = str(entry.get("expected_result") or "None recorded.")
+    expected_result = html.escape(str(entry.get("expected_result") or "None recorded."))
     if fern:
         # YAML block scalars may end in a newline, which breaks MDX paragraph parsing.
         expected_result = " ".join(expected_result.split())
+        expected_result = expected_result.replace("{", "&#123;").replace("}", "&#125;")
     lines.extend(
         [
             "  </section>",
             '  <section class="verification-expected-result">',
             f"    <h{subsection_level}>Expected result</h{subsection_level}>",
-            f"    <p>{html.escape(expected_result)}</p>",
+            f"    <p>{expected_result}</p>",
             "  </section>",
             "</article>",
         ]

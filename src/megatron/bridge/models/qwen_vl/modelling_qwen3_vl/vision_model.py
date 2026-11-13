@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Optional
 
 import torch
@@ -22,11 +23,13 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_layer import TransformerLayer
 from torch import nn
 from torch.nn import functional as F
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLVisionTransformerBlock
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_layer import Qwen3VLRotaryTransformerLayer
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     Qwen3VLVisionPatchEmbed,
     Qwen3VLVisionPatchMerger,
@@ -109,6 +112,10 @@ def _vision_forward_packed_attention_setup(
     return packed_seq_params, None
 
 
+class Qwen3VLVisionTransformerLayer(Qwen3VLRotaryTransformerLayer):
+    """Keep vision graph wrappers separate from the language model's layers."""
+
+
 class Qwen3VLVisionModel(VisionModule):
     """Qwen3 ViT vision model.
 
@@ -153,6 +160,10 @@ class Qwen3VLVisionModel(VisionModule):
         self.post_process = post_process
 
         # Transformer layers.
+        if transformer_layer_spec.module is TransformerLayer:
+            transformer_layer_spec = deepcopy(transformer_layer_spec)
+            transformer_layer_spec.module = Qwen3VLVisionTransformerLayer
+            transformer_layer_spec.params["rotary_dim"] = head_dim
         self.decoder = Qwen3VLVisionTransformerBlock(
             config=transformer_config,
             spec=transformer_layer_spec,
@@ -361,12 +372,23 @@ class Qwen3VLVisionModel(VisionModule):
         )
         # Remove padding if we added it
         if use_cuda_graph_padding and original_seq_len < seq_len:
-            hidden_states = hidden_states[:original_seq_len]
-            # Unpad deepstack features - they go through a merger that reduces by spatial_merge_size^2
-            # So their length is seq_len // (spatial_merge_size^2)
-            original_merged_seq_len = original_seq_len // (self.spatial_merge_size**2)
+            # Merge the padded rows (cut to whole merged tokens) and drop the padded merged tokens afterwards, so the
+            # merger always sees the same row count. On the real patch count, which changes with every micro batch,
+            # Transformer Engine builds a new patch_norm plan for each new count when the cuDNN norm flags
+            # (NVTE_NORM_FWD/BWD_USE_CUDNN=1) are set, while every other rank waits. The result is the same:
+            # patch_norm is per row and every image has a multiple of spatial_merge_size**2 patches, so the padding
+            # starts on a merged token boundary. The padded rows are zeroed first: their merged tokens get zero
+            # gradient, but a non-finite padded row would still turn the merger's weight gradients into NaN (0 * NaN).
+            merge_unit = self.spatial_merge_size**2
+            merger_input = hidden_states[: seq_len - seq_len % merge_unit]
+            is_pad = torch.arange(merger_input.shape[0], device=merger_input.device) >= original_seq_len
+            hidden_states = self.merger(merger_input.masked_fill(is_pad[:, None, None], 0.0))
+            original_merged_seq_len = original_seq_len // merge_unit
+            hidden_states = hidden_states[:original_merged_seq_len]
+            # Deepstack features went through a merger in the decoder: their length is seq_len // spatial_merge_size^2
             deepstack_feature_lists = [feat[:original_merged_seq_len] for feat in deepstack_feature_lists]
-        hidden_states = self.merger(hidden_states)
+        else:
+            hidden_states = self.merger(hidden_states)
 
         # Encodes images into continuous embeddings that can be forwarded to the language model.
         split_sizes = (grid_thw.prod(-1) // self.spatial_merge_size**2).tolist()

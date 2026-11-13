@@ -31,6 +31,11 @@ _PERF_SCRIPTS_DIR = _REPO_ROOT / "scripts" / "performance"
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
+# setup_experiment imports utils.executors, which references nemo_run.KubeflowExecutor at import time; the locked
+# nemo-run 0.4.0 does not have it.
+if not hasattr(pytest.importorskip("nemo_run"), "KubeflowExecutor"):
+    pytest.skip("scripts/performance needs a nemo-run release with KubeflowExecutor", allow_module_level=True)
+
 import setup_experiment
 
 

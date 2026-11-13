@@ -3,10 +3,11 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from megatron.bridge.models.bailing.bailing_moe2_bridge import BailingMoeV2Bridge
 from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
-from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2Attention
+from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2Attention, BailingMoeV2RotaryEmbedding
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
@@ -135,3 +136,25 @@ class TestBailingMoeV2BuilderConfig:
         assert model_config.add_qkv_bias is use_qkv_bias
         # The provider keeps its explicit decoder block spec for the dense-first layer pattern.
         assert provider.transformer_layer_spec.func is get_gpt_decoder_block_spec
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize("num_positions", [16384, 32768, 65536])
+def test_rotary_embedding_exact_when_tf32_allowed(num_positions: int) -> None:
+    """Test that RoPE cos/sin stay fp32-exact when TF32 is allowed for fp32 matmuls."""
+    rotary_embedding = BailingMoeV2RotaryEmbedding(BailingMoeV2Config(head_dim=128), device="cuda")
+    positions = torch.arange(90000 - num_positions, 90000, device="cuda", dtype=torch.float32)
+    x = torch.zeros(1, num_positions, 8, device="cuda")
+    allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+    try:
+        outputs = {}
+        for tf32 in (True, False):
+            torch.backends.cuda.matmul.allow_tf32 = tf32
+            outputs[tf32] = torch.cat(rotary_embedding(x, positions[None, :]), dim=-1)
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+    angles = positions.double()[:, None] * rotary_embedding.inv_freq.double()[None, :]
+    emb = torch.cat((angles, angles), dim=-1)
+    expected = torch.cat((emb.cos(), emb.sin()), dim=-1) * rotary_embedding.attention_scaling
+    torch.testing.assert_close(outputs[True][0].double(), expected, rtol=0, atol=1e-2)
+    assert torch.equal(outputs[True], outputs[False])

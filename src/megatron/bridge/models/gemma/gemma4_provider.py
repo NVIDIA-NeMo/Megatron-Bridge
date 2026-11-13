@@ -30,6 +30,9 @@ from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gemma.gemma3_provider import Gemma3LanguageModelEmbedding
+from megatron.bridge.models.gemma.gemma4_config import (
+    validate_gemma4_moe_orchestration as _validate_gemma4_moe_orchestration,
+)
 from megatron.bridge.models.gemma.modeling_gemma4 import (
     HAVE_TE,
     Gemma4DenseRotaryEmbedding,
@@ -42,79 +45,12 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     get_gemma4_layer_spec,
     wire_gemma4_kv_sharing,
 )
+from megatron.bridge.models.gemma.modeling_gemma4 import (
+    install_gemma4_dense_load_state_aliases as _install_gemma4_dense_load_state_aliases,
+)
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
-
-
-def _validate_gemma4_moe_orchestration(provider: GPTModelProvider) -> None:
-    """Reject MCore execution modes bypassed by Gemma 4's custom MoE forward."""
-    unsupported = []
-    if provider.transformer_impl == "inference_optimized":
-        unsupported.append("transformer_impl='inference_optimized'")
-    if provider.cuda_graph_impl != "none":
-        unsupported.append(f"cuda_graph_impl={provider.cuda_graph_impl!r}")
-    if provider.moe_shared_expert_overlap:
-        unsupported.append("moe_shared_expert_overlap=True")
-    if provider.mlp_chunks_for_prefill > 1:
-        unsupported.append("mlp_chunks_for_prefill > 1")
-    if provider.mlp_chunks_for_training > 1:
-        unsupported.append("mlp_chunks_for_training > 1")
-    if provider.inference_fuse_tp_communication:
-        unsupported.append("inference_fuse_tp_communication=True")
-    recompute_modules = set(provider.recompute_modules or [])
-    if provider.recompute_granularity == "selective" and "layernorm" in recompute_modules:
-        unsupported.append("selective layernorm recompute")
-    offload_modules = set(provider.offload_modules or [])
-    if provider.fine_grained_activation_offloading and "mlp_norm" in offload_modules:
-        unsupported.append("MLP norm activation offloading")
-    if unsupported:
-        raise ValueError(
-            "Gemma 4 MoE's separate router/shared/routed inputs do not yet support: " + ", ".join(unsupported)
-        )
-
-
-def _install_gemma4_dense_load_state_aliases(model: torch.nn.Module) -> None:
-    """Translate Gemma4 Dense checkpoint attention aliases before load_state_dict.
-
-    Gemma4 Dense saves sliding/global attention tensors under separate names in
-    dist-checkpoints because the two layer types have different sharded shapes.
-    After dist-checkpoint load materializes a regular state_dict, PyTorch module
-    loading expects the real module attribute name, ``self_attention``.
-    """
-
-    if getattr(model, "_gemma4_dense_load_state_aliases_installed", False):
-        return
-
-    def _load_state_dict_pre_hook(
-        state_dict,
-        prefix,
-        local_metadata,
-        strict,
-        missing_keys,
-        unexpected_keys,
-        error_msgs,
-    ):
-        del local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-
-        for key in list(state_dict.keys()):
-            if prefix and not key.startswith(prefix):
-                continue
-
-            canonical_key = None
-            if ".self_attention_sliding." in key:
-                canonical_key = key.replace(".self_attention_sliding.", ".self_attention.")
-            elif ".self_attention_global." in key:
-                canonical_key = key.replace(".self_attention_global.", ".self_attention.")
-
-            if canonical_key is None:
-                continue
-
-            state_dict.setdefault(canonical_key, state_dict[key])
-            state_dict.pop(key)
-
-    model._register_load_state_dict_pre_hook(_load_state_dict_pre_hook)
-    model._gemma4_dense_load_state_aliases_installed = True
 
 
 # ---------------------------------------------------------------------------

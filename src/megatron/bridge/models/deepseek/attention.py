@@ -24,6 +24,7 @@ from megatron.core.transformer.mla_qk_norm_config import get_backend
 from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelConfig as MCoreGPTModelConfig
 
 
 class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
@@ -98,13 +99,14 @@ def get_deepseek_decoder_block_spec(
     """Build the decoder block spec, omitting the query norm when ``q_lora_rank`` is None.
 
     The signature mirrors ``get_gpt_decoder_block_spec`` exactly, including ``vp_stage``
-    and ``pp_rank``. ``GPTModelProvider.provide()`` inspects the callable's parameters and
-    only forwards ``vp_stage`` when it is declared, so dropping it here would leave
-    interleaved pipeline parallelism calling MCore's layer-offset helper without a virtual
-    stage, which asserts.
+    and ``pp_rank``. ``GPTModelProvider.provide()`` and the GPT model builder inspect the
+    callable's parameters and only forward ``vp_stage`` when it is declared, so dropping it
+    here would leave interleaved pipeline parallelism calling MCore's layer-offset helper
+    without a virtual stage, which asserts.
 
     Args:
-        config: The model provider / transformer config.
+        config: The model provider, or a builder model config whose nested transformer
+            config describes the layers.
         use_transformer_engine: Whether to build Transformer Engine submodules.
         normalization: Optional normalization override, forwarded unchanged.
         qk_l2_norm: Optional QK L2 norm flag, forwarded unchanged.
@@ -115,6 +117,7 @@ def get_deepseek_decoder_block_spec(
         The decoder block spec, with MLA self-attention replaced by
         :class:`MLASelfAttentionWithoutQueryNorm` when there is no query LoRA.
     """
+    config = config.transformer if isinstance(config, MCoreGPTModelConfig) else config
     spec = get_gpt_decoder_block_spec(
         config,
         use_transformer_engine=use_transformer_engine,

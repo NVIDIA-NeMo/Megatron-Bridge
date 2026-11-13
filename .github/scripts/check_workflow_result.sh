@@ -1,58 +1,55 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Reuse one complete snapshot for every assertion and diagnostic. An API failure
-# must never be interpreted as zero failures, including after retry exhaustion.
-for attempt in 1 2 3; do
-  if jobs_json=$(gh run view "$GITHUB_RUN_ID" --json jobs); then
-    break
-  fi
-  if [ "$attempt" -eq 3 ]; then
-    echo "Unable to retrieve workflow jobs after $attempt attempts" >&2
-    exit 1
-  fi
-  echo "Unable to retrieve workflow jobs (attempt $attempt); retrying" >&2
-  sleep "$((attempt * 5))"
-done
-
-# Reject empty or malformed responses rather than reporting a false success.
-if ! jq -e '.jobs | type == "array" and length > 0' <<< "$jobs_json" > /dev/null; then
-  echo "Invalid workflow jobs response" >&2
+# GitHub supplies the completed dependency results, including matrix rollups.
+# Do not query the jobs API here: an API outage must not turn passing tests red.
+needs_json=${NEEDS_JSON:-}
+if ! jq -e '
+  type == "object" and length > 0 and
+  all(.[];
+    type == "object" and
+    (.result | IN("success", "failure", "cancelled", "skipped")))
+' <<< "$needs_json" > /dev/null; then
+  echo "Invalid workflow dependency results" >&2
   exit 1
 fi
-failed_jobs=$(jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length' <<< "$jobs_json")
 
+# Quarantined suites are informational; only required jobs block the summary.
+failed_jobs=$(jq '[to_entries[] |
+  select(.key != "cicd-functional-tests-flaky" and .key != "cicd-functional-tests-gb200-flaky") |
+  select(.value.result == "failure" or .value.result == "cancelled")] | length' <<< "$needs_json")
 unexpected_skips=0
 check_tier_skips() {
-  local tier="$1" expect="$2"
+  local job="$1" expect="$2"
   if [ "$expect" != "true" ]; then
     return 0
   fi
-  local n
-  n=$(jq --arg p "${tier}_" '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length' <<< "$jobs_json")
-  if [ "$n" -gt 0 ]; then
-    echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
-    jq -r --arg p "${tier}_" '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name' <<< "$jobs_json"
-    unexpected_skips=$((unexpected_skips + n))
+  local result
+  result=$(jq -r --arg job "$job" '.[$job].result // "missing"' <<< "$needs_json")
+  if [[ "$result" == "skipped" || "$result" == "missing" ]]; then
+    echo "❌ Expected $job to run, but its result is $result"
+    unexpected_skips=$((unexpected_skips + 1))
   fi
 }
 
-check_tier_skips "L0" "$EXPECT_L0"
-check_tier_skips "L1" "$EXPECT_L1"
-check_tier_skips "L2" "$EXPECT_L2"
+check_tier_skips "cicd-functional-tests-l0" "$EXPECT_L0"
+check_tier_skips "cicd-functional-tests-l1" "$EXPECT_L1"
+check_tier_skips "cicd-functional-tests-l2" "$EXPECT_L2"
 if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
-  check_tier_skips "gb200_L0" "$EXPECT_L0"
-  check_tier_skips "gb200_L1" "$EXPECT_L1"
-  check_tier_skips "gb200_L2" "$EXPECT_L2"
+  check_tier_skips "cicd-functional-tests-gb200-l0" "$EXPECT_L0"
+  check_tier_skips "cicd-functional-tests-gb200-l1" "$EXPECT_L1"
+  check_tier_skips "cicd-functional-tests-gb200-l2" "$EXPECT_L2"
 fi
 
 if [ "$failed_jobs" -gt 0 ]; then
   echo "❌ Found $failed_jobs failed job(s):"
-  jq -r '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name' <<< "$jobs_json"
+  jq -r 'to_entries[] |
+  select(.key != "cicd-functional-tests-flaky" and .key != "cicd-functional-tests-gb200-flaky") |
+  select(.value.result == "failure" or .value.result == "cancelled") | "\(.key): \(.value.result)"' <<< "$needs_json"
 fi
 
 if [ "$failed_jobs" -gt 0 ] || [ "$unexpected_skips" -gt 0 ]; then
   exit 1
 fi
 
-echo "✅ All previous jobs completed successfully"
+echo "✅ All required jobs completed successfully"

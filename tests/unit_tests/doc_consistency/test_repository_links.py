@@ -134,7 +134,7 @@ def test_raw_file_trailing_slash_fails(repo: Path, suffix: str) -> None:
         f"{PREFIX}/stargazers",
         "https://github.com/another/repo/blob/main/missing.py",
         f"https://example.com/{REPOSITORY}/blob/main/missing.py",
-        f"https://github.com.evil.example/{REPOSITORY}/blob/main/missing.py",
+        f"https://github.com.test.example/{REPOSITORY}/blob/main/missing.py",
         f"https://github.com:8443/{REPOSITORY}/blob/main/src/retired.py",
         f"https://raw.githubusercontent.com:8443/{REPOSITORY}/main/src/retired.py",
         f"https://github.com:80/{REPOSITORY}/blob/main/src/retired.py",

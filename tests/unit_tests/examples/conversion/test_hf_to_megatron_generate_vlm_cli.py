@@ -54,6 +54,7 @@ def test_hf_revision_is_forwarded_to_every_loader():
         ("AutoConfig", "from_pretrained"),
         ("AutoProcessor", "from_pretrained"),
         ("AutoTokenizer", "from_pretrained"),
+        ("GenerationConfig", "from_pretrained"),
     }
     revision_loaders = set()
 

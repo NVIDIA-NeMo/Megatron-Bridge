@@ -53,7 +53,14 @@ def gemma4_e4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     - Shared KV cache across the last 18 layers
     - Local (non-TE) transformer spec via ``get_gemma4_layer_spec``
 
-    Default parallelism: TP=2, PP=1, seq_length=4096.
+    Default parallelism: TP=2 with sequence parallelism, PP=1, seq_length=4096.
+
+    Memory: sequence parallelism and selective ``core_attn`` recompute keep the peak
+    at about 67 GB per GPU on 8 H100 80GB GPUs (TP=2, DP=4). On 2 GPUs (DP=1) the
+    distributed optimizer cannot shard the FP32 main parameters and Adam moments,
+    which adds about 34 GB per GPU and exceeds an 80 GB H100; train on 8 GPUs or
+    reduce optimizer memory, for example with optimizer CPU offload.
+
     Override at launch time with Hydra-style args, e.g.::
 
         checkpoint.pretrained_checkpoint=/path/to/megatron-ckpt
@@ -64,9 +71,9 @@ def gemma4_e4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # gemma-4-E4B-it is a ConditionalGeneration HF model; force the text-only
-    # Gemma4 bridge path so this pre-training recipe uses Gemma4DenseProvider.
+    # Gemma 4 path so this pre-training recipe builds the dense text model.
     with _gemma4_text_conversion_mode():
-        cfg.model = AutoBridge.from_hf_pretrained(_GEMMA4_E4B_HF_PATH).to_megatron_provider(load_weights=False)
+        cfg.model = AutoBridge.from_hf_pretrained(_GEMMA4_E4B_HF_PATH).get_model_config()
 
     # Tokenizer — NullTokenizer for mock pre-training; override for real data
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -84,7 +91,8 @@ def gemma4_e4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    # SP shards the norm and residual activations across the TP=2 group.
+    cfg.model.sequence_parallel = True
     cfg.model.seq_length = 4096
 
     # Training
@@ -112,9 +120,10 @@ def gemma4_e4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.masked_softmax_fusion = False
     cfg.model.gradient_accumulation_fusion = False
 
-    # Memory saving (disabled; enable recompute for larger batches)
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
+    # Memory saving: the local spec's unfused attention keeps the s x s scores and
+    # probabilities of every layer, so recompute core attention in the backward pass.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
