@@ -26,6 +26,7 @@ recomputes only the MoE layers; the 64K recipe keeps full activation recompute.
 | --- | --- | ---: | --- |
 | `muse_spark_open_pretrain_192gpu_gb200_bf16_config` | Text pretraining, GBS 1024, sequence length 4096 | 48 | TP1/PP6/EP32 |
 | `muse_spark_open_pretrain_256gpu_gb200_bf16_config` | Text pretraining, eight pipeline stages | 64 | TP1/PP8/EP32 |
+| `muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config` | Deterministic text pretraining of a proxy with the first six decoder blocks, GBS 256 | 4 | TP1/PP1/EP16 |
 | `muse_spark_open_sft_192gpu_gb200_bf16_config` | Full SFT, one epoch of 100K Tulu 3 conversations packed to 4K, GBS 128 | 48 | TP4/PP3/EP64 |
 | `muse_spark_open_sft_256gpu_gb200_bf16_config` | Full SFT on 10K Tulu 3 conversations packed to 8K, GBS 8 (the cross-model card contract) | 64 | TP4/PP4/CP2/EP64 |
 | `muse_spark_open_sft_192gpu_gb200_bf16_long_context_config` | Full SFT on packed 32K Tulu 3, GBS 8 | 48 | TP4/PP6/CP4/EP32 |
@@ -34,13 +35,19 @@ recomputes only the MoE layers; the 64K recipe keeps full activation recompute.
 | `muse_spark_open_sft_192gpu_gb200_bf16_multimodal_config` | Full SFT on image-text CORD-v2, GBS 64 | 48 | TP4/PP3/EP64 |
 | `muse_spark_open_peft_16gpu_gb200_bf16_multimodal_config` | LoRA on image-text CORD-v2, GBS 8 | 4 | TP4/EP16 |
 
+The pretraining proxy keeps the first six of the 62 decoder blocks at full width, with all 256
+routed experts and top-8 routing: blocks 0, 2, 3, and 4 use sliding-window attention with RoPE, and
+blocks 1 and 5 full attention without RoPE, so every block type of the full model runs on one NVL72
+rack. Start it from a checkpoint cut to those six blocks to keep natural expert routing.
+
 The text recipes freeze the vision and audio towers; the image-text recipes freeze only the audio
 tower. The recipes are short verification runs whose learning-rate decay ends at the last step, so
 raise `scheduler.lr_decay_iters` together with the step count to train longer.
 
 HybridEP needs each expert-parallel group inside one NVL72 NVLink domain: every EP64 group is one
 pipeline stage's 64 contiguous ranks (16 nodes), every EP32 group of the pretraining and 32K and 64K
-SFT recipes is one stage's 32 ranks (8 nodes), and the 4-node image-text LoRA recipe keeps EP16. On
+SFT recipes is one stage's 32 ranks (8 nodes), and the 4-node image-text LoRA recipe and pretraining
+proxy keep EP16. On
 block-topology Slurm clusters, allocate the nodes in 16-node segments. Setting
 `model.transformer.moe_token_dispatcher_type` to `alltoall` switches back to the all-to-all
 dispatcher.

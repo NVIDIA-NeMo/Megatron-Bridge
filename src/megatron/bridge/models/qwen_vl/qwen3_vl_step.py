@@ -340,7 +340,7 @@ def _forward_step_common(
     original_tokens = tokens.clone()
     forward_args = get_batch_on_this_cp_rank(
         forward_args,
-        is_hybrid_cp=False,
+        dynamic_cp=False,
         cp_group=this_pg_collection.cp,
     )
     sequence_parallel = getattr(config, "sequence_parallel", False)

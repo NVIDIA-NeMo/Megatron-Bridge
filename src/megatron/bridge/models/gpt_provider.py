@@ -187,7 +187,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     # MoE / FP8
     num_moe_experts: Optional[int] = None
-    moe_grouped_gemm: bool = False
     qk_layernorm: bool = False
     fp8: Optional[str] = None
     normalization: str = "LayerNorm"
@@ -342,26 +341,44 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         return model
 
 
-def _callable_spec_kwargs(spec_fn: Callable, config: "GPTModelProvider", vp_stage: Optional[int]) -> dict[str, Any]:
-    """Build the keyword arguments a callable transformer layer spec declares."""
+def _callable_spec_kwargs(
+    spec_fn: Callable,
+    config: "GPTModelProvider",
+    vp_stage: Optional[int],
+    pp_rank: Optional[int] = None,
+) -> dict[str, Any]:
+    """Build the keyword arguments a callable transformer layer spec declares.
+
+    An explicit ``pp_rank`` takes precedence over the rank of the provider's own groups.
+    """
     params = inspect.signature(spec_fn).parameters
     kwargs: dict[str, Any] = {}
     if "vp_stage" in params:
         kwargs["vp_stage"] = vp_stage
     if "pp_rank" in params:
-        # Resolve the pipeline rank from the provider's own groups so that block spec
-        # builders do not fall back to the MPU globals, which decentralized runs never set.
-        pg_collection = getattr(config, "_pg_collection", None)
-        if pg_collection is not None:
-            kwargs["pp_rank"] = get_pg_rank(pg_collection.pp)
+        if pp_rank is None:
+            # Resolve the pipeline rank from the provider's own groups so that block spec
+            # builders do not fall back to the MPU globals, which decentralized runs never set.
+            pg_collection = getattr(config, "_pg_collection", None)
+            if pg_collection is not None:
+                pp_rank = get_pg_rank(pg_collection.pp)
+        if pp_rank is not None:
+            kwargs["pp_rank"] = pp_rank
     return kwargs
 
 
-def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:
+def mtp_block_spec(
+    config: "GPTModelProvider",
+    vp_stage: Optional[int] = None,
+    pp_rank: Optional[int] = None,
+) -> Optional[ModuleSpec]:
     """Pass in the MTP block spec if model has MTP layers.
 
     Args:
         config: GPT configuration object
+        vp_stage: Virtual pipeline stage to build the spec for.
+        pp_rank: Pipeline rank to build the spec for. Callers that build specs without the MPU
+            globals, such as MegatronMIMO, must pass it; otherwise MCore falls back to them.
 
     Returns:
         ModuleSpec: The MTP module specification
@@ -371,7 +388,7 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
 
         if isinstance(config.transformer_layer_spec, Callable):
             spec = config.transformer_layer_spec(
-                config, **_callable_spec_kwargs(config.transformer_layer_spec, config, vp_stage)
+                config, **_callable_spec_kwargs(config.transformer_layer_spec, config, vp_stage, pp_rank)
             )
         else:
             spec = config.transformer_layer_spec
@@ -394,6 +411,6 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
             transform = getattr(config, "mtp_layer_spec_transform", None)
             if transform is not None:
                 spec = transform(config, spec)
-        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
+        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage, pp_rank=pp_rank)
     else:
         return None

@@ -47,6 +47,7 @@ from megatron.core.utils import (
 )
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.models.common.dsa_metrics import reset_dsa_metric_tracker
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig, _set_moe_expert_tensor_parallel_default
@@ -330,6 +331,7 @@ def destroy_global_state() -> None:
     """
     from megatron.core.rerun_state_machine import destroy_rerun_state_machine
 
+    reset_dsa_metric_tracker()
     destroy_num_microbatches_calculator()
     parallel_state.destroy_global_memory_buffer()
     parallel_state.destroy_model_parallel()

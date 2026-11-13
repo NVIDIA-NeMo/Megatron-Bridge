@@ -206,6 +206,12 @@ class TestGemma4RecipeOverrides:
         assert recipe_config.model.masked_softmax_fusion is False
         assert recipe_config.model.gradient_accumulation_fusion is False
 
+    def test_recipe_memory_settings_fit_h100(self, recipe_config):
+        # Without SP and attention recompute, the first iteration runs out of memory on 80 GB H100s.
+        assert recipe_config.model.sequence_parallel is True
+        assert recipe_config.model.recompute_granularity == "selective"
+        assert recipe_config.model.recompute_modules == ["core_attn"]
+
 
 class TestGemma4RecipeModelConfigDrift:
     """Critical fields must match between recipe and bridge-derived model config."""

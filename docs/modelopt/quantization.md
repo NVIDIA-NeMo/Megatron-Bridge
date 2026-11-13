@@ -199,7 +199,10 @@ Plan construction and export-stream iteration perform WORLD and model-parallel c
 must therefore build the plan and fully consume each export stream in the same task order, without rank-local early
 termination. The streaming API supports canonical per-expert layouts and grouped expert mappings that expose local
 expert specifications. Grouped mappings are resolved to per-expert gate, up, and down tensors before ModelOpt packing
-and EP collection. Unsupported custom grouped mappings fail explicitly.
+and EP collection. Unsupported custom grouped mappings fail explicitly. GPT-OSS experts, which Hugging Face stores
+as one tensor per projection, export only as weight-only MXFP4 (e.g. ModelOpt's `mxfp4_mlp_weight_only` recipe), in
+the format of OpenAI's released checkpoints: `*_blocks` / `*_scales` tensors and `"quant_method": "mxfp4"`, which keeps
+every other layer in BF16. This needs a ModelOpt release that packs weight-only MXFP4 (NVIDIA/Model-Optimizer#3221).
 
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
 or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
