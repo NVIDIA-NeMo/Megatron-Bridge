@@ -1141,7 +1141,6 @@ class TestPEFTCheckpointingIntegration:
         distributed_model = model_provider.provide_distributed_model(
             ddp_config=ddp_config,
             overlap_param_gather_with_optimizer_step=False,
-            use_torch_fsdp2=False,
             wrap_with_ddp=True,
             data_parallel_random_init=False,
         )

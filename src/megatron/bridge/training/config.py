@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import json
 import math
 import os
@@ -19,11 +20,11 @@ import warnings
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Literal, Optional, Self, Tuple, Union
 
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
-from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.distributed import DistributedDataParallelConfig, TorchFullyShardedDataParallelConfig
 from megatron.core.optimizer import (
     OptimizerConfig,
     ParamGroupOverride,
@@ -35,7 +36,6 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig as
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from megatron.training.config import (
     CheckpointConfig,
-    DistributedInitConfig,
     LoggerConfig,
     ProfilingConfig,
     RerunStateMachineConfig,
@@ -45,6 +45,8 @@ from megatron.training.config import (
     TrainingConfig,
     ValidationConfig,
 )
+from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
+from megatron.training.config.instantiate_utils import InstantiationMode
 from megatron.training.determinism import apply_determinism_to_args
 
 from megatron.bridge.data.base import (
@@ -125,6 +127,23 @@ def _apply_megatron_fsdp_grad_dtype_policy(ddp_config: DistributedDataParallelCo
         f"megatron_fsdp_grad_comm_dtype={grad_comm_dtype}). Deactivating..."
     )
     ddp_config.grad_reduce_in_fp32 = False
+
+
+@dataclass(kw_only=True)
+class DistributedInitConfig(MTrainDistributedInitConfig):
+    """Distributed initialization plus settings owned by the Bridge driver."""
+
+    enable_megatron_core_experimental: bool = False
+    """Enable Core's process-wide experimental feature gate during Bridge setup."""
+
+    use_decentralized_pg: bool = False
+    """Create and pass explicit process-group collections through Bridge setup."""
+
+    eval_context_parallel_size: int | None = None
+    """Optional evaluation CP degree handled by Bridge's process-group rebinding."""
+
+    gtp_remat_nccl_ub: bool = False
+    """Legacy Bridge switch for dense GTP symmetric-memory registration."""
 
 
 def finalize_optimizer_config(config: OptimizerConfig) -> None:
@@ -786,6 +805,52 @@ class ConfigContainer(Container):
         """
         return world_size // total_model_size
 
+    @classmethod
+    def from_dict(cls, config_dict: dict[str, Any], mode: InstantiationMode = InstantiationMode.STRICT) -> Self:
+        """Load saved configs, moving legacy distributed settings to their owners."""
+        config_dict = copy.deepcopy(config_dict)
+        dist = config_dict.get("dist")
+        if isinstance(dist, dict):
+            if dist.get("_target_") in {
+                "megatron.training.config.DistributedInitConfig",
+                f"{MTrainDistributedInitConfig.__module__}.DistributedInitConfig",
+            }:
+                dist["_target_"] = f"{DistributedInitConfig.__module__}.DistributedInitConfig"
+            use_torch_fsdp2 = dist.pop("use_torch_fsdp2", False)
+            accumulation_key = "gtp_remat_reduce_scatter_with_fp32_accumulation"
+            accumulation = dist.pop(accumulation_key, None)
+            if use_torch_fsdp2 or accumulation is not None:
+                ddp = config_dict.setdefault(
+                    "ddp",
+                    {"_target_": f"{DistributedDataParallelConfig.__module__}.DistributedDataParallelConfig"},
+                )
+                if ddp is None:
+                    if use_torch_fsdp2 or accumulation:
+                        raise ValueError("Cannot migrate active legacy distributed settings with ddp=None.")
+                elif not isinstance(ddp, dict):
+                    raise ValueError("Saved DDP config must be a mapping or None.")
+                elif use_torch_fsdp2:
+                    known_targets = {
+                        "megatron.bridge.training.config.DistributedDataParallelConfig",
+                        "megatron.core.distributed.DistributedDataParallelConfig",
+                        "megatron.core.distributed.TorchFullyShardedDataParallelConfig",
+                        f"{DistributedDataParallelConfig.__module__}.DistributedDataParallelConfig",
+                        f"{TorchFullyShardedDataParallelConfig.__module__}.TorchFullyShardedDataParallelConfig",
+                    }
+                    if ddp.get("_target_") not in known_targets:
+                        raise ValueError("Cannot migrate legacy use_torch_fsdp2 with a custom DDP config type.")
+                    ddp["_target_"] = (
+                        f"{TorchFullyShardedDataParallelConfig.__module__}.TorchFullyShardedDataParallelConfig"
+                    )
+                if ddp is not None and accumulation is not None:
+                    # The old Bridge runtime read the dist value, even if DDP stored a different value.
+                    ddp[accumulation_key] = accumulation
+        straggler = config_dict.get("straggler")
+        if isinstance(straggler, dict):
+            # This field was serialized but never controlled the runtime detector.
+            straggler.pop("enable_straggler_on_startup", None)
+        return super().from_dict(config_dict, mode=mode)
+
     def set_data_parallel_size(self) -> None:
         """Calculate and set data_parallel_size for this config and comm_overlap config.
 
@@ -1149,7 +1214,7 @@ class ConfigContainer(Container):
         """
         _validate_and_sync_distributed_optimizer_settings(self)
         if self.optimizer.optimizer not in ("adam", "sgd") and (
-            self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
+            self.ddp.use_megatron_fsdp or isinstance(self.ddp, TorchFullyShardedDataParallelConfig)
         ):
             raise ValueError("Emerging optimizers such as Muon do not support Megatron-FSDP or Torch-FSDP2.")
 
@@ -1442,7 +1507,7 @@ class ConfigContainer(Container):
             if not self.model.mtp_num_layers:
                 raise ValueError("freeze_base_model_for_mtp requires mtp_num_layers.")
         if getattr(self.model, "moe_shortcut_connection", False) and (
-            self.dist.use_torch_fsdp2 or self.ddp.use_megatron_fsdp
+            isinstance(self.ddp, TorchFullyShardedDataParallelConfig) or self.ddp.use_megatron_fsdp
         ):
             raise ValueError("moe_shortcut_connection is not supported with FSDP.")
         # Core also enables LayerWise for legacy dist_* optimizer names.
@@ -1452,7 +1517,7 @@ class ConfigContainer(Container):
             raise ValueError("Layer-wise distributed optimizer does not support moe_single_grouped_weight.")
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
-        if self.ddp.use_megatron_fsdp and self.dist.use_torch_fsdp2:
+        if self.ddp.use_megatron_fsdp and isinstance(self.ddp, TorchFullyShardedDataParallelConfig):
             raise ValueError("use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive.")
         # Validate Megatron-FSDP configuration.
         if self.ddp.use_megatron_fsdp:
@@ -1503,7 +1568,7 @@ class ConfigContainer(Container):
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             # only check if saving or loading
             if self.checkpoint.ckpt_format == "fsdp_dtensor":
-                assert self.ddp.use_megatron_fsdp and not self.dist.use_torch_fsdp2, (
+                assert self.ddp.use_megatron_fsdp and not isinstance(self.ddp, TorchFullyShardedDataParallelConfig), (
                     "fsdp_dtensor checkpoint format only supports Megatron FSDP"
                 )
 

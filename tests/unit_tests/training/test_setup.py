@@ -19,7 +19,11 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import torch
 from megatron.core import parallel_state
-from megatron.core.distributed import DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed import (
+    DistributedDataParallelConfig,
+    TorchFullyShardedDataParallelConfig,
+    finalize_model_grads,
+)
 from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.moe.router import TopKRouter
 
@@ -206,7 +210,6 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
             enable_megatron_core_experimental=False,
             use_decentralized_pg=False,
             use_gloo_process_groups=False,
-            use_torch_fsdp2=False,
         ),
         ft=None,
         logger=SimpleNamespace(
@@ -530,8 +533,8 @@ class TestBuildDistributedModel:
     def test_build_with_model_config(self, use_megatron_fsdp, use_torch_fsdp2):
         """Test that the distributed model helper receives the DDP FSDP setting."""
         cfg, model_cfg = self._make_cfg_with_model_config()
-        cfg.ddp.use_megatron_fsdp = use_megatron_fsdp
-        cfg.dist.use_torch_fsdp2 = use_torch_fsdp2
+        ddp_type = TorchFullyShardedDataParallelConfig if use_torch_fsdp2 else DistributedDataParallelConfig
+        cfg.ddp = ddp_type(use_megatron_fsdp=use_megatron_fsdp)
         assert not hasattr(model_cfg, "provide_distributed_model")
 
         mock_dist_model = [MagicMock()]
@@ -558,8 +561,9 @@ class TestBuildDistributedModel:
         cfg.model = mock_provider
         cfg.ddp = MagicMock()
         cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-        cfg.ddp.use_megatron_fsdp = use_megatron_fsdp
-        cfg.dist = DistributedInitConfig(use_torch_fsdp2=use_torch_fsdp2)
+        ddp_type = TorchFullyShardedDataParallelConfig if use_torch_fsdp2 else DistributedDataParallelConfig
+        cfg.ddp = ddp_type(use_megatron_fsdp=use_megatron_fsdp)
+        cfg.dist = DistributedInitConfig()
         cfg.rng.data_parallel_random_init = False
 
         result = _build_distributed_model(cfg, pg_collection=MagicMock())

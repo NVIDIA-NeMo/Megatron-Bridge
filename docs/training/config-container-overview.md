@@ -32,17 +32,29 @@ config = ConfigContainer(
 
 ## Native Megatron configuration classes
 
-The training sections use the actual Megatron classes, without Bridge subclasses:
+The shared training sections use the actual Megatron classes:
 
 ```python
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 from megatron.training.config import (
-    CheckpointConfig, DistributedInitConfig, LoggerConfig, ProfilingConfig,
+    CheckpointConfig, LoggerConfig, ProfilingConfig,
     RerunStateMachineConfig, RNGConfig, SchedulerConfig,
     StragglerDetectionConfig, TrainingConfig, ValidationConfig,
 )
 ```
+
+`DistributedInitConfig` remains a small Bridge extension for evaluation CP
+rebinding, the experimental gate, explicit process-group routing, and the legacy
+GTP NCCL-buffer switch. These settings are owned by Bridge runtime setup.
+
+Select Torch FSDP2 with `cfg.ddp = TorchFullyShardedDataParallelConfig(...)` from
+`megatron.core.distributed`; `dist.use_torch_fsdp2` is removed. Set GTP FP32
+accumulation through `cfg.ddp.gtp_remat_reduce_scatter_with_fp32_accumulation`.
+`ConfigContainer.from_dict()` moves these fields from older saved `dist` sections
+to their canonical DDP representation. It also discards the unused legacy
+`enable_straggler_on_startup` field; `disable_straggler_on_startup` still controls
+the detector.
 
 The same names in `megatron.bridge.training.config` remain re-exports so existing
 imports and saved `_target_` paths resolve. New saved configs record the canonical

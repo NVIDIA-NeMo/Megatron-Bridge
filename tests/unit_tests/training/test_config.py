@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
+from megatron.core.distributed import TorchFullyShardedDataParallelConfig
 
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
@@ -2639,7 +2640,7 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        dist_cfg = create_test_distributed_init_config()
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2647,7 +2648,7 @@ class TestConfigContainerValidation:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             dist_config=dist_cfg,
-            ddp_config=create_test_ddp_config(use_megatron_fsdp=True),
+            ddp_config=TorchFullyShardedDataParallelConfig(use_megatron_fsdp=True),
         )
         try:
             with pytest.raises(ValueError, match="use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive"):
@@ -5746,7 +5747,7 @@ def test_shortcut_moe_rejects_fsdp(backend):
         1, create_test_gpt_config(moe_shortcut_connection=True, num_moe_experts=4)
     )
     try:
-        cfg.dist.use_torch_fsdp2 = backend == "torch"
+        cfg.ddp = TorchFullyShardedDataParallelConfig() if backend == "torch" else cfg.ddp
         cfg.ddp.use_megatron_fsdp = backend == "megatron"
         with pytest.raises(ValueError, match="moe_shortcut_connection"):
             cfg.validate()

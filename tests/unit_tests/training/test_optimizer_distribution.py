@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from megatron.core.distributed import TorchFullyShardedDataParallelConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -301,7 +302,7 @@ def test_reject_emerging_optimizer_fsdp_before_model_construction(name, backend)
 
     cfg = vanilla_gpt_pretrain_config()
     cfg.optimizer.optimizer = name
-    cfg.dist.use_torch_fsdp2 = backend == "torch"
+    cfg.ddp = TorchFullyShardedDataParallelConfig() if backend == "torch" else cfg.ddp
     cfg.ddp.use_megatron_fsdp = backend == "megatron_ddp"
     with pytest.raises(ValueError, match="do not support Megatron-FSDP or Torch-FSDP2"):
         cfg.validate()

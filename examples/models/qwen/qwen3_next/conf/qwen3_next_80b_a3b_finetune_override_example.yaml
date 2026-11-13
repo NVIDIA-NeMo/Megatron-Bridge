@@ -32,7 +32,6 @@ scheduler:
   lr_warmup_iters: 0
 
 dist:
-  use_torch_fsdp2: false
 
 logger:
   log_interval: 1

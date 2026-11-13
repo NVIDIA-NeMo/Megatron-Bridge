@@ -45,14 +45,14 @@ from megatron.core.utils import (
     is_torch_min_version,
     set_default_log_ranks,
 )
-from megatron.training.config import DistributedInitConfig, RerunStateMachineConfig, RNGConfig
+from megatron.training.config import RerunStateMachineConfig, RNGConfig
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.common.dsa_metrics import reset_dsa_metric_tracker
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig, _set_moe_expert_tensor_parallel_default
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig
 from megatron.bridge.training.gtp import is_gtp_remat_active
 from megatron.bridge.training.utils.pg_utils import DistTrainProcessGroupCollection
 from megatron.bridge.utils.common_utils import (

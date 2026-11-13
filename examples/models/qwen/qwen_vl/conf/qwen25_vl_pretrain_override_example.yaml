@@ -35,7 +35,6 @@ checkpoint:
   save: null
 
 dist:
-  use_torch_fsdp2: false
 
 logger:
   log_interval: 1
