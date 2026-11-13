@@ -402,9 +402,10 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 VRNVL72 GPUs.
 
     Shrinks ``deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config`` for bring-up on fewer GPUs. Keeps
-    GBS=4096, per-layer shapes, EP=32, one MTP layer and the tuned execution settings of the
-    parent: NCCL EP tuning, fusions, CUDA graphs, runtime and environment. PP=1 without virtual
-    pipelining gives dense DP=64, expert DP=2 and 64 microbatches. This reduced-depth model does
+    GBS=4096, per-layer shapes, EP=32, one MTP layer and the parent's fusions, CUDA graphs,
+    runtime and environment. Uses the MLPerf nightly baseline's MXFP8 forward dispatch,
+    receive-capacity factor 4 and CUDA stash-buffer factor 1.1. PP=1 without virtual pipelining
+    gives dense DP=64, expert DP=2 and 64 microbatches. This reduced-depth model does
     not reproduce the parent's PP=2 x VP=8 schedule,
     at-scale pipeline traffic, convergence or memory use; GPU validation is required.
     """
@@ -416,6 +417,11 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    # Match the MLPerf nightly baseline's communication precision and buffer sizing.
+    cfg.model.moe_dispatch_fwd_dtype = "mxfp8"
+    cfg.model.moe_expert_rank_capacity_factor = 4
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
 
     # Keep this explicit environment identical to the 256-GPU parent.
     cfg.env_vars = {

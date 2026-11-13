@@ -43,7 +43,7 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
         ("nvfp4", (2, 8), (128, 4, 32)),
     ],
 )
-def test_proxy_preserves_parent_except_depth_and_layout(
+def test_proxy_preserves_parent_except_documented_overrides(
     precision: str, parent_pipeline: tuple[int, int], parent_mesh: tuple[int, int, int]
 ) -> None:
     parent_fn: Callable[[], ConfigContainer] = getattr(
@@ -60,15 +60,25 @@ def test_proxy_preserves_parent_except_depth_and_layout(
     assert parent.train.train_iters == proxy.train.train_iters == 50
     # Current MCore requires an explicit backend; None fails during model construction.
     assert parent.model.attention_backend is proxy.model.attention_backend is AttnBackend.auto
-    depth_fields = {
+    proxy_fields = {
         "num_layers",
         "moe_layer_freq",
         "pipeline_model_parallel_size",
         "virtual_pipeline_model_parallel_size",
         "pipeline_model_parallel_layout",
     }
-    assert {key: value for key, value in vars(proxy.model).items() if key not in depth_fields} == {
-        key: value for key, value in vars(parent.model).items() if key not in depth_fields
+    if precision == "fp8mx":
+        # The MXFP8 proxy follows the MLPerf nightly's dispatch and buffer settings.
+        proxy_fields |= {
+            "moe_dispatch_fwd_dtype",
+            "moe_expert_rank_capacity_factor",
+            "moe_paged_stash_buffer_size_factor_cuda",
+        }
+        assert proxy.model.moe_dispatch_fwd_dtype == "mxfp8"
+        assert proxy.model.moe_expert_rank_capacity_factor == 4
+        assert proxy.model.moe_paged_stash_buffer_size_factor_cuda == 1.1
+    assert {key: value for key, value in vars(proxy.model).items() if key not in proxy_fields} == {
+        key: value for key, value in vars(parent.model).items() if key not in proxy_fields
     }
     for field in fields(parent):
         if field.name not in {"model", "env_vars"}:
