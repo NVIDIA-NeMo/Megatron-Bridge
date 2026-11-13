@@ -13,6 +13,12 @@
 # limitations under the License.
 """Megatron Bridge - A component of the Megatron ecosystem."""
 
+from megatron.bridge.compat.mcore_version import check_mcore_version
+
+
+# Warn before dependency-sensitive Bridge registrations are imported.
+check_mcore_version()
+
 try:
     import modelopt.torch  # noqa: F401
 except ImportError:
