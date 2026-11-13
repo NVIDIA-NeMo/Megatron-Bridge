@@ -15,6 +15,8 @@
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
+from functools import wraps
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -138,6 +140,61 @@ def reset_cuda():
         gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+
+@pytest.fixture(scope="session")
+def _distributed_session() -> Iterator[None]:
+    """Release a default process group created by this test session."""
+    was_initialized = torch.distributed.is_initialized()
+    yield
+    if not was_initialized and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
+
+
+@pytest.fixture
+def reset_distributed(monkeypatch: pytest.MonkeyPatch, _distributed_session: None) -> Iterator[None]:
+    """Release per-test subgroups while preserving the default group's rendezvous state."""
+    from megatron.core.pipeline_parallel.bridge_communicator import BridgeCommunicator
+
+    # MIMO communicator caches must share the lifetime of their test-owned groups.
+    monkeypatch.setattr(BridgeCommunicator, "_broadcast_pg_cache", {})
+    monkeypatch.setattr(BridgeCommunicator, "_bridge_pg_cache", {})
+    groups: list[torch.distributed.ProcessGroup] = []
+    new_group = torch.distributed.new_group
+    destroy_group = torch.distributed.destroy_process_group
+
+    @wraps(new_group)
+    def tracked_new_group(*args, **kwargs):
+        group = new_group(*args, **kwargs)
+        if group is not None and group != torch.distributed.GroupMember.NON_GROUP_MEMBER:
+            groups.append(group)
+        return group
+
+    @wraps(destroy_group)
+    def tracked_destroy_group(group=None):
+        destroy_all = group is None or group is torch.distributed.group.WORLD
+        destroy_group(group)
+        if destroy_all:
+            groups.clear()
+        elif group in groups:
+            groups.remove(group)
+
+    monkeypatch.setattr(torch.distributed, "new_group", tracked_new_group)
+    monkeypatch.setattr(torch.distributed, "destroy_process_group", tracked_destroy_group)
+    monkeypatch.setattr(torch.distributed.distributed_c10d, "new_group", tracked_new_group)
+    monkeypatch.setattr(torch.distributed.distributed_c10d, "destroy_process_group", tracked_destroy_group)
+    yield
+    from torch.distributed.tensor import DTensor
+
+    # DTensor caches specs by mesh layout, so recreated groups can reuse stale meshes.
+    DTensor._op_dispatcher.sharding_propagator.propagate_op_sharding.cache_clear()
+    clear_native_cache = getattr(torch._C, "_clear_DTensor_sharding_propagator_cache", None)
+    if clear_native_cache is not None:
+        clear_native_cache()
+    # Megatron clears its group references but leaves NCCL subgroups registered in PyTorch.
+    # Destroy them in the same reverse creation order on every participating rank.
+    for group in reversed(groups):
+        destroy_group(group)
 
 
 @pytest.fixture(autouse=True)

@@ -375,14 +375,18 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
     assert training_cfg.train.global_batch_size == benchmark_cfg.train.global_batch_size == 512
     assert training_cfg.train.micro_batch_size == benchmark_cfg.train.micro_batch_size == 1
 
-    # The GB200 benchmark dispatches through NCCL EP; the training recipe keeps HybridEP. Apart from the
-    # dispatcher topology settings, both declare the same process environment.
-    assert training_cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    # Both the GB200 benchmark and the training recipe dispatch through NCCL EP with device-side expert
+    # token counts, and neither carries HybridEP NVLink-domain variables. Apart from the dispatcher mode,
+    # both declare the same process environment.
+    assert training_cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert benchmark_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert training_cfg.model.moe_use_grouped_tensor is True
     assert benchmark_cfg.model.moe_use_grouped_tensor is True
-    assert training_cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert training_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert benchmark_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
-    dispatcher_env_names = HYBRID_EP_ENV_NAMES | {"NCCL_EP_HT_EM_PULL_PUSH"}
+    assert HYBRID_EP_ENV_NAMES.isdisjoint(training_cfg.env_vars)
+    assert HYBRID_EP_ENV_NAMES.isdisjoint(benchmark_cfg.env_vars)
+    dispatcher_env_names = {"NCCL_EP_HT_EM_PULL_PUSH"}
     assert {name: value for name, value in training_cfg.env_vars.items() if name not in dispatcher_env_names} == {
         name: value for name, value in benchmark_cfg.env_vars.items() if name not in dispatcher_env_names
     }
@@ -710,7 +714,7 @@ def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.sequence_parallel is False
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
@@ -739,8 +743,9 @@ def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.optimizer.overlap_param_gather is True
     assert cfg.checkpoint.async_save is False
 
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
 
 
 def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_policy():
@@ -761,6 +766,8 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
         "moe_flex_dispatcher_backend",
         "moe_flex_dispatcher_num_sms",
         "moe_hybridep_num_sms",
+        "moe_use_grouped_tensor",
+        "max_seq_length_per_sample",
         "recompute_granularity",
         "recompute_modules",
         "recompute_method",
