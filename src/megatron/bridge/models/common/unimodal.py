@@ -40,56 +40,35 @@ def _ddp_wrap(
     use_layer_wise_distributed_optimizer: bool = False,
     use_layer_wise_param_layout: bool = True,
 ) -> list[MegatronModule]:
-    """Select mHC units enclosing compute and replay; delegate other models to Core.
+    """Dispatch DeepSeek-V4 mHC FSDP v2 wrapping; delegate all other paths to Core."""
+    if use_megatron_fsdp and ddp_config.megatron_fsdp_version == 2:
+        from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
 
-    Split mHC layers call inner Transformer helpers directly, bypassing their
-    module hooks. Replacing the unit list gives the called mHC wrapper ownership
-    of those weights. Core still wraps routed experts on their expert mesh first.
-    MTP projections and reused embedding/output weights remain root-owned.
-    With selective mHC recomputation, a manager can replay several layers from
-    one output hook. The enclosing HybridStack must own their dense weights so
-    its backward entry gathers them before that replay begins.
-    """
-    use_mhc_units = (
-        use_megatron_fsdp
-        and ddp_config.megatron_fsdp_version == 2
-        and any(getattr(get_model_config(chunk), "enable_mhc_connections", False) for chunk in model)
-    )
-    if not use_mhc_units:
-        return _core_ddp_wrap(
-            model,
-            data_parallel_random_init,
-            ddp_config,
-            overlap_param_gather_with_optimizer_step,
-            use_megatron_fsdp=use_megatron_fsdp,
-            use_torch_fsdp2=use_torch_fsdp2,
-            pg_collection=pg_collection,
-            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
-            use_layer_wise_param_layout=use_layer_wise_param_layout,
-        )
-    if use_torch_fsdp2 or use_layer_wise_distributed_optimizer or overlap_param_gather_with_optimizer_step:
-        raise ValueError("mHC MFSDP v2 requires its native optimizer and parameter-gather scheduling")
-    if data_parallel_random_init:
-        raise ValueError("MFSDP v2 does not support data-parallel random initialization")
-    if any(get_model_config(chunk).overlap_moe_expert_parallel_comm for chunk in model):
-        raise ValueError("mHC MFSDP v2 requires automatic hooks; EP communication overlap is unsupported")
+        if model and all(
+            isinstance(get_model_config(chunk), DeepSeekV4HybridModelProvider)
+            and get_model_config(chunk).enable_mhc_connections
+            for chunk in model
+        ):
+            from megatron.bridge.models.deepseek.deepseek_v4_fsdp import wrap_deepseek_v4_fsdp
 
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV2
-    from megatron.core.models.hybrid.hybrid_block import HybridStack
-    from megatron.core.models.hybrid.layers.hybrid_hyper_connection import HyperConnectionHybridLayer
-
-    wrapped_model = []
-    for chunk in model:
-        config = get_model_config(chunk)
-        mhc_recompute = config.recompute_granularity == "selective" and "mhc" in (config.recompute_modules or [])
-        wrapped_model.append(
-            FullyShardedDataParallelV2(
-                config=config,
+            return wrap_deepseek_v4_fsdp(
+                model=model,
+                data_parallel_random_init=data_parallel_random_init,
                 ddp_config=ddp_config,
-                module=chunk,
-                fsdp_unit_modules=[HybridStack if mhc_recompute else HyperConnectionHybridLayer],
-                disable_bucketing=False,
+                overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
+                use_torch_fsdp2=use_torch_fsdp2,
                 pg_collection=pg_collection,
+                use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
             )
-        )
-    return wrapped_model
+
+    return _core_ddp_wrap(
+        model,
+        data_parallel_random_init,
+        ddp_config,
+        overlap_param_gather_with_optimizer_step,
+        use_megatron_fsdp=use_megatron_fsdp,
+        use_torch_fsdp2=use_torch_fsdp2,
+        pg_collection=pg_collection,
+        use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+        use_layer_wise_param_layout=use_layer_wise_param_layout,
+    )

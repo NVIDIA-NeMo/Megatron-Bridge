@@ -86,12 +86,18 @@ Enable the experimental v2 implementation with `ddp.use_megatron_fsdp=True`
 and `ddp.megatron_fsdp_version=2`. The DeepSeek-V4 path is qualified with
 TP=PP=1 and no virtual pipeline parallelism.
 
-For models with `enable_mhc_connections=True`, Bridge replaces the default
+For `DeepSeekV4HybridModelProvider` models with `enable_mhc_connections=True`, Bridge replaces the default
 dense FSDP units with `HyperConnectionHybridLayer`. Split mHC layers call
 private inner Transformer helpers directly; wrapping those inner Transformers
 would bypass their parameter-gather hooks. Routed experts remain independent
 expert-DP units. Remaining MTP projections and reused embedding/output
 parameters are owned by the root unit.
+
+The unit policy and compatibility checks live in
+`models/deepseek/deepseek_v4_fsdp.py`. The common wrapper only dispatches to
+that helper for DeepSeek-V4 mHC with Megatron FSDP v2; other models, including
+other mHC models, retain Core's wrapping path. This Bridge-only adapter is
+temporary until Core's wrapping entry point exposes `fsdp_unit_modules`.
 
 With selective `mhc` recomputation, the enclosing `HybridStack` becomes the
 dense unit instead. The recompute manager can replay several layers from one
@@ -103,10 +109,15 @@ configured recompute regions or the separate expert units.
 Configure v2 explicitly:
 
 ```python
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
+
 cfg.model.tensor_model_parallel_size = 1
 cfg.model.pipeline_model_parallel_size = 1
 cfg.model.virtual_pipeline_model_parallel_size = None
-cfg.model.pipeline_model_parallel_layout = None
+set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+cfg.dist.use_megatron_fsdp = True
 cfg.ddp.use_megatron_fsdp = True
 cfg.ddp.megatron_fsdp_version = 2
 cfg.ddp.use_distributed_optimizer = False
@@ -128,13 +139,16 @@ not select v2's gradient storage precision. Data-parallel random initialization,
 layer-wise distributed optimization, optimizer-step parameter-gather overlap,
 and expert communication overlap are not supported by this mHC wrapper.
 
-The full-model BF16 smoke test used unfused mHC (`use_fused_mhc=False`) on
-64 GB200 GPUs with NeMo 26.10, TP1/PP1/CP1/EP8, and a 60-minute distributed
-timeout. Ten steps completed with finite, unskipped updates on every rank.
-This is a smoke qualification, not a claim of long-run stability, checkpoint
-resume coverage, or performance parity with pipeline-parallel DDP. Model-specific
-recompute, MTP, and checkpoint workflows still require configuration-specific
-validation. No diagnostic synchronization or logging is added by the wrapper.
+When changing PP, normalize the hybrid layer pattern with the helper above;
+clearing only the pipeline layout can leave a stage-specific pattern and build
+an incomplete model. Check actual constructed decoder depth and MTP presence.
+
+Unit tests cover dispatch isolation, constructor arguments, unit selection and
+rejected lifecycle combinations. This refactor itself has not been GPU-qualified;
+model-specific recompute, MTP, checkpoint and performance workflows require
+configuration-specific validation. No diagnostic synchronization or logging is
+added by the wrapper. Fused versus unfused mHC is a separate execution setting,
+not selected or modified by this adapter.
 
 ### General compatibility
 
