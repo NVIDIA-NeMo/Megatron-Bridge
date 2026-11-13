@@ -108,16 +108,25 @@ def export_hf_adapter(
     Streaming yields ``(hf_name, tensor)`` for every ``lora_A`` / ``lora_B`` with full tensors on every
     rank; like the merged stream it is collective and every rank must drain it. ``path`` writes a PEFT
     directory (``adapter_config.json`` + ``adapter_model.safetensors``) that
-    ``peft.PeftModel.from_pretrained`` loads over ``base_model_name_or_path``.
+    ``peft.PeftModel.from_pretrained`` loads over ``base_model_name_or_path``. Expert adapters come out
+    under per-expert names in every layout: an ``"outer_shared"`` adapter's shared factor is repeated for
+    each expert (Bridge's ``expand_shared_outer``, which leaves the other layouts unchanged).
     """
     if streaming:
         return (
             (item.param_name, item.weight)
-            for item in state.bridge.export_adapter_weights(model, cpu=False, show_progress=False)
+            for item in state.bridge.export_adapter_weights(
+                model, cpu=False, show_progress=False, expand_shared_outer=True
+            )
         )
     if path is None:
         raise ValueError("export needs a path unless streaming=True.")
     state.bridge.save_hf_adapter(
-        model, path, peft_config=peft, base_model_name_or_path=base_model_name_or_path, show_progress=False
+        model,
+        path,
+        peft_config=peft,
+        base_model_name_or_path=base_model_name_or_path,
+        show_progress=False,
+        expand_shared_outer=True,
     )
     return None

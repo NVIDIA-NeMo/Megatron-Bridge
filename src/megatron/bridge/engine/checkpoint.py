@@ -138,11 +138,17 @@ def _lora_settings(peft: PEFT | None) -> dict[str, Any] | None:
         return None
     if not isinstance(peft, LoRA):
         raise TypeError(f"TrainingEngine checkpoints record LoRA settings only, got {type(peft).__name__}.")
+    # Bridge's precedence: the shared-outer layout overrides share_expert_adapters.
+    if peft.experts_shared_outer_loras:
+        expert_adapters = "outer_shared"
+    else:
+        expert_adapters = "shared" if peft.share_expert_adapters else "per_expert"
     return {
         "rank": int(peft.dim),
         "alpha": float(peft.alpha),
         "dropout": float(peft.dropout),
         "target_modules": [str(name) for name in peft.target_modules],
+        "expert_adapters": expert_adapters,
     }
 
 

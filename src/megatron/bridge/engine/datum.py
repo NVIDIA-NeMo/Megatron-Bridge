@@ -307,14 +307,30 @@ class LoraConfig:
         rank: strict. Adapter rank.
         alpha: strict. Adapter scaling numerator; the adapter output is scaled by ``alpha / rank``.
         target_modules: strict. Megatron module names or ``*`` wildcards the adapters attach to, or
-            ``None`` for the recipe's ``lora_target_modules``. No MoE router may match.
+            ``None`` for the recipe's ``lora_target_modules``. No MoE router may match. On a
+            vision-language recipe that freezes part of the model (``freeze_language_model``,
+            ``freeze_vision_model``, ``freeze_vision_projection``), plain names attach only to the parts
+            it trains; names containing ``*`` or ``.`` are used as given.
         dropout: strict. Adapter dropout probability, in ``[0, 1)``.
+        expert_adapters: strict. Layout of the adapters on grouped MoE expert linears, one of Bridge's
+            three (``LORA_EXPERT_ADAPTER_LAYOUTS``): ``"shared"`` (Bridge's default: one adapter used by
+            every expert), ``"per_expert"`` (one adapter per expert) or ``"outer_shared"`` (the gate/up
+            ``lora_A`` and down ``lora_B`` shared across experts, the other two factors per expert).
     """
 
     rank: int
     alpha: float
     target_modules: list[str] | None = None
     dropout: float = 0.0
+    expert_adapters: str = "shared"
+
+
+# LoraConfig.expert_adapters -> Bridge LoRA's (share_expert_adapters, experts_shared_outer_loras).
+LORA_EXPERT_ADAPTER_LAYOUTS: dict[str, tuple[bool, bool]] = {
+    "shared": (True, False),
+    "per_expert": (False, False),
+    "outer_shared": (True, True),
+}
 
 
 @dataclass

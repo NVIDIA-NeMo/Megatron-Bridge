@@ -28,8 +28,11 @@ pytestmark = pytest.mark.unit
 QWEN35_TARGETS = [*BRIDGE_LORA_TARGET_MODULES, "in_proj", "out_proj"]
 
 
-def _recipe(targets=None) -> SimpleNamespace:
-    return SimpleNamespace(lora_target_modules=list(BRIDGE_LORA_TARGET_MODULES if targets is None else targets))
+def _recipe(targets=None, **model) -> SimpleNamespace:
+    return SimpleNamespace(
+        lora_target_modules=list(BRIDGE_LORA_TARGET_MODULES if targets is None else targets),
+        model=SimpleNamespace(**model),
+    )
 
 
 # ---- lowering ---------------------------------------------------------------------------------
@@ -42,7 +45,21 @@ def test_build_lora_lowers_rank_alpha_dropout_and_takes_the_recipe_targets():
     assert peft.target_modules == QWEN35_TARGETS
     # Bridge's default: one adapter shared by the local experts of a grouped expert linear, whose gradient
     # the expert-parallel sync installed with peft_enabled=True sums.
-    assert peft.share_expert_adapters
+    assert peft.share_expert_adapters and not peft.experts_shared_outer_loras
+
+
+@pytest.mark.parametrize(
+    "layout, share_expert_adapters, experts_shared_outer_loras",
+    [("shared", True, False), ("per_expert", False, False), ("outer_shared", True, True)],
+)
+def test_build_lora_lowers_each_expert_adapter_layout_to_bridges_flags(
+    layout, share_expert_adapters, experts_shared_outer_loras
+):
+    peft = build_lora(LoraConfig(rank=8, alpha=16.0, expert_adapters=layout), _recipe())
+    assert (peft.share_expert_adapters, peft.experts_shared_outer_loras) == (
+        share_expert_adapters,
+        experts_shared_outer_loras,
+    )
 
 
 def test_build_lora_prefers_explicit_targets_and_copies_them():
@@ -60,6 +77,7 @@ def test_build_lora_prefers_explicit_targets_and_copies_them():
         (LoraConfig(rank=8, alpha=1.0, dropout=1.0), "dropout must be in"),
         (LoraConfig(rank=8, alpha=1.0, target_modules=[]), "target_modules is empty"),
         (LoraConfig(rank=8, alpha=1.0, target_modules=["linear_qkv", "*.router"]), "router cannot be a LoRA target"),
+        (LoraConfig(rank=8, alpha=1.0, expert_adapters="outer"), "expert_adapters must be one of"),
     ],
 )
 def test_build_lora_rejects_invalid_settings(config, message):
@@ -89,7 +107,7 @@ def test_lora_hook_loads_the_base_into_the_bare_model_before_applying_lora(monke
         "megatron.bridge.engine.lora._apply_peft_transformation",
         lambda peft, model: calls.append(("lora", peft, model)) or wrapped,
     )
-    recipe, peft, bare = object(), build_lora(LoraConfig(rank=2, alpha=4.0), _recipe()), [_MoeLayer(_CpuRouter())]
+    recipe, peft, bare = _recipe(), build_lora(LoraConfig(rank=2, alpha=4.0), _recipe()), [_MoeLayer(_CpuRouter())]
     assert make_lora_hook(recipe, peft, "/base")(bare) is wrapped
     # No optimizer exists yet: its fp32 masters are built later from the loaded (frozen) base and adapters.
     assert calls == [("load", bare, None, "/base"), ("lora", peft, bare)]
@@ -166,14 +184,14 @@ def test_lora_hook_rejects_target_patterns_that_resolve_to_a_router(monkeypatch,
     monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: pytest.fail("loaded"))
     peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=["linear_qkv", pattern]), _recipe())
     with pytest.raises(ValueError, match=re.escape("matches 1 router(s), e.g. mlp.router")):
-        make_lora_hook(object(), peft, "/base")([_MoeLayer(_CpuRouter())])
+        make_lora_hook(_recipe(), peft, "/base")([_MoeLayer(_CpuRouter())])
 
 
 def test_lora_hook_rejects_quantile_balanced_routing(monkeypatch):
     monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: pytest.fail("loaded"))
     peft = build_lora(LoraConfig(rank=2, alpha=4.0), _recipe())
     with pytest.raises(NotImplementedError, match="quantile-balanced routing"):
-        make_lora_hook(object(), peft, "/base")([_MoeLayer(_CpuRouter(quantile_balancing=True))])
+        make_lora_hook(_recipe(), peft, "/base")([_MoeLayer(_CpuRouter(quantile_balancing=True))])
 
 
 def test_lora_hook_freezes_the_router_expert_bias_against_megatrons_update(monkeypatch):
@@ -188,7 +206,7 @@ def test_lora_hook_freezes_the_router_expert_bias_against_megatrons_update(monke
     config = SimpleNamespace(moe_router_bias_update_rate=1e-3)
     peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=["linear_qkv", "*.linear_fc1"]), _recipe())
     router = _CpuRouter(expert_bias=True)
-    model = make_lora_hook(object(), peft, "/base")([_MoeLayer(router)])
+    model = make_lora_hook(_recipe(), peft, "/base")([_MoeLayer(router)])
     assert model[0].mlp.router is router and router.training and router.frozen_expert_bias
     assert type(model[0].mlp.linear_fc1).__name__ == "LoRALinear"  # LoRA itself was applied
     _update_router_expert_bias(model, config)
@@ -197,6 +215,100 @@ def test_lora_hook_freezes_the_router_expert_bias_against_megatrons_update(monke
     unfrozen = [_MoeLayer(_CpuRouter(expert_bias=True))]
     _update_router_expert_bias(unfrozen, config)
     assert torch.equal(unfrozen[0].mlp.router.expert_bias, torch.ones(2))
+
+
+# ---- vision-language targets follow the recipe's freeze flags ------------------------------------
+
+# Where Bridge's Qwen3-VL model keeps its LoRA-able linears (bare model, as the pre-wrap hook sees it).
+_LANGUAGE = (
+    "language_model.decoder.layers.0.self_attention.linear_qkv",
+    "language_model.decoder.layers.0.self_attention.linear_proj",
+    "language_model.decoder.layers.0.mlp.linear_fc1",
+    "language_model.decoder.layers.0.mlp.linear_fc2",
+    "language_model.decoder.layers.1.self_attention.in_proj",
+    "language_model.decoder.layers.1.self_attention.out_proj",
+)
+_VISION = (
+    "vision_model.decoder.layers.0.self_attention.linear_qkv",
+    "vision_model.decoder.layers.0.self_attention.linear_proj",
+    "vision_model.decoder.layers.0.mlp.linear_fc1",
+    "vision_model.decoder.layers.0.mlp.linear_fc2",
+)
+_PROJECTION = (
+    "vision_model.merger.linear_fc1",
+    "vision_model.merger.linear_fc2",
+    "vision_model.decoder.deepstack_merger_list.0.linear_fc1",
+    "vision_model.decoder.deepstack_merger_list.0.linear_fc2",
+)
+
+
+def _vision_language_model() -> torch.nn.Module:
+    root = torch.nn.Module()
+    for path in (*_LANGUAGE, *_VISION, *_PROJECTION):
+        parent = root
+        *parents, leaf = path.split(".")
+        for part in parents:
+            if part not in parent._modules:
+                parent.add_module(part, torch.nn.Module())
+            parent = parent._modules[part]
+        parent.add_module(leaf, torch.nn.Linear(4, 4, bias=False))
+    return root
+
+
+def _wrapped_with_lora(monkeypatch, *, targets=None, **freeze) -> tuple[list[str], LoRA]:
+    """Run the LoRA hook on the toy vision-language model; return the wrapped linears and the LoRA."""
+    monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: None)
+    flags = {"freeze_language_model": False, "freeze_vision_model": False, "freeze_vision_projection": False}
+    recipe = _recipe(QWEN35_TARGETS, vision_config=object(), **{**flags, **freeze})
+    peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=targets), recipe)
+    model = make_lora_hook(recipe, peft, "/base")([_vision_language_model()])
+    wrapped = sorted(name for name, module in model[0].named_modules() if type(module).__name__ == "LoRALinear")
+    return wrapped, peft
+
+
+def test_vision_language_lora_covers_every_trained_part_when_nothing_is_frozen(monkeypatch):
+    wrapped, peft = _wrapped_with_lora(monkeypatch)
+    assert wrapped == sorted((*_LANGUAGE, *_VISION, *_PROJECTION))
+    assert peft.target_modules == QWEN35_TARGETS  # plain names, unchanged
+
+
+@pytest.mark.parametrize(
+    "freeze, trained",
+    [
+        ({"freeze_vision_model": True, "freeze_vision_projection": True}, _LANGUAGE),
+        ({"freeze_vision_model": True}, (*_LANGUAGE, *_PROJECTION)),
+        ({"freeze_language_model": True}, (*_VISION, *_PROJECTION)),
+    ],
+)
+def test_vision_language_lora_skips_the_parts_the_recipe_freezes(monkeypatch, freeze, trained):
+    wrapped, peft = _wrapped_with_lora(monkeypatch, **freeze)
+    assert wrapped == sorted(trained)
+    # One pattern per trained part that has the name, so no pattern goes unmatched (Bridge would warn).
+    if freeze.get("freeze_vision_model") and freeze.get("freeze_vision_projection"):
+        assert peft.target_modules == [f"language_model.*.{name}" for name in QWEN35_TARGETS]
+
+
+def test_vision_language_lora_keeps_explicit_patterns_as_given(monkeypatch):
+    wrapped, peft = _wrapped_with_lora(
+        monkeypatch,
+        targets=["vision_model.decoder.layers.*.linear_qkv", "linear_proj"],
+        freeze_vision_model=True,
+        freeze_vision_projection=True,
+    )
+    assert peft.target_modules == ["vision_model.decoder.layers.*.linear_qkv", "language_model.*.linear_proj"]
+    assert wrapped == sorted(
+        [
+            "vision_model.decoder.layers.0.self_attention.linear_qkv",
+            "language_model.decoder.layers.0.self_attention.linear_proj",
+        ]
+    )
+
+
+def test_vision_language_lora_rejects_a_recipe_that_freezes_everything(monkeypatch):
+    with pytest.raises(ValueError, match="freezes every part"):
+        _wrapped_with_lora(
+            monkeypatch, freeze_language_model=True, freeze_vision_model=True, freeze_vision_projection=True
+        )
 
 
 # ---- engine construction ------------------------------------------------------------------------
@@ -440,6 +552,7 @@ def test_checkpoints_record_the_lora_settings(checkpoint_calls, tmp_path):
             "alpha": 16.0,
             "dropout": 0.1,
             "target_modules": ["linear_qkv", "*.in_proj"],
+            "expert_adapters": "shared",
         }
     with open(tmp_path / "full" / "iter_0000003" / "run_config.yaml") as handle:
         assert yaml.safe_load(handle)["lora"] is None
@@ -452,6 +565,7 @@ def test_checkpoints_record_the_lora_settings(checkpoint_calls, tmp_path):
         (LoraConfig(rank=8, alpha=16.0, dropout=0.1), LoraConfig(rank=8, alpha=16.0)),
         # Fewer targets: Bridge's non-strict resume would drop the saved in_proj adapters without a word.
         (LoraConfig(rank=8, alpha=16.0, target_modules=["linear_qkv", "in_proj"]), LoraConfig(rank=8, alpha=16.0)),
+        (LoraConfig(rank=8, alpha=16.0), LoraConfig(rank=8, alpha=16.0, expert_adapters="per_expert")),
         (LoraConfig(rank=8, alpha=16.0), None),
         (None, LoraConfig(rank=8, alpha=16.0)),
     ],
@@ -529,12 +643,17 @@ def test_export_hf_adapter_streams_unmerged_adapters_and_writes_peft_directories
     peft = object()
     items = list(export_hf_adapter(state, [], peft, path=None, streaming=True, base_model_name_or_path="hf/base"))
     assert [name for name, _ in items] == ["model.layers.0.self_attn.q_proj.lora_A.weight"]
-    assert bridge.calls[0] == ("stream", {"cpu": False, "show_progress": False})
+    assert bridge.calls[0] == ("stream", {"cpu": False, "show_progress": False, "expand_shared_outer": True})
     assert export_hf_adapter(state, [], peft, path="/out", streaming=False, base_model_name_or_path="hf/base") is None
     assert bridge.calls[1] == (
         "save",
         "/out",
-        {"peft_config": peft, "base_model_name_or_path": "hf/base", "show_progress": False},
+        {
+            "peft_config": peft,
+            "base_model_name_or_path": "hf/base",
+            "show_progress": False,
+            "expand_shared_outer": True,
+        },
     )
     with pytest.raises(ValueError, match="path"):
         export_hf_adapter(state, [], peft, path=None, streaming=False, base_model_name_or_path="hf/base")
@@ -558,7 +677,16 @@ def test_engine_export_adapter_only_needs_lora_and_an_explicit_base_model(monkey
         engine.export(path="/out", adapter_only=True)
     assert engine.export(path="/out", adapter_only=True, base_model_name_or_path="org/sft-model") is None
     assert bridge.calls == [
-        ("save", "/out", {"peft_config": peft, "base_model_name_or_path": "org/sft-model", "show_progress": False})
+        (
+            "save",
+            "/out",
+            {
+                "peft_config": peft,
+                "base_model_name_or_path": "org/sft-model",
+                "show_progress": False,
+                "expand_shared_outer": True,
+            },
+        )
     ]
     # The adapter stream and the merged export record no base model, so naming one there is an error.
     for kwargs in ({"streaming": True, "adapter_only": True}, {"path": "/merged"}):

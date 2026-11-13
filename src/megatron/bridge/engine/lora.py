@@ -40,8 +40,8 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.moe.router import Router
 
 from megatron.bridge.engine.checkpoint import load_pretrained_weights
-from megatron.bridge.engine.datum import LoraConfig
-from megatron.bridge.engine.recipes.base import TrainingRecipe
+from megatron.bridge.engine.datum import LORA_EXPERT_ADAPTER_LAYOUTS, LoraConfig
+from megatron.bridge.engine.recipes.base import TrainingRecipe, is_multimodal
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.peft.walk_utils import walk
 from megatron.bridge.training.setup import _apply_peft_transformation
@@ -53,10 +53,10 @@ PreWrapHook = Callable[[list[MegatronModule]], list[MegatronModule]]
 def build_lora(config: LoraConfig, recipe: TrainingRecipe) -> LoRA:
     """Lower a ``LoraConfig`` to Bridge's ``LoRA``.
 
-    ``config.target_modules=None`` takes ``recipe.lora_target_modules``. Bridge's other LoRA settings keep
-    their defaults; in particular a grouped MoE expert linear gets one adapter shared by the local experts
-    (``share_expert_adapters=True``), which is what the expert-parallel gradient sync the engine installs
-    is for.
+    ``config.target_modules=None`` takes ``recipe.lora_target_modules``. ``config.expert_adapters`` picks
+    Bridge's layout for grouped MoE expert linears (``share_expert_adapters`` and
+    ``experts_shared_outer_loras``); whatever a layout replicates across expert-parallel ranks is summed
+    there by the gradient sync the engine installs. Bridge's other LoRA settings keep their defaults.
 
     Args:
         config: The user's adapter settings.
@@ -66,9 +66,10 @@ def build_lora(config: LoraConfig, recipe: TrainingRecipe) -> LoRA:
         A fresh ``LoRA`` owned by the engine.
 
     Raises:
-        ValueError: For a non-positive rank or alpha, a dropout outside ``[0, 1)``, an empty target list, or
-            a target naming the MoE router (routing stays the base model's, which router replay relies on).
-            Wildcards that resolve to a router are caught by the pre-wrap hook, once the model exists.
+        ValueError: For a non-positive rank or alpha, a dropout outside ``[0, 1)``, an empty target list, a
+            target naming the MoE router (routing stays the base model's, which router replay relies on),
+            or an unknown ``expert_adapters`` layout. Wildcards that resolve to a router are caught by the
+            pre-wrap hook, once the model exists.
     """
     targets = list(config.target_modules) if config.target_modules is not None else list(recipe.lora_target_modules)
     problems: list[str] = []
@@ -83,18 +84,32 @@ def build_lora(config: LoraConfig, recipe: TrainingRecipe) -> LoRA:
     router_targets = [name for name in targets if "router" in name]
     if router_targets:
         problems.append(f"the MoE router cannot be a LoRA target: {router_targets}")
+    if config.expert_adapters not in LORA_EXPERT_ADAPTER_LAYOUTS:
+        problems.append(
+            f"expert_adapters must be one of {sorted(LORA_EXPERT_ADAPTER_LAYOUTS)}, got {config.expert_adapters!r}"
+        )
     if problems:
         raise ValueError("LoraConfig is not supported by TrainingEngine:\n  - " + "\n  - ".join(problems))
-    return LoRA(target_modules=targets, dim=config.rank, alpha=config.alpha, dropout=config.dropout)
+    share_expert_adapters, experts_shared_outer_loras = LORA_EXPERT_ADAPTER_LAYOUTS[config.expert_adapters]
+    return LoRA(
+        target_modules=targets,
+        dim=config.rank,
+        alpha=config.alpha,
+        dropout=config.dropout,
+        share_expert_adapters=share_expert_adapters,
+        experts_shared_outer_loras=experts_shared_outer_loras,
+    )
 
 
 def make_lora_hook(recipe: TrainingRecipe, peft: LoRA, checkpoint_path: str) -> PreWrapHook:
     """Pre-wrap hook: check the routers, load the base weights into the bare model, then apply LoRA.
 
-    The router checks run first, on the bare model: no router may match a target pattern, and quantile
-    balancing is rejected. The base load runs with no PEFT in the checkpoint view, so every base tensor is
-    read; LoRA then wraps the targets, freezes the base and records the adapter parameters it saves
-    (``set_params_to_save``). Last, the routers' expert-bias updates are switched off.
+    On a vision-language model, plain target names are first kept off the parts the recipe freezes
+    (``_scope_to_trained_parts``). The router checks then run on the bare model: no router may match a
+    target pattern, and quantile balancing is rejected. The base load runs with no PEFT in the checkpoint
+    view, so every base tensor is read; LoRA then wraps the targets, freezes the base and records the
+    adapter parameters it saves (``set_params_to_save``). Last, the routers' expert-bias updates are
+    switched off.
 
     Args:
         recipe: The engine's recipe (checkpoint loading reads its model, optimizer and DDP sections).
@@ -106,6 +121,7 @@ def make_lora_hook(recipe: TrainingRecipe, peft: LoRA, checkpoint_path: str) -> 
     """
 
     def hook(model: list[MegatronModule]) -> list[MegatronModule]:
+        _scope_to_trained_parts(peft, recipe, model)
         _check_routers(peft, model)
         load_pretrained_weights(recipe, model, None, checkpoint_path)
         model = _apply_peft_transformation(peft, model)
@@ -113,6 +129,55 @@ def make_lora_hook(recipe: TrainingRecipe, peft: LoRA, checkpoint_path: str) -> 
         return model
 
     return hook
+
+
+# The parts of Bridge's vision-language model (``Qwen3VLModel``) that the provider's freeze flags cover,
+# as module-name prefixes in the bare model. The split is Bridge's own (``Qwen3VLModel.freeze``): the
+# projection is the patch merger plus the deepstack mergers.
+_VISION_LANGUAGE_PARTS = (
+    ("freeze_language_model", ("language_model.",)),
+    ("freeze_vision_model", ("vision_model.decoder.layers.",)),
+    ("freeze_vision_projection", ("vision_model.merger.", "vision_model.decoder.deepstack_merger_list.")),
+)
+
+
+def _scope_to_trained_parts(peft: LoRA, recipe: TrainingRecipe, model: list[MegatronModule]) -> None:
+    """On a vision-language recipe that freezes part of the model, keep plain target names off that part.
+
+    A plain name (``linear_qkv``) matches its module anywhere, and the vision tower and the patch mergers
+    use the language model's layer names. When the recipe freezes some of those parts, each plain name
+    becomes one pattern per trained part that has a module of that name (``language_model.*.linear_qkv``,
+    or ``vision_model.merger.linear_fc1`` for a direct child), so ``peft.target_modules`` is rewritten.
+    Names containing ``*`` or ``.`` are the caller's own patterns and are kept as given. Nothing changes on
+    a text model or when the recipe trains every part.
+
+    Raises:
+        ValueError: If the recipe freezes every part the targets could reach.
+    """
+    if not is_multimodal(recipe):
+        return
+    frozen = [flag for flag, _ in _VISION_LANGUAGE_PARTS if getattr(recipe.model, flag)]
+    if not frozen:
+        return
+    trained_prefixes = [
+        prefix for flag, prefixes in _VISION_LANGUAGE_PARTS if flag not in frozen for prefix in prefixes
+    ]
+    plain = [target for target in peft.target_modules if "*" not in target and "." not in target]
+    scoped = [target for target in peft.target_modules if target not in plain]
+    module_names = [name for chunk in model for name, _ in chunk.named_modules()]
+    for prefix in trained_prefixes:
+        relative = [name[len(prefix) :] for name in module_names if name.startswith(prefix)]
+        for target in plain:
+            if target in relative:  # a direct child of the part
+                scoped.append(f"{prefix}{target}")
+            if any(rel.endswith(f".{target}") for rel in relative):
+                scoped.append(f"{prefix}*.{target}")
+    if not scoped:
+        raise ValueError(
+            f"the recipe freezes every part LoRA targets {list(peft.target_modules)} could reach "
+            f"({', '.join(frozen)}): nothing would be trained."
+        )
+    peft.target_modules = scoped
 
 
 def _check_routers(peft: LoRA, model: list[MegatronModule]) -> None:
