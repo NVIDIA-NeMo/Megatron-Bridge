@@ -223,6 +223,52 @@ def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_override
     assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
 
 
+def test_deepseek_v3_vrnvl72_fp8mx_matches_rubin_execution_settings() -> None:
+    gb300 = _build("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config")
+    cfg = _build("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config")
+
+    # Keep data, batch, schedule, forced load balancing and auxiliary loss from the shared MXFP8 base.
+    assert type(cfg.dataset) is type(gb300.dataset)
+    assert cfg.tokenizer.tokenizer_type == gb300.tokenizer.tokenizer_type
+    assert cfg.model.seq_length == gb300.model.seq_length
+    assert cfg.train.global_batch_size == gb300.train.global_batch_size == 4096
+    assert cfg.train.micro_batch_size == gb300.train.micro_batch_size
+    assert cfg.train.train_iters == gb300.train.train_iters
+    assert cfg.optimizer.lr == gb300.optimizer.lr
+    assert cfg.optimizer.min_lr == gb300.optimizer.min_lr
+    assert cfg.scheduler.lr_warmup_iters == gb300.scheduler.lr_warmup_iters
+    assert cfg.scheduler.lr_decay_iters == gb300.scheduler.lr_decay_iters
+    assert cfg.model.moe_router_force_load_balancing is gb300.model.moe_router_force_load_balancing is True
+    assert cfg.mixed_precision.fp8_recipe == gb300.mixed_precision.fp8_recipe == "mxfp8"
+    # The bridge sets these on real providers; the offline provider used here may not carry them.
+    for name in ("moe_aux_loss_coeff", "moe_dispatch_fwd_dtype"):
+        assert getattr(cfg.model, name, None) == getattr(gb300.model, name, None), name
+    assert cfg.model.moe_router_dtype == "bf16"
+    assert cfg.model.moe_combine_bwd_dtype == "mxfp8"
+
+    # Keep the shared base's 16-stage PP=2 x VP=8 layout, EP and TP.
+    assert cfg.model.pipeline_model_parallel_layout == gb300.model.pipeline_model_parallel_layout
+    assert (gb300.model.pipeline_model_parallel_size, gb300.model.virtual_pipeline_model_parallel_size) == (2, 8)
+    assert (cfg.model.pipeline_model_parallel_size, cfg.model.virtual_pipeline_model_parallel_size) == (2, 8)
+    assert cfg.model.expert_model_parallel_size == gb300.model.expert_model_parallel_size == 32
+    assert cfg.model.tensor_model_parallel_size == gb300.model.tensor_model_parallel_size == 1
+
+    # Rubin buffer sizing and MLPerf-derived fusions, CUDA graphs and runtime settings.
+    assert cfg.model.moe_flex_dispatcher_num_sms == 64
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.fused_residual_rmsnorm is True
+    assert cfg.model.mla_down_proj_fusion is True
+    assert cfg.model.use_fused_mla_kv_rope_quant is True
+    assert cfg.model.use_grouped_gemm_for_shared_expert is True
+    assert cfg.model.moe_shared_expert_glu_interleave_size == 32
+    assert cfg.model.cuda_graph_warmup_steps == 2
+    assert cfg.optimizer.optimizer_cuda_graph is True
+    assert cfg.dist.use_gloo_process_groups is False
+    assert cfg.dataset.create_attention_mask is False
+
+
 @pytest.mark.parametrize(
     ("module_name", "factory_name"),
     [(module, factory) for module, factory in _QWEN3_NVL8_RECIPES if "235b" in factory],
