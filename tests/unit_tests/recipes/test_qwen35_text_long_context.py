@@ -88,6 +88,8 @@ def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch
     assert cfg.model.gdn_kernel_backend == "transformer_engine"
     assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
     assert cfg.model.gdn_gated_output_norm_fusion is False
+    # NCCL EP reads its packed-token bound from the nested transformer config.
+    assert cfg.model.transformer.max_seq_length_per_sample == cfg.dataset.offline_packing_specs.packed_sequence_size
     assert not any(name.startswith("vision_recompute_") for name in [*dir(cfg.model), *dir(cfg.model.transformer)])
     assert cfg.model.apply_rope_fusion is False
     assert cfg.model.cuda_graph_impl == "none"

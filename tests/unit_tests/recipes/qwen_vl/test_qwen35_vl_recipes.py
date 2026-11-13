@@ -1751,6 +1751,8 @@ def test_gb200_long_context_validates_with_real_model_config(monkeypatch, recipe
         "gdn_gated_output_norm_fusion",
     } <= {field.name for field in fields(config.model.transformer)}
     assert config.model.gdn_kernel_backend == "transformer_engine"
+    # NCCL EP reads its packed-token bound from the nested transformer config.
+    assert config.model.transformer.max_seq_length_per_sample == config.dataset.seq_length == 131072
     assert config.ddp.overlap_grad_reduce is False
     assert config.ddp.overlap_param_gather is False
     assert config.optimizer.overlap_param_gather is False
