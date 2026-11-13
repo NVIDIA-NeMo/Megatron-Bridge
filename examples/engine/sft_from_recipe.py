@@ -20,6 +20,10 @@ the recipe's warmup + cosine schedule computed here (the caller owns the schedul
 ``--save-at N --save-dir ROOT`` saves an engine checkpoint after step N (``--async-save`` for the
 asynchronous path, waited for at the end); ``--resume-from ROOT`` restores it into a fresh engine and
 continues from the next step on the next data batch. The data cursor travels as ``user_state``.
+With a LoRA engine, ``--check-resume-guards ROOT`` adds two resume checks: right after the resume,
+``load_state`` must refuse the checkpoint under other LoRA settings before reading anything; and after
+the run, a save to ``ROOT`` must be what a following ``load_state(ROOT)`` restores, although an earlier
+save to ``ROOT`` was already loaded in the same process.
 
 ``--check-accumulation`` instead builds two engines from the same checkpoint and applies one update to
 each from the same packs, as one call and as four calls, then compares the accumulated gradient buffers
@@ -47,6 +51,7 @@ import torch
 import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import AdamParams, Datum, LoraConfig, PreparedMicrobatch, TrainingEngine, check_datums
 from megatron.bridge.engine.batching import assign_to_dp_ranks, filler_microbatch, pack_sequences, shard_for_cp
+from megatron.bridge.engine.datum import LORA_EXPERT_ADAPTER_LAYOUTS
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -121,6 +126,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-rank", type=int, default=0, help="Train LoRA adapters of this rank (0: full weights)")
     parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
     parser.add_argument(
+        "--lora-expert-adapters",
+        choices=sorted(LORA_EXPERT_ADAPTER_LAYOUTS),
+        default="shared",
+        help="LoRA layout on grouped MoE expert linears (LoraConfig.expert_adapters)",
+    )
+    parser.add_argument(
+        "--check-resume-guards",
+        default=None,
+        metavar="ROOT",
+        help="With --resume-from and --lora-rank: check the LoRA-settings refusal and a reload after a newer save",
+    )
+    parser.add_argument(
         "--check-disable-adapters",
         action="store_true",
         help="LoRA gate: after --iters updates, adapters-off scores must equal a frozen engine on the same base",
@@ -129,8 +146,32 @@ def _parse_args() -> argparse.Namespace:
 
 
 def lora_config(args: argparse.Namespace) -> LoraConfig | None:
-    """``--lora-rank`` / ``--lora-alpha`` as the engine's LoRA settings, or ``None`` for full-weight training."""
-    return LoraConfig(rank=args.lora_rank, alpha=args.lora_alpha) if args.lora_rank else None
+    """``--lora-rank`` / ``--lora-alpha`` / ``--lora-expert-adapters`` as the engine's LoRA settings, or ``None``
+    for full-weight training."""
+    if not args.lora_rank:
+        return None
+    return LoraConfig(rank=args.lora_rank, alpha=args.lora_alpha, expert_adapters=args.lora_expert_adapters)
+
+
+def check_lora_settings_guard(engine: TrainingEngine, path: str) -> None:
+    """LoRA resume gate: ``load_state`` refuses a checkpoint saved with other LoRA settings, before reading it.
+
+    The engine's recorded alpha is changed for the call only. Adapters keep their own scale, so the model is
+    untouched, and the refused load must leave the update count where it was.
+    """
+    peft, updates = engine._peft, engine.step
+    alpha = peft.alpha
+    peft.alpha = alpha * 2
+    try:
+        engine.load_state(path)
+    except ValueError as error:
+        assert "was saved with lora=" in str(error), error
+    else:
+        raise AssertionError("load_state accepted a checkpoint saved with another LoRA alpha")
+    finally:
+        peft.alpha = alpha
+    assert engine.step == updates, f"the refused load moved the update count to {engine.step}"
+    print_rank_0("[guard] load_state refused other LoRA settings before reading: PASSED")
 
 
 def copy_trainable_weights(source: TrainingEngine, target: TrainingEngine) -> None:
@@ -472,6 +513,13 @@ def train(args: argparse.Namespace, recipe) -> None:
         assert user_state is not None and "consumed_steps" in user_state, f"no data cursor in {user_state!r}"
         first_step = user_state["consumed_steps"] + 1
         print_rank_0(f"[ckpt] resumed from {args.resume_from}: updates {engine.step}, user_state {user_state}")
+    if args.check_resume_guards:
+        if not (args.resume_from and args.lora_rank):
+            raise SystemExit("--check-resume-guards needs --resume-from and --lora-rank")
+        check_lora_settings_guard(engine, args.resume_from)
+        # A first save and load of the guard root, so a cached read of its tracker would be stale later.
+        engine.save_state(args.check_resume_guards, user_state={"consumed_steps": first_step - 1})
+        engine.load_state(args.check_resume_guards)
     batches = iter_pack_batches(args.parquet, args.packs_per_step, skip_steps=first_step - 1)
     handle = None
     for step in range(first_step, args.iters + 1):
@@ -508,6 +556,12 @@ def train(args: argparse.Namespace, recipe) -> None:
         start = time.time()
         handle.wait()
         print_rank_0(f"[ckpt] checkpoint {handle.path} durable; wait took {time.time() - start:.1f}s")
+    if args.check_resume_guards:
+        updates = engine.step
+        engine.save_state(args.check_resume_guards, user_state={"consumed_steps": args.iters})
+        engine.load_state(args.check_resume_guards)
+        assert engine.step == updates, f"a load after a newer save restored update {engine.step}, not {updates}"
+        print_rank_0(f"[guard] load_state after a newer save to the same root restored update {updates}: PASSED")
     if args.export_dir:
         check_export(engine, args.export_dir)
         if args.lora_rank:

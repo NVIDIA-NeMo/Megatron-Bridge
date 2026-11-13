@@ -40,6 +40,7 @@ from sft_from_recipe import (
 
 import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import AdamParams, TrainingEngine
+from megatron.bridge.engine.datum import LORA_EXPERT_ADAPTER_LAYOUTS
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -53,6 +54,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--lora-rank", type=int, default=0, help="Move LoRA engines of this rank (0: full weights)")
     parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
+    parser.add_argument(
+        "--lora-expert-adapters",
+        choices=sorted(LORA_EXPERT_ADAPTER_LAYOUTS),
+        default="shared",
+        help="LoRA layout on grouped MoE expert linears (LoraConfig.expert_adapters)",
+    )
     return parser.parse_args()
 
 

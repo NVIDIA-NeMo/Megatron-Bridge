@@ -45,6 +45,7 @@ import yaml
 
 import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import LoraConfig, TrainingEngine
+from megatron.bridge.engine.datum import LORA_EXPERT_ADAPTER_LAYOUTS
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -63,12 +64,20 @@ def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--skip-reference", action="store_true", help="Only build the trainable actor")
     parser.add_argument("--lora-rank", type=int, default=0, help="Build the actor with LoRA of this rank (0: off)")
     parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
+    parser.add_argument(
+        "--lora-expert-adapters",
+        choices=sorted(LORA_EXPERT_ADAPTER_LAYOUTS),
+        default="shared",
+        help="LoRA layout on grouped MoE expert linears (LoraConfig.expert_adapters)",
+    )
     args, overrides = parser.parse_known_args()
     return args, overrides
 
 
 def _lora(args: argparse.Namespace) -> LoraConfig | None:
-    return LoraConfig(rank=args.lora_rank, alpha=args.lora_alpha) if args.lora_rank else None
+    if not args.lora_rank:
+        return None
+    return LoraConfig(rank=args.lora_rank, alpha=args.lora_alpha, expert_adapters=args.lora_expert_adapters)
 
 
 def _check_lora_actor(model: list[torch.nn.Module]) -> None:
