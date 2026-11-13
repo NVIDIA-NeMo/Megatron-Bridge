@@ -1261,6 +1261,7 @@ def save_safetensors_shards(
         shards.append((temporary, list(current)))
 
     seen: set[str] = set()
+    storages: set[int] = set()
     for name, tensor in tensors:
         if name in seen:
             raise ValueError(f"Duplicate exported tensor {name}")
@@ -1269,7 +1270,12 @@ def save_safetensors_shards(
         if current and current_size + size > max_shard_size:
             flush()
             current, current_size = {}, 0
-        current[name] = tensor.contiguous()
+        tensor = tensor.contiguous()
+        # safetensors rejects tensors sharing memory, e.g. CPU exports of fused projections and their scales.
+        if tensor.untyped_storage().nbytes() != size or tensor.untyped_storage().data_ptr() in storages:
+            tensor = tensor.clone()
+        storages.add(tensor.untyped_storage().data_ptr())
+        current[name] = tensor
         current_size += size
         total_size += size
     if current or not shards:
