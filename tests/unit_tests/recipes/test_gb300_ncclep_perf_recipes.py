@@ -1,0 +1,314 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Every GB300 and VRNVL72 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the
+VRNVL72 MoE recipes left off NCCL EP do not pick it up."""
+
+import importlib
+
+import pytest
+from megatron.training.determinism import DETERMINISM_ENV_VAR_DEFAULTS
+
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+
+
+pytestmark = pytest.mark.unit
+
+_NCCL_EP_ENV = {"NCCL_EP_HT_EM_PULL_PUSH": 1}
+_SSM_DETERMINISM_ENV = {"MAMBA_DETERMINISTIC": "1", "CAUSAL_CONV1D_DETERMINISTIC": "1"}
+
+# (module under megatron.bridge.perf_recipes, recipe factory) for the GB300 recipes defaulted to NCCL EP.
+_GB300_NCCLEP_RECIPES = (
+    ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_bf16_config"),
+    ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config"),
+    ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_nvfp4_config"),
+    ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config"),
+    ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config"),
+    ("gpt_oss.gb300.gpt_oss", "gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config"),
+    ("kimi.gb300.kimi_k2", "kimi_k2_pretrain_256gpu_gb300_fp8mx_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_super_pretrain_64gpu_gb300_bf16_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config"),
+    ("qwen.gb300.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config"),
+    ("qwen.gb300.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config"),
+    ("qwen.gb300.qwen3_moe", "qwen3_30b_a3b_pretrain_32gpu_gb300_bf16_config"),
+    ("qwen.gb300.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config"),
+    ("qwen.gb300.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config"),
+    ("qwen.gb300.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_large_scale_config"),
+    ("qwen.gb300.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config"),
+    ("qwen_vl.gb300.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"),
+)
+
+# Qwen3 30B BF16/MXFP8, 235B NVL8 recipes, and MXFP8 large-scale variants.
+_QWEN3_NVL8_RECIPES = tuple(
+    (f"qwen.{hardware}.qwen3_moe", f"qwen3_30b_a3b_pretrain_8gpu_{hardware}_{precision}_config")
+    for hardware in ("b200", "b300")
+    for precision in ("bf16", "fp8mx")
+) + tuple(
+    (f"qwen.{hardware}.qwen3_moe", f"qwen3_235b_a22b_pretrain_{gpus}gpu_{hardware}_{precision}_config")
+    for hardware in ("b200", "b300")
+    for gpus, precision in (
+        (64, "bf16"),
+        (64, "fp8mx"),
+        (64, "nvfp4"),
+        (256, "bf16"),
+        (256, "fp8mx"),
+        (256, "fp8mx_large_scale"),
+        (256, "nvfp4"),
+    )
+)
+
+# VRNVL72 MoE recipes on NCCL EP. The Nemotron 3 Ultra aliases share the GB300 NCCL EP builders; the rest
+# switch their GB300 HybridEP base or recipe, or their own HybridEP setup, to NCCL EP.
+_VRNVL72_NCCLEP_RECIPES = (
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_bf16_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v4", "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config"),
+    (
+        "qwen_vl.vrnvl72.qwen35_vl",
+        "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config",  # pragma: allowlist secret
+    ),
+)
+
+# VRNVL72 MoE recipes that stay off NCCL EP: GPT-OSS 20B, Kimi K2, Nemotron 3 Nano, the FP8-CS recipes and
+# Qwen3.5-VL 122B stay on HybridEP, and GPT-OSS 120B BF16 uses alltoall, like the GB300 recipe it aliases.
+_VRNVL72_NON_NCCLEP_RECIPES = (
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_128gpu_vrnvl72_fp8cs_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8cs_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_bf16_config"),
+    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_bf16_config"),
+    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config"),
+    (
+        "qwen_vl.vrnvl72.qwen35_vl",
+        "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config",  # pragma: allowlist secret
+    ),
+)
+
+
+# Import the recipe modules at collection time: the offline-construction fixture patches ``AutoBridge`` in
+# every recipe module that is already loaded, so a lazy import inside a test would escape the patch.
+_RECIPE_MODULES = {
+    module_name: importlib.import_module(f"megatron.bridge.perf_recipes.{module_name}")
+    for module_name in sorted(
+        {
+            name
+            for name, _ in (
+                *_GB300_NCCLEP_RECIPES,
+                *_QWEN3_NVL8_RECIPES,
+                *_VRNVL72_NCCLEP_RECIPES,
+                *_VRNVL72_NON_NCCLEP_RECIPES,
+            )
+        }
+    )
+}
+
+
+def _build(module_name: str, factory_name: str):
+    return getattr(_RECIPE_MODULES[module_name], factory_name)()
+
+
+@pytest.fixture(autouse=True)
+def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_recipe_construction_dependencies(monkeypatch)
+
+
+@pytest.mark.parametrize(
+    ("module_name", "factory_name"),
+    (*_GB300_NCCLEP_RECIPES, *_QWEN3_NVL8_RECIPES, *_VRNVL72_NCCLEP_RECIPES),
+    ids=lambda value: value,
+)
+def test_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory_name: str) -> None:
+    cfg = _build(module_name, factory_name)
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    # Device-side expert token counts; the legacy grouped-MLP path host-syncs tokens_per_expert per layer.
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    if (module_name, factory_name) in _QWEN3_NVL8_RECIPES:
+        assert cfg.model.expert_model_parallel_size == 8
+
+
+def test_gb300_deepseek_hsdp_uses_hybridep() -> None:
+    cfg = _build("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config")
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == cfg.model.expert_model_parallel_size == 64
+    assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
+
+
+@pytest.mark.parametrize(("module_name", "factory_name"), _VRNVL72_NON_NCCLEP_RECIPES, ids=lambda value: value)
+def test_vrnvl72_recipes_left_off_nccl_ep_do_not_inherit_it(module_name: str, factory_name: str) -> None:
+    cfg = _build(module_name, factory_name)
+
+    # These recipes keep their own dispatcher (flex/hybridep or alltoall); the NCCL EP overlay must never
+    # leak into them.
+    assert cfg.model.moe_flex_dispatcher_backend != "ncclep"
+    assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
+    if cfg.model.moe_token_dispatcher_type == "flex":
+        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    else:
+        assert cfg.model.moe_token_dispatcher_type == "alltoall"
+
+
+def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_overrides() -> None:
+    module = "deepseek.gb300.deepseek_v3"
+    base = _build(module, "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config")
+    cfg = _build(module, "deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config")
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    assert cfg.model.moe_router_fusion == base.model.moe_router_fusion
+    # Same NCCL EP stack as the base recipe; only the determinism overrides differ.
+    assert cfg.model.moe_token_dispatcher_type == base.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == base.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is base.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
+
+
+def test_deepseek_v3_vrnvl72_fp8mx_matches_rubin_execution_settings() -> None:
+    gb300 = _build("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config")
+    cfg = _build("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config")
+
+    # Keep data, batch, schedule, forced load balancing and auxiliary loss from the shared MXFP8 base.
+    assert type(cfg.dataset) is type(gb300.dataset)
+    assert cfg.tokenizer.tokenizer_type == gb300.tokenizer.tokenizer_type
+    assert cfg.model.seq_length == gb300.model.seq_length
+    assert cfg.train.global_batch_size == gb300.train.global_batch_size == 4096
+    assert cfg.train.micro_batch_size == gb300.train.micro_batch_size
+    assert cfg.train.train_iters == gb300.train.train_iters
+    assert cfg.optimizer.lr == gb300.optimizer.lr
+    assert cfg.optimizer.min_lr == gb300.optimizer.min_lr
+    assert cfg.scheduler.lr_warmup_iters == gb300.scheduler.lr_warmup_iters
+    assert cfg.scheduler.lr_decay_iters == gb300.scheduler.lr_decay_iters
+    assert cfg.model.moe_router_force_load_balancing is gb300.model.moe_router_force_load_balancing is True
+    assert cfg.mixed_precision.fp8_recipe == gb300.mixed_precision.fp8_recipe == "mxfp8"
+    # The bridge sets these on real providers; the offline provider used here may not carry them.
+    for name in ("moe_aux_loss_coeff", "moe_dispatch_fwd_dtype"):
+        assert getattr(cfg.model, name, None) == getattr(gb300.model, name, None), name
+    assert cfg.model.moe_router_dtype == "bf16"
+    assert cfg.model.moe_combine_bwd_dtype == "mxfp8"
+
+    # Keep the shared base's 16-stage PP=2 x VP=8 layout, EP and TP.
+    assert cfg.model.pipeline_model_parallel_layout == gb300.model.pipeline_model_parallel_layout
+    assert (gb300.model.pipeline_model_parallel_size, gb300.model.virtual_pipeline_model_parallel_size) == (2, 8)
+    assert (cfg.model.pipeline_model_parallel_size, cfg.model.virtual_pipeline_model_parallel_size) == (2, 8)
+    assert cfg.model.expert_model_parallel_size == gb300.model.expert_model_parallel_size == 32
+    assert cfg.model.tensor_model_parallel_size == gb300.model.tensor_model_parallel_size == 1
+
+    # Rubin buffer sizing and MLPerf-derived fusions, CUDA graphs and runtime settings.
+    assert cfg.model.moe_flex_dispatcher_num_sms == 64
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.fused_residual_rmsnorm is True
+    assert cfg.model.mla_down_proj_fusion is True
+    assert cfg.model.use_fused_mla_kv_rope_quant is True
+    assert cfg.model.use_grouped_gemm_for_shared_expert is True
+    assert cfg.model.moe_shared_expert_glu_interleave_size == 32
+    assert cfg.model.cuda_graph_warmup_steps == 2
+    assert cfg.optimizer.optimizer_cuda_graph is True
+    assert cfg.dist.use_gloo_process_groups is False
+    assert cfg.dataset.create_attention_mask is False
+
+
+@pytest.mark.parametrize(
+    ("module_name", "factory_name"),
+    [(module, factory) for module, factory in _QWEN3_NVL8_RECIPES if "235b" in factory],
+    ids=lambda value: value,
+)
+def test_qwen3_235b_nvl8_preserves_layout_and_graphs(module_name: str, factory_name: str) -> None:
+    cfg = _build(module_name, factory_name)
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.seq_length == cfg.dataset.seq_length == 4096
+    assert cfg.train.micro_batch_size == (1 if ".b200." in module_name else 2)
+    assert cfg.train.global_batch_size == (
+        512 if "large_scale" in factory_name else (2048 if "64gpu" in factory_name else 8192)
+    )
+
+    full_iteration = "256gpu" in factory_name and ("fp8mx" in factory_name or "nvfp4" in factory_name)
+    assert cfg.model.cuda_graph_impl == ("full_iteration" if full_iteration else "none")
+    if full_iteration:
+        assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+        assert cfg.model.moe_paged_stash is True
+        assert cfg.model.use_transformer_engine_op_fuser is True
+        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+        assert cfg.comm_overlap.delay_wgrad_compute is True
+        assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    if "nvfp4" in factory_name:
+        assert cfg.comm_overlap.tp_comm_overlap is False
+
+
+def test_qwen3_235b_b200_bf16_disables_parameter_gather_overlap() -> None:
+    cfg = _build("qwen.b200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_b200_bf16_config")
+
+    assert cfg.comm_overlap.overlap_param_gather is False
+    assert cfg.comm_overlap.align_param_gather is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.ddp.align_param_gather is False
+    assert cfg.optimizer.overlap_param_gather is False
+    assert cfg.model.cuda_graph_impl == "none"

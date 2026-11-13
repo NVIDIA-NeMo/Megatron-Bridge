@@ -13,15 +13,59 @@
 # limitations under the License.
 
 import importlib
+import inspect
 
 import pytest
+from transformers import ExaoneMoeConfig
 
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.exaone.exaone_moe.exaone_moe_config import ExaoneMoeModelConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
 pytestmark = pytest.mark.unit
 
 _HF_PATH = "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B"
+
+
+def _k_exaone_hf_config() -> ExaoneMoeConfig:
+    """A small K-EXAONE architecture: dense-first MoE, hybrid attention, one MTP layer."""
+    return ExaoneMoeConfig(
+        architectures=["ExaoneMoeForCausalLM"],
+        num_hidden_layers=4,
+        hidden_size=256,
+        intermediate_size=768,
+        moe_intermediate_size=128,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=32,
+        num_experts=8,
+        num_experts_per_tok=2,
+        n_group=1,
+        topk_group=1,
+        num_shared_experts=1,
+        mlp_layer_types=["dense", "sparse", "sparse", "sparse"],
+        layer_types=["sliding_attention", "sliding_attention", "sliding_attention", "full_attention"],
+        sliding_window=128,
+        vocab_size=1024,
+        max_position_embeddings=4096,
+        num_nextn_predict_layers=1,
+        dtype="bfloat16",
+    )
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self) -> ExaoneMoeModelConfig:
+        return AutoBridge.from_hf_config(_k_exaone_hf_config()).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("K-EXAONE recipes must use get_model_config(), not the legacy provider API")
 
 
 @pytest.fixture(autouse=True)
@@ -120,3 +164,30 @@ def test_k_exaone_2_0_short_aliases_resolve(alias_name: str, target_name: str) -
     h100_module = importlib.import_module("megatron.bridge.recipes.exaone.h100.exaone_moe")
 
     assert getattr(recipes, alias_name) is getattr(h100_module, target_name)
+
+
+_EXAONE_MOE_RECIPE_MODULE = importlib.import_module("megatron.bridge.recipes.exaone.h100.exaone_moe")
+_EXAONE_MOE_RECIPE_NAMES = sorted(
+    name
+    for name, value in vars(_EXAONE_MOE_RECIPE_MODULE).items()
+    if not name.startswith("_") and name.endswith("_config") and inspect.isfunction(value)
+    if value.__module__ == _EXAONE_MOE_RECIPE_MODULE.__name__
+)
+
+
+@pytest.mark.parametrize("recipe_name", _EXAONE_MOE_RECIPE_NAMES)
+def test_each_k_exaone_recipe_uses_strict_builder_config(recipe_name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Recipes only set fields that the builder-backed model config declares."""
+    recipe_module = importlib.import_module("megatron.bridge.recipes.exaone.h100.exaone_moe")
+    monkeypatch.setattr(recipe_module, "AutoBridge", _BuilderOnlyBridge)
+
+    cfg = getattr(recipe_module, recipe_name)()
+
+    assert isinstance(cfg.model, ExaoneMoeModelConfig)
+    assert cfg.model.qk_layernorm is True
+    assert cfg.model.num_moe_experts == 8
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.sequence_parallel is True
+    if "2_0" in recipe_name:
+        assert cfg.model._pipeline_model_parallel_layout_builder is recipe_module.get_k_exaone_2_0_pipeline_layout
+        assert cfg.model.pipeline_model_parallel_layout is not None

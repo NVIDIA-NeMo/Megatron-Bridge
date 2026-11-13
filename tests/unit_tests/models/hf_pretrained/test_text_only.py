@@ -199,7 +199,8 @@ def test_wrapper_retains_revision_and_drops_media_artifacts(checkpoint):
     assert original.OPTIONAL_ARTIFACTS == ["generation_config", "processor", "image_processor"]
     assert original.custom_file_patterns == ["*.py"]
     assert wrapper.config is not config
-    assert wrapper.config.num_nextn_predict_layers == 2
+    # HF stores one physical shared block; recipes select its training repetitions.
+    assert wrapper.config.num_nextn_predict_layers == 1
     assert config.num_nextn_predict_layers == 1
     assert wrapper.init_kwargs["revision"] == "resolved"
     assert wrapper.processor is None
@@ -303,7 +304,7 @@ def test_wrapper_artifacts_reload_as_native_text_without_remote_code(checkpoint,
     path, _ = checkpoint
     original = PreTrainedCausalLM.from_pretrained(path, trust_remote_code=True)
     original.config = PretrainedConfig()
-    config = NemotronHConfig(num_nextn_predict_layers=2)
+    config = NemotronHConfig(num_nextn_predict_layers=1)
     config.architectures = ["NemotronHForCausalLM"]
     wrapper = _select_text(original, config=config)
     wrapper.tokenizer = PreTrainedTokenizerFast(
@@ -315,7 +316,8 @@ def test_wrapper_artifacts_reload_as_native_text_without_remote_code(checkpoint,
     wrapper.save_artifacts(output)
     reloaded = AutoConfig.from_pretrained(output, trust_remote_code=False)
     assert type(reloaded) is NemotronHConfig
-    assert reloaded.num_nextn_predict_layers == 2
+    assert reloaded.num_nextn_predict_layers == 1
+    assert reloaded.mtp_use_repeated_layer
     assert reloaded.architectures == ["NemotronHForCausalLM"]
     assert not getattr(reloaded, "auto_map", None)
     assert not hasattr(reloaded, "vision_config")

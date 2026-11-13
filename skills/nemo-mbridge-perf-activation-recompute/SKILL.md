@@ -14,21 +14,19 @@ license: Apache-2.0
 Stable docs: @docs/training/activation-recomputation.md
 Card: @skills/nemo-mbridge-perf-activation-recompute/card.yaml
 
-<!-- Guidance refreshed: 2026-08-12. -->
-
 Activation recompute (activation checkpointing) trades additional forward work during backward for lower retained-activation memory. The useful checkpoint boundary depends on the model architecture, attention backend, parallelism, and the tensor that actually drives the per-rank peak.
 
 ## Quick Decision Guide
 
 1. Confirm the pressure is real allocation, not allocator fragmentation. Compare `max_memory_allocated()` with `max_memory_reserved()` on every rank.
-2. Keep an explicit no-recompute control when the workload fits. Under selective granularity, `recompute_modules=[]` is valid and useful for this comparison.
-3. Select the first boundary from the architecture and observed peak:
+2. For final library, performance, and verification-card recipes, no recompute and selective recompute on cheap supported modules are both appropriate starting choices. Choose by measured memory headroom and steady-state performance; a no-recompute OOM is not a prerequisite for selective recompute. Keep an explicit no-recompute control when it fits. Under selective granularity, `recompute_modules=[]` is valid and useful for this comparison.
+3. For selective recompute, start with cheap supported boundaries selected from the architecture and observed peak:
    - **Standard attention:** `core_attn` is the common first candidate. It is strongest when unfused attention materializes score/probability tensors. With Transformer Engine fused or Flash Attention, compare it against `[]` because those backends already rematerialize attention internals.
    - **Multi-Latent Attention (MLA):** start with `mla_up_proj` when expanded Q/K/V projections dominate. Add `core_attn` only when the attention-core state still matters.
    - **Grouped MoE:** start with `moe_act` when the expert intermediate activation dominates; add `layernorm` when norm outputs are material. Use whole `moe` recompute only after accounting for the extra expert compute and communication it replays.
    - **Dense FFN:** `mlp` can save the whole dense-MLP activation region, but it usually costs more compute than a narrow output-discard boundary.
 4. Change one label at a time. Record per-rank allocated/reserved peaks plus steady-state step time or throughput; do not infer a global module ranking from one recipe.
-5. Use full-layer recompute only when targeted selective boundaries do not make the workload fit. Full recompute has the broadest memory effect and the largest replay cost.
+5. Full-layer recompute is allowed temporarily for diagnostic bring-up. Retain it in a final recipe only when target-scale measurements show that no recompute and supported selective boundaries still fail to fit, or matched runs show better end-to-end throughput with full recompute (for example, by enabling larger MBS or lower TP). Document the memory/OOM evidence, boundaries and layouts tested, and steady-state performance of the alternatives. Full recompute can severely reduce throughput and must not become the default from a bring-up success alone.
 6. Treat CUDA graphs, FP8, context-parallel communication, and overlap features as compatibility constraints, not afterthoughts.
 
 Megatron Core's `cpu_offloading=True` is an alternative when PCIe/NVLink transfer overhead is preferable to replayed compute. It cannot be combined with activation recompute and is not compatible with pipeline parallelism greater than one.
@@ -93,10 +91,11 @@ These are candidate patterns, not an ordering guarantee. Peak attribution and ma
   `gdn_norm_out`, and current Bridge recipes demonstrate it in a selective
   list. Verify that label and the recipe's complete layer mix on the exact
   revision rather than describing Qwen3.5 selective recompute as unsupported.
-- If the selected Qwen3.5 boundaries still OOM after optimizer initialization,
-  full-layer recompute is the valid capacity fallback. This is more likely at
-  lower EP because EP shards expert weights but not dense or activation state;
-  it is not proof that the selective boundary itself is broken.
+- If no recompute and the supported Qwen3.5 selective boundaries still OOM at
+  target scale, full-layer recompute is the capacity fallback under the evidence
+  requirement above. Test through optimizer initialization and steady steps.
+  OOM is more likely at lower EP because EP shards expert weights but not dense
+  or activation state; it is not proof that the selective boundary itself is broken.
 
 ## Measurement Contract
 
@@ -109,7 +108,14 @@ For every candidate, capture:
 - steady-state step time or throughput after warmup;
 - a short convergence or numerical-sanity check appropriate to the task.
 
-Use a matched no-recompute control and change one recompute choice at a time. Peak memory from different jobs, backends, or parallel layouts is not a module-ranking benchmark.
+Use a matched no-recompute control when it fits and change one recompute choice
+at a time to isolate its effect. For a throughput-driven full-recompute choice,
+also compare viable no-recompute/selective layouts with the full-recompute
+layout, including any larger MBS or lower TP it enables. Keep hardware,
+workload, precision, GBS, and convergence settings fixed; record all execution
+changes and check loss. Compare useful tokens/s/GPU or complete step time,
+not replayed FLOPs. Such a layout comparison supports the final recipe choice,
+not a ranking of individual modules or checkpoint boundaries.
 
 Do not call a candidate successful merely because it advances farther than the
 control. Run through optimizer-state initialization and multiple steady-state
@@ -139,7 +145,8 @@ iteration 2. Time and throughput are means over iterations 11--20.
 | `moe_act` | 35.941 | 466.26 | 75.50 | -1.85% | +1.99% |
 | `layernorm`, `moe_act` | 35.949 | 506.53 | 70.27 | -1.83% | +10.79% |
 
-For this exact workload, `moe_act` is the best first boundary: it recovered
+For this exact workload, both no recompute and cheap selective `moe_act` are
+reasonable choices depending on the desired memory headroom. `moe_act` recovered
 nearly as much allocated memory as `mla_up_proj` for less replay cost.
 `mla_up_proj` is the next candidate if its roughly 39 MB additional reduction
 matters. Adding `mlp` to `mla_up_proj` or `layernorm` to `moe_act` did not
@@ -182,11 +189,12 @@ is used here.
 ### Cross-model conclusion
 
 These measurements do not define one ranking. Moonlight fit with an empty
-control and favored narrow `moe_act`; Nemotron required broad whole-`moe`
-recompute; historical dense Llama evidence found whole-`mlp` replay costly and
-lacked an empty control. The correct first candidate is therefore the narrowest
-boundary implicated by the architecture and peak, followed by broader replay
-only when the narrow choice does not pass the complete step.
+control, and cheap selective `moe_act` offered additional headroom at modest
+cost. Nemotron required broad whole-`moe` recompute; historical dense Llama
+evidence found whole-`mlp` replay costly and lacked an empty control. Start with
+no recompute or cheap selective boundaries, choose by measured memory and
+performance, and broaden only when measured capacity or end-to-end throughput
+benefits justify the replay cost.
 
 ## Compatibility and Validation
 
@@ -278,4 +286,4 @@ Limitations of this evidence:
 - `skills/nemo-mbridge-perf-memory-tuning/SKILL.md`
 - `skills/nemo-mbridge-perf-cuda-graphs/SKILL.md`
 - `skills/nemo-mbridge-perf-cpu-offloading/SKILL.md`
-- Megatron Core activation recomputation guide: <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html>
+- [Megatron Core activation recomputation guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html)

@@ -40,9 +40,9 @@ def test_forward_propagates_padding_mask_to_transformer_layer():
         def __init__(self):
             self.called_with = None
 
-        def __call__(self, **kwargs):
-            self.called_with = kwargs
-            return kwargs["hidden_states"], kwargs["context"]
+        def __call__(self, hidden_states, /, **kwargs):
+            self.called_with = {"hidden_states": hidden_states, **kwargs}
+            return hidden_states, kwargs["context"]
 
     layer = _Layer()
     block = SimpleNamespace(
@@ -104,10 +104,10 @@ def transformer_config():
 class TestQwen3VLTransformerBlock:
     """Test suite for Qwen3VL TransformerBlock."""
 
-    @classmethod
-    def setup_class(cls):
-        """Setup distributed process group."""
-        if not dist.is_initialized():
+    def setup_method(self):
+        """Set up a distributed process group owned by this test when needed."""
+        self._owns_process_group = not dist.is_initialized()
+        if self._owns_process_group:
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29501"
             os.environ["RANK"] = "0"
@@ -125,12 +125,6 @@ class TestQwen3VLTransformerBlock:
                 timeout=datetime.timedelta(minutes=30),
             )
 
-    @classmethod
-    def teardown_class(cls):
-        """Teardown distributed process group."""
-        if dist.is_initialized():
-            dist.destroy_process_group()
-
     def _setup_parallel_state(self):
         """Setup Megatron parallel state."""
         parallel_state.initialize_model_parallel(
@@ -144,8 +138,12 @@ class TestQwen3VLTransformerBlock:
         model_parallel_cuda_manual_seed(123)
 
     def teardown_method(self):
-        """Teardown Megatron parallel state."""
-        parallel_state.destroy_model_parallel()
+        """Release Megatron state and the default process group owned by this test."""
+        try:
+            parallel_state.destroy_model_parallel()
+        finally:
+            if self._owns_process_group and dist.is_initialized():
+                dist.destroy_process_group()
 
     @pytest.mark.timeout(30)
     @pytest.mark.parametrize(

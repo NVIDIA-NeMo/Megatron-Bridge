@@ -22,8 +22,10 @@ import pytest
 import torch
 
 from megatron.bridge.recipes.deepseek import (
+    deepseek_v4_flash_pretrain_config,
     deepseek_v4_flash_pretrain_muon_config,
     deepseek_v4_flash_pretrain_mxfp8_config,
+    set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as deepseek_v4_h100_module
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
@@ -35,15 +37,22 @@ DEEPSEEK_V4_TEST_MODEL_PATH = Path("/home/TestData/megatron_bridge/models/deepse
 
 def _has_dsv4_in_mcore() -> bool:
     try:
-        return all(
+        if not all(
             importlib.util.find_spec(mod) is not None
             for mod in (
                 "megatron.core.transformer.hyper_connection",
                 "megatron.core.transformer.experimental_attention_variant.csa",
                 "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
             )
-        )
-    except ModuleNotFoundError:
+        ):
+            return False
+        # The DSv4 HybridModel stack spec ships in the "Enable DeepSeek-v4 hybrid_model"
+        # megatron-core series; older cores have the attention modules above but not this,
+        # so the DSv4 hybrid model cannot be built. Skip rather than fail on such cores.
+        from megatron.core.models.hybrid import hybrid_layer_specs
+
+        return hasattr(hybrid_layer_specs, "hybrid_dsv4_stack_spec")
+    except (ImportError, ValueError):
         return False
 
 
@@ -57,15 +66,15 @@ def _deepseek_v4_toy_model_path() -> str:
     return str(model_path)
 
 
+# On HybridModel, DeepSeek-V4's layer count, per-layer compression ratios, and MoE
+# placement are all derived from the toy HF config via the hybrid layer pattern, so we
+# must NOT override num_layers / csa_compress_ratios / moe_layer_freq here (they would
+# conflict with the pattern-derived values and trip finalize()'s consistency check).
+# We only disable the Blackwell-only fused kernels and any explicit pipeline layout so
+# the smoke test runs unfused on a single rank.
 DEEPSEEK_V4_MODEL_OVERRIDES = {
-    "num_layers": 2,
     "mtp_num_layers": None,
     "pipeline_model_parallel_layout": None,
-    "num_moe_experts": 8,
-    "moe_router_topk": 1,
-    "moe_layer_freq": [0, 1],
-    "csa_compress_ratios": [0, 0],
-    "csa_backend": "unfused",
     "use_fused_mhc": False,
     "apply_rope_fusion": False,
     "dsa_indexer_loss_coeff": 0.0,
@@ -76,6 +85,12 @@ DEEPSEEK_V4_MODEL_OVERRIDES = {
 
 DEEPSEEK_V4_PRETRAIN_RECIPES = [
     # (config_func, name, requires_blackwell, checkpoint_overrides)
+    (
+        deepseek_v4_flash_pretrain_config,
+        "deepseek_v4_flash_adam_bf16",
+        False,
+        None,
+    ),
     (
         deepseek_v4_flash_pretrain_muon_config,
         "deepseek_v4_flash_muon_bf16",
@@ -116,7 +131,13 @@ class TestDeepSeekRecipes:
         def recipe_with_test_model():
             with pytest.MonkeyPatch.context() as monkeypatch:
                 monkeypatch.setattr(deepseek_v4_h100_module, "DEEPSEEK_V4_FLASH_HF_PATH", hf_path)
-                return config_func()
+                config = config_func()
+            # Rebuild the native '|' segments for one stage; overriding PP alone would keep
+            # the recipe's multi-stage segments in hybrid_layer_pattern.
+            config.model.pipeline_model_parallel_size = 1
+            config.model.virtual_pipeline_model_parallel_size = None
+            set_deepseek_v4_pipeline_model_parallel_layout(config.model)
+            return config
 
         run_pretrain_recipe_test(
             recipe_with_test_model,

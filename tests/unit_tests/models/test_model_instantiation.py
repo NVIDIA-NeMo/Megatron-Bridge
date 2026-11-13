@@ -364,6 +364,19 @@ class TestPrintNumParams:
 class TestGetModel:
     """Test cases for get_model function."""
 
+    @pytest.mark.parametrize(
+        (
+            "use_layer_wise",
+            "use_layer_wise_param_layout",
+            "initial_distributed_optimizer",
+            "expected_distributed_optimizer",
+        ),
+        [
+            (False, None, True, True),
+            (True, None, True, False),
+            (True, True, False, True),
+        ],
+    )
     @patch("megatron.bridge.models.model_provider._create_model")
     @patch("megatron.bridge.models.model_provider._print_num_params")
     @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
@@ -376,6 +389,10 @@ class TestGetModel:
         mock_fix_float8,
         mock_print_params,
         mock_create_model,
+        use_layer_wise,
+        use_layer_wise_param_layout,
+        initial_distributed_optimizer,
+        expected_distributed_optimizer,
     ):
         """Test basic get_model functionality."""
         # Setup mocks
@@ -392,10 +409,13 @@ class TestGetModel:
         mock_ddp_wrap.return_value = [model]
 
         model_provider = MockModelProvider(model)
-        ddp_config = DistributedDataParallelConfig()
+        ddp_config = DistributedDataParallelConfig(use_distributed_optimizer=initial_distributed_optimizer)
 
         pg = _PG()
-        result = get_model(model_provider, ddp_config, pg_collection=pg)
+        kwargs = {"use_layer_wise_distributed_optimizer": use_layer_wise}
+        if use_layer_wise_param_layout is not None:
+            kwargs["use_layer_wise_param_layout"] = use_layer_wise_param_layout
+        result = get_model(model_provider, ddp_config, pg_collection=pg, **kwargs)
 
         # Assertions
         assert len(result) == 1
@@ -404,6 +424,11 @@ class TestGetModel:
         assert "pg_collection" in mock_create_model.call_args.kwargs
         mock_print_params.assert_called_once()
         mock_ddp_wrap.assert_called_once()
+        assert mock_ddp_wrap.call_args.kwargs["use_layer_wise_distributed_optimizer"] is use_layer_wise
+        effective_ddp_config = mock_ddp_wrap.call_args.args[2]
+        assert effective_ddp_config.use_distributed_optimizer is expected_distributed_optimizer
+        assert ddp_config.use_distributed_optimizer is initial_distributed_optimizer
+        assert (effective_ddp_config is not ddp_config) is use_layer_wise
 
     @patch("megatron.bridge.models.model_provider._create_model")
     @patch("megatron.bridge.models.model_provider._print_num_params")

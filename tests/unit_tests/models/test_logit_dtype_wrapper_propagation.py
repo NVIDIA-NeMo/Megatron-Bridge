@@ -17,7 +17,6 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_LLAVA_CONTRACT,
     NemotronOmniLlavaModelProvider,
 )
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.thinker_model import Qwen3ASRThinkerModel
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import Qwen3OmniThinkerModel
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.thinker_model import Qwen25OmniThinkerModel
@@ -187,18 +186,59 @@ def test_nemotron_omni_wrapper_forwards_logit_dtype() -> None:
     assert captured["logit_dtype"] is torch.float32
 
 
-def test_nemotron_vl_provider_rejects_requested_dtype_at_llava_boundary() -> None:
-    provider = NemotronVLModelProvider(logit_dtype=torch.float32)
+def test_nemotron_omni_wrapper_reads_logit_dtype_from_builder_model_config() -> None:
+    captured: dict[str, torch.dtype] = {}
+    # A builder-backed config keeps logit_dtype on the outer config, not on the transformer config.
+    language_config = _language_config()
+    del language_config.logit_dtype
+    with (
+        patch("megatron.core.transformer.module.MegatronModule.__init__", new=_fake_megatron_init),
+        patch(
+            "megatron.bridge.models.nemotron_omni.modeling_nemotron_omni.HybridModel",
+            new=_fake_language_model(captured),
+        ),
+    ):
+        NemotronOmniModel(
+            language_transformer_config=language_config,
+            language_transformer_layer_spec=object(),
+            language_vocab_size=32,
+            language_max_sequence_length=16,
+            vision_transformer_config=object(),
+            vision_transformer_layer_spec=object(),
+            vision_projection_config=object(),
+            vision_projection_layer_spec=object(),
+            image_token_index=1,
+            pre_process=False,
+            add_encoder=False,
+            pg_collection=_pg_collection(),
+            model_config=SimpleNamespace(logit_dtype=torch.float32),
+        )
 
-    with pytest.raises(RuntimeError, match="LLaVAModel does not support logit_dtype"):
-        provider.provide()
+    assert captured["logit_dtype"] is torch.float32
 
 
-def test_legacy_nemotron_omni_provider_rejects_requested_dtype_at_llava_boundary() -> None:
+class LegacyLLaVAModel:
+    """Exercise the unsupported interface still present in pinned MCore dev."""
+
+    def __init__(self, **kwargs: object) -> None:
+        raise AssertionError("Unsupported constructor must be rejected before invocation")
+
+
+@pytest.mark.parametrize("supports_dtype", [False, True])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_legacy_nemotron_omni_provider_logit_dtype_at_llava_boundary(supports_dtype: bool, dtype: torch.dtype) -> None:
     provider = NemotronOmniLlavaModelProvider(
         nemotron_omni_contract=NEMOTRON_OMNI_LLAVA_CONTRACT,
-        logit_dtype=torch.float32,
+        logit_dtype=dtype,
     )
+    captured: dict[str, torch.dtype] = {}
+    fake_llava = SimpleNamespace(config=provider)
+
+    def compatible_llava(*args: object, logit_dtype: torch.dtype | None = None, **kwargs: object) -> SimpleNamespace:
+        assert logit_dtype is not None
+        captured["logit_dtype"] = logit_dtype
+        return fake_llava
+
     with (
         patch.object(provider, "_validate_omni_config"),
         patch.object(provider, "_build_vision_config", return_value=SimpleNamespace(class_token_len=0)),
@@ -213,9 +253,21 @@ def test_legacy_nemotron_omni_provider_rejects_requested_dtype_at_llava_boundary
             return_value=object(),
         ),
         patch.object(provider, "_resolve_hybrid_stack_spec", return_value=object()),
+        patch.object(provider, "_configure_llava_preprocess_contract"),
+        patch(
+            "megatron.bridge.models.nemotron_omni.nemotron_omni_provider.LLaVAModel",
+            new=compatible_llava if supports_dtype else LegacyLLaVAModel,
+        ),
+        patch("megatron.bridge.models.nemotron_omni.nemotron_omni_provider.NemotronOmniLlavaModel") as wrapper,
     ):
-        with pytest.raises(RuntimeError, match="LLaVAModel does not support logit_dtype"):
-            provider._provide_llava()
+        if supports_dtype:
+            assert provider._provide_llava() is wrapper.return_value
+            assert captured["logit_dtype"] is dtype
+            wrapper.assert_called_once_with(llava_model=fake_llava)
+        else:
+            with pytest.raises(RuntimeError, match="LegacyLLaVAModel does not support logit_dtype"):
+                provider._provide_llava()
+            wrapper.assert_not_called()
 
 
 def test_gemma4_dense_forwards_logit_dtype() -> None:

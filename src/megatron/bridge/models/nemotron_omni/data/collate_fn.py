@@ -245,6 +245,18 @@ def _pixel_shuffled_token_count(*, height: int, width: int, patch_dim: int) -> i
     return (patch_rows // PIXEL_SHUFFLE_FACTOR) * (patch_cols // PIXEL_SHUFFLE_FACTOR)
 
 
+def _join_content_parts(parts: Sequence[str]) -> str:
+    """Separate structured parts without duplicating source-owned newlines."""
+    rendered: list[str] = []
+    for index, part in enumerate(parts):
+        # Energon preserves the newline after a literal <image>/<video> marker
+        # in its text part. Keep that separator (and intentional blank lines).
+        if index and not parts[index - 1].endswith("\n") and not part.startswith("\n"):
+            rendered.append("\n")
+        rendered.append(part)
+    return "".join(rendered)
+
+
 def _render_text_conversation(example: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[Any]]:
     """Replace structured image parts with literal placeholders in source order."""
     conversation: list[dict[str, Any]] = []
@@ -265,7 +277,7 @@ def _render_text_conversation(example: Mapping[str, Any]) -> tuple[list[dict[str
                     text_parts.append(str(item.get("text", "")))
                 elif isinstance(item, str):
                     text_parts.append(item)
-            turn_copy["content"] = "\n".join(text_parts)
+            turn_copy["content"] = _join_content_parts(text_parts)
         elif content is not None and not isinstance(content, str):
             turn_copy["content"] = str(content)
         conversation.append(turn_copy)
@@ -362,7 +374,7 @@ def _prepare_temporal_rows(
                         text_parts.append(str(item.get("text", "")))
                     elif isinstance(item, str):
                         text_parts.append(item)
-                turn_copy["content"] = "\n".join(text_parts)
+                turn_copy["content"] = _join_content_parts(text_parts)
             elif content is not None and not isinstance(content, str):
                 turn_copy["content"] = str(content)
             conversation.append(turn_copy)

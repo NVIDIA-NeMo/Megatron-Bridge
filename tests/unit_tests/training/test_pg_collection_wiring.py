@@ -92,6 +92,7 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
     """Skipping the stop iteration must still close an active Nsys capture."""
     from megatron.bridge.training import profiling as profiling_module
     from megatron.bridge.training import train as train_module
+    from megatron.bridge.training.config import GPTDatasetConfig
 
     profiling = SimpleNamespace(
         use_pytorch_profiler=False,
@@ -110,11 +111,14 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
             iterations_to_skip={1},
         ),
         validation=SimpleNamespace(eval_interval=0, start_eval_at_iter=None),
+        dataset=GPTDatasetConfig(seq_length=8, random_seed=1234),
         profiling=profiling,
         straggler=None,
         ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
         optimizer=SimpleNamespace(
+            optimizer="adam",
             use_distributed_optimizer=False,
+            use_layer_wise_distributed_optimizer=False,
             optimizer_cuda_graph=False,
         ),
         model=SimpleNamespace(
@@ -162,7 +166,7 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
     monkeypatch.setattr(train_module, "is_full_iteration_cuda_graph", lambda _config: False)
     monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
     monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
-    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
+    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
     monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)
     monkeypatch.setattr(train_module, "should_fire", lambda *args: False)
@@ -198,6 +202,7 @@ def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
     """A rerun-requested exit must close an active Nsys capture."""
     from megatron.bridge.training import profiling as profiling_module
     from megatron.bridge.training import train as train_module
+    from megatron.bridge.training.config import GPTDatasetConfig
 
     profiling = SimpleNamespace(
         use_pytorch_profiler=False,
@@ -216,11 +221,14 @@ def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
             iterations_to_skip=set(),
         ),
         validation=SimpleNamespace(eval_interval=0, start_eval_at_iter=None),
+        dataset=GPTDatasetConfig(seq_length=8, random_seed=1234),
         profiling=profiling,
         straggler=None,
         ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
         optimizer=SimpleNamespace(
+            optimizer="adam",
             use_distributed_optimizer=False,
+            use_layer_wise_distributed_optimizer=False,
             optimizer_cuda_graph=False,
         ),
         model=SimpleNamespace(
@@ -272,7 +280,7 @@ def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
     monkeypatch.setattr(train_module, "is_full_iteration_cuda_graph", lambda _config: False)
     monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
     monkeypatch.setattr(train_module, "train_step", lambda *args: ({}, True, False, True, 16, None, None, None))
-    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
+    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
     monkeypatch.setattr(train_module, "tensor_inspect_step_if_enabled", lambda _config: None)
     monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)
@@ -308,6 +316,7 @@ def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
 def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch):
     """A dummy first iteration must not strand parameter-gather hook initialization."""
     from megatron.bridge.training import train as train_module
+    from megatron.bridge.training.config import GPTDatasetConfig
 
     config = SimpleNamespace(
         train=SimpleNamespace(
@@ -321,6 +330,7 @@ def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch
             decrease_batch_size_if_needed=False,
         ),
         validation=SimpleNamespace(eval_interval=0, start_eval_at_iter=None),
+        dataset=GPTDatasetConfig(seq_length=8, random_seed=1234),
         profiling=None,
         straggler=None,
         dist=SimpleNamespace(distributed_timeout_seconds_after_init=None),
@@ -415,7 +425,7 @@ def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch
     monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
     monkeypatch.setattr(train_module, "train_step", lambda *args: ({}, 0, False, False, 0, None, None, None))
     monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
-    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
+    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
     monkeypatch.setattr(train_module, "tensor_inspect_step_if_enabled", lambda _config: None)
     monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)

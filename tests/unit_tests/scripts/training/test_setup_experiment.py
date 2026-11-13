@@ -263,10 +263,10 @@ def test_parser_consumes_peak_mem_clk(option):
 @pytest.mark.parametrize(
     ("requested_peak_mem_clk", "hardware", "expected"),
     [
-        (None, "vr200", 4752),
+        (None, "vrnvl72", 4752),
         (None, "h100", None),
-        (2600, "vr200", 2600),
-        (-1, "vr200", None),
+        (2600, "vrnvl72", 2600),
+        (-1, "vrnvl72", None),
     ],
 )
 def test_peak_mem_clk_resolution(requested_peak_mem_clk, hardware, expected):
@@ -299,7 +299,15 @@ def test_peak_mem_clk_is_applied_once_per_slurm_node():
     assert "sudo nvidia-smi -lmc 4752,4752" in executor.setup_lines
 
 
-def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config",
+        # The deprecated hardware name resolves to the same benchmark recipe.
+        "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config",
+    ],
+)
+def test_main_applies_vrnvl72_peak_mem_clk_default(monkeypatch, recipe_name):
     module = _load_setup_experiment_module()
     configured_clocks = []
     sentinel_executor = object()
@@ -348,7 +356,7 @@ def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
             "image.sqsh",
             "--submission-dry-run",
             "--recipe",
-            "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config",
+            recipe_name,
         ]
     )
 

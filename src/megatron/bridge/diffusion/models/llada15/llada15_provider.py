@@ -20,21 +20,32 @@ from typing import Callable, Union
 from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.diffusion.models.llada15.llada15_attention import LLaDA15TEDotProductAttention
+from megatron.bridge.models.gpt import gpt_builder
 from megatron.bridge.models.gpt_provider import GPTModelProvider, transformer_engine_layer_spec
 
 
-def _llada15_layer_spec(config: "LLaDA15ModelProvider") -> ModuleSpec:
+def llada15_layer_spec(config: "LLaDA15ModelProvider | gpt_builder.GPTModelConfig") -> ModuleSpec:
     """Build a TE GPT layer spec and swap in ``LLaDA15TEDotProductAttention``.
 
     Injecting the custom core attention is the single change required versus
     a vanilla TE GPT layer: it forces bidirectional attention (``no_mask``)
     so the model matches LLaDA1.5's reference implementation, which uses a
     zero attention bias at every forward pass.
+
+    Accepts the legacy provider or a builder-backed GPT model config, whose
+    transformer fields live on ``config.transformer``.
     """
-    spec = transformer_engine_layer_spec(config)
+    if isinstance(config, GPTModelProvider):
+        spec = transformer_engine_layer_spec(config)
+    else:
+        spec = gpt_builder.transformer_engine_layer_spec(config)
     self_attention = spec.submodules.self_attention
     self_attention.submodules.core_attention = LLaDA15TEDotProductAttention
     return spec
+
+
+# Preserve references to the previous private name, which provider checkpoints serialized.
+_llada15_layer_spec = llada15_layer_spec
 
 
 @dataclass
@@ -56,7 +67,7 @@ class LLaDA15ModelProvider(GPTModelProvider):
     ``position_embedding_type`` stays at its default ``"rope"`` value.
     """
 
-    transformer_layer_spec: Union[ModuleSpec, Callable] = _llada15_layer_spec
+    transformer_layer_spec: Union[ModuleSpec, Callable] = llada15_layer_spec
     share_embeddings_and_output_weights: bool = False
     # LLaDA1.5 uses full standard RoPE — let Megatron handle it. The base
     # default is "learned_absolute" which would create a phantom

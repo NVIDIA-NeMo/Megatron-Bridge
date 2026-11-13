@@ -1,0 +1,361 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Native pipeline allocation for DeepSeek V4 attention/MoE pairs."""
+
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+from megatron.core.models.hybrid import hybrid_layer_allocation as allocation
+from megatron.core.models.hybrid.hybrid_model import (
+    _get_hash_moe_layer_threshold,
+    _validate_hash_moe_pipeline_placement,
+)
+from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    DeepSeekV4Bridge,
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
+from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from tests.unit_tests.recipes.recipe_test_utils import deepseek_v4_model_config
+from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
+
+
+pytestmark = pytest.mark.unit
+
+
+def _provider(logical_layers, pp, vp=None):
+    pattern = "WEWE" + "".join("CE" if i % 2 == 0 else "HE" for i in range(logical_layers - 2))
+    return DeepSeekV4HybridModelProvider(
+        num_layers=2 * logical_layers,
+        hidden_size=128,
+        num_attention_heads=4,
+        num_moe_experts=8,
+        moe_ffn_hidden_size=256,
+        ffn_hidden_size=256,
+        vocab_size=1280,
+        hybrid_layer_pattern=pattern,
+        mtp_num_layers=1,
+        mtp_hybrid_override_pattern="WE",
+        pipeline_model_parallel_size=pp,
+        virtual_pipeline_model_parallel_size=vp,
+    )
+
+
+@pytest.mark.parametrize(
+    ("logical_layers", "pp", "vp", "counts"),
+    [(43, 8, None, [6] * 3 + [5] * 5), (43, 4, 4, [3] * 11 + [2] * 5), (61, 4, None, [16, 15, 15, 15])],
+)
+def test_native_pipeline_segments_match_mcore_allocation(logical_layers, pp, vp, counts):
+    cfg = _provider(logical_layers, pp, vp)
+    original_pattern = cfg.hybrid_layer_pattern
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+
+    segments = cfg.hybrid_layer_pattern.split("|")
+    assert "".join(segments) == original_pattern
+    assert [len(segment) for segment in segments] == [2 * count for count in counts]
+    assert all(segment.endswith("E") for segment in segments)
+    assert segments[0].count("E") >= 3
+    layout = PipelineParallelLayerLayout(cfg.pipeline_model_parallel_layout, pipeline_model_parallel_size=pp)
+    mtp_standalone = layout.validate_layer_layout(cfg.num_layers, cfg.mtp_num_layers)
+    assert not mtp_standalone
+    assert layout.layout[0][0][0] is LayerType.embedding
+    assert layout.layout[-1][-1][-2:] == [LayerType.mtp, LayerType.loss]
+
+    for index, segment in enumerate(segments):
+        pp_rank, vp_rank = index % pp, index // pp
+        with (
+            patch.object(allocation.torch.distributed, "get_rank", return_value=pp_rank),
+            patch.object(allocation.torch.distributed, "get_world_size", return_value=pp),
+            patch.object(allocation, "log_on_each_pipeline_stage"),
+        ):
+            configs, offset = allocation.select_pipeline_segment(
+                cfg.hybrid_layer_pattern, cfg, object(), vp_rank if vp else None
+            )
+        assert offset == 2 * sum(counts[:index])
+        assert "".join(allocation.get_layer_type_list_from_layer_config_list(configs)) == segment
+        assert layout.layout[pp_rank][vp_rank].count(LayerType.decoder) == len(configs)
+
+
+def test_pro_perf_preserves_measured_last_stage_room_for_mtp():
+    cfg = _provider(61, 4, 4)
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg, logical_layers_per_stage=[4] * 15 + [1])
+    assert [len(segment) for segment in cfg.hybrid_layer_pattern.split("|")] == [8] * 15 + [2]
+    assert cfg.pipeline_model_parallel_layout[-1] == ["decoder", "decoder", "mtp", "loss"]
+
+
+def test_return_to_pp_one_removes_inherited_stage_boundaries_and_keeps_mtp():
+    cfg = _provider(43, 8)
+    original_pattern = cfg.hybrid_layer_pattern
+    cfg.hybrid_layer_pattern += "/WE"
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    cfg.pipeline_model_parallel_size = 1
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    assert cfg.pipeline_model_parallel_layout is None
+    assert cfg.hybrid_layer_pattern == original_pattern + "/WE"
+
+
+def test_reapplying_layout_is_idempotent():
+    cfg = _provider(43, 4, 4)
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    expected = cfg.hybrid_layer_pattern, cfg.pipeline_model_parallel_layout
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    assert (cfg.hybrid_layer_pattern, cfg.pipeline_model_parallel_layout) == expected
+
+
+@pytest.mark.parametrize(
+    ("pp", "vp", "counts"), [(1, None, [43]), (4, None, [11, 11, 11, 10]), (4, 4, [3] * 11 + [2] * 5)]
+)
+def test_cli_topology_override_rebuilds_native_pattern_and_mtp(pp, vp, counts):
+    cfg = _provider(43, 8)
+    original_pattern = cfg.hybrid_layer_pattern
+    cfg.hybrid_layer_pattern += "/WE"
+    # A topology override intentionally replaces recipe-specific uneven splits.
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg, logical_layers_per_stage=[1] * 7 + [36])
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    runner, _ = _load_recipe_runner_module()
+
+    runner.sync_model_pipeline_layout(
+        SimpleNamespace(model=cfg),
+        cli_overrides=[
+            f"model.pipeline_model_parallel_size={pp}",
+            f"model.virtual_pipeline_model_parallel_size={vp}",
+        ],
+    )
+
+    main_pattern, mtp_pattern = cfg.hybrid_layer_pattern.split("/")
+    segments = main_pattern.split("|")
+    assert "".join(segments) == original_pattern
+    assert [len(segment) for segment in segments] == [2 * count for count in counts]
+    assert mtp_pattern == "WE"
+    if pp == 1:
+        assert cfg.pipeline_model_parallel_layout is None
+    else:
+        assert cfg.pipeline_model_parallel_layout[0][0] == "embedding"
+        assert cfg.pipeline_model_parallel_layout[-1][-2:] == ["mtp", "loss"]
+        assert [stage.count("decoder") for stage in cfg.pipeline_model_parallel_layout] == [
+            2 * count for count in counts
+        ]
+    cfg.finalize()
+
+
+@pytest.mark.parametrize(("pp", "vp"), [(1, None), (4, None), (2, 2)])
+def test_finalize_rejects_segments_left_from_another_topology(pp, vp):
+    # MCore would build only part of the decoder from these eight PP8 segments.
+    cfg = _provider(43, 8)
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    cfg.pipeline_model_parallel_layout = None
+
+    with pytest.raises(ValueError, match="has 8 pipeline segments"):
+        cfg.finalize()
+
+
+def test_finalize_rejects_explicit_layout_that_disagrees_with_segments():
+    cfg = _provider(43, 4)
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    assert [len(segment) for segment in cfg.hybrid_layer_pattern.split("|")] == [22, 22, 22, 20]
+    # Same stage and layer totals, different split from the pattern segments.
+    cfg.pipeline_model_parallel_layout = [
+        ["embedding"] + ["decoder"] * 24,
+        ["decoder"] * 20,
+        ["decoder"] * 22,
+        ["decoder"] * 20 + ["mtp", "loss"],
+    ]
+
+    with pytest.raises(ValueError, match="decoder layers per stage"):
+        cfg.finalize()
+
+
+def test_finalize_keeps_mcore_even_split_for_pattern_without_pipes():
+    cfg = _provider(43, 1)
+    cfg.pipeline_model_parallel_size = 2
+
+    cfg.finalize()
+
+
+def test_finalize_checks_segments_after_hybrid_finalize(monkeypatch):
+    cfg = _provider(43, 8)
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    cfg.pipeline_model_parallel_size = 4
+    cfg.pipeline_model_parallel_layout = None
+    calls = []
+    monkeypatch.setattr(HybridModelProvider, "finalize", lambda self: calls.append(self))
+
+    with pytest.raises(ValueError, match="has 8 pipeline segments"):
+        cfg.finalize()
+    assert calls == [cfg]
+
+
+def _builder_config(pp, vp=None):
+    """The builder-backed config that DSv4 recipes build, with the recipe's native layout."""
+    cfg = deepseek_v4_model_config()
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    return cfg
+
+
+def _segment_lengths(cfg):
+    return [len(segment) for segment in cfg.hybrid_layer_pattern.split("/")[0].split("|")]
+
+
+@pytest.mark.parametrize(("pp", "vp"), [(1, None), (8, None), (4, 2)])
+def test_cli_topology_override_rebuilds_builder_config(pp, vp):
+    # Recipes build DeepSeekV4ModelConfig, so the runner hook must be on the config, not only the provider.
+    cfg = _builder_config(4)
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    runner, _ = _load_recipe_runner_module()
+
+    runner.sync_model_pipeline_layout(
+        SimpleNamespace(model=cfg),
+        cli_overrides=[
+            f"model.pipeline_model_parallel_size={pp}",
+            f"model.virtual_pipeline_model_parallel_size={vp}",
+        ],
+    )
+
+    expected = _builder_config(pp, vp)
+    assert cfg.hybrid_layer_pattern == expected.hybrid_layer_pattern
+    assert cfg.pipeline_model_parallel_layout == expected.pipeline_model_parallel_layout
+    cfg.validate()
+
+
+@pytest.mark.parametrize(("pp", "vp"), [(1, None), (2, None), (8, None), (4, 2)])
+def test_builder_config_rejects_segments_left_from_another_topology(pp, vp):
+    cfg = _builder_config(4)
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    cfg.pipeline_model_parallel_layout = None
+
+    with pytest.raises(ValueError, match="has 4 pipeline segments"):
+        cfg.validate()
+
+
+def test_builder_config_rejects_layout_that_disagrees_with_segments():
+    cfg = _builder_config(4)
+    layout = [list(stage) for stage in cfg.pipeline_model_parallel_layout]
+    # Move one attention/MoE pair to the first stage: same totals, different split from the segments.
+    layout[0].extend(["decoder"] * 2)
+    del layout[1][:2]
+    cfg.pipeline_model_parallel_layout = layout
+
+    with pytest.raises(ValueError, match="decoder layers per stage"):
+        cfg.validate()
+
+
+def test_builder_config_checks_a_command_line_layout_string():
+    cfg = _builder_config(4)
+    lengths = _segment_lengths(cfg)
+    stages = "|".join(f"t*{count}" for count in lengths)
+    cfg.pipeline_model_parallel_layout = f"E{stages}mL"
+    cfg.validate()
+
+    shifted = [lengths[0] + 2, lengths[1] - 2, *lengths[2:]]
+    cfg.pipeline_model_parallel_layout = "E" + "|".join(f"t*{count}" for count in shifted) + "mL"
+    with pytest.raises(ValueError, match="decoder layers per stage"):
+        cfg.validate()
+
+
+def _layout_as(layout_form, cfg):
+    """The config's explicit layout as a command-line string, a list, or a parsed layout."""
+    if layout_form == "string":
+        return "E" + "|".join(f"t*{count}" for count in _segment_lengths(cfg)) + "mL"
+    if layout_form == "parsed":
+        return PipelineParallelLayerLayout(
+            layout=cfg.pipeline_model_parallel_layout,
+            pipeline_model_parallel_size=cfg.pipeline_model_parallel_size,
+        )
+    return cfg.pipeline_model_parallel_layout
+
+
+@pytest.mark.parametrize("layout_form", ["string", "list", "parsed"])
+def test_builder_finalize_infers_vpp_from_an_explicit_layout(layout_form):
+    # An eight-stage PP4 layout implies VPP2, which MCore sets during finalization.
+    cfg = _builder_config(4, 2)
+    cfg.pipeline_model_parallel_layout = _layout_as(layout_form, cfg)
+    cfg.virtual_pipeline_model_parallel_size = None
+
+    cfg.finalize()
+
+    assert cfg.virtual_pipeline_model_parallel_size == 2
+
+
+@pytest.mark.parametrize("layout_form", ["string", "list", "parsed"])
+def test_builder_config_rejects_segments_that_do_not_match_the_layout_vpp(layout_form):
+    # Four PP4 segments cannot fill the eight stages of a layout that implies VPP2.
+    layout = _layout_as(layout_form, _builder_config(4, 2))
+    cfg = _builder_config(4)
+    cfg.pipeline_model_parallel_layout = layout
+
+    with pytest.raises(ValueError, match="has 4 pipeline segments"):
+        cfg.validate()
+
+
+@pytest.mark.parametrize("counts", [[4] * 16, [4] * 14 + [5], [4] * 15 + [-1]])
+def test_invalid_stage_counts_fail_before_model_construction(counts):
+    cfg = _provider(61, 4, 4)
+    with pytest.raises(ValueError, match="stage counts"):
+        set_deepseek_v4_pipeline_model_parallel_layout(cfg, logical_layers_per_stage=counts)
+
+
+def _validate_hash_moe_placement(pattern, num_hash_layers):
+    """Apply MCore's per-stage hash-MoE check to every pipe segment of ``pattern``."""
+    threshold = _get_hash_moe_layer_threshold(pattern.replace("|", ""), num_hash_layers)
+    offset = 0
+    for index, segment in enumerate(pattern.split("|")):
+        _validate_hash_moe_pipeline_placement(list(segment), offset, threshold, pre_process=index == 0)
+        offset += len(segment)
+
+
+def test_even_split_would_leave_hash_moe_layers_off_the_embedding_stage():
+    # Four logical blocks with three hash-routed MoE layers: an even PP2 split puts the third on stage 1.
+    with pytest.raises(ValueError, match="hash MoE layers must be in the same pipeline"):
+        _validate_hash_moe_placement("WEWE|CEHE", num_hash_layers=3)
+
+
+@pytest.mark.parametrize(
+    ("logical_layers", "pp", "counts"),
+    [(4, 2, [3, 1]), (43, 32, [3] + [2] * 9 + [1] * 22), (43, 8, [6] * 3 + [5] * 5)],
+)
+def test_default_split_keeps_hash_moe_layers_on_the_embedding_stage(logical_layers, pp, counts):
+    cfg = _provider(logical_layers, pp)
+    cfg.moe_num_hash_layers = 3
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+
+    assert [len(segment) // 2 for segment in cfg.hybrid_layer_pattern.split("|")] == counts
+    _validate_hash_moe_placement(cfg.hybrid_layer_pattern, cfg.moe_num_hash_layers)
+
+
+def test_conversion_hook_lays_out_physical_layers_of_the_truncated_flash_model():
+    # The GPU conversion check truncates DeepSeek-V4-Flash to four logical layers plus MTP.
+    cfg = _provider(4, 2)
+    cfg.moe_num_hash_layers = 3
+    DeepSeekV4Bridge.configure_pipeline_layout(cfg)
+
+    assert cfg.hybrid_layer_pattern == "WEWECE|HE"
+    assert cfg.pipeline_model_parallel_layout == [
+        ["embedding"] + ["decoder"] * 6,
+        ["decoder"] * 2 + ["mtp", "loss"],
+    ]
+    layout = PipelineParallelLayerLayout(cfg.pipeline_model_parallel_layout, pipeline_model_parallel_size=2)
+    assert not layout.validate_layer_layout(cfg.num_layers, cfg.mtp_num_layers)
+    _validate_hash_moe_placement(cfg.hybrid_layer_pattern, cfg.moe_num_hash_layers)

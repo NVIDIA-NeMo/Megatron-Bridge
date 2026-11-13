@@ -1,12 +1,64 @@
 # VLM Bridge Patterns
 
 Reference implementations:
+- **Builder-backed config and conversion:** Muse Glimmer (`src/megatron/bridge/models/muse_glimmer/`)
+- **Builder-backed HybridModel VLM with audio:** Nemotron Omni (`src/megatron/bridge/models/nemotron_omni/`)
 - **Megatron vision encoder:** Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
 - **HF vision encoder:** Gemma3-VL (`src/megatron/bridge/models/gemma_vl/`)
 
-## Provider Pattern
+For new support, invoke HF vision/video and audio encoders directly. Use the
+HF-encoder pattern below and keep only modality integration and genuinely
+missing language computations in Bridge's `modeling_<model>/` directory.
+The native encoder example documents existing models; do not copy or port an
+encoder merely to follow that example. Select the language builder requested by
+the task (including HybridModel); the GPT provider snippets below illustrate
+older integration patterns and do not require GPTModel.
 
-Subclass `GPTModelProvider`. VLM providers add vision-specific fields on top of standard LLM fields.
+## Model Config and Builder Pattern
+
+New multimodal bridges describe the model with a builder-backed `ModelConfig`, as Muse Glimmer
+does:
+
+- `<model>_config.py` — a Bridge `TransformerConfig` subclass for extra decoder fields, and a
+  `ModelConfig` subclass (`ModelConfigOverrideMixin` plus Megatron Core's `GPTModelConfig` or
+  `HybridModelConfig`) that declares the vision config, token IDs and freeze options, and names its
+  builder and `transformer_config_class`.
+- `<model>_builder.py` — a `GPTModelBuilder` or `HybridModelBuilder` subclass whose `build_model()`
+  combines the vision encoder, projector and language model.
+- `<model>_bridge.py` — sets `MODEL_CONFIG_CLASS` and `USE_MODEL_CONFIG_FOR_CONVERSION = True`, and
+  overrides `hf_config_to_model_config()` (reading `text_config`, `vision_config` and the top-level
+  fields listed below) and `megatron_to_hf_config()`.
+
+Recipes then use `AutoBridge.from_hf_pretrained(...).get_model_config()`.
+
+### Migrating a provider-based VLM
+
+Qwen3.5-VL (`qwen_vl/qwen35_vl_config.py`, `qwen_vl/qwen35_vl_builder.py`) moves a VLM whose model class
+was written for a provider onto a builder without changing the model:
+
+- Subclass the language family's builder config, here `BridgeGPTModelConfig`. Keep the vision-language
+  settings on the outer config: the Hugging Face vision config, token IDs, vision geometry, freeze options,
+  and the vision encoder's recompute and CUDA graph settings. On the nested transformer config, declare only
+  the fields that the model and its layers read from the config they are built with.
+- In the bridge, start from the text bridge's language config kwargs, add the vision-language fields, and
+  return the same kwargs from `hf_config_to_provider_kwargs()`. Set every provider default that differs from
+  the text kwargs explicitly, so the deprecated provider path stays unchanged. Qwen3.5's text bridges build a
+  `HybridModel`, so the VL bridge takes `hf_config_to_block_config_kwargs()`, which is still in HF block
+  units; `Qwen35VLHybridLanguageModel` splits each block into its Hybrid positions.
+- Have the builder construct the existing model class, so checkpoint keys and the bridge's registered target
+  stay the same. Pass the outer config to the model for the settings it reads at construction, which a
+  provider carries on the language config (`Qwen3VLModel(model_config=...)`).
+- Subclass bridges that must stay on providers, such as classification-head bridges, opt out with
+  `MODEL_CONFIG_CLASS = None` and `USE_MODEL_CONFIG_FOR_CONVERSION = False`.
+- A builder-built model's `config` is its transformer config, so a step function reads outer fields such as
+  `seq_length` from `state.cfg.model`. `GPTModelConfig.finalize()` also runs checks that a provider's
+  `provide()` override may skip, such as requiring the TE RNG tracker for CUDA graphs and equal virtual
+  pipeline chunks.
+
+## Provider Pattern (legacy)
+
+Existing VLM families subclass `GPTModelProvider`. VLM providers add vision-specific fields on top of
+standard LLM fields.
 
 ```python
 @dataclass
@@ -45,7 +97,7 @@ class MyVLModelProvider(GPTModelProvider):
             raise ValueError(f"TP ({self.tensor_model_parallel_size}) must be <= num_query_groups ({self.num_query_groups})")
 ```
 
-### Key provider fields by source
+### Key config fields by source
 
 Read these from the correct config level:
 
@@ -59,7 +111,7 @@ Read these from the correct config level:
 | `vision_config` | **top-level** `hf_config` | Vision encoder config |
 | `image_token_id`, `video_token_id` | **top-level** `hf_config` | Special token IDs |
 
-## Bridge Pattern
+## Bridge Pattern (legacy provider)
 
 ```python
 @MegatronModelBridge.register_bridge(
@@ -181,6 +233,31 @@ class MyVLModel(MegatronModule):
             text_embeds.masked_scatter_(special_image_mask, image_features)
         return self.language_model(decoder_input=text_embeds, ...)
 ```
+
+#### Building an HF-encoder wrapper from a builder config
+
+Gemma 4 VL (`gemma_vl/gemma4_vl_config.py`, `gemma_vl/gemma4_vl_builder.py`) builds such a wrapper, written for a
+provider, from a builder config:
+
+- A builder-built model's `config` is its transformer config. When the wrapper, or Hugging Face methods bound to
+  it, read vision-language settings from `self.config`, declare those fields on the vision-language transformer
+  config. Keep the rest, such as freeze options, on the outer config.
+- The builder passes the wrapper a language-model factory, `partial(super().build_model, pg_collection)`, in place
+  of `provide_language_model()`, so the encoders and the language model are created in the provider's order. It
+  also passes the process groups, which a provider carries on itself as `_pg_collection`.
+- Checkpoint conversion builds a builder model without the `Float16Module` wrapper, which casts a provider-built
+  model to `params_dtype`. Cast the Hugging Face encoders to `params_dtype` in the wrapper or the builder;
+  `Gemma4VLModel` casts its encoders itself.
+- Hugging Face configs are dataclasses, and Megatron Core's `ModelConfig.as_dict()` reads every field of a nested
+  dataclass. `Gemma4TextConfig` raises on its per-layer attributes, so the Gemma 4 VL configs serialize their
+  Hugging Face sub-configs with `_ConfigContainerBase._convert_value_to_dict()`, as provider checkpoints do.
+- A remote-code Hugging Face config sets its settings as attributes that its dataclass does not declare, so the
+  default deserialization drops them. Kimi K2.5 VL (`kimi_vl/kimi_k25_vl_config.py`) restores its vision config
+  with the config class's own `from_dict()`.
+- A wrapper that loads its encoders from the checkpoint's own code, as `KimiK25VLModel` does, needs the checkpoint
+  and the permission to run its code. `get_model_config()` passes the bridge only the Hugging Face config, so the
+  Kimi K2.5 VL bridge records the config's `name_or_path` and the bridge's `trust_remote_code`, which `AutoBridge`
+  sets from its source, as `hf_model_path` and `trust_remote_code` on the model config.
 
 ## Weight Mapping Naming Conventions
 

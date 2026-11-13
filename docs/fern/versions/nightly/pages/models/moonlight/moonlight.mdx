@@ -6,7 +6,7 @@ The model features 27 decoder layers with 64 routed experts and 8 shared experts
 
 Moonlight models are supported via the Bridge system with specialized configurations for MoE and MLA optimizations.
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -124,8 +124,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command exits successfully, creates iter_0000000, and the checkpoint round-trips through CPU export with exact model configuration. After native reload, all 377 registered parameters and persistent buffers match bitwise by key, shape, dtype, and value. In the serialized files, 26 router correction-bias buffers widen losslessly from BF16 to FP32.
-</p>
+        <p>The command exits successfully, creates iter_0000000, and the checkpoint round-trips through CPU export with exact model configuration. After native reload, all 377 registered parameters and persistent buffers match bitwise by key, shape, dtype, and value. In the serialized files, 26 router correction-bias buffers widen losslessly from BF16 to FP32.</p>
       </section>
     </article>
     <article id="moonlight-16b-a3b-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-hf-to-megatron-gpu" tabindex="-1">
@@ -150,8 +149,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command exits successfully, creates a reloadable iter_0000000, and an exact audit finds all 5,344 serialized source tensors and the model configuration unchanged after the paired GPU export.
-</p>
+        <p>The command exits successfully, creates a reloadable iter_0000000, and an exact audit finds all 5,344 serialized source tensors and the model configuration unchanged after the paired GPU export.</p>
       </section>
     </article>
     <article id="moonlight-16b-a3b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-megatron-to-hf-cpu" tabindex="-1">
@@ -176,8 +174,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command exits successfully, the model configuration is exact, and all 377 registered parameters and persistent buffers match bitwise by key, shape, dtype, and value after native reload. Transformers strictly reloads the output as DeepseekV3ForCausalLM with trust_remote_code disabled. In the serialized files, 26 router correction-bias buffers widen losslessly from BF16 to FP32 and 27 stale, nonpersistent source inv_freq tensors are omitted.
-</p>
+        <p>The command exits successfully, the model configuration is exact, and all 377 registered parameters and persistent buffers match bitwise by key, shape, dtype, and value after native reload. Transformers strictly reloads the output as DeepseekV3ForCausalLM with trust_remote_code disabled. In the serialized files, 26 router correction-bias buffers widen losslessly from BF16 to FP32 and 27 stale, nonpersistent source inv_freq tensors are omitted.</p>
       </section>
     </article>
     <article id="moonlight-16b-a3b-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-megatron-to-hf-gpu" tabindex="-1">
@@ -202,8 +199,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Strict distributed export exits successfully, all 5,344 serialized tensor keys, shapes, dtypes, and values match the recorded HF revision, and native Transformers strictly reloads the output as DeepseekV3ForCausalLM with trust_remote_code disabled and no missing or unexpected keys.
-</p>
+        <p>Strict distributed export exits successfully, all 5,344 serialized tensor keys, shapes, dtypes, and values match the recorded HF revision, and native Transformers strictly reloads the output as DeepseekV3ForCausalLM with trust_remote_code disabled and no missing or unexpected keys.</p>
       </section>
     </article>
     <article id="moonlight-16b-a3b-pretrain-h100" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-pretrain-h100" tabindex="-1">
@@ -253,8 +249,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The uninterrupted 16-GPU bounded RP2 run completes exactly 100 steps at TP1/PP1/CP1/EP8/ETP1, DP16, GBS/MBS 1024/2, and 32-way gradient accumulation with natural MoE routing and the HybridEP flex dispatcher. It reaches peak learning rate at step 40 and completes cosine decay at step 100. LM loss is finite from 12.43248 to 5.158420 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and complete 16-shard iter_0000050 and iter_0000100 checkpoints are saved.
-</p>
+        <p>The uninterrupted 16-GPU bounded RP2 run completes exactly 100 steps at TP1/PP1/CP1/EP8/ETP1, DP16, GBS/MBS 1024/2, and 32-way gradient accumulation with natural MoE routing and the HybridEP flex dispatcher. It reaches peak learning rate at step 40 and completes cosine decay at step 100. LM loss is finite from 12.43248 to 5.158420 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and complete 16-shard iter_0000050 and iter_0000100 checkpoints are saved.</p>
       </section>
     </article>
     <article id="moonlight-16b-a3b-sft-h100" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-sft-h100" tabindex="-1">
@@ -299,13 +294,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe moonlight_16b_sft_8gpu_h100_bf16_tp1_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-sft-hybridep-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=1 &#x27;dataset.dataset_kwargs={pad_to_max_length:true}&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe moonlight_16b_sft_8gpu_h100_bf16_tp1_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-sft-hybridep-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=1 &#x27;dataset.dataset_kwargs=&#123;pad_to_max_length:true&#125;&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 8-GPU run completes exactly 100 full-SFT steps at TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 8/1, and no gradient accumulation, using the HybridEP flex dispatcher with overlapped expert communication and delayed weight-gradient compute. Fixed-width 8K, pad-1 offline packing is 99.73% efficient and averages 21.550 source sequences per pack while retaining 6,553,600 token slots across the 100 updates. LM loss is finite from 1.770799 to 1.180197 with no skipped or NaN iterations, all five metrics are recorded, and the complete eight-shard iter_0000100 full-model checkpoint saves successfully.
-</p>
+        <p>The immutable-revision 8-GPU run completes exactly 100 full-SFT steps at TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 8/1, and no gradient accumulation, using the HybridEP flex dispatcher with overlapped expert communication and delayed weight-gradient compute. Fixed-width 8K, pad-1 offline packing is 99.73% efficient and averages 21.550 source sequences per pack while retaining 6,553,600 token slots across the 100 updates. LM loss is finite from 1.770799 to 1.180197 with no skipped or NaN iterations, all five metrics are recorded, and the complete eight-shard iter_0000100 full-model checkpoint saves successfully.</p>
       </section>
     </article>
     <article id="moonlight-16b-a3b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-sft-long-context-h100" tabindex="-1">
@@ -350,13 +344,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe moonlight_16b_sft_8k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 20 --seq_length 8192 --context_parallel_size 2 --lr 1e-6 --min_lr 0 --warmup_iters 2 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-long-context-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe moonlight_16b_sft_8k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 20 --seq_length 8192 --context_parallel_size 2 --lr 1e-6 --min_lr 0 --warmup_iters 2 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-long-context-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 8-GPU run completes exactly 20 Tulu3 SFT steps at the model&#x27;s 8192-token context limit with recipe-owned TP2/PP1/CP2/EP8/SP-on, GBS/MBS 128/1, and explicit pad-4 offline packing. LM loss is 1.306440 to 1.228019; skipped/NaN totals are 0/0. The persisted post-setup runtime config matches the command, packing is 99.69%, and the sampled training window contains 13,765,732 actual supervised tokens.
-</p>
+        <p>The immutable-revision 8-GPU run completes exactly 20 Tulu3 SFT steps at the model&#x27;s 8192-token context limit with recipe-owned TP2/PP1/CP2/EP8/SP-on, GBS/MBS 128/1, and explicit pad-4 offline packing. LM loss is 1.306440 to 1.228019; skipped/NaN totals are 0/0. The persisted post-setup runtime config matches the command, packing is 99.69%, and the sampled training window contains 13,765,732 actual supervised tokens.</p>
       </section>
     </article>
     <article id="moonlight-16b-a3b-peft-h100" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-peft-h100" tabindex="-1">
@@ -401,16 +394,15 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --recipe moonlight_16b_peft_4gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 2048 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-peft-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/moonlight-16b-a3b/peft-convergence-v1-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --recipe moonlight_16b_peft_4gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 2048 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-peft-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/moonlight-16b-a3b/peft-convergence-v1-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 4-GPU run completes exactly 100 PEFT steps at TP1/PP1/CP1/EP4/ETP1, DP4, SP off, GBS/MBS 32/1, and eight-way gradient accumulation. Pad-4 offline packing is 99.29% efficient, and the sampled 6,553,600 token slots contain 4,291,091 supervised tokens after label masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_q_proj, linear_kv_down_proj, linear_kv_up_proj, and linear_proj is trainable. LM loss is finite from 1.264324 to 1.100755 with no skipped or NaN iterations, all five metrics are recorded, and the complete four-shard iter_0000100 adapter checkpoint covers all 216 expected adapter entries.
-</p>
+        <p>The immutable-revision 4-GPU run completes exactly 100 PEFT steps at TP1/PP1/CP1/EP4/ETP1, DP4, SP off, GBS/MBS 32/1, and eight-way gradient accumulation. Pad-4 offline packing is 99.29% efficient, and the sampled 6,553,600 token slots contain 4,291,091 supervised tokens after label masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_q_proj, linear_kv_down_proj, linear_kv_up_proj, and linear_proj is trainable. LM loss is finite from 1.264324 to 1.100755 with no skipped or NaN iterations, all five metrics are recorded, and the complete four-shard iter_0000100 adapter checkpoint covers all 216 expected adapter entries.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

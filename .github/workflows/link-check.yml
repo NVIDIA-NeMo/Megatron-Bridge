@@ -14,14 +14,15 @@
 
 name: Link check
 
-# Checks external (http/https) links in the docs so broken cross-repo / published
-# links (NVBug 6421302 class) are caught before merge and on a weekly cadence.
+# Checks repository links against the candidate Git tree, then checks external
+# and explicitly versioned HTTP(S) destinations online.
 #
 # Scope note: this job checks http/https URLs only (`--scheme`). Internal
 # cross-page links in the Fern docs use a `.md` extension while the source files
 # are `.mdx`, so filesystem-level checking of relative links would report ~600
-# false positives; that convention is out of scope here. GitHub links are NOT
-# excluded (GITHUB_TOKEN is supplied to avoid rate limits).
+# false positives; that convention is out of scope here. Same-repository links
+# to the target branch use the checked tree, including unchanged historical
+# pages. Other file links use raw content to avoid GitHub HTML rendering.
 
 on:
   pull_request:
@@ -39,28 +40,73 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # On pull_request this is GitHub's synthetic merge, including forks.
+          # A complete tree needs no parents/history or submodule checkout.
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      - name: Check links
+      - name: Record checked revision
+        env:
+          EVENT_SHA: ${{ github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EVENT_SHA"
+          git show --no-patch --format='Checked commit: %H%nTree: %T' HEAD
+          echo "PR base: $BASE_SHA"
+          echo "PR head: $HEAD_SHA"
+
+      - name: Extract all documentation URLs
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
+          lycheeVersion: v0.24.2
+          token: ''
+          # Compact avoids the action appending a Markdown report link to the dump.
+          format: compact
+          jobSummary: false
+          output: ${{ runner.temp }}/documentation-links.txt
+          args: >-
+            --dump
+            --scheme https
+            --scheme http
+            --root-dir docs/fern
+            "docs/fern/**/*.mdx"
+            "docs/**/*.md"
+
+      - name: Check repository links in the candidate tree
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TARGET_BRANCH: ${{ github.base_ref || github.ref_name }}
+        run: |
+          python3 scripts/docs/check_repository_links.py \
+            --repository "$REPOSITORY" --branch "$TARGET_BRANCH" \
+            --links-file "$RUNNER_TEMP/documentation-links.txt" \
+            --external-links-file "$RUNNER_TEMP/external-links.txt"
+
+      - name: Check external and versioned links
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
+        with:
+          lycheeVersion: v0.24.2
           fail: true
-          # TODO(kimi-k3): drop the two kimi_k3 / kimi-k3 excludes below once this PR is
-          # merged. They point at files added by the same PR, so blob/main 404s until then.
+          # An all-local scan is valid; the extraction stage must still be nonempty.
+          failIfEmpty: false
+          # Keep requests bounded and check file availability without GitHub HTML rendering.
           args: >-
             --no-progress
+            --max-concurrency 8
+            --host-concurrency 2
             --max-retries 3
             --retry-wait-time 10
             --scheme https
             --scheme http
             --accept '200..=299,401,403,429'
             --root-dir docs/fern
-            --exclude 'github\.com/deepseek-ai/DeepSeek-V4'
+            --remap '^https://github\.com/([^/]+/[^/]+)/blob/(.+)$ https://raw.githubusercontent.com/$1/$2'
+            --exclude '(github\.com|raw\.githubusercontent\.com)/deepseek-ai/DeepSeek-V4'
             --exclude 'github\.com/NVIDIA-NeMo/Megatron-Bridge/stargazers'
             --exclude 'sched\.com'
             --exclude 'llama\.com'
-            --exclude 'Megatron-Bridge/blob/main/src/megatron/bridge/models/kimi/kimi_k3_'
-            --exclude 'Megatron-Bridge/blob/main/examples/model_verification_cards/kimi-k3/'
-            "docs/fern/**/*.mdx"
-            "docs/**/*.md"
+            "${{ runner.temp }}/external-links.txt"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

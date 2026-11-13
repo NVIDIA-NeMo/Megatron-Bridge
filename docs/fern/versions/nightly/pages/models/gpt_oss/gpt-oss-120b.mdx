@@ -6,7 +6,7 @@ The GPT OSS models feature decoder-only architectures with routed expert layers,
 
 GPT OSS models are supported via the Bridge system with specialized configurations for MoE optimizations and long-context training.
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -140,8 +140,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Future verification must import the pinned MXFP4 Hugging Face checkpoint, dequantize it into a reloadable BF16 Megatron checkpoint at iter_0000000, and audit keys, shapes, dtypes, and values against the recorded source revision.
-</p>
+        <p>Future verification must import the pinned MXFP4 Hugging Face checkpoint, dequantize it into a reloadable BF16 Megatron checkpoint at iter_0000000, and audit keys, shapes, dtypes, and values against the recorded source revision.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="gpt-oss-120b-hf-to-megatron-gpu" tabindex="-1">
@@ -166,8 +165,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Imports the pinned MXFP4 checkpoint on 32 H100 GPUs and creates a reloadable TP1/PP4/EP8/ETP1 BF16 Megatron checkpoint at iter_0000000 with 32 DistCP shards, metadata, train-state, tokenizer, and latest-marker artifacts.
-</p>
+        <p>Imports the pinned MXFP4 checkpoint on 32 H100 GPUs and creates a reloadable TP1/PP4/EP8/ETP1 BF16 Megatron checkpoint at iter_0000000 with 32 DistCP shards, metadata, train-state, tokenizer, and latest-marker artifacts.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="gpt-oss-120b-megatron-to-hf-cpu" tabindex="-1">
@@ -192,8 +190,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The single-process CPU export exits successfully and writes the complete BF16 Hugging Face checkpoint. Exhaustive comparison against the pinned unsloth/gpt-oss-120b-BF16 reference covers all 615 tensors and 116,829,156,672 values with exact keys, shapes, dtypes, and bitwise-equal values. Transformers strictly reloads all 615 state tensors natively as GptOssForCausalLM with attention_bias=true and no loading discrepancies, and the tokenizer also reloads successfully.
-</p>
+        <p>The single-process CPU export exits successfully and writes the complete BF16 Hugging Face checkpoint. Exhaustive comparison against the pinned unsloth/gpt-oss-120b-BF16 reference covers all 615 tensors and 116,829,156,672 values with exact keys, shapes, dtypes, and bitwise-equal values. Transformers strictly reloads all 615 state tensors natively as GptOssForCausalLM with attention_bias=true and no loading discrepancies, and the tokenizer also reloads successfully.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="gpt-oss-120b-megatron-to-hf-gpu" tabindex="-1">
@@ -218,8 +215,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exports the distributed Megatron checkpoint to a reloadable BF16 Hugging Face checkpoint with attention_bias=true. The exported checkpoint has 73 safetensors shards and 615 BF16 tensors totaling 116,829,156,672 parameters, with no missing, unexpected, shape, dtype, or value mismatches against unsloth/gpt-oss-120b-BF16.
-</p>
+        <p>Exports the distributed Megatron checkpoint to a reloadable BF16 Hugging Face checkpoint with attention_bias=true. The exported checkpoint has 73 safetensors shards and 615 BF16 tensors totaling 116,829,156,672 parameters, with no missing, unexpected, shape, dtype, or value mismatches against unsloth/gpt-oss-120b-BF16.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-pretrain-h100" class="verification-model-detail" data-entry-detail="gpt-oss-120b-pretrain-h100" tabindex="-1">
@@ -269,8 +265,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 64x H100, the command completes exactly 100 bounded pretraining optimizer steps using the recipe-owned GBS/MBS, natural routing, and BF16 configuration. All 100 optimizer-step rows are present exactly once with finite loss, zero skipped iterations, and zero NaN iterations. Loss decreases from 10.91136 to 5.828481, all five metrics are recorded, the post-setup run_config.yaml persists, and complete 64-shard iter_0000050 and iter_0000100 checkpoints are saved with metadata, train state, tokenizer artifacts, and latest-checkpoint markers suitable for direct resume.
-</p>
+        <p>On 64x H100, the command completes exactly 100 bounded pretraining optimizer steps using the recipe-owned GBS/MBS, natural routing, and BF16 configuration. All 100 optimizer-step rows are present exactly once with finite loss, zero skipped iterations, and zero NaN iterations. Loss decreases from 10.91136 to 5.828481, all five metrics are recorded, the post-setup run_config.yaml persists, and complete 64-shard iter_0000050 and iter_0000100 checkpoints are saved with metadata, train state, tokenizer artifacts, and latest-checkpoint markers suitable for direct resume.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-sft-h100" class="verification-model-detail" data-entry-detail="gpt-oss-120b-sft-h100" tabindex="-1">
@@ -315,13 +310,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe gpt_oss_120b_sft_32gpu_h100_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 2048 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;b5c939de8f754692c1647ca79fbf85e8c1e70f8a&quot;&#x27; dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-sft-2k-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=1 model.tensor_model_parallel_size=2 model.sequence_parallel=true model.recompute_granularity=selective &#x27;model.recompute_modules=[moe_act]&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gpt-oss-120b/sft-2k-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe gpt_oss_120b_sft_32gpu_h100_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 2048 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;b5c939de8f754692c1647ca79fbf85e8c1e70f8a&quot;&#x27; dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-sft-2k-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=1 model.tensor_model_parallel_size=2 model.sequence_parallel=true model.recompute_granularity=selective &#x27;model.recompute_modules=[moe_act]&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gpt-oss-120b/sft-2k-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 100 full-SFT steps from the imported checkpoint on 32x H100 with immutable Tulu3 selection, assistant-token masking, offline packing, TP2/SP, and selective MoE-activation recompute. All 100 optimizer-step rows are present with finite losses, zero skipped iterations, and zero NaN iterations; loss decreases from 6.751403 to 0.7468084. All five metrics are recorded, the checkpoint-local post-setup run_config.yaml persists, and the final full-model checkpoint at iter_0000100 is complete with 32 DistCP shards, metadata, train state, tokenizer artifacts, and latest-checkpoint marker 100.
-</p>
+        <p>Completed 100 full-SFT steps from the imported checkpoint on 32x H100 with immutable Tulu3 selection, assistant-token masking, offline packing, TP2/SP, and selective MoE-activation recompute. All 100 optimizer-step rows are present with finite losses, zero skipped iterations, and zero NaN iterations; loss decreases from 6.751403 to 0.7468084. All five metrics are recorded, the checkpoint-local post-setup run_config.yaml persists, and the final full-model checkpoint at iter_0000100 is complete with 32 DistCP shards, metadata, train state, tokenizer artifacts, and latest-checkpoint marker 100.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="gpt-oss-120b-sft-long-context-h100" tabindex="-1">
@@ -366,13 +360,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 6 --gpus-per-node 8 --recipe gpt_oss_120b_sft_48gpu_h100_bf16_32k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000 --max_steps 20 --seq_length 32768 --lr 1e-6 --min_lr 0 --warmup_iters 2 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;b5c939de8f754692c1647ca79fbf85e8c1e70f8a&quot;&#x27; dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-sft-long-context-32k-cp4-pp6-nofuse-gbs4-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 6 --gpus-per-node 8 --recipe gpt_oss_120b_sft_48gpu_h100_bf16_32k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000 --max_steps 20 --seq_length 32768 --lr 1e-6 --min_lr 0 --warmup_iters 2 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;b5c939de8f754692c1647ca79fbf85e8c1e70f8a&quot;&#x27; dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-sft-long-context-32k-cp4-pp6-nofuse-gbs4-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 20 long-context full-SFT optimizer steps from the imported checkpoint on 48x H100 with 32K sequence length, immutable Tulu3 selection, assistant-token masking, offline packing, TP2/SP, CP4 with a2a context-parallel communication, PP6, EP4, disabled cross-entropy and bias-activation fusions, and selective MoE-activation recompute. All 20 optimizer-step rows are present exactly once with finite losses, zero skipped iterations, and zero NaN iterations. Loss decreases from 6.666666 to 1.238030, all five metrics are recorded, and no checkpoint is saved because this bounded long-context verification run disables checkpoint output.
-</p>
+        <p>Completed 20 long-context full-SFT optimizer steps from the imported checkpoint on 48x H100 with 32K sequence length, immutable Tulu3 selection, assistant-token masking, offline packing, TP2/SP, CP4 with a2a context-parallel communication, PP6, EP4, disabled cross-entropy and bias-activation fusions, and selective MoE-activation recompute. All 20 optimizer-step rows are present exactly once with finite losses, zero skipped iterations, and zero NaN iterations. Loss decreases from 6.666666 to 1.238030, all five metrics are recorded, and no checkpoint is saved because this bounded long-context verification run disables checkpoint output.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-peft-h100" class="verification-model-detail" data-entry-detail="gpt-oss-120b-peft-h100" tabindex="-1">
@@ -417,13 +410,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe gpt_oss_120b_peft_8gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 2048 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;b5c939de8f754692c1647ca79fbf85e8c1e70f8a&quot;&#x27; dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-peft-2k-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gpt-oss-120b/peft-2k-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe gpt_oss_120b_peft_8gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 2048 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;b5c939de8f754692c1647ca79fbf85e8c1e70f8a&quot;&#x27; dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-peft-2k-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gpt-oss-120b/peft-2k-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 100 LoRA steps from the imported checkpoint with the base frozen, model-native target modules, immutable Tulu3 selection, assistant-token masking, and offline packing. All 100 optimizer-step rows are present with finite losses, zero skipped iterations, and zero NaN iterations; the checkpoint-local post-setup run_config.yaml persists and latest_checkpointed_iteration.txt points to the reloadable final adapter checkpoint at iter_0000100.
-</p>
+        <p>Completed 100 LoRA steps from the imported checkpoint with the base frozen, model-native target modules, immutable Tulu3 selection, assistant-token masking, and offline packing. All 100 optimizer-step rows are present with finite losses, zero skipped iterations, and zero NaN iterations; the checkpoint-local post-setup run_config.yaml persists and latest_checkpointed_iteration.txt points to the reloadable final adapter checkpoint at iter_0000100.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-pretrain-performance-gb200" class="verification-model-detail" data-entry-detail="gpt-oss-120b-pretrain-performance-gb200" tabindex="-1">
@@ -473,8 +465,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 GB200s, the canonical BF16 mock-data performance recipe completes 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 1280/4, forced router balancing, selective layernorm and MoE activation recompute, and expert-parallel communication overlap. All 50 optimizer-step rows are present exactly once with finite loss, zero skipped iterations, and zero NaN iterations. Loss decreases from 12.79104 to 0.03246120. The final ten logged step times average 4995.630 ms, measured model throughput averages 535.230 TFLOP/s/GPU, and derived token-slot throughput averages 16398.332 tokens/s/GPU over the same final-ten window. The resolved configuration persists. Mock data and forced routing make the loss a finiteness check rather than convergence evidence.
-</p>
+        <p>On exactly 64 GB200s, the canonical BF16 mock-data performance recipe completes 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 1280/4, forced router balancing, selective layernorm and MoE activation recompute, and expert-parallel communication overlap. All 50 optimizer-step rows are present exactly once with finite loss, zero skipped iterations, and zero NaN iterations. Loss decreases from 12.79104 to 0.03246120. The final ten logged step times average 4995.630 ms, measured model throughput averages 535.230 TFLOP/s/GPU, and derived token-slot throughput averages 16398.332 tokens/s/GPU over the same final-ten window. The resolved configuration persists. Mock data and forced routing make the loss a finiteness check rather than convergence evidence.</p>
       </section>
     </article>
     <article id="gpt-oss-120b-pretrain-performance-gb300" class="verification-model-detail" data-entry-detail="gpt-oss-120b-pretrain-performance-gb300" tabindex="-1">
@@ -524,11 +515,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP16/ETP1, GBS/MBS 1280/4, and sequence length 4096. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.78424 to 0.0985439; the final ten steps average 2481.140 ms, 1077.350 TFLOP/s/GPU, and 33017.081 tokens/s/GPU. The resolved configuration persists.
-</p>
+        <p>On exactly 64 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP16/ETP1, GBS/MBS 1280/4, and sequence length 4096. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.78424 to 0.0985439; the final ten steps average 2481.140 ms, 1077.350 TFLOP/s/GPU, and 33017.081 tokens/s/GPU. The resolved configuration persists.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

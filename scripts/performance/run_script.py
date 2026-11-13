@@ -20,6 +20,7 @@ import re
 import sys
 
 from argument_parser import parse_cli_args
+from utils.mcore_patches import patch_skip_force_all_tensors_to_non_fp8
 from utils.utils import PerfRecipeNotFoundError, get_perf_optimized_recipe, get_perf_recipe_by_name
 
 
@@ -58,7 +59,12 @@ def _dump_env_rank0() -> None:
 
 def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     """Apply Hydra and argparse overrides to a flat performance recipe."""
-    from utils.overrides import _apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
+    from utils.overrides import (
+        _apply_flat_cli_environment_compatibility,
+        apply_one_gpu_per_rank_device_mapping,
+        set_cli_overrides,
+        set_user_overrides,
+    )
     from utils.utils import apply_target_topology_environment, explicit_environment_override_names
 
     if not hasattr(recipe, "env_vars"):
@@ -99,7 +105,7 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
             gpu=args.gpu,
             protected_env_names=protected_env_names,
         )
-    return recipe
+    return apply_one_gpu_per_rank_device_mapping(recipe)
 
 
 def _prepare_perf_recipe(args, cli_overrides: list[str]):
@@ -121,6 +127,7 @@ def _prepare_perf_recipe(args, cli_overrides: list[str]):
             gpu=args.gpu,
             compute_dtype=args.compute_dtype,
             config_variant=getattr(args, "config_variant", None),
+            launch_num_gpus=args.num_gpus,
         )
         recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)
         from utils.overrides import set_post_overrides
@@ -185,6 +192,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
 def main() -> None:
     """Parse the final training arguments and run the workload once."""
+    patch_skip_force_all_tensors_to_non_fp8()
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
     _run_training(args, cli_overrides)

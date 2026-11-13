@@ -27,6 +27,7 @@ from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_pg_rank, unwrap_model
 
+from megatron.bridge.models.conversion.gtp import _gather_gtp_weight
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -149,6 +150,42 @@ def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expecte
 
 class MegatronPeftBridge:
     """Mixin providing adapter-aware utilities for Megatron model bridges."""
+
+    def _adapter_target_modules(self, adapter_weight_names: Iterable[str]) -> list[str]:
+        """Return the ``target_modules`` written to an exported ``adapter_config.json``.
+
+        ``AutoBridge.save_hf_adapter`` calls this hook with the Hugging Face PEFT names of
+        the exported adapter weights (for example
+        ``base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight``). The default
+        keeps PEFT's usual leaf-name selectors (``q_proj``, ``gate_proj``, ...), inferred by
+        :func:`infer_target_modules_from_adapter_weights`.
+
+        Override it when a leaf name is shared by modules the adapter does not cover. PEFT
+        matches ``target_modules`` by suffix, so a bare leaf name attaches an untrained
+        adapter to every module with that name when the adapter is loaded.
+
+        Example: Beam has an attention output gate ``self_attn.gate_proj`` and an MLP
+        ``mlp.gate_proj``. For an adapter trained on attention only, the default returns
+        ``["gate_proj", "k_proj", "o_proj", "q_proj", "v_proj"]``, which also wraps every
+        ``mlp.gate_proj`` on load. ``BeamBridge`` returns full module paths instead::
+
+            def _adapter_target_modules(self, adapter_weight_names):
+                return sorted(
+                    {
+                        _split_hf_lora_weight_name(name)[0].removeprefix("base_model.model.")
+                        for name in adapter_weight_names
+                    }
+                )
+
+        which yields ``["model.layers.0.self_attn.gate_proj", "model.layers.0.self_attn.q_proj", ...]``.
+
+        Args:
+            adapter_weight_names: Hugging Face PEFT names of the exported LoRA weights.
+
+        Returns:
+            Sorted ``target_modules`` entries for the PEFT adapter config.
+        """
+        return infer_target_modules_from_adapter_weights(adapter_weight_names)
 
     def _get_lora_unwrapped_name(self, megatron_param: str) -> str:
         """Remove `.to_wrap` from LoRA parameter names."""
@@ -370,10 +407,21 @@ class MegatronPeftBridge:
         """Split a fused LoRA linear_out tensor for QKV adapters."""
 
         model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
-        # Pass the LoRA rank as feature_dim so split_qkv_weights doesn't
-        # mistake it for an FP8 compressed hidden_size.
-        feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
-        q_out, k_out, v_out = split_qkv_weights(model.config, linear_out_weight, feature_dim=feature_dim)
+        config = model.config
+        if getattr(config, "kda_two_stage_gates", False):
+            # ColumnParallelMapping gathers [Q_rank | K_rank | V_rank] in TP-rank order.
+            q_dim = config.linear_num_key_heads * config.linear_key_head_dim
+            v_dim = config.linear_num_value_heads * config.linear_value_head_dim
+            tp_size = parallel_state.get_tensor_model_parallel_world_size()
+            shards = linear_out_weight.reshape(tp_size, -1, *linear_out_weight.shape[1:])
+            q_out, k_out, v_out = (
+                section.flatten(0, 1)
+                for section in shards.split((q_dim // tp_size, q_dim // tp_size, v_dim // tp_size), dim=1)
+            )
+        else:
+            # LoRA rank is the feature width, not an FP8-compressed hidden size.
+            feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
+            q_out, k_out, v_out = split_qkv_weights(config, linear_out_weight, feature_dim=feature_dim)
         return {"q_proj": q_out, "k_proj": k_out, "v_proj": v_out}
 
     def _split_gdn_in_proj_linear_out_weight(
@@ -803,12 +851,14 @@ class MegatronPeftBridge:
                 )
             else:
                 linear_in_dict = adapter_task.linear_in_task.mapping.megatron_to_hf(
-                    adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_in_task.param_weight),
+                    adapter_task.linear_in_task.megatron_module,
                 )
                 linear_in_tensor = next(iter(linear_in_dict.values()))
 
                 linear_out_dict = adapter_task.linear_out_task.mapping.megatron_to_hf(
-                    adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_out_task.param_weight),
+                    adapter_task.linear_out_task.megatron_module,
                 )
                 linear_out_tensor = next(iter(linear_out_dict.values()))
 
@@ -842,7 +892,9 @@ class MegatronPeftBridge:
         """Broadcast and gather grouped-expert adapter weights on their real expert-TP axis."""
 
         mapping = task.mapping
-        tensor = mapping.broadcast_from_pp_rank(task.param_weight, cache_key=task.global_param_name)
+        tensor = mapping.broadcast_from_pp_rank(
+            _gather_gtp_weight(task.param_weight), cache_key=task.global_param_name
+        )
         assert tensor is not None, f"Expected adapter tensor for {task.global_param_name}"
         tensor = mapping.maybe_dequantize(tensor)
         if mapping.tp_size > 1:
@@ -1791,11 +1843,18 @@ def _pack_target_parameter_adapter_weights(
     lora_a: torch.Tensor,
     lora_b: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout."""
+    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout.
+
+    Exported factors are ``lora_A [E, r, in]`` and ``lora_B [E, out, r]``. ParamWrapper
+    reads ``lora_A`` as ``(E, r, in)`` and ``lora_B`` as ``(out, r, E)``, so the columns
+    of the packed ``lora_B`` must be expert-fastest.
+    """
 
     if lora_a.ndim == 3 and lora_b.ndim == 3:
-        packed_lora_a = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_b], dim=0)
-        packed_lora_b = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_a], dim=1)
+        num_experts, rank, in_features = lora_a.shape
+        out_features = lora_b.shape[1]
+        packed_lora_a = lora_a.reshape(num_experts * rank, in_features).contiguous()
+        packed_lora_b = lora_b.permute(1, 2, 0).reshape(out_features, rank * num_experts).contiguous()
         return packed_lora_a, packed_lora_b
 
     return lora_a, lora_b

@@ -44,6 +44,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <div class="verification-hardware-controls" aria-label="GPU filter">
         <span>GPU</span>
         <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H100">H100</button>
         <button type="button" data-hardware="GB200">GB200</button>
       </div>
       <span class="verification-combination-count" aria-live="polite"></span>
@@ -85,6 +86,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="qwen3-8-27b-sft-h100" aria-controls="qwen3-8-27b-sft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · H100</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
     <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="qwen3-8-27b-sft-gb200" aria-controls="qwen3-8-27b-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · GB200</strong>
@@ -109,6 +117,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="qwen3-8-27b-pretrain-performance-gb200" aria-controls="qwen3-8-27b-pretrain-performance-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Benchmark · GB200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="qwen3-8-27b-pretrain-performance-h100" aria-controls="qwen3-8-27b-pretrain-performance-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Benchmark · H100</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
@@ -227,30 +242,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-20</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-28</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>6.858159</dd>
+            <dd>6.852052</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>3.955657</dd>
+            <dd>3.831639</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>41,391.140 ms</dd>
+            <dd>3,551.780 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>33.240 TFLOP/s/GPU</dd>
+            <dd>390.360 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>197.917 tokens/s/GPU</dd>
+            <dd>2,306.449 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -261,12 +276,71 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config --mode pretrain --deterministic --pretrained_checkpoint work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 --save_dir work/model-verification/qwen3.8-27b/pretrain/checkpoints --save_interval 10 dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_large_grads=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain/resolved-config.yaml scheduler.lr_decay_iters=20</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config --mode pretrain --pretrained_checkpoint work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 --save_dir work/model-verification/qwen3.8-27b/pretrain/checkpoints --save_interval 10 dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_large_grads=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain/resolved-config.yaml scheduler.lr_decay_iters=20</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 16-GB200 MockVLM pretrain completed exactly 20 deterministic steps at TP4/PP4, sequence length 4096, and MBS2/GBS32. The language model and multimodal vision merger trained while the vision encoder remained frozen. Loss remained finite from 6.858159 to 3.955657 with finite gradients and zero skipped or NaN iterations. Steps 11-20 averaged 41,391.140 ms, 33.240 corrected model TFLOP/s/GPU, and 197.917 token slots/s/GPU. Checkpoints at iterations 10 and 20 each contain 20 files totaling 399,257,378,741 bytes, and the tracker records iteration 20. Both built-in 32-iteration validation and test passes completed at loss 3.907797. The process exited successfully in 26m31s.
+        <p>The 16-GB200 MockVLM pretrain warm-started from the imported checkpoint and completed exactly 20 steps at TP4/PP4, sequence length 4096, and MBS2/GBS32. The language model and multimodal vision merger trained while the vision encoder remained frozen. Deterministic mode is omitted: it replaces the fused Gated DeltaNet kernels with a torch-native reference path and is rejected alongside the recipe&#x27;s pre-gated-delta-rule fusion. Loss remained finite from 6.852052 to 3.831639 with finite gradients and zero skipped or NaN iterations. Steps 11-20 averaged 3,551.780 ms, 390.360 model TFLOP/s/GPU, and 2,306.449 token slots/s/GPU; step 11, the first step after the iteration-10 save, took 4,593.5 ms. Checkpoints at iterations 10 and 20 each contain 20 files totaling 399,255,348,187 bytes, and the tracker records iteration 20. The built-in 32-iteration validation and test passes completed at loss 3.824842 and 3.824848. The process exited successfully in 16m03s.
+</p>
+      </section>
+    </article>
+    <article id="qwen3-8-27b-sft-h100" class="verification-model-detail" data-entry-detail="qwen3-8-27b-sft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-02</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>2.120037</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>1.428843</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>6,212.760 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>221.440 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>1,318.577 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>49.566 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>51.178 GiB</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_27b_sft_16gpu_h100_bf16_config --mode sft --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.8-27B &#x27;dataset.hf_processor_kwargs={revision:1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0}&#x27; dataset.do_validation=false dataset.pad_to_max_length=true model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044 model.sequence_parallel=true model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 model.recompute_modules=null scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.save=null checkpoint.load=null ddp.check_for_large_grads=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-27b/sft-h100/resolved-config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On two 8-GPU H100 nodes, the exact command completed all 100 full-SFT MedPix steps at TP4/PP4/CP1, DP1, MBS4/GBS32, sequence length 4096 with padding to the maximum length, sequence parallelism, and one-layer full-uniform activation recompute: the data, schedule and batch of sft.GB200. Gated DeltaNet runs fused; deterministic mode is omitted because it requires the torch reference Gated DeltaNet backend. Loss remained finite from 2.120037 to 1.428843 with zero skipped or NaN iterations. Steps 91-100 averaged 6,212.760 ms, 221.440 model TFLOP/s/GPU, and 1,318.577 token slots/s/GPU; peak allocated and reserved memory were 49.566 and 51.178 GiB. The recipe&#x27;s own layout does not fit: with sequence parallelism but without activation recompute, the same workload ran out of memory in its first iteration near the approximately 79.1-GiB per-GPU device limit. Checkpoint saves are disabled because export is not in scope for this hardware leaf. The run used a NeMo 26.10 release-candidate base container with the pinned Megatron-Core submodule, and the process exited successfully. This is support verification on the card&#x27;s MedPix SFT contract, not the cross-model convergence cohort.
 </p>
       </section>
     </article>
@@ -475,6 +549,57 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>On 16 GB200 GPUs, the exact canonical BF16 language-and-projector MockVLM recipe completes 20 steps at TP2/PP1/CP1, DP8, sequence length 4096, and MBS2/GBS32. The language model and multimodal vision merger train while the vision encoder remains frozen. The recipe uses fused Gated DeltaNet execution without activation recompute and disables evaluation and checkpoint output for the bounded run. Loss remains finite from 6.852387 to 3.884668 with finite gradients and zero skipped or NaN iterations. Excluding first-iteration kernel compilation, steps 11-20 average 1,679.460 ms, 819.190 corrected model TFLOP/s/GPU, and 4,877.758 token slots/s/GPU; peak allocated memory is 174.120 GiB. The process exits successfully. This mock-data result is throughput evidence, not convergence evidence.
+</p>
+      </section>
+    </article>
+    <article id="qwen3-8-27b-pretrain-performance-h100" class="verification-model-detail" data-entry-detail="qwen3-8-27b-pretrain-performance-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Benchmark · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-28</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>6.860321</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>4.485981</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>4,591.290 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>299.620 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>1,784.248 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config --mode pretrain --pretrained_checkpoint work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 model.sequence_parallel=true dataset.hf_processor_path=Qwen/Qwen3.8-27B tokenizer.tokenizer_model=Qwen/Qwen3.8-27B model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044 scheduler.lr_decay_iters=20 train.eval_iters=0 validation.eval_iters=0 validation.eval_interval=0 checkpoint.save=null checkpoint.load=null logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain-performance-h100/resolved-config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On two nodes with 16x H100, the BF16 language-and-projector MockVLM recipe warm-starts from the card&#x27;s imported GPU Megatron checkpoint and completes 20 steps at TP4/PP4/CP1, DP1, sequence length 4096, and MBS2/GBS32. Sequence parallelism is enabled by the explicit model.sequence_parallel=true override; the recipe default leaves it disabled, which exhausts H100 memory on the first pipeline stage in bounded runs. The language model, including its single MTP layer, and the multimodal vision merger train while the vision encoder remains frozen. Gated DeltaNet runs fused, without activation recompute or CUDA graphs, and evaluation and checkpoint output are disabled. Loss remains finite from 6.860321 to 4.485981 with zero skipped or NaN iterations. Excluding first-iteration Triton compilation and autotuning, steps 11-20 average 4,591.290 ms, 299.620 model TFLOP/s/GPU, and 1,784.248 token slots/s/GPU. The run used a NeMo 26.10 release-candidate base container with the pinned Megatron-Core submodule, and the process exits successfully. This mock-data result is throughput evidence, not convergence evidence.
 </p>
       </section>
     </article>

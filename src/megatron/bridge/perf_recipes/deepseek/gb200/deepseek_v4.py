@@ -15,7 +15,10 @@
 
 import torch
 
-from megatron.bridge.perf_recipes._common import _benchmark_common
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
+from megatron.bridge.perf_recipes._common import _benchmark_common, _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
@@ -24,8 +27,8 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
 
 
-def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× GB200, MXFP8, full-iteration CUDA graph."""
+def _build_deepseek_v4_flash_gb200_fp8mx() -> ConfigContainer:
+    """Shared HybridEP MXFP8 base for the DeepSeek V4 Flash GB200 recipe and its GB300 derivative."""
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
 
     cfg.model.tensor_model_parallel_size = 1
@@ -36,7 +39,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.pipeline_model_parallel_layout = None
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
@@ -79,7 +82,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     cfg.model.csa_compress_rotary_base = 40_000
     cfg.model.rotary_scaling_factor = 4
-    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_kernel_backend = "cudnn"
     cfg.model.dsa_indexer_loss_coeff = 0.01
     cfg.model.dsa_indexer_use_sparse_loss = True
     cfg.model.quant_recipe = None
@@ -108,6 +111,16 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.checkpoint.load_optim = False
     cfg.checkpoint.load_rng = False
     cfg.checkpoint.save_optim = False
+    return cfg
+
+
+def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Flash pretrain: 128× GB200, MXFP8, full-iteration CUDA graph, NCCL EP."""
+    cfg = _build_deepseek_v4_flash_gb200_fp8mx()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -116,10 +129,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

@@ -2110,8 +2110,13 @@ class GroupedExpertLinearAdapter(nn.Module):
 
         linear_in_weight = torch.empty(linear_in_shape, device=params_device, dtype=dtype)
         linear_out_weight = torch.empty(linear_out_shape, device=params_device, dtype=dtype)
-        ParallelLinearAdapter._get_init_fn(self, column_init_method)(linear_in_weight)
-        ParallelLinearAdapter._get_init_fn(self, row_init_method)(linear_out_weight)
+        # The weights are stacked per-expert matrices. Resolve the fan-dependent
+        # init methods from the full (unsharded) per-expert dims: a fan read off
+        # the 3-D tensor would scale with ``dim * in_features`` and with the
+        # number of local experts, so the init would depend on EP/ETP size and
+        # start far too small (see ``_get_init_fn``).
+        ParallelLinearAdapter._get_init_fn(self, column_init_method, fan_in=in_features, fan_out=dim)(linear_in_weight)
+        ParallelLinearAdapter._get_init_fn(self, row_init_method, fan_in=dim, fan_out=out_features)(linear_out_weight)
 
         use_expert_process_groups = (
             _process_group_size(
@@ -2447,6 +2452,10 @@ class GroupedExpertLinearAdapter(nn.Module):
             if not self.input_is_parallel:
                 hidden = self._gather_along_last_dim(hidden)
             hidden = self.activation(hidden)
+            # Scale the rank-sized bottleneck rather than the full-width output. The
+            # output projection is bias-free, so this is exact and avoids allocating
+            # a second output-sized temporary.
+            hidden = hidden * (self.alpha / self.dim)
 
             if self.config.cpu_offloading and self.config.cpu_offloading_activations:
                 hidden.activation_offloading = True
@@ -2488,9 +2497,7 @@ class GroupedExpertLinearAdapter(nn.Module):
         use_te_fp8 = fp8_enabled and self._can_use_te_grouped_linear_fp8(x)
         use_grouped_mm = not fp8_enabled and self._can_use_grouped_mm(x)
         if not use_te_fp8 and not use_grouped_mm:
-            return self._forward_per_expert(x, expert_splits=expert_splits, expert_tp_size=expert_tp_size) * (
-                self.alpha / self.dim
-            )
+            return self._forward_per_expert(x, expert_splits=expert_splits, expert_tp_size=expert_tp_size)
 
         active_expert_indices = []
         grouped_inputs = []
@@ -2529,6 +2536,10 @@ class GroupedExpertLinearAdapter(nn.Module):
         if not self.input_is_parallel:
             hidden = self._gather_along_last_dim(hidden)
         hidden = self.activation(hidden)
+        # Scale the rank-sized bottleneck rather than the full-width output. The
+        # grouped output projection is bias-free, so this is exact and avoids
+        # allocating a second output-sized temporary.
+        hidden = hidden * (self.alpha / self.dim)
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             hidden.activation_offloading = True
@@ -2549,7 +2560,7 @@ class GroupedExpertLinearAdapter(nn.Module):
             expert_output = self.dropout(expert_output)
 
         if all(pad_len == 0 for pad_len in pad_lengths):
-            return expert_output * (self.alpha / self.dim)
+            return expert_output
 
         outputs = []
         start = 0
@@ -2558,7 +2569,7 @@ class GroupedExpertLinearAdapter(nn.Module):
             outputs.append(unpad_seq_to_mult(output_chunk, pad_len) if pad_len > 0 else output_chunk)
             start += padded_size
 
-        return torch.cat(outputs, dim=0) * (self.alpha / self.dim)
+        return torch.cat(outputs, dim=0)
 
     def sharded_state_dict(
         self,
@@ -2744,8 +2755,11 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
         # :class:`GroupedExpertLinearAdapter`.
         self._is_fc1 = not input_is_parallel
 
-        column_init = ParallelLinearAdapter._get_init_fn(self, column_init_method)
-        row_init = ParallelLinearAdapter._get_init_fn(self, row_init_method)
+        # Full per-matrix fans: the shared side is a TP-sharded Megatron linear
+        # (initialized per shard) and the per-expert side is initialized one
+        # expert matrix at a time, so both resolve to the same fixed scale.
+        column_init = ParallelLinearAdapter._get_init_fn(self, column_init_method, fan_in=in_features, fan_out=dim)
+        row_init = ParallelLinearAdapter._get_init_fn(self, row_init_method, fan_in=dim, fan_out=out_features)
         if self._is_fc1:
             # Shared A (hidden → rank); per-expert B (rank → 2*intermediate).
             self.linear_in = ColumnParallelLinear(
@@ -2805,21 +2819,27 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
         if self.dropout_position == "pre":
             x = self.dropout(x)
 
+        # Scale the rank-sized bottleneck rather than the full-width output. Both
+        # output projections are bias-free, so this is exact and avoids allocating
+        # a second output-sized temporary.
+        scale = self.alpha / self.dim
         if self._is_fc1:
             # Shared A → activation → per-expert B.
             x, _ = self.linear_in(x)
             x = self.activation(x)
+            x = x * scale
             x, _ = self.linear_out(x, m_splits)
         else:
             # Per-expert A → activation → shared B.
             x, _ = self.linear_in(x, m_splits)
             x = self.activation(x)
+            x = x * scale
             x, _ = self.linear_out(x)
 
         if self.dropout_position == "post":
             x = self.dropout(x)
 
-        return x * (self.alpha / self.dim)
+        return x
 
     def sharded_state_dict(
         self,

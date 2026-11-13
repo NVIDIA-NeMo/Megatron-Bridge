@@ -15,9 +15,17 @@
 from dataclasses import fields
 from typing import Optional, Union
 
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import get_attr_wrapped_model
+from megatron.core.utils import get_attr_wrapped_model, get_model_config
+
+from megatron.bridge.training.utils.flop_utils import get_model_chunk_vp_stage
 
 
 def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> ProcessGroupCollection:
@@ -47,6 +55,31 @@ def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> Pro
         if "couldn't find attribute pg_collection" in str(e):
             return ProcessGroupCollection.use_mpu_process_groups()
         raise
+
+
+def pipeline_stage_roles(model: MegatronModule) -> tuple[bool, bool]:
+    """Return ``(is_first, is_last)`` for this rank's model chunk.
+
+    Both are True without pipeline parallelism, so callers can fall through to the
+    ordinary single-stage path. Virtual pipeline chunks count as first or last only
+    when they are the edge chunk of an edge stage.
+
+    Args:
+        model: One model chunk, possibly wrapped by DDP or a precision wrapper.
+
+    Returns:
+        Whether the chunk is the first and whether it is the last stage of the pipeline.
+    """
+    pg_collection = get_pg_collection(model)
+    vp_stage = get_model_chunk_vp_stage(model)
+    vp_size = getattr(get_model_config(model), "virtual_pipeline_model_parallel_size", None)
+    is_first = is_pp_first_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    is_last = is_pp_last_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    return is_first, is_last
 
 
 class DistTrainProcessGroupCollection(ProcessGroupCollection):

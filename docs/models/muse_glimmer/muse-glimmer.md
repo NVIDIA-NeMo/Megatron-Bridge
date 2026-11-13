@@ -220,30 +220,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-12</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-29</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.23977</dd>
+            <dd>12.23791</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.4103</dd>
+            <dd>0.6403766</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>1,035.340 ms</dd>
+            <dd>105,995.340 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>42.490 TFLOP/s/GPU</dd>
+            <dd>205.590 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>247.262 tokens/s/GPU</dd>
+            <dd>1,236.583 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -259,7 +259,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 32 H100 GPUs at TP8/PP2/DP2, the command trains the complete randomly initialized HybridModel for exactly 100 optimizer steps on the revision-pinned public CORD-v2 multimodal dataset. All losses and gradient norms remain finite, with zero skipped and zero NaN iterations. Loss decreases from 12.23977 to 1.410300; steps 91-100 average 1,035.34 ms, 42.49 model TFLOP/s/GPU, and 247.262 token slots/s/GPU. The persisted post-setup config records the exact runtime. Complete step-50 and step-100 checkpoints each contain 32 nonempty distributed shards and 1,550 state entries, including model, optimizer, scheduler, and RNG state, plus metadata, train state, and the native HybridModel run config.
+        <p>On 32 H100 GPUs at TP4/PP4/DP2 with sequence parallelism, a 9|15|15|13 split of the 52 decoder layers, MBS2/GBS1024 at sequence length 4096, and four data-loader workers, the command trains the complete randomly initialized HybridModel for exactly 100 optimizer steps on the revision-pinned public CORD-v2 multimodal dataset. All losses and gradient norms remain finite, with zero skipped and zero NaN iterations. Loss decreases from 12.23791 to 0.6403766; steps 91-100 average 105,995.34 ms, 205.59 model TFLOP/s/GPU, and 1,236.583 token slots/s/GPU. The run used a NeMo 26.10 release-candidate base container with the pinned Megatron-Core submodule. The persisted post-setup config records the exact runtime. Complete step-50 and step-100 checkpoints each contain 32 nonempty distributed shards and 1,566 state entries, including model, optimizer, scheduler, and RNG state, plus metadata, train state, and the native HybridModel run config. Data-loader worker state is not checkpointed, so a resume from step 50 is not guaranteed to replay the identical sample stream.
 </p>
       </section>
     </article>

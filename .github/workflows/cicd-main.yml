@@ -31,6 +31,10 @@ on:
         description: "MCore commit SHA to test against"
         required: false
         type: string
+      mcore_branch:
+        description: "MCore source branch (for logging)"
+        required: false
+        type: string
       mcore_repo:
         description: "MCore repository URL (for fetching from forks)"
         required: false
@@ -100,6 +104,8 @@ jobs:
       expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
       expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
       perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
+      dependency_only:   ${{ steps.coverage-scope.outputs.dependency_only }}
+      pr_head_sha:       ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.sha || github.sha }}
       skip_queue:        ${{ steps.configure.outputs.skip_queue }}
       merge_sha:         ${{ steps.merge-sha.outputs.merge_sha }}
     steps:
@@ -107,6 +113,31 @@ jobs:
         id: get-pr-info
         if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
+
+      - name: Determine PR coverage scope
+        id: coverage-scope
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PR_INFO: ${{ steps.get-pr-info.outputs.pr-info || '{}' }}
+        with:
+          script: |
+            const pr = JSON.parse(process.env.PR_INFO);
+            let dependencyOnly = false;
+            if (pr.number && pr.head.sha === context.sha) {
+              const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                basehead: `${pr.base.sha}...${pr.head.sha}`
+              });
+              const files = comparison.files || [];
+              const dependencyPaths = new Set([
+                '.main.commit', '.dev.commit', '3rdparty/Megatron-LM', 'uv.lock'
+              ]);
+              dependencyOnly = files.length > 0 && files.length === pr.changed_files
+                && files.every(file => dependencyPaths.has(file.filename)
+                  && (!file.previous_filename || dependencyPaths.has(file.previous_filename)));
+            }
+            core.setOutput('dependency_only', String(dependencyOnly));
 
       - name: Resolve merge commit sha
         id: merge-sha
@@ -304,12 +335,14 @@ jobs:
           .github/scripts/test_cache_keys.sh
           .github/scripts/test_docker_dependency_layers.sh
           .github/scripts/test_queue_bypass.sh
+          .github/scripts/test_workflow_result.sh
 
       - name: Check lint
         run: |
           pip install pre-commit==3.6.0
           pre-commit install
           pre-commit run --all-files --show-diff-on-failure --color=always
+          python3 .github/scripts/test_coverage_config.py
 
   cicd-wait-in-queue:
     needs: [pre-flight, lint-check, configure]
@@ -455,6 +488,13 @@ jobs:
         with:
           python-version: 3.12
 
+      - name: Login to NGC
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: nvcr.io
+          username: ${{ secrets.NGC_API_USER }}
+          password: ${{ secrets.NGC_API_KEY }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -532,17 +572,26 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
+          # DEEPEP_NVCC_THREADS and MAMBA_NVCC_THREADS opt into parallel nvcc targets for DeepEP's
+          # extensions and Mamba (Dockerfile defaults keep each package's own). CI-Events'
+          # megatron-bridge build profile passes the same values to keep hitting this cache.
           file: ./docker/Dockerfile.ci
           push: true
           context: .
           platforms: ${{ steps.platform.outputs.platforms }}
+          # NVTE_BUILD_THREADS_PER_JOB compiles each TransformerEngine source's GPU targets
+          # concurrently (the Dockerfile default keeps TE's serial nvcc --threads 1). CI-Events'
+          # megatron-bridge build profile passes the same value to keep hitting this cache.
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            DEEPEP_NVCC_THREADS=3
+            MAMBA_NVCC_THREADS=9
             BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
             # Test images run the diffusion unit job; install its hash-locked codecs while building as root.
             INSTALL_DIFFUSION_DEPS=true
+            NVTE_BUILD_THREADS_PER_JOB=4
           cache-from: type=registry,ref=${{ steps.cache_from.outputs.donor }},mode=max
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
@@ -720,7 +769,9 @@ jobs:
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+              entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+                '{script: $script, timeout: $timeout, runner: $runner}')
+              entries="${entries}${entry},"
             done
             matrix="{\"include\":[${entries%,}]}"
             echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
@@ -731,7 +782,9 @@ jobs:
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+            entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+              '{script: $script, timeout: $timeout, runner: $runner}')
+            entries="${entries}${entry},"
           done
           echo "matrix_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -969,7 +1022,9 @@ jobs:
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+              entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+                '{script: $script, timeout: $timeout, runner: $runner}')
+              entries="${entries}${entry},"
             done
             echo "matrix_gb200_${tier,,}={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
           done
@@ -979,7 +1034,9 @@ jobs:
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+            entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+              '{script: $script, timeout: $timeout, runner: $runner}')
+            entries="${entries}${entry},"
           done
           echo "matrix_gb200_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -1201,6 +1258,15 @@ jobs:
     needs:
       - pre-flight
       - configure
+      - ephemeral-runner-routing
+      - lint-check
+      - cicd-wait-in-queue
+      - cicd-compute-build-matrix
+      - cicd-container-build
+      - generate-test-matrix
+      - generate-gb200-test-matrix
+      - cicd-functional-tests-flaky
+      - cicd-functional-tests-gb200-flaky
       - cicd-import-check
       - cicd-unit-tests-core
       - cicd-unit-tests-diffusion
@@ -1212,7 +1278,8 @@ jobs:
       - cicd-functional-tests-gb200-l2
     if: always() && !cancelled()
     runs-on: ubuntu-latest
-    permissions: write-all
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -1223,56 +1290,14 @@ jobs:
         id: result
         shell: bash -e -u -o pipefail {0}
         env:
-          GH_TOKEN:  ${{ github.token }}
-          GH_REPO:   ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
           DISABLE_GB200_TESTS: ${{ vars.DISABLE_GB200_TESTS }}
         run: |
-          # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
-          # any failure (e.g. "failed to determine base repo" when git context is
-          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
-          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
-          # repository, and `set -e -o pipefail` makes any failure here abort the job.
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length')
-
-          UNEXPECTED_SKIPS=0
-          check_tier_skips() {
-            local tier="$1" expect="$2"
-            [ "$expect" != "true" ] && return
-            local n
-            n=$(gh run view $GITHUB_RUN_ID --json jobs \
-              | jq --arg p "${tier}_" '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
-            if [ "${n:-0}" -gt 0 ]; then
-              echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
-              gh run view $GITHUB_RUN_ID --json jobs \
-                | jq -r --arg p "${tier}_" '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
-              UNEXPECTED_SKIPS=$((UNEXPECTED_SKIPS + n))
-            fi
-          }
-
-          check_tier_skips "L0" "$EXPECT_L0"
-          check_tier_skips "L1" "$EXPECT_L1"
-          check_tier_skips "L2" "$EXPECT_L2"
-          if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
-            check_tier_skips "gb200_L0" "$EXPECT_L0"
-            check_tier_skips "gb200_L1" "$EXPECT_L1"
-            check_tier_skips "gb200_L2" "$EXPECT_L2"
-          fi
-
-          if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
-            echo "❌ Found $FAILED_JOBS failed job(s):"
-            gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name'
-          fi
-
-          if [ "${FAILED_JOBS:-0}" -gt 0 ] || [ "${UNEXPECTED_SKIPS:-0}" -gt 0 ]; then
-            exit 1
-          fi
-
-          echo "✅ All previous jobs completed successfully"
-          exit 0
+          .github/scripts/check_workflow_result.sh
 
   Coverage_Fake:
     runs-on: ubuntu-latest
@@ -1285,6 +1310,7 @@ jobs:
         needs.configure.outputs.docs_only == 'true'
         || needs.pre-flight.outputs.is_deployment_workflow == 'true'
         || needs.configure.outputs.perf_scripts_only == 'true'
+        || (needs.configure.outputs.dependency_only == 'true' && needs.Nemo_CICD_Test.result == 'success')
       )
     steps:
       - name: Generate GitHub App token
@@ -1316,6 +1342,7 @@ jobs:
       && needs.configure.outputs.docs_only == 'false'
       && needs.pre-flight.outputs.is_deployment_workflow == 'false'
       && needs.configure.outputs.perf_scripts_only == 'false'
+      && needs.configure.outputs.dependency_only != 'true'
       && github.event.inputs.mcore_ref == ''
       && !cancelled()
     strategy:
@@ -1358,7 +1385,8 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
           flags: ${{ matrix.flag }}
-          base_sha: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').base.sha }}
+          override_pr: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
+          override_commit: ${{ needs.configure.outputs.pr_head_sha }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -1367,3 +1395,44 @@ jobs:
           path: |
             .coverage
           include-hidden-files: true
+
+  notify-nightly-failure:
+    name: Notify scheduled CI failure
+    runs-on: ubuntu-latest
+    environment: public
+    needs:
+      - ephemeral-runner-routing
+      - pre-flight
+      - configure
+      - lint-check
+      - cicd-wait-in-queue
+      - cicd-compute-build-matrix
+      - cicd-container-build
+      - cicd-import-check
+      - cicd-unit-tests-core
+      - cicd-unit-tests-diffusion
+      - generate-test-matrix
+      - cicd-functional-tests-l0
+      - cicd-functional-tests-l1
+      - cicd-functional-tests-l2
+      - cicd-functional-tests-flaky
+      - generate-gb200-test-matrix
+      - cicd-functional-tests-gb200-l0
+      - cicd-functional-tests-gb200-l1
+      - cicd-functional-tests-gb200-l2
+      - cicd-functional-tests-gb200-flaky
+      - Nemo_CICD_Test
+      - Coverage
+    permissions: {}
+    # Keep setup failures visible even when downstream jobs are skipped.
+    if: >-
+      ${{ always() && !cancelled() && failure() &&
+          github.repository == 'NVIDIA-NeMo/Megatron-Bridge' &&
+          github.event_name == 'schedule' &&
+          github.ref_name == github.event.repository.default_branch }}
+    steps:
+      - name: Notify CI alerts channel
+        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/notify-ci-failure@631c404d00a9e60afc591cd071d35d2e18f82fc6
+        with:
+          needs-json: ${{ toJSON(needs) }}
+          webhook: ${{ secrets.SLACK_WEBHOOK }}

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS, DETERMINISM_ENV_VARS
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
@@ -67,9 +67,12 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
     common_expansions = 0
     for index, (key, value) in enumerate(zip(mapping.keys, mapping.values)):
         if key is None:
-            assert index == 0
-            assert isinstance(value, ast.Name) and value.id == "COMMON_RECIPE_ENV_VARS"
-            common_expansions += 1
+            assert isinstance(value, ast.Name) and value.id in {"COMMON_RECIPE_ENV_VARS", "DETERMINISM_ENV_VARS"}
+            if value.id == "COMMON_RECIPE_ENV_VARS":
+                assert index == 0
+                common_expansions += 1
+            else:
+                result.update(DETERMINISM_ENV_VARS)
             continue
         result[ast.literal_eval(key)] = ast.literal_eval(value)
     assert common_expansions == 1
@@ -198,7 +201,7 @@ def test_explicit_recipe_environment_invariants():
             },
         ),
         (
-            "nemotron_omni/h100/nemotron_35_super_vl.py",
+            "nemotronh_multimodal/h100/nemotron_35_super_vl.py",
             "nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config",
             {
                 "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -211,7 +214,15 @@ def test_explicit_recipe_environment_invariants():
             },
         ),
         (
-            "nemotron_omni/h100/nemotron_35_super_vl.py",
+            "qwen_vl/gb300/qwen35_vl.py",
+            "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config",
+            {
+                "NCCL_EP_HT_EM_PULL_PUSH": 1,
+                "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+            },
+        ),
+        (
+            "nemotronh_multimodal/h100/nemotron_35_super_vl.py",
             "nemotron_35_super_vl_sft_64gpu_h100_bf16_config",
             {
                 "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -233,7 +244,7 @@ def test_representative_recipe_environment_is_visible(relative_path, function_na
 
 def test_super_vl_alltoall_peft_omits_hybrid_ep_environment():
     environment = _explicit_environment(
-        _RECIPE_ROOT / "nemotron_omni/h100/nemotron_35_super_vl.py",
+        _RECIPE_ROOT / "nemotronh_multimodal/h100/nemotron_35_super_vl.py",
         "nemotron_35_super_vl_peft_16gpu_h100_bf16_config",
     )
 

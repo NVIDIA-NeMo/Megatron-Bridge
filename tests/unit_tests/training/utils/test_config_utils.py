@@ -28,8 +28,22 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from transformers import PreTrainedConfig
 
 from megatron.bridge.models.common import Serializable
-from megatron.bridge.training.utils.config_utils import _ConfigContainerBase, create_ddp_config
+from megatron.bridge.training.utils.config_utils import (
+    _ConfigContainerBase,
+    _materialize_gtp_weight_shards,
+    create_ddp_config,
+)
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
+
+
+def test_gtp_weight_shards_preserve_explicit_counts_and_handle_aliases():
+    model = {"tensor_model_parallel_size": 2, "tensor_parallel_num_weight_shards": 8, "gtp_weight_remat_size": 2}
+    config = {"models": [model, model]}
+    config["self"] = config
+    normalized = _materialize_gtp_weight_shards(config)
+    assert normalized["models"][0]["tensor_parallel_num_weight_shards"] == 8
+    assert normalized["models"][0] is normalized["models"][1]
+    assert normalized["self"] is normalized
 
 
 # Test functions for callable testing
@@ -486,6 +500,97 @@ class TestConfigContainer_ConvertValueToDict:
         assert "public_field" in result
         assert "_private_field" not in result
         assert "_target_" in result
+
+
+class TestConfigContainer_BridgeTraversal:
+    """Bridge owns container traversal so its value hooks apply at every depth."""
+
+    def test_to_dict_routes_nested_values_through_conversion_hook(self):
+        """Sections, collections and overlays all use the subclass conversion hook."""
+
+        class Marker:
+            pass
+
+        @dataclass
+        class Section:
+            marker: object = None
+            items: list = field(default_factory=list)
+
+        @dataclass
+        class HookedContainer(_ConfigContainerBase):
+            section: Section = field(default_factory=Section)
+            mapping: dict = field(default_factory=dict)
+
+            @classmethod
+            def _convert_value_to_dict(cls, value):
+                if isinstance(value, Marker):
+                    return "converted-marker"
+                return super()._convert_value_to_dict(value)
+
+        config = HookedContainer(
+            section=Section(marker=Marker(), items=[Marker()]),
+            mapping={"nested": {"marker": Marker()}},
+        )
+
+        result = config.to_dict()
+        assert result["section"]["marker"] == "converted-marker"
+        assert result["section"]["items"] == ["converted-marker"]
+        assert result["mapping"] == {"nested": {"marker": "converted-marker"}}
+
+        overlaid = config.to_dict(section={"items": [Marker(), 3]})
+        assert overlaid["section"]["_target_"] == result["section"]["_target_"]
+        assert overlaid["section"]["marker"] == "converted-marker"
+        assert overlaid["section"]["items"] == ["converted-marker", 3]
+        assert isinstance(config.section.items[0], Marker)
+
+    def test_to_cfg_dict_value_can_delegate_to_container_conversion(self):
+        """Model providers serialize their own fields through the Bridge converter."""
+
+        @dataclass
+        class Provider:
+            inner: SimpleDataclass = field(default_factory=SimpleDataclass)
+
+            def to_cfg_dict(self):
+                return {
+                    "_target_": "my.module.Provider",
+                    "inner": _ConfigContainerBase._convert_value_to_dict(self.inner),
+                }
+
+        @dataclass
+        class ContainerWithProvider(_ConfigContainerBase):
+            model: Provider = field(default_factory=Provider)
+
+        result = ContainerWithProvider().to_dict()
+
+        assert result["model"] == {
+            "_target_": "my.module.Provider",
+            "inner": {
+                "_target_": "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass",
+                "name": "test",
+                "value": 42,
+            },
+        }
+
+    def test_to_dict_rejects_invalid_section_overrides(self):
+        """Unknown sections and fields and non-mapping overrides are rejected."""
+        config = ComplexConfigContainer(
+            simple_config=TestConfigContainer(),
+            nested_data=NestedDataclass(simple=SimpleDataclass()),
+            items=[],
+            metadata={},
+        )
+
+        with pytest.raises(ValueError, match="has no section named"):
+            config.to_dict(missing={})
+        with pytest.raises(ValueError, match="has no field named"):
+            config.to_dict(nested_data={"missing": 1})
+        with pytest.raises(TypeError, match="must map field names to values"):
+            config.to_dict(nested_data=[("regular_value", 1)])
+        with pytest.raises(TypeError, match="is not a dataclass"):
+            config.to_dict(items={"value": 1})
+        overlaid = config.to_dict(nested_data={"description": "overlaid"})["nested_data"]
+        assert overlaid["description"] == "overlaid"
+        assert overlaid["simple"]["value"] == 42
 
 
 class TestConfigContainer_ToYaml:
@@ -1169,78 +1274,6 @@ class TestBackwardCompatibility:
 
         # All fields preserved when target can't be resolved
         assert result == config
-
-    def test_apply_run_config_backward_compat_sanitizes_model(self):
-        """Test apply_run_config_backward_compat sanitizes model section with init=False fields."""
-        from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
-
-        run_config = {
-            "model": {
-                "_target_": "tests.unit_tests.training.utils.test_config_utils.DataclassWithInitFalse",
-                "name": "model_name",
-                "value": 100,
-                "computed_field": "should_be_removed",
-            },
-            "training": {"lr": 0.001},
-            "tokenizer": {"type": "sentencepiece"},
-        }
-
-        result = apply_run_config_backward_compat(run_config)
-
-        assert "computed_field" not in result["model"]
-        assert result["model"]["name"] == "model_name"
-        assert result["training"] == {"lr": 0.001}
-        assert result["tokenizer"] == {"type": "sentencepiece"}
-
-    def test_apply_run_config_backward_compat_no_model_section(self):
-        """Test apply_run_config_backward_compat handles config without model section."""
-        from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
-
-        run_config = {"training": {"lr": 0.001}}
-        result = apply_run_config_backward_compat(run_config)
-
-        assert result == run_config
-
-    def test_apply_run_config_backward_compat_non_dict(self):
-        """Test apply_run_config_backward_compat handles non-dict input."""
-        from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
-
-        assert apply_run_config_backward_compat("string") == "string"
-        assert apply_run_config_backward_compat(None) is None
-
-    def test_apply_run_config_backward_compat_sanitizes_all_sections(self):
-        """Test apply_run_config_backward_compat sanitizes all sections, not just model."""
-        from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
-
-        run_config = {
-            "model": {
-                "_target_": "tests.unit_tests.training.utils.test_config_utils.DataclassWithInitFalse",
-                "name": "model_name",
-                "computed_field": "should_be_removed_from_model",
-            },
-            "training": {
-                "_target_": "tests.unit_tests.training.utils.test_config_utils.DataclassWithInitFalse",
-                "name": "training_config",
-                "computed_field": "should_be_removed_from_training",
-            },
-            "data": {
-                "_target_": "tests.unit_tests.training.utils.test_config_utils.DataclassWithInitFalse",
-                "name": "data_config",
-                "computed_field": "should_be_removed_from_data",
-            },
-        }
-
-        result = apply_run_config_backward_compat(run_config)
-
-        # All sections should have init=False fields removed
-        assert "computed_field" not in result["model"]
-        assert "computed_field" not in result["training"]
-        assert "computed_field" not in result["data"]
-
-        # Regular fields should be preserved
-        assert result["model"]["name"] == "model_name"
-        assert result["training"]["name"] == "training_config"
-        assert result["data"]["name"] == "data_config"
 
 
 class TestConfigContainerBackwardCompat:

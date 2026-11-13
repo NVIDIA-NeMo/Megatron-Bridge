@@ -115,7 +115,12 @@ from megatron.bridge.models.nemotron_omni.inference_inputs import (
     nemotron_omni_reference_metadata,
     prepare_nemotron_omni_inputs,
 )
-from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import (
+    disable_mtp_for_inference,
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+)
 from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
@@ -367,8 +372,26 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     return output_tensor, loss_func
 
 
+def _build_inference_context(
+    input_ids: torch.Tensor,
+    *,
+    legacy_full_prefix: bool,
+) -> StaticInferenceContext | None:
+    """Build a static inference context unless the legacy full-prefix forward is requested.
+
+    Attention variants such as Core's AbsorbedMLA reject any inference context, so
+    ``--legacy-full-prefix`` runs the comparison as a plain full-prefix forward pass.
+    """
+    if legacy_full_prefix:
+        return None
+    return StaticInferenceContext(
+        max_batch_size=input_ids.size(0),
+        max_sequence_length=input_ids.size(1),
+    )
+
+
 def inference_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
-    """Run a text-model forward step with an explicit inference context."""
+    """Run a text-model forward step with an explicit (possibly absent) inference context."""
     batch = next(data_iterator)
 
     def loss_func(x, **kwargs):
@@ -782,6 +805,18 @@ def _load_megatron_model(args):
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                # Preserve the saved dispatcher/backend, but never drop tokens or
+                # use synthetic routing when comparing against HF inference.
+                "moe_expert_capacity_factor": None,
+                "moe_expert_rank_capacity_factor": None,
+                "moe_paged_stash": False,
+                # Zero-copy NCCL-EP requires the fixed capacity disabled above.
+                "moe_ncclep_zero_copy": False,
+                "moe_pad_expert_input_to_capacity": False,
+                "moe_router_force_load_balancing": False,
+                "moe_router_force_biased": None,
+                # Eager prompts can have unequal or unaligned token counts.
+                "moe_hybridep_pad_uneven_dispatch_inputs": True,
             },
             wrap_with_ddp=False,
         )
@@ -1073,9 +1108,8 @@ def compare_models_one_step(args) -> None:
                 **forward_kwargs,
             )
         else:
-            inference_context = StaticInferenceContext(
-                max_batch_size=input_ids.size(0),
-                max_sequence_length=input_ids.size(1),
+            inference_context = _build_inference_context(
+                input_ids, legacy_full_prefix=getattr(args, "legacy_full_prefix", False)
             )
             iterator = SingleBatchIterator(
                 input_ids,
@@ -1198,6 +1232,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional logits artifact from a memory-bounded HF reference forward.",
     )
+    parser.add_argument(
+        "--legacy-full-prefix",
+        action="store_true",
+        help=(
+            "Run the Megatron forward without an inference context (plain full-prefix forward). "
+            "Required for attention variants that reject inference contexts, such as AbsorbedMLA."
+        ),
+    )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
@@ -1242,6 +1284,7 @@ def build_parser() -> argparse.ArgumentParser:
 if __name__ == "__main__":
     args = build_parser().parse_args()
 
+    maybe_initialize_distributed()
     compare_models_one_step(args)
 
     if torch.distributed.is_initialized():

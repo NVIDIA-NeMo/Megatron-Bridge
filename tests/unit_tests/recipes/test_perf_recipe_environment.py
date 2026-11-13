@@ -23,6 +23,7 @@ import pytest
 
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
@@ -46,22 +47,37 @@ _DEEPSEEK_NON_BASELINE_ENV_NAMES = {
     "QUANTIZATION_TYPE_DEBUG",
     "TORCHINDUCTOR_WORKER_START",
 }
-_VR200_CUDNN_LAYERNORM_RECIPES = {
-    "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config",
-    "deepseek_v3_pretrain_128gpu_vr200_fp8mx_config",
-    "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
-    "deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config",
-    "gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config",
-    "gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config",
-    "gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config",
-    "kimi_k2_pretrain_256gpu_vr200_fp8mx_config",
-    "llama3_70b_pretrain_64gpu_vr200_bf16_config",
-    "nemotron_3_nano_pretrain_8gpu_vr200_bf16_config",
-    "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
-    "nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config",
-    "nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config",
-    "nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config",
-    "nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config",
+_MLPERF_NVFP4_RECIPES_WITHOUT_FAST_MATH = {
+    "llama31_8b_pretrain_8gpu_gb200_nvfp4_config",
+    "llama31_8b_pretrain_8gpu_gb300_nvfp4_config",
+    "llama31_8b_pretrain_72gpu_gb200_nvfp4_config",
+    "llama31_8b_pretrain_72gpu_gb300_nvfp4_config",
+}
+_VRNVL72_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config",
+    "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
+    "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config",
+    "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config",
+    "gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config",
+    "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "llama3_70b_pretrain_64gpu_vrnvl72_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config",
+    "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config",
+    "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config",
+    "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config",
+    "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config",
+}
+# Mirror the MLPerf DeepSeek-V3 environment, which differs from the DeepSeek baseline policy.
+_DEEPSEEK_MLPERF_EXEC_RECIPES = {
+    "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
 }
 
 
@@ -100,8 +116,11 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
     common_expansions = 0
     for key, value in zip(mapping.keys, mapping.values):
         if key is None:
-            assert isinstance(value, ast.Name) and value.id == "COMMON_PERF_ENV_VARS"
-            common_expansions += 1
+            assert isinstance(value, ast.Name) and value.id in {"COMMON_PERF_ENV_VARS", "DETERMINISM_ENV_VARS"}
+            if value.id == "COMMON_PERF_ENV_VARS":
+                common_expansions += 1
+            else:
+                result.update(DETERMINISM_ENV_VARS)
             continue
         if isinstance(value, ast.Name):
             assert value.id in local_constants
@@ -194,9 +213,9 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
 
         cudnn_names = {"NVTE_NORM_BWD_USE_CUDNN", "NVTE_NORM_FWD_USE_CUDNN"}
         assert environment.keys().isdisjoint(cudnn_names) or environment.keys() >= cudnn_names
-        if path.parent.name == "vr200":
+        if path.parent.name == "vrnvl72":
             assert environment["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-            uses_cudnn_layernorm = function_name in _VR200_CUDNN_LAYERNORM_RECIPES
+            uses_cudnn_layernorm = function_name in _VRNVL72_CUDNN_LAYERNORM_RECIPES
             assert (environment.keys() >= cudnn_names) == uses_cudnn_layernorm
             if uses_cudnn_layernorm:
                 assert all(environment[name] == 1 for name in cudnn_names)
@@ -205,28 +224,40 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
         assert not hybrid_ep_names or hybrid_ep_names == _HYBRID_EP_ENV_NAMES
         if hybrid_ep_names:
             gpu = path.parent.name
-            nvlink_domain_size = 72 if gpu in {"gb200", "gb300", "vr200"} else 8
+            nvlink_domain_size = 72 if gpu in {"gb200", "gb300", "vrnvl72"} else 8
             assert environment["NVLINK_DOMAIN_SIZE"] == nvlink_domain_size
             assert environment["USE_MNNVL"] == int(nvlink_domain_size == 72)
             assert environment["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] <= nvlink_domain_size
 
-        if "_nvfp4" in function_name:
+        if "_nvfp4" in function_name and function_name not in _MLPERF_NVFP4_RECIPES_WITHOUT_FAST_MATH:
             assert environment["NVTE_USE_FAST_MATH"] == 1
         if path.parts[-3] == "deepseek":
             assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
-            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
-            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
-            # These VR200 MXFP8 recipes explicitly opt into this path.
-            expected_nondeterminism = int(
-                function_name
-                in {
-                    "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
-                    "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config",
-                    "deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config",
-                }
-            )
-            assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == expected_nondeterminism
-            assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
+            # MLPerf reserves no SMs for LayerNorm kernels.
+            layernorm_sm_margin = 0 if function_name in _DEEPSEEK_MLPERF_EXEC_RECIPES else 20
+            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == layernorm_sm_margin
+            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == layernorm_sm_margin
+            if function_name.endswith("_deterministic_config"):
+                # Bit-exact recipes pin deterministic TE kernels.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
+            elif function_name == "deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config":
+                # The fused SwiGLU dprob uses atomic reductions.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
+            elif function_name in _DEEPSEEK_MLPERF_EXEC_RECIPES:
+                # MLPerf allows nondeterministic Transformer Engine kernels.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
+            elif path.parent.name == "gb300" and path.stem == "deepseek_v3":
+                # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale
+                # gradient is accumulated with atomics; TE raises when bit-exact execution is requested,
+                # so these recipes must not pin NVTE_ALLOW_NONDETERMINISTIC_ALGO=0.
+                assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in environment
+            else:
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+            if "NCCL_EP_HT_EM_PULL_PUSH" in environment:
+                # NCCL EP recipes drop the HybridEP tuning that nothing reads on that backend.
+                assert not hybrid_ep_names
+            else:
+                assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
 
 
 @pytest.mark.parametrize(
@@ -246,10 +277,8 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             "deepseek/gb200/deepseek_v3.py",
             "deepseek_v3_pretrain_256gpu_gb200_bf16_config",
             {
-                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-                "NVLINK_DOMAIN_SIZE": 72,
+                "NCCL_EP_HT_EM_PULL_PUSH": 1,
                 "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-                "USE_MNNVL": 1,
             },
         ),
         (
@@ -272,3 +301,19 @@ def test_representative_recipe_specific_environment_is_visible(relative_path, fu
     environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
 
     assert environment.items() >= expected.items()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "function_name"),
+    [
+        ("deepseek/gb200/deepseek_v3.py", "deepseek_v3_pretrain_256gpu_gb200_bf16_config"),
+        ("deepseek/gb300/deepseek_v3.py", "deepseek_v3_pretrain_256gpu_gb300_bf16_config"),
+        ("qwen/gb200/qwen3_moe.py", "qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config"),
+        ("qwen/gb300/qwen3_moe.py", "qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config"),
+    ],
+)
+def test_te_layer_graph_pipeline_recipes_keep_only_cpp_errors(relative_path, function_name):
+    """TE layer-graph capture with PP>1 floods stderr with PyTorch 2.14 C++ deprecation warnings."""
+    environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
+
+    assert environment["TORCH_CPP_LOG_LEVEL"] == "ERROR"

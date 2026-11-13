@@ -48,9 +48,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """
     use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg = _pretrain_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).get_model_config()
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -71,9 +69,10 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = "auto"
-    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_kernel_backend = "cudnn"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.01
     cfg.model.dsa_indexer_use_sparse_loss = True
 
@@ -90,7 +89,8 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_fusion_impl = "te"
 
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]
+    # MCore does not support mHC recompute together with activation offloading.
+    cfg.model.recompute_modules = ["moe_act", "mla_up_proj"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = True
@@ -149,9 +149,10 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config()
 
+    # Keep cuDNN attention enabled when indexer training is disabled.
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
-    cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]
+    cfg.model.recompute_modules = ["moe_act", "mla_up_proj"]
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=2000,
@@ -186,7 +187,6 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision.fp8_param_gather = False
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.model.moe_router_padding_for_fp8 = True
-    cfg.model.mtp_eval_in_bf16 = True
     cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
     return cfg
 
@@ -207,7 +207,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config() -> ConfigConta
     cfg.model.expert_model_parallel_size = 16
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.pipeline_model_parallel_layout = "Et*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*2|t*2|t*2|t*2|t*2mL"
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
     cfg.train.global_batch_size = 256
     cfg.train.micro_batch_size = 1
 
@@ -291,6 +291,163 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config() -> ConfigContainer
     return cfg
 
 
+def deepseek_v4_flash_proxy_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """DeepSeek-V4-Flash six-layer proxy, BF16 pre-training on 8-GPU GB200 (EP=8).
+
+    The proxy keeps DeepSeek-V4-Flash's first six blocks and its MTP layer at full width:
+    two sliding-window, two CSA (with the DSA indexer) and two HCA attention layers,
+    mHC hyper-connections, and 256-expert top-6 MoE whose first three layers are
+    hash-routed. Loaded from the same layers of a DeepSeek-V4-Flash checkpoint, each
+    kept router sees the inputs it sees in the full model. The recipe keeps the 64-GPU
+    library recipe's optimizer, batch, natural-routing and HybridEP execution settings on
+    one pipeline stage, in BF16 with the 64-GPU BF16 recipe's DSA indexer loss.
+
+    Note: set checkpoint.save_optim=False when using HybridEP.
+    """
+    use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg = _pretrain_common()
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).get_model_config()
+
+    # Blocks 0-5 (sliding, sliding, CSA, HCA, CSA, HCA) and the MTP depth. The compression ratios list each hybrid
+    # layer: six attention/MoE pairs, then the MTP depth's sliding-window attention and MoE layers.
+    cfg.model.hybrid_layer_pattern = "WEWECEHECEHE"
+    cfg.model.num_layers = 12
+    cfg.model.csa_compress_ratios = [0, 0, 0, 0, 4, 0, 128, 0, 4, 0, 128, 0, 0, 0]
+    cfg.model.moe_num_hash_layers = 3
+    cfg.model.mtp_num_layers = 1
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.model.params_dtype = torch.bfloat16
+
+    cfg.model.account_for_embedding_in_pipeline_split = False
+    cfg.model.account_for_loss_in_pipeline_split = False
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.attention_backend = "auto"
+    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
+    cfg.model.dsa_indexer_loss_coeff = 0.01
+    cfg.model.dsa_indexer_use_sparse_loss = True
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_hybridep_num_sms_preprocessing = 108
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_aux_loss_coeff = 0.0
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = False
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["mhc", "mla_up_proj"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+    cfg.model.fine_grained_offloading_max_inflight_offloads = None
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+
+    # Hash routing looks experts up by token ID, so the proxy reads DeepSeek-V4 tokens and keeps the model's
+    # 129,280-row vocabulary, which the imported embeddings and routing tables use.
+    cfg.tokenizer.tokenizer_model = DEEPSEEK_V4_FLASH_HF_PATH
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+
+    cfg.dataset.blend = None
+    cfg.dataset.blend_per_split = None
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.num_workers = 8
+    cfg.dataset.skip_getting_attention_mask_from_dataset = True
+    cfg.dataset.dataloader_type = "single"
+
+    cfg.train.train_iters = 1_000_000
+    cfg.train.global_batch_size = 256
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 5
+    cfg.train.manual_gc_eval = 5
+    cfg.validation.eval_interval = 2000
+    cfg.validation.eval_iters = 32
+
+    cfg.logger.log_interval = 10
+    cfg.checkpoint.save_interval = 2000
+    cfg.checkpoint.async_save = False
+    cfg.dist.enable_megatron_core_experimental = True
+
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=2000,
+        lr_decay_iters=cfg.train.train_iters,
+        max_lr=2.7e-4,
+        min_lr=2.7e-5,
+        weight_decay=0.1,
+        clip_grad=1.0,
+    )
+    opt_cfg.use_precision_aware_optimizer = True
+    opt_cfg.main_grads_dtype = torch.float32
+    opt_cfg.main_params_dtype = torch.float32
+    opt_cfg.exp_avg_dtype = torch.bfloat16
+    opt_cfg.exp_avg_sq_dtype = torch.bfloat16
+    opt_cfg.adam_beta1 = 0.9
+    opt_cfg.adam_beta2 = 0.95
+    opt_cfg.adam_eps = 1e-20
+
+    scheduler_cfg.start_weight_decay = 0.1
+    scheduler_cfg.end_weight_decay = 0.1
+    scheduler_cfg.weight_decay_incr_style = "constant"
+
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.mixed_precision = bf16_mixed()
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap.overlap_grad_reduce = True
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+    return cfg
+
+
 def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigContainer:
     """Return the GB200-optimized offline-packed OpenMath SFT config.
 
@@ -304,7 +461,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
 
     cfg = deepseek_v4_flash_sft_openmath_thinking_packed_config()
 
-    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_kernel_backend = "cudnn"
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
@@ -316,7 +473,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
     cfg.model.moe_router_fusion = True
 
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe", "mhc", "mla_up_proj", "layernorm"]
+    cfg.model.recompute_modules = ["moe", "mla_up_proj", "layernorm"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.calculate_per_token_loss = True

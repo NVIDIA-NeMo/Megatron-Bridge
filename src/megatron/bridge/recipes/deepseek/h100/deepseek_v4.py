@@ -65,9 +65,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """
     use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg = _pretrain_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).get_model_config()
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -88,9 +86,10 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -168,9 +167,10 @@ def deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
     use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -214,7 +214,6 @@ def deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision.fp8_param_gather = False
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.model.moe_router_padding_for_fp8 = True
-    cfg.model.mtp_eval_in_bf16 = True
     cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
@@ -240,9 +239,10 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config() -> ConfigContainer:
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
     use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
+    cfg.model.mhc_norm_eps_inside_sqrt = not use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -306,9 +306,7 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     sequences with Adam/bf16.
     """
     cfg = _sft_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).get_model_config()
 
     # --- parallelism (DSv4 hybrid attention requires TP=1) ---
     cfg.model.tensor_model_parallel_size = 1
@@ -325,9 +323,10 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # --- attention / kernels: fused mHC on Blackwell, unfused mHC on Hopper, unfused DSA ---
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.mhc_norm_eps_inside_sqrt = not cfg.model.use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -376,9 +375,7 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     Prediction layer (fused mHC only on Blackwell, bf16, SBHD).
     """
     cfg = _sft_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).get_model_config()
 
     # --- parallelism (DSv4 hybrid attention requires TP=1) ---
     cfg.model.tensor_model_parallel_size = 1
@@ -395,9 +392,10 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # --- attention / kernels: fused mHC on Blackwell, unfused mHC on Hopper, unfused DSA ---
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.mhc_norm_eps_inside_sqrt = not cfg.model.use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -418,9 +416,12 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # --- MTP disabled ---
     cfg.model.mtp_num_layers = None
     cfg.model.mtp_loss_scaling_factor = 0.0
-    # The bridge appends an MTP-layer entry to csa_compress_ratios based on
-    # num_nextn_predict_layers. With MTP off, len(csa_compress_ratios) must
-    # equal num_layers (transformer_config validates this), so trim it.
+    # Drop the hybrid MTP sub-pattern so finalize() does not append a (0-copy) MTP
+    # section to hybrid_layer_pattern once MTP is off.
+    cfg.model.mtp_hybrid_override_pattern = None
+    # The bridge sizes csa_compress_ratios for the main hybrid layers plus one MTP
+    # depth. With MTP off, len(csa_compress_ratios) must be >= num_layers (the hybrid
+    # main-layer count, which transformer_config validates), so trim the MTP tail.
     ratios = getattr(cfg.model, "csa_compress_ratios", None)
     num_layers = getattr(cfg.model, "num_layers", None)
     if ratios is not None and num_layers is not None and len(ratios) > num_layers:

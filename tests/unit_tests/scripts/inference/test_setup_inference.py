@@ -101,7 +101,8 @@ def test_additional_slurm_parameters_reject_malformed_pairs(value):
         module.parse_args(["--additional-slurm-params", value])
 
 
-def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
+@pytest.mark.parametrize("active_environment", [False, True])
+def test_shell_launcher_reuses_active_environment_or_provisions_nemo_run(tmp_path, active_environment):
     fake_uv = tmp_path / "uv"
     uv_args = tmp_path / "uv-args.txt"
     fake_uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$UV_ARGS_FILE"\n', encoding="utf-8")
@@ -111,9 +112,12 @@ def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
         {
             "PATH": f"{tmp_path}:{env['PATH']}",
             "UV_ARGS_FILE": str(uv_args),
-            "VIRTUAL_ENV": str(tmp_path / "active-environment"),
         }
     )
+    if active_environment:
+        env["VIRTUAL_ENV"] = str(tmp_path / "active-environment")
+    else:
+        env.pop("VIRTUAL_ENV", None)
 
     subprocess.run(
         [str(REPO_ROOT / "scripts" / "inference" / "infer.sh"), "--help"],
@@ -121,12 +125,12 @@ def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
         env=env,
     )
 
+    expected_options = (
+        ["--active", "--no-sync"] if active_environment else ["--no-project", "--with", "nemo-run==0.10.0"]
+    )
     assert uv_args.read_text(encoding="utf-8").splitlines() == [
         "run",
-        "--active",
-        "--no-sync",
-        "--with",
-        "nemo-run==0.10.0",
+        *expected_options,
         "python",
         str(REPO_ROOT / "scripts" / "inference" / "setup_inference.py"),
         "--help",
@@ -478,6 +482,7 @@ def test_main_submission_wait_detach_and_dry_run_modes(
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
     monkeypatch.setattr(module, "_build_task", lambda *_args: sentinel_task)
+    monkeypatch.setattr(module, "run_from_container_repo_root", lambda task: task)
     monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **kwargs: wait_calls.append(kwargs))
 
     module.main(_launcher_args("--prompt", "hello", *extra_options))
@@ -510,7 +515,49 @@ def test_main_propagates_synchronous_inference_failure(monkeypatch):
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
     monkeypatch.setattr(module, "_build_task", lambda *_args: object())
+    monkeypatch.setattr(module, "run_from_container_repo_root", lambda task: task)
     monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **_kwargs: None)
 
     with pytest.raises(RuntimeError, match="text-generation=FAILED"):
         module.main(_launcher_args("--prompt", "hello"))
+
+
+def test_main_runs_pyxis_task_from_container_repo_root(monkeypatch):
+    """Slurm Pyxis inference resolves relative model paths from the container checkout."""
+    module = _load_setup_inference_module()
+    submitted = []
+
+    class _Experiment:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, task, **_kwargs):
+            submitted.append(task)
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**{"inline": "", "path": "", "args": [], **kwargs})
+    module.run.Experiment = _Experiment
+    monkeypatch.setitem(sys.modules, "nemo_run", module.run)
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+
+    module.main(
+        _launcher_args(
+            "--task", "hf-inference", "--submission-dry-run", "--hf-model", "work/model-verification/card/hf"
+        )
+    )
+
+    task = submitted[0]
+    assert task.entrypoint == "bash"
+    assert task.inline == (
+        "set -e\ncd /opt/Megatron-Bridge\n"
+        "exec python /opt/Megatron-Bridge/skills/create-model-verification-card/scripts/verify_hf_inference.py"
+        " --hf-model work/model-verification/card/hf\n"
+    )

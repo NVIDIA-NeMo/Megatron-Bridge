@@ -1439,6 +1439,37 @@ def test_shared_chat_preprocessing_normalizes_sharegpt_roles_before_templating()
     assert tokenized.assistant_mask.any()
 
 
+def test_normalize_chat_conversation_converts_null_legacy_value_to_empty_content():
+    row = {
+        "conversations": [
+            {"from": "human", "value": "question"},
+            {"from": "gpt", "value": None},
+        ]
+    }
+
+    assert normalize_chat_conversation(row) == [
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": ""},
+    ]
+
+
+def test_normalize_chat_conversation_matches_null_and_empty_spellings_across_schemas():
+    def sharegpt(value):
+        return {"conversations": [{"from": "human", "value": "question"}, {"from": "gpt", "value": value}]}
+
+    openai_null = {
+        "messages": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": None},
+        ]
+    }
+
+    normalized = normalize_chat_conversation(sharegpt(None))
+
+    assert normalized == normalize_chat_conversation(sharegpt(""))
+    assert normalized == normalize_chat_conversation(openai_null)
+
+
 def test_normalize_chat_conversation_normalizes_openai_tool_calls_without_mutating_input():
     row = {
         "messages": [
@@ -1506,6 +1537,7 @@ def test_ultrachat_style_row_has_matching_gpt_sft_and_direct_hf_collation():
     gpt_dataset.max_seq_length = 16
     gpt_dataset.tokens_to_generate = 0
     gpt_dataset.pad_to_max_length = False
+    gpt_dataset.return_padding_mask = False
     gpt_dataset.pad_seq_length_to_mult = 1
     gpt_dataset.ceil_to_power_2 = False
     gpt_dataset.get_attention_mask_from_fusion = True

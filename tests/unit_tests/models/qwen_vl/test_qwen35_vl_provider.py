@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.attention import SelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 
@@ -31,6 +32,75 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
 
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
+
+
+@pytest.fixture(params=[Qwen35VLModelProvider, Qwen35VLMoEModelProvider], ids=["dense", "moe"])
+def language_model_construction(request, monkeypatch):
+    provider = request.param(num_layers=4, hidden_size=64, num_attention_heads=4, vocab_size=128)
+    pp_group = Mock(spec=["rank", "size"])
+    pp_group.rank.return_value = 0
+    pp_group.size.return_value = 1
+    provider._pg_collection = ProcessGroupCollection(pp=pp_group)
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.get_pg_rank", lambda group: group.rank())
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.get_pg_size", lambda group: group.size())
+
+    constructor = Mock()
+    monkeypatch.setattr("megatron.bridge.models.qwen_vl.qwen35_vl_provider.build_module", constructor)
+    return provider, constructor
+
+
+@pytest.mark.unit
+class TestQwen35LanguageModelConstruction:
+    @pytest.mark.parametrize(
+        "pp_size,vp_size,pp_rank,vp_stage,overrides,expected",
+        [
+            (2, 2, 0, 0, {}, (True, False)),
+            (2, 2, 1, 0, {}, (False, False)),
+            (2, 2, 0, 1, {}, (False, False)),
+            (2, 2, 1, 1, {}, (False, True)),
+            (2, None, 0, None, {}, (True, False)),
+            (2, None, 1, None, {}, (False, True)),
+            (1, None, 0, None, {}, (True, True)),
+            (2, 2, 0, 1, {"pre_process": True, "post_process": True}, (True, True)),
+            (2, 2, 0, 0, {"pre_process": False}, (False, False)),
+            (2, 2, 1, 1, {"post_process": False}, (False, False)),
+        ],
+    )
+    def test_logical_pipeline_stage_owns_embedding_and_output(
+        self, language_model_construction, pp_size, vp_size, pp_rank, vp_stage, overrides, expected
+    ):
+        provider, constructor = language_model_construction
+        provider.pipeline_model_parallel_size = pp_size
+        provider.virtual_pipeline_model_parallel_size = vp_size
+        provider._pg_collection.pp.rank.return_value = pp_rank
+        provider._pg_collection.pp.size.return_value = pp_size
+
+        provider.provide_language_model(vp_stage=vp_stage, **overrides)
+
+        kwargs = constructor.call_args.kwargs
+        assert (kwargs["pre_process"], kwargs["post_process"]) == expected
+        assert kwargs["vp_stage"] == vp_stage
+        assert kwargs["pg_collection"] is provider._pg_collection
+
+    @pytest.mark.parametrize(
+        "vocab_size,tp_size,should_pad,expected",
+        [(131, 2, True, 256), (256, 2, True, 256), (131, 1, False, 131), (258, 2, False, 258)],
+    )
+    def test_vocab_padding_is_local_to_language_model_construction(
+        self, language_model_construction, vocab_size, tp_size, should_pad, expected
+    ):
+        provider, constructor = language_model_construction
+        provider.vocab_size = vocab_size
+        provider.tensor_model_parallel_size = tp_size
+        provider.make_vocab_size_divisible_by = 128
+        provider.should_pad_vocab = should_pad
+
+        provider.provide_language_model()
+
+        spec = constructor.call_args.args[0]
+        assert spec.params["vocab_size"] == expected
+        assert provider.vocab_size == vocab_size
+        assert provider.build_language_model_spec().params["vocab_size"] == vocab_size
 
 
 class TestQwen35VLModelProvider:
@@ -169,8 +239,7 @@ class TestQwen35VLModelProvider:
         assert provider.special_token_ids == {"images": provider.image_token_id}
 
     def test_build_mtp_spec_returns_none_when_mtp_disabled(self):
-        """MIMO conversion v1 disables MTP at config time. Verify the helper
-        returns None so the MIMO model is built without an MTP submodule."""
+        """Without MTP layers the helper returns None, so no MTP submodule is built."""
         provider = Qwen35VLModelProvider(
             num_layers=64,
             hidden_size=5120,
@@ -333,47 +402,75 @@ class TestQwen35VLMoEModelProvider:
         )
         assert isinstance(provider.vision_config, Qwen3_5MoeVisionConfig)
 
-    def test_provide_patches_mtp_attention_spec(self, monkeypatch):
-        block_attn_spec = ModuleSpec(module=SelfAttention, submodules=SimpleNamespace())
-        mtp_attn_spec = ModuleSpec(module=SelfAttention, submodules=SimpleNamespace())
-        block_spec = SimpleNamespace(
-            layer_specs=[ModuleSpec(module=object, submodules=SimpleNamespace(self_attention=block_attn_spec))]
-        )
-        mtp_spec = SimpleNamespace(
-            layer_specs=[
-                ModuleSpec(
-                    module=object,
-                    submodules=SimpleNamespace(
-                        mtp_model_layer=ModuleSpec(
-                            module=object,
-                            submodules=SimpleNamespace(self_attention=mtp_attn_spec),
-                        )
-                    ),
-                )
-            ]
-        )
-        model_ctor = Mock(return_value=Mock())
+    def test_hybrid_stack_shares_multimodal_attention_with_mtp(self):
+        from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import Qwen35VLHybridLanguageModel
 
-        monkeypatch.setattr(
-            "megatron.bridge.models.qwen_vl.qwen35_vl_provider.get_transformer_block_with_experimental_attention_variant_spec",
-            lambda *args, **kwargs: block_spec,
-        )
-        monkeypatch.setattr("megatron.bridge.models.gpt_provider.mtp_block_spec", lambda *args, **kwargs: mtp_spec)
-        monkeypatch.setattr("megatron.bridge.models.qwen_vl.qwen35_vl_provider.Qwen3VLModel", model_ctor)
+        provider = Qwen35VLMoEModelProvider(num_layers=4, hidden_size=512, num_attention_heads=4, mtp_num_layers=1)
+        spec = provider.build_language_model_spec()
+        assert spec.module is Qwen35VLHybridLanguageModel
+        stack = spec.params["transformer_layer_spec"]
+        assert stack.submodules.attention_layer.submodules.self_attention.module is Qwen3VLSelfAttention
+        assert provider.build_mtp_spec(vp_stage=None) is None
 
-        provider = Qwen35VLMoEModelProvider(
-            num_layers=60,
-            hidden_size=4096,
-            num_attention_heads=32,
-            mtp_num_layers=1,
-        )
-        provider.provide()
 
-        kwargs = model_ctor.call_args.kwargs
-        assert kwargs["language_transformer_layer_spec"].layer_specs[0].submodules.self_attention.module is (
-            Qwen3VLSelfAttention
-        )
-        assert (
-            kwargs["mtp_block_spec"].layer_specs[0].submodules.mtp_model_layer.submodules.self_attention.module
-            is Qwen3VLSelfAttention
-        )
+@pytest.mark.parametrize("provider_cls", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])
+@pytest.mark.parametrize("granularity", ["inherit", None, "full", "selective"])
+def test_vision_recompute_provider_spec(provider_cls, granularity):
+    provider = provider_cls(
+        num_layers=4,
+        hidden_size=512,
+        num_attention_heads=4,
+        vision_recompute_granularity=granularity,
+        vision_recompute_method="uniform" if granularity == "full" else None,
+        vision_recompute_num_layers=1 if granularity == "full" else None,
+        vision_recompute_modules=["mlp"] if granularity == "selective" else None,
+        recompute_granularity="selective",
+        recompute_modules=["gdn_norm_out", "moe"],
+    )
+
+    spec = provider.build_vision_encoder_spec()
+    config = spec.params["transformer_config"]
+
+    assert config.recompute_granularity == ("selective" if granularity == "inherit" else granularity)
+    assert config.recompute_method == ("uniform" if granularity == "full" else None)
+    assert config.recompute_num_layers == (1 if granularity == "full" else None)
+    assert config.recompute_modules == {"inherit": ["core_attn"], "selective": ["mlp"]}.get(granularity, [])
+    assert provider.recompute_granularity == "selective"
+    assert provider.recompute_modules == ["gdn_norm_out", "moe"]
+
+
+@pytest.mark.parametrize("provider_cls", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])
+@pytest.mark.parametrize(
+    "granularity,method,num_layers,modules",
+    [
+        ("inherit", None, None, None),
+        (None, None, None, None),
+        ("full", "block", 2, None),
+        ("selective", None, None, ["core_attn", "mlp"]),
+    ],
+)
+def test_vision_recompute_config_round_trip(provider_cls, granularity, method, num_layers, modules):
+    from megatron.training.config.instantiate_utils import instantiate
+
+    from megatron.bridge.training.config import ConfigContainer
+
+    provider = provider_cls(num_layers=4, hidden_size=512, num_attention_heads=4)
+    assert provider.vision_recompute_granularity == "inherit"
+    provider.vision_recompute_granularity = granularity
+    provider.vision_recompute_method = method
+    provider.vision_recompute_num_layers = num_layers
+    provider.vision_recompute_modules = modules
+
+    restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+
+    assert isinstance(restored, provider_cls)
+    assert restored.vision_recompute_granularity == granularity
+    assert restored.vision_recompute_method == method
+    assert restored.vision_recompute_num_layers == num_layers
+    assert restored.vision_recompute_modules == modules
+    config = restored.build_vision_encoder_spec().params["transformer_config"]
+    assert (config.recompute_granularity, config.recompute_method, config.recompute_num_layers) == (
+        None if granularity == "inherit" else granularity,
+        method,
+        num_layers,
+    )

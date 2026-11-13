@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 import pytest
+import torch
 
 from megatron.bridge.models.common.base import ModelBuilder, ModelConfig, compose_hooks
 from megatron.bridge.utils.instantiate_utils import (
@@ -60,7 +61,7 @@ class DummyDerivedSubConfig:
     derived: int = field(init=False, default=2)
 
 
-def _dummy_callable() -> None:
+def dummy_callable() -> None:
     """Placeholder callable used as a field default in DummyNestedModelConfig."""
 
 
@@ -68,7 +69,7 @@ def _dummy_callable() -> None:
 class DummyNestedModelConfig(ModelConfig):
     builder: ClassVar[str] = ""
     sub: DummySubConfig = field(default_factory=DummySubConfig)
-    fn_field: Callable = _dummy_callable
+    fn_field: Callable = dummy_callable
     extra: int = 0
 
 
@@ -105,8 +106,9 @@ def test_model_config_get_builder_cls_uses_validated_target() -> None:
     assert cfg.get_builder_cls() is DummyModelBuilder
 
 
-def test_model_config_from_dict_round_trips_nested_config() -> None:
-    original = DummyNestedModelConfig(sub=DummySubConfig(x=7, y="nested"), extra=99)
+@pytest.mark.parametrize("fn_field", [dummy_callable, torch.nn.functional.relu])
+def test_model_config_from_dict_round_trips_nested_config(fn_field: Callable[..., object]) -> None:
+    original = DummyNestedModelConfig(sub=DummySubConfig(x=7, y="nested"), fn_field=fn_field, extra=99)
 
     cfg = ModelConfig.from_dict(original.as_dict())
 
@@ -115,6 +117,7 @@ def test_model_config_from_dict_round_trips_nested_config() -> None:
     assert isinstance(cfg.sub, DummySubConfig)
     assert cfg.sub.x == 7
     assert cfg.sub.y == "nested"
+    assert cfg.fn_field is fn_field
 
 
 def test_model_config_from_dict_ignores_non_init_derived_fields() -> None:

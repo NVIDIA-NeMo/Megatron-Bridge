@@ -52,5 +52,15 @@ patch --batch --forward --fuzz=0 -d "$mamba_build_dir/mamba_ssm-2.3.1" -p1 < "$p
 
 # --no-deps preserves the environment resolved by uv sync, especially base-image
 # torch. FORCE_BUILD prevents Mamba's setup.py from downloading an unpatched wheel.
-MAMBA_FORCE_BUILD=TRUE uv pip install --no-build-isolation --no-deps --reinstall \
+build_env=(MAMBA_FORCE_BUILD=TRUE)
+# Mamba's setup.py passes nvcc --threads 4. nvcc applies the last --threads it sees, so an
+# optional MAMBA_NVCC_THREADS appended through NVCC_APPEND_FLAGS overrides it for this build.
+if [[ -n "${MAMBA_NVCC_THREADS:-}" ]]; then
+    if [[ ! "$MAMBA_NVCC_THREADS" =~ ^[1-9][0-9]*$ ]]; then
+        echo "MAMBA_NVCC_THREADS must be a positive integer" >&2
+        exit 1
+    fi
+    build_env+=(NVCC_APPEND_FLAGS="${NVCC_APPEND_FLAGS:+$NVCC_APPEND_FLAGS }--threads $MAMBA_NVCC_THREADS")
+fi
+env "${build_env[@]}" uv pip install --no-build-isolation --no-deps --reinstall \
     "$mamba_build_dir/mamba_ssm-2.3.1"

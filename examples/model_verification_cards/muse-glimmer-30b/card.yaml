@@ -171,7 +171,7 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 8be93c49130954e3257158db774d59075d2beaa6  # pragma: allowlist secret
+      bridge_commit: 5d678741d1e570ec502e35767ceea0015c793ec3  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
@@ -186,25 +186,30 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/muse-glimmer-30b/pretrain-reference-resolved.yaml
-      last_verified: 2026-08-12
+      last_verified: 2026-09-29
       metrics:
-        initial_loss: 12.23977
-        final_loss: 1.4103
-        last_10_steps_step_time_ms_avg: 1035.34
-        last_10_steps_model_tflops_per_gpu_avg: 42.49
-        last_10_steps_tokens_per_second_per_gpu_avg: 247.262
+        initial_loss: 12.23791
+        final_loss: 0.6403766
+        last_10_steps_step_time_ms_avg: 105995.34
+        last_10_steps_model_tflops_per_gpu_avg: 205.59
+        last_10_steps_tokens_per_second_per_gpu_avg: 1236.583
       expected_result: >
-        On 32 H100 GPUs at TP8/PP2/DP2, the command trains the complete
-        randomly initialized HybridModel for exactly 100 optimizer steps on
-        the revision-pinned public CORD-v2 multimodal dataset. All losses and
+        On 32 H100 GPUs at TP4/PP4/DP2 with sequence parallelism, a 9|15|15|13
+        split of the 52 decoder layers, MBS2/GBS1024 at sequence length 4096,
+        and four data-loader workers, the command trains the complete randomly
+        initialized HybridModel for exactly 100 optimizer steps on the
+        revision-pinned public CORD-v2 multimodal dataset. All losses and
         gradient norms remain finite, with zero skipped and zero NaN
-        iterations. Loss decreases from 12.23977 to 1.410300; steps 91-100
-        average 1,035.34 ms, 42.49 model TFLOP/s/GPU, and 247.262 token
-        slots/s/GPU. The persisted post-setup config records the exact runtime.
-        Complete step-50 and step-100 checkpoints each contain 32 nonempty
-        distributed shards and 1,550 state entries, including model, optimizer,
-        scheduler, and RNG state, plus metadata, train state, and the native
-        HybridModel run config.
+        iterations. Loss decreases from 12.23791 to 0.6403766; steps 91-100
+        average 105,995.34 ms, 205.59 model TFLOP/s/GPU, and 1,236.583 token
+        slots/s/GPU. The run used a NeMo 26.10 release-candidate base container
+        with the pinned Megatron-Core submodule. The persisted post-setup config
+        records the exact runtime. Complete step-50 and step-100 checkpoints
+        each contain 32 nonempty distributed shards and 1,566 state entries,
+        including model, optimizer, scheduler, and RNG state, plus metadata,
+        train state, and the native HybridModel run config. Data-loader worker
+        state is not checkpointed, so a resume from step 50 is not guaranteed to
+        replay the identical sample stream.
 
   sft:
     H100:

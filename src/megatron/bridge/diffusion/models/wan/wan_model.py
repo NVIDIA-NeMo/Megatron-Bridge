@@ -186,14 +186,19 @@ class WanModel(VisionModule):
         """Forward pass.
 
         Args:
-            x List[Tensor]: list of vae encoded data (in_channel, f, h, w)
-            grid_sizes List[Tuple[int, int, int]]: list of grid sizes (f, h, w)
-            t Tensor: timesteps
-            context List[Tensor]: list of context (text_len, hidden_size)
-            packed_seq_params PackedSeqParams: packed sequence parameters
+            x: Patchified, packed VAE latents of shape
+                ``[seq_len, batch_size, C * pF * pH * pW]``, where C is the latent channel count.
+                Ignored on non-first pipeline stages, which use the decoder input tensor.
+            grid_sizes: Tensor of per-sample patch-grid sizes (f, h, w), one row per packed sample.
+            t: Timesteps.
+            context: Packed text-encoder embeddings of shape ``[text_len, batch_size, text_dim]``.
+            packed_seq_params: Dict with ``self_attention`` and ``cross_attention`` PackedSeqParams entries.
 
         Returns:
-            Tensor: output tensor (still patchified) of shape [seq_len, batch_size, hidden_size]
+            Tensor: On the last pipeline stage, the patchified prediction of shape
+                ``[seq_len, batch_size, out_channels * pF * pH * pW]``. Other stages return
+                decoder hidden states with last dimension ``hidden_size``, sharded along
+                the sequence dimension when sequence parallelism is enabled.
         """
         #################################
         ########## Wan forward ##########
@@ -229,6 +234,10 @@ class WanModel(VisionModule):
 
         # context embeddings
         context = self.text_embedding(context)  # shape [text_len, b, hidden_size]
+        if self.config.sequence_parallel:
+            # The cross-attention KV projection gathers sequence shards across TP ranks.
+            # Scatter after embedding so its replicated parameters receive full gradients.
+            context = tensor_parallel.scatter_to_sequence_parallel_region(context)
 
         # ============= decoder =============
         # calculate rotary pos emb
@@ -284,7 +293,7 @@ class WanModel(VisionModule):
         self.decoder.set_input_tensor(input_tensor[0])
 
     def sharded_state_dict(
-        self, prefix: str = "module.", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
+        self, prefix: str = "", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
     ) -> ShardedStateDict:
         """Sharded state dict implementation for GPTModel backward-compatibility (removing extra state).
 

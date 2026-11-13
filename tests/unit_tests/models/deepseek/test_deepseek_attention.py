@@ -34,8 +34,9 @@ from megatron.bridge.models.deepseek.attention import (
     get_deepseek_decoder_block_spec,
     replace_mla_self_attention,
 )
-from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTMLAModelConfig
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
 def _mla_submodules():
@@ -104,14 +105,13 @@ class TestMLASelfAttentionWithoutQueryNorm:
 class TestDeepSeekBridgesUseTheSpecHelper:
     """The bridges behind the affected models must route through the corrected spec builder.
 
-    `deepseek-ai/DeepSeek-V2-Lite` goes through DeepSeekV2Bridge and
-    `kakaocorp/kanana-2-30b-a3b-thinking` through DeepSeekV3Bridge, and both ship
+    `kakaocorp/kanana-2-30b-a3b-thinking` uses DeepSeekV3Bridge and ships
     `q_lora_rank: null`.
     """
 
-    @pytest.mark.parametrize("bridge_cls", [DeepSeekV2Bridge, DeepSeekV3Bridge])
+    @pytest.mark.parametrize("bridge_cls", [DeepSeekV3Bridge])
     def test_provider_bridge_installs_the_spec_helper(self, bridge_cls, monkeypatch):
-        """Both bridges must build their decoder block through get_deepseek_decoder_block_spec."""
+        """The bridge must build its decoder block through get_deepseek_decoder_block_spec."""
         provider = SimpleNamespace()
         monkeypatch.setattr(
             MegatronModelBridge,
@@ -183,6 +183,24 @@ class TestSpecBuilderContract:
         bound = partial(get_deepseek_decoder_block_spec, use_transformer_engine=True)
         assert "vp_stage" in inspect.signature(bound).parameters
 
+    def test_builder_model_config_builds_from_its_transformer_config(self, monkeypatch):
+        """The GPT builder passes its model config; MCore builds the layers from the nested transformer config."""
+        seen = {}
+
+        def _capture(config, **kwargs):
+            seen["config"] = config
+            return SimpleNamespace(layer_specs=[])
+
+        monkeypatch.setattr(attention_module, "get_gpt_decoder_block_spec", _capture)
+        transformer = MLATransformerConfig(
+            num_layers=2, hidden_size=128, num_attention_heads=4, q_lora_rank=None, kv_lora_rank=32
+        )
+        model_config = BridgeGPTMLAModelConfig(transformer=transformer, vocab_size=256)
+
+        get_deepseek_decoder_block_spec(model_config, use_transformer_engine=True, vp_stage=None)
+
+        assert seen["config"] is transformer
+
 
 class TestLocalBackend:
     """The local backend cannot express this architecture; say so, and say it clearly."""
@@ -241,7 +259,7 @@ class TestStandaloneMTPStage:
 
         assert layer_spec.submodules.self_attention.module is MLASelfAttention
 
-    @pytest.mark.parametrize("bridge_cls", [DeepSeekV2Bridge, DeepSeekV3Bridge])
+    @pytest.mark.parametrize("bridge_cls", [DeepSeekV3Bridge])
     def test_bridges_register_the_mtp_transform(self, bridge_cls, monkeypatch):
         """Without this the MTP layer on a standalone stage regains the query norm."""
         provider = SimpleNamespace()

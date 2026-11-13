@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 import torch
-from megatron.core.activations import squared_relu
 
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
@@ -32,53 +32,40 @@ _HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
 _HF_MODEL_REVISION = "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"  # pragma: allowlist secret
 
 
-def _model_config(*, seq_length: int, context_parallel_size: int = 1) -> HybridModelProvider:
-    """Build the exact dense Nemotron 3 Nano 4B architecture."""
-    return HybridModelProvider(
-        hybrid_layer_pattern="M-M-M-MM-M-M*-M-M*-M-M-M*-M-M-MM*-MMM-M-M-",
-        num_layers=42,
-        hidden_size=3136,
-        ffn_hidden_size=12544,
-        num_attention_heads=40,
-        num_query_groups=8,
-        kv_channels=128,
-        mamba_num_heads=96,
-        mamba_head_dim=80,
-        mamba_state_dim=128,
-        mamba_num_groups=8,
-        mamba_chunk_size=256,
-        seq_length=seq_length,
-        vocab_size=131072,
-        should_pad_vocab=False,
-        make_vocab_size_divisible_by=128,
-        share_embeddings_and_output_weights=False,
-        position_embedding_type="none",
-        activation_func=squared_relu,
-        gated_linear_unit=False,
-        add_bias_linear=False,
-        normalization="RMSNorm",
-        layernorm_epsilon=1.0e-5,
-        init_method_std=0.02,
-        hidden_dropout=0.0,
-        attention_dropout=0.0,
-        masked_softmax_fusion=True,
-        apply_query_key_layer_scaling=False,
-        persist_layer_norm=True,
-        attention_softmax_in_fp32=False,
-        first_last_layers_bf16=True,
-        is_hybrid_model=True,
-        use_mamba_mem_eff_path=True,
-        transformer_impl="transformer_engine",
-        attention_backend=None,
-        cross_entropy_loss_fusion=True,
-        cross_entropy_fusion_impl="native",
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=context_parallel_size,
-        sequence_parallel=False,
-    )
+def _model_config(*, seq_length: int, context_parallel_size: int = 1) -> BridgeHybridModelConfig:
+    """Build the dense Nemotron 3 Nano 4B architecture from its pinned HF config."""
+    model = AutoBridge.from_hf_pretrained(_HF_MODEL_ID, revision=_HF_MODEL_REVISION).get_model_config()
+    # The model is dense, but its Transformers config declares default MoE values. Keep every
+    # MoE field at its Megatron Core default.
+    model.num_moe_experts = None
+    model.moe_ffn_hidden_size = None
+    model.moe_shared_expert_intermediate_size = None
+    model.moe_router_topk_scaling_factor = None
+    model.moe_router_num_groups = None
+    model.moe_router_group_topk = None
+    model.moe_router_score_function = "softmax"
+    model.moe_router_enable_expert_bias = False
+    model.moe_router_load_balancing_type = "aux_loss"
+    model.moe_aux_loss_coeff = 0.0
+    model.moe_router_dtype = None
+    model.moe_grouped_gemm = False
+    model.moe_permute_fusion = False
+    model.moe_shared_expert_overlap = False
+    model.moe_token_dispatcher_type = "allgather"
+    model.seq_length = seq_length
+    model.should_pad_vocab = False
+    model.use_mamba_mem_eff_path = True
+    model.transformer_impl = "transformer_engine"
+    model.attention_backend = None
+    model.cross_entropy_loss_fusion = True
+    model.cross_entropy_fusion_impl = "native"
+    model.tensor_model_parallel_size = 1
+    model.pipeline_model_parallel_size = 1
+    model.pipeline_dtype = torch.bfloat16
+    model.virtual_pipeline_model_parallel_size = None
+    model.context_parallel_size = context_parallel_size
+    model.sequence_parallel = False
+    return model
 
 
 def _configure_tokenizer(cfg: ConfigContainer) -> None:

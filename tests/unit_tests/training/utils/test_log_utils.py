@@ -316,3 +316,36 @@ class TestSafeSerialize:
         my_lambda = lambda x: x + 1
         result = safe_serialize(my_lambda)
         assert "lambda" in result.lower() or "function" in result.lower()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "GroupedGemmQuantSm100",
+        "GroupedGemmDsreluSm100",
+        "GroupedGemmSreluSm100",
+        "GroupedGemmWgradSm100",
+        "GroupedGemmWgradBlockScaledAPI",
+        "absl",
+    ],
+)
+def test_external_info_logs_follow_current_rank_and_preserve_diagnostics(name):
+    from megatron.bridge.training.utils.log_utils import _rank_zero_info_filter
+
+    logger = logging.getLogger(name)
+    old_filters, old_level = logger.filters[:], logger.level
+    try:
+        logger.setLevel(logging.DEBUG)
+        with patch("megatron.bridge.training.utils.log_utils._mlm_setup_logging"):
+            setup_logging()
+            setup_logging()
+        assert logger.level == logging.DEBUG
+        assert logger.filters.count(_rank_zero_info_filter) == 1
+        for rank in (0, 3, 0):
+            with patch("megatron.bridge.training.utils.log_utils.get_rank_safe", return_value=rank):
+                for level in (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR):
+                    record = logging.LogRecord(name, level, __file__, 1, "message", (), None)
+                    assert _rank_zero_info_filter.filter(record) == (rank == 0 or level >= logging.WARNING)
+    finally:
+        logger.filters = old_filters
+        logger.setLevel(old_level)
