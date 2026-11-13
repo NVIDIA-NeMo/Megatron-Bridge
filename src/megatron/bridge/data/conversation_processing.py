@@ -1128,6 +1128,26 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
             rendered_turn_end_roles=(CHATML_ASSISTANT_ROLE,),
         )
 
+    # Inkling 2 renders every message as role-tagged blocks such as
+    # ``<|message_model|><|content_text|>...<|end_message|>`` and ends an
+    # assistant turn with ``<|content_model_end_sampling|>``. The model writes
+    # its own ``<|message_model|>`` headers, so the loss covers the whole turn,
+    # from its first header through the end-of-sampling token.
+    if all(
+        marker in template for marker in ("<|message_model|>", "<|content_model_end_sampling|>", "<|message_user|>")
+    ):
+        return assistant_mask_boundary_config_from_markers(
+            processor,
+            assistant_start="<|message_model|>",
+            assistant_end="<|content_model_end_sampling|>",
+            role_start_markers={
+                "system": "<|message_system|>",
+                "user": "<|message_user|>",
+                "tool": "<|message_tool|>",
+            },
+            include_start_tokens_for_roles=(CHATML_ASSISTANT_ROLE,),
+        )
+
     candidates: tuple[tuple[tuple[str, ...], str, str, tuple[str, ...], Mapping[str, str]], ...] = (
         (
             ("<|im_start|>assistant", "<|im_end|>"),

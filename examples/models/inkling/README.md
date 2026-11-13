@@ -106,16 +106,14 @@ lcm(2 x CP, CP x TP) tokens (16 at TP4/CP4), per-token loss
 (`model.calculate_per_token_loss`), and `ddp.average_in_collective=False`; the recipe
 sets all three, and a different CP size needs its own packed-data directory. Image
 inputs are not supported with context parallelism yet. Conversations
-are rendered with `INKLING2_CHAT_TEMPLATE` from
-`megatron.bridge.models.inkling.inkling2_chat_template`: the release's `chat_template.jinja`,
-which it renders identically, plus two additions. An assistant's reasoning may also come in
-the `thinking` field of Bridge's dataset adapters, and assistant turns are marked as
-`{% generation %}` spans for the loss mask. As in the release's template, tool declarations
-come first, a `Thinking effort level` system line precedes the first non-system message
-(the `reasoning_effort` template argument, 0.9 by default), reasoning is its own block, each
-tool call is a structured `<|content_invoke_tool_json|>` block, and tool results are named
-after the call they answer. The supervised span of an assistant turn includes its message
-headers, tool calls, and end-of-sampling token.
+are rendered with the checkpoint's own `chat_template.jinja`. Tool declarations come first,
+a `Thinking effort level` system line precedes the first non-system message (the
+`reasoning_effort` template argument, 0.9 by default), an assistant's `reasoning_content` is
+its own block, each tool call is a structured `<|content_invoke_tool_json|>` block, and tool
+results are named after the call they answer. The template has no `{% generation %}` tags,
+so Bridge finds each assistant turn from its markers, `<|message_model|>` through
+`<|content_model_end_sampling|>`; the supervised span includes the turn's message headers,
+tool calls, and end-of-sampling token.
 
 The image-text recipes read CORD-v2 receipts through `Inkling2Processor`, which
 `AutoProcessor` resolves from the checkpoint directory, so point

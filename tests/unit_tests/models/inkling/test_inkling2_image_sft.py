@@ -28,6 +28,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig, load_direct_hf_sft_processor
 from megatron.bridge.data.collators.registry import always_use_model_collate, resolve_model_collate
+from megatron.bridge.data.conversation_processing import tokenize_chat_example
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
 from megatron.bridge.models.inkling import Inkling2Processor
@@ -38,7 +39,6 @@ from megatron.bridge.models.inkling.data.image_processing import (
     resize_lanczos3,
 )
 from megatron.bridge.models.inkling.data.processor import reasoning_effort_level
-from megatron.bridge.models.inkling.inkling2_chat_template import INKLING2_CHAT_TEMPLATE
 
 
 pytestmark = pytest.mark.unit
@@ -263,7 +263,7 @@ class TestProcessor:
         with pytest.raises(ValueError, match="but the model replaces token"):
             Inkling2Processor.from_pretrained(checkpoint)
 
-    def test_text_turns_match_the_text_sft_chat_template(self, checkpoint: Path) -> None:
+    def test_text_turns_match_the_text_sft_pipeline(self, checkpoint: Path) -> None:
         processor = Inkling2Processor.from_pretrained(checkpoint)
         conversation = [
             {"role": "system", "content": "What is 2 + 2 ?"},
@@ -271,16 +271,12 @@ class TestProcessor:
             {"role": "assistant", "content": "4", "reasoning_content": "2 + 2 is 4"},
         ]
         input_ids, mask, _ = processor.render(conversation)
-        reference = processor.tokenizer.apply_chat_template(
-            conversation,
-            chat_template=INKLING2_CHAT_TEMPLATE,
-            tokenize=True,
-            return_dict=True,
-            return_assistant_tokens_mask=True,
-        )
+        # Text SFT renders with the release's template and finds the assistant turn from its markers.
+        processor.tokenizer.chat_template = RELEASE_TEMPLATE
+        reference = tokenize_chat_example({"messages": conversation}, processor.tokenizer)
 
-        assert input_ids == list(reference["input_ids"])
-        assert mask == list(reference["assistant_masks"])
+        assert input_ids == reference.input_ids.tolist()
+        assert mask == [int(value) for value in reference.assistant_mask.tolist()]
 
     def test_batches_pad_right_and_keep_images_in_order(self, checkpoint: Path) -> None:
         processor = Inkling2Processor.from_pretrained(checkpoint)

@@ -31,7 +31,6 @@ import torch
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
 from megatron.bridge.data.sft_processing import ChatSFTPreprocessingConfig
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
-from megatron.bridge.models.inkling.inkling2_chat_template import INKLING2_CHAT_TEMPLATE
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.inkling.gb200 import inkling2 as inkling2_recipes
 from megatron.bridge.recipes.inkling.gb200 import (
@@ -274,7 +273,8 @@ def test_pretrain_recipe_contract() -> None:
 
 
 def _assert_tulu3_packed_contract(cfg: ConfigContainer, *, seq_length: int, output_root: str) -> None:
-    assert cfg.tokenizer.chat_template == INKLING2_CHAT_TEMPLATE
+    # The tokenizer renders with the checkpoint's own chat_template.jinja.
+    assert cfg.tokenizer.chat_template is None
     assert cfg.model.seq_length == cfg.dataset.seq_length == seq_length
     assert cfg.dataset.hf_dataset.split == "train[:10000]"
     assert cfg.dataset.hf_dataset.load_kwargs == {"revision": inkling2_recipes._TULU3_REVISION}

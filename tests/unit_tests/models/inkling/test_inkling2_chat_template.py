@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bridge's Inkling2 chat template against the release's chat_template.jinja: framing, tools, reasoning, masks."""
+"""The release's Inkling2 chat template through Bridge's chat SFT pipeline: turn markers, masks, reasoning, tools."""
 
 from pathlib import Path
 
@@ -22,9 +22,12 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast
 
-from megatron.bridge.data.conversation_processing import normalize_chat_conversation
+from megatron.bridge.data.conversation_processing import (
+    infer_assistant_mask_boundary_config,
+    normalize_chat_conversation,
+    tokenize_chat_example,
+)
 from megatron.bridge.data.sources.hf_adapters import _openmathinstruct2_thinking_adapter
-from megatron.bridge.models.inkling.inkling2_chat_template import INKLING2_CHAT_TEMPLATE
 
 
 pytestmark = pytest.mark.unit
@@ -118,66 +121,87 @@ CONVERSATIONS = {
 
 @pytest.fixture(scope="module")
 def tokenizer() -> PreTrainedTokenizerFast:
-    """A word-level tokenizer that knows the Inkling2 framing tokens."""
+    """A word-level tokenizer that knows the Inkling2 framing tokens and carries the release's template."""
     vocab = {token: index for index, token in enumerate(("<unk>", "<pad>", *FRAMING))}
     model = Tokenizer(WordLevel(vocab, unk_token="<unk>"))
     model.pre_tokenizer = Whitespace()
     fast = PreTrainedTokenizerFast(tokenizer_object=model, unk_token="<unk>", pad_token="<pad>")
     fast.add_special_tokens({"additional_special_tokens": list(FRAMING)})
-    fast.chat_template = INKLING2_CHAT_TEMPLATE
+    fast.chat_template = RELEASE_TEMPLATE
     return fast
 
 
-def _render(tokenizer: PreTrainedTokenizerFast, messages: list[dict], template: str | None = None, **kwargs) -> str:
-    return tokenizer.apply_chat_template(messages, chat_template=template, tokenize=False, **kwargs)
+def _render(tokenizer: PreTrainedTokenizerFast, messages: list[dict], **kwargs) -> str:
+    return tokenizer.apply_chat_template(messages, tokenize=False, **kwargs)
+
+
+def _expected_mask(tokens: list[str]) -> list[int]:
+    """Supervise each assistant turn from its first ``<|message_model|>`` through ``<|content_model_end_sampling|>``."""
+    mask, inside = [], False
+    for token in tokens:
+        inside = inside or token == "<|message_model|>"
+        # An assistant turn without content renders only its end-of-sampling token, which is still the model's.
+        mask.append(int(inside or token == "<|content_model_end_sampling|>"))
+        if token == "<|content_model_end_sampling|>":
+            inside = False
+    return mask
 
 
 class TestInkling2ChatTemplate:
-    @pytest.mark.parametrize("effort", [None, "none", "low", 0.7, 0])
-    @pytest.mark.parametrize("name", sorted(CONVERSATIONS))
-    def test_renders_as_the_release_template(self, tokenizer: PreTrainedTokenizerFast, name: str, effort) -> None:
-        kwargs = {"tools": TOOLS if name == "tool_use" else None}
+    def test_bridge_finds_the_inkling2_turn_markers(self, tokenizer: PreTrainedTokenizerFast) -> None:
+        config = infer_assistant_mask_boundary_config(tokenizer)
+
+        assert config is not None
+        assert tokenizer.convert_ids_to_tokens(list(config.role_start_tokens["assistant"])) == ["<|message_model|>"]
+        assert tokenizer.convert_ids_to_tokens(list(config.role_end_tokens["assistant"])) == [
+            "<|content_model_end_sampling|>"
+        ]
+        assert "assistant" in config.include_start_tokens_for_roles
+        assert "assistant" in config.include_end_tokens_for_roles
+
+    @pytest.mark.parametrize("effort", [None, "none", 0.7])
+    @pytest.mark.parametrize(
+        "name", sorted(name for name in CONVERSATIONS if name not in ("prompt_only", "system_only"))
+    )
+    def test_masks_cover_whole_assistant_turns(self, tokenizer: PreTrainedTokenizerFast, name: str, effort) -> None:
+        example = {"messages": CONVERSATIONS[name], "tools": TOOLS if name == "tool_use" else None}
         if effort is not None:
-            kwargs["reasoning_effort"] = effort
+            example["chat_template_kwargs"] = {"reasoning_effort": effort}
+        encoded = tokenize_chat_example(example, tokenizer, warn_on_all_masked=False)
+        tokens = tokenizer.convert_ids_to_tokens(encoded.input_ids.tolist())
 
-        assert _render(tokenizer, CONVERSATIONS[name], **kwargs) == _render(
-            tokenizer, CONVERSATIONS[name], RELEASE_TEMPLATE, **kwargs
-        )
+        assert [int(value) for value in encoded.assistant_mask.tolist()] == _expected_mask(tokens)
 
-    def test_tool_use_framing(self, tokenizer: PreTrainedTokenizerFast) -> None:
-        rendered = _render(tokenizer, CONVERSATION, tools=TOOLS)
+    def test_tool_use_is_supervised_and_the_rest_is_not(self, tokenizer: PreTrainedTokenizerFast) -> None:
+        encoded = tokenize_chat_example({"messages": CONVERSATION, "tools": TOOLS}, tokenizer)
+        tokens = tokenizer.convert_ids_to_tokens(encoded.input_ids.tolist())
+        masks = dict.fromkeys(SUPERVISED + UNSUPERVISED, set())
+        for token, mask in zip(tokens, encoded.assistant_mask.tolist(), strict=True):
+            if token in masks:
+                masks[token] = masks[token] | {int(mask)}
 
-        declaration = (
-            '<|message_system|>tool_declare<|content_xml|>[{"description":"Wetter für eine Stadt","name":"get_weather",'
-            '"parameters":{"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},'
-            '"type":"function"},{"description":"","name":"finish","parameters":{},"type":"function"}]<|end_message|>'
-        )
+        assert all(masks[token] == {1} for token in SUPERVISED)
+        assert all(masks[token] == {0} for token in UNSUPERVISED if token != "<|content_image|>")
+        supervised = [token for token, mask in zip(tokens, encoded.assistant_mask.tolist(), strict=True) if mask]
+        assert supervised.count("<|content_model_end_sampling|>") == 2
+        assert supervised[0] == "<|message_model|>" and supervised[-1] == "<|content_model_end_sampling|>"
         # Tools first, then the system prompt, then the thinking-effort line before the first non-system message.
-        assert rendered.startswith(
-            declaration + "<|message_system|><|content_text|>You are a weather agent.<|end_message|>" + EFFORT
-        )
-        assert (
-            '<|message_model|>get_weather<|content_invoke_tool_json|>{"name":"get_weather","args":'
-            '{"city":"Zürich","units":{"speed":"km/h","temp":"C"}}}<|end_message|><|content_model_end_sampling|>'
-        ) in rendered
-        # A result without a name takes the name of the call it answers.
-        assert '<|message_tool|>get_weather<|content_text|>{"temperature":58}<|end_message|>' in rendered
+        rendered = _render(tokenizer, CONVERSATION, tools=TOOLS)
+        assert rendered.index("tool_declare") < rendered.index("You are a weather agent.") < rendered.index(EFFORT)
 
-    def test_reasoning_reads_the_thinking_field(self, tokenizer: PreTrainedTokenizerFast) -> None:
+    def test_openmath_thinking_rows_render_their_reasoning(self, tokenizer: PreTrainedTokenizerFast) -> None:
         row = _openmathinstruct2_thinking_adapter(
             {"problem": "What is 2 + 2?", "generated_solution": "Add them: $\\boxed{4}$", "expected_answer": "4"}, {}
         )
-        as_reasoning_content = [
-            row["messages"][0],
-            {"role": "assistant", "reasoning_content": "Add them:", "content": "#### 4"},
-        ]
+        encoded = tokenize_chat_example(row, tokenizer)
+        tokens = tokenizer.convert_ids_to_tokens(encoded.input_ids.tolist())
 
         assert _render(tokenizer, row["messages"]) == (
             EFFORT + "<|message_user|><|content_text|>What is 2 + 2?<|end_message|>"
             "<|message_model|><|content_thinking|>Add them:<|end_message|>"
             "<|message_model|><|content_text|>#### 4<|end_message|><|content_model_end_sampling|>"
         )
-        assert _render(tokenizer, row["messages"]) == _render(tokenizer, as_reasoning_content, RELEASE_TEMPLATE)
+        assert [int(value) for value in encoded.assistant_mask.tolist()] == _expected_mask(tokens)
 
     def test_openai_string_arguments_are_parsed_by_the_pipeline(self, tokenizer: PreTrainedTokenizerFast) -> None:
         call = {"id": "c", "type": "function", "function": {"name": "f", "arguments": '{"b": 1, "a": [2, 3]}'}}
@@ -192,34 +216,3 @@ class TestInkling2ChatTemplate:
         )
         with pytest.raises(Exception, match="must be a parsed object"):
             _render(tokenizer, [{"role": "assistant", "content": "", "tool_calls": [call]}])
-
-    def test_reasoning_content_takes_precedence_over_the_aliases(self, tokenizer: PreTrainedTokenizerFast) -> None:
-        both = [{"role": "assistant", "content": "4", "reasoning_content": "a", "thinking": "b", "reasoning": "c"}]
-        alias = [{"role": "assistant", "content": "4", "reasoning": "c"}]
-
-        assert "<|content_thinking|>a<|end_message|>" in _render(tokenizer, both)
-        assert "<|content_thinking|>c<|end_message|>" in _render(tokenizer, alias)
-
-    @pytest.mark.parametrize("effort", ["huge", 1.5])
-    def test_unknown_efforts_and_roles_are_rejected(self, tokenizer: PreTrainedTokenizerFast, effort) -> None:
-        with pytest.raises(Exception, match="reasoning_effort"):
-            _render(tokenizer, CONVERSATIONS["plain"], reasoning_effort=effort)
-        with pytest.raises(Exception, match="Unknown message role: developer"):
-            _render(tokenizer, [{"role": "developer", "content": "x"}])
-
-    def test_assistant_turns_are_supervised_and_the_rest_is_not(self, tokenizer: PreTrainedTokenizerFast) -> None:
-        encoded = tokenizer.apply_chat_template(
-            CONVERSATION, tools=TOOLS, tokenize=True, return_dict=True, return_assistant_tokens_mask=True
-        )
-        tokens = tokenizer.convert_ids_to_tokens(encoded["input_ids"])
-        masks = dict.fromkeys(SUPERVISED + UNSUPERVISED, set())
-        for token, mask in zip(tokens, encoded["assistant_masks"], strict=True):
-            if token in masks:
-                masks[token] = masks[token] | {mask}
-
-        assert all(masks[token] == {1} for token in SUPERVISED)
-        assert all(masks[token] == {0} for token in UNSUPERVISED if token != "<|content_image|>")
-        # Each supervised span runs from an assistant turn's first block to its end-of-sampling token.
-        supervised = [token for token, mask in zip(tokens, encoded["assistant_masks"], strict=True) if mask]
-        assert supervised.count("<|content_model_end_sampling|>") == 2
-        assert supervised[0] == "<|message_model|>" and supervised[-1] == "<|content_model_end_sampling|>"

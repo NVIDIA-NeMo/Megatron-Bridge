@@ -40,7 +40,6 @@ from __future__ import annotations
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.inkling.inkling2_chat_template import INKLING2_CHAT_TEMPLATE
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import (
     _peft_common,
@@ -165,7 +164,7 @@ def inkling2_small_sft_128gpu_gb200_bf16_config() -> ConfigContainer:
     decoder blocks. That pass's activations fit without recompute: the last stage
     peaks near 145 GB, and recomputing the first 6 of each stage's 24 Hybrid layers
     makes the step about 13% slower. The 96-GPU recipe trains the same run on fewer GPUs.
-    Conversations are rendered with the Inkling2 chat template and packs are aligned
+    Conversations are rendered with the checkpoint's chat template and packs are aligned
     to the TP4 sequence-parallel width. The final step saves the full model weights
     for HF export.
     """
@@ -175,7 +174,6 @@ def inkling2_small_sft_128gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
     cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
-    cfg.tokenizer.chat_template = INKLING2_CHAT_TEMPLATE
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
@@ -282,7 +280,6 @@ def inkling2_small_sft_96gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
     cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
-    cfg.tokenizer.chat_template = INKLING2_CHAT_TEMPLATE
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 3
@@ -388,7 +385,6 @@ def inkling2_small_sft_128gpu_gb200_bf16_long_context_config() -> ConfigContaine
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
     cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
-    cfg.tokenizer.chat_template = INKLING2_CHAT_TEMPLATE
     cfg.model.seq_length = 32768
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
@@ -496,7 +492,6 @@ def inkling2_small_peft_32gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora"
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
     cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
-    cfg.tokenizer.chat_template = INKLING2_CHAT_TEMPLATE
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
@@ -605,7 +600,6 @@ def inkling2_small_peft_16gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora"
     cfg.tokenizer.tokenizer_model = _MODEL_ID
     # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
     cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
-    cfg.tokenizer.chat_template = INKLING2_CHAT_TEMPLATE
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
