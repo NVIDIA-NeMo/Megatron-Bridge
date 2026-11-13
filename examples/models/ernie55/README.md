@@ -134,9 +134,11 @@ python -m torch.distributed.run --nproc_per_node 4 --nnodes 16 ... scripts/conve
 ```
 
 The export holds the model's tensors with their values unchanged. The tensors kept in fp32 (router,
-hyper-connections, sinks and similar) are written in F32 even when the source checkpoint stored them in bf16, and the
-shared MTP body is written once, not repeated under the MTP layer. Its
-`tokenizer_config.json` names `PreTrainedTokenizerFast`, so transformers 4 and 5 both load it.
+hyper-connections, sinks and similar) are written in F32 even when the source checkpoint stored them in bf16. The
+export has the tensor names of the `--hf-model` checkpoint: the shared MTP body is written under the decoder's last
+layer and, when that checkpoint also stores it under the MTP layer (the released checkpoints do), under those names
+too. Inference engines read their MTP draft layer for speculative decoding from them, so pass a checkpoint that has
+them. The export's `tokenizer_config.json` names `PreTrainedTokenizerFast`, so transformers 4 and 5 both load it.
 
 ## Training settings
 

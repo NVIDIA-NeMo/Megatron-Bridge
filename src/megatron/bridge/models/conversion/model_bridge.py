@@ -598,7 +598,7 @@ class MegatronModelBridge(
 
         ``HF_EXPORT_IGNORED_SOURCE_PREFIXES`` names whole modules absent from every target; this hook covers
         omissions that depend on the checkpoint, such as a checkpoint's copies of parameters the Megatron
-        model holds once (ERNIE 5.5's shared MTP body). Strict export treats the returned names as
+        model holds once, for a bridge that does not write them back. Strict export treats the returned names as
         intentionally absent instead of missing, so the shards that hold them are still written with their
         other tensors. Never return a tensor the export does yield: strict saving rejects it as unknown.
 
