@@ -113,6 +113,7 @@ def create_config(
     )
 
     optimizer_config = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         bf16=True,
         fp16=False,
@@ -169,7 +170,9 @@ def create_config(
         dataset=dataset_config,
         logger=LoggerConfig(log_interval=10, tensorboard_dir=None),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=model_config.vocab_size),
-        checkpoint=CheckpointConfig(save=None, load=None, save_interval=None),
+        checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, save=None, load=None, save_interval=None
+        ),
         rng=RNGConfig(seed=1234),
         ddp=ddp_config,
         nvrx_straggler=nvrx_config,

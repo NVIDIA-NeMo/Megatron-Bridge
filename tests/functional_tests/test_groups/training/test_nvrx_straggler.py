@@ -116,6 +116,7 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
     )
 
     optimizer_config = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         bf16=True,
         fp16=False,
@@ -151,6 +152,8 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
     )
 
     checkpoint_config = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
         save=None,
         load=None,
         save_interval=None,

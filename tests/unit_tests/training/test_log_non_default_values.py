@@ -78,6 +78,7 @@ class TestGetNonDefaultValues:
         """Should detect values that differ from Mcore OptimizerConfig defaults."""
         # Create optimizer with non-default values
         optimizer = OptimizerConfig(
+            use_layer_wise_param_layout=False,
             lr=0.001,
             adam_beta2=0.95,  # Mcore default is 0.999
             weight_decay=0.1,  # Mcore default is 0.01
@@ -95,6 +96,7 @@ class TestGetNonDefaultValues:
         """Should not include values that match Mcore defaults."""
         # Create optimizer with default adam_eps value
         optimizer = OptimizerConfig(
+            use_layer_wise_param_layout=False,
             lr=0.001,
             adam_eps=1e-8,  # Matches Mcore default
         )
@@ -140,7 +142,7 @@ class TestGetNonDefaultValues:
 
     def test_skips_private_fields(self):
         """Should skip fields that start with underscore."""
-        optimizer = OptimizerConfig(lr=0.001)
+        optimizer = OptimizerConfig(use_layer_wise_param_layout=False, lr=0.001)
 
         non_defaults = _get_non_default_values(optimizer, MCoreOptimizerConfig)
 
@@ -191,6 +193,8 @@ class TestGetKeyConfigValues:
     def test_extracts_checkpoint_config_values(self):
         """Should extract key values from CheckpointConfig."""
         checkpoint = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             ckpt_format="torch_dist",
             save_interval=500,
             async_save=True,
@@ -220,6 +224,7 @@ class TestLogNonDefaultValues:
         return ConfigContainer(
             model=model_provider,
             optimizer=OptimizerConfig(
+                use_layer_wise_param_layout=False,
                 lr=0.001,
                 adam_beta2=0.95,  # Non-default (Mcore default is 0.999)
             ),
@@ -231,7 +236,9 @@ class TestLogNonDefaultValues:
             ddp=DistributedDataParallelConfig(
                 overlap_grad_reduce=True,  # Non-default
             ),
-            checkpoint=CheckpointConfig(ckpt_format="torch_dist"),
+            checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, ckpt_format="torch_dist"
+            ),
             logger=LoggerConfig(),
             tokenizer=TokenizerConfig(),
             rng=RNGConfig(),
@@ -325,13 +332,16 @@ class TestLogNonDefaultValues:
                 seq_length=512,
             ),
             optimizer=OptimizerConfig(
+                use_layer_wise_param_layout=False,
                 lr=0.001,
                 adam_eps=1e-8,  # Mcore default
             ),
             scheduler=SchedulerConfig(lr_decay_style="cosine"),
             train=TrainingConfig(global_batch_size=64, train_iters=500),
             ddp=DistributedDataParallelConfig(),
-            checkpoint=CheckpointConfig(ckpt_format="torch_dist"),
+            checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, ckpt_format="torch_dist"
+            ),
             logger=LoggerConfig(),
             tokenizer=TokenizerConfig(),
             rng=RNGConfig(),

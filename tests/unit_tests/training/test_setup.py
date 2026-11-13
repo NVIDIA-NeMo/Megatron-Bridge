@@ -608,7 +608,7 @@ class TestBuildDistributedModel:
         cfg = SimpleNamespace(
             model=model_config,
             ddp=DistributedDataParallelConfig(),
-            optimizer=OptimizerConfig(),
+            optimizer=OptimizerConfig(use_layer_wise_param_layout=False),
             dist=DistributedInitConfig(),
             rng=SimpleNamespace(data_parallel_random_init=False),
         )

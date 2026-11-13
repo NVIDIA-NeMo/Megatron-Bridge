@@ -16,19 +16,13 @@ import os
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.training.config import CheckpointConfig, LoggerConfig, RNGConfig, TrainingConfig
 
 from megatron.bridge.diffusion.conversion.flux.flux_bridge import FluxBridge
 from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-)
+from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
@@ -134,6 +128,8 @@ def flux_12b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=2000,
             save=checkpoint_dir,
             load=checkpoint_dir,
@@ -164,6 +160,8 @@ def flux_12b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
 
     cfg.checkpoint = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
         save_interval=20,
         save=checkpoint_dir,
         load=checkpoint_dir,

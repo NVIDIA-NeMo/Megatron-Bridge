@@ -31,6 +31,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, get_pg_rank, to_local_if_dtensor
+from megatron.training.config import ProfilingConfig, TrainingConfig
 
 from megatron.bridge.models.common.heads import (
     LinearForLastLayer as LinearForLastLayer,
@@ -41,7 +42,7 @@ from megatron.bridge.models.common.heads import (
     create_value_head_hook,
     ensure_model_list,
 )
-from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics

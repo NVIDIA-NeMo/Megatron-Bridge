@@ -30,12 +30,9 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, com
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_model_config
+from megatron.training.config import SchedulerConfig
 
-from megatron.bridge.training.config import (
-    OptimizerConfigOverrideProvider,
-    OptimizerConfigOverrideProviderContext,
-    SchedulerConfig,
-)
+from megatron.bridge.training.config import OptimizerConfigOverrideProvider, OptimizerConfigOverrideProviderContext
 from megatron.bridge.training.utils.optimizer_utils import normalize_optimizer_config
 
 

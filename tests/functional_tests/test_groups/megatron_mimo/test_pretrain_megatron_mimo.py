@@ -319,6 +319,7 @@ def _build_config(
     )
 
     opt_config = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         bf16=not deterministic,
         use_distributed_optimizer=True,
         lr=1e-4,
@@ -333,7 +334,7 @@ def _build_config(
         dataset=_build_mock_data_provider(),
         logger=LoggerConfig(),
         tokenizer=TokenizerConfig(),
-        checkpoint=CheckpointConfig(),
+        checkpoint=CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
     )
     # Mirrors the --deterministic flag plumbing in
     # examples/megatron_mimo/llava/megatron_mimo_training_llava.py: fp32 grad
@@ -469,6 +470,7 @@ def _build_resume_config(
     train_cfg.num_microbatches = 1
 
     opt_config = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         bf16=True,
         use_distributed_optimizer=True,
         lr=1e-4,
@@ -476,6 +478,8 @@ def _build_resume_config(
     )
 
     ckpt_cfg = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
         save_interval=save_interval,
         save=ckpt_save_dir,
         ckpt_format="torch_dist",

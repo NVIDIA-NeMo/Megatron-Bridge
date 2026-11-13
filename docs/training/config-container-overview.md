@@ -30,6 +30,61 @@ config = ConfigContainer(
 )
 ```
 
+## Native Megatron configuration classes
+
+The training sections use the actual Megatron classes, without Bridge subclasses:
+
+```python
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.optimizer import OptimizerConfig
+from megatron.training.config import (
+    CheckpointConfig, DistributedInitConfig, LoggerConfig, ProfilingConfig,
+    RerunStateMachineConfig, RNGConfig, SchedulerConfig,
+    StragglerDetectionConfig, TrainingConfig, ValidationConfig,
+)
+```
+
+The same names in `megatron.bridge.training.config` remain re-exports so existing
+imports and saved `_target_` paths resolve. New saved configs record the canonical
+Megatron module paths. Fields explicitly stored in older configs are retained.
+
+Bridge's training entry points apply recipe and mixed-precision overrides, then
+call `runtime_config_update()` (or the MIMO equivalent) to validate and derive
+runtime values. Do not call a removed Bridge-specific `.finalize()` method on
+an individual section. Filesystem checks, optional logging dependencies, and
+Bridge's FSDP precision policy remain part of Bridge runtime setup.
+
+Bare constructors now use Megatron's defaults. Shipped Bridge recipes explicitly
+select their existing policy where it differs:
+
+| Construction | Previous Bridge default | Native default | Preserve the previous setting |
+| --- | --- | --- | --- |
+| Optimizer layer-wise layout | `False` | `True` | `OptimizerConfig(use_layer_wise_param_layout=False)` |
+| Persistent checkpoint worker | `True` | `False` | `CheckpointConfig(use_persistent_ckpt_worker=True)` |
+| Strict FSDP DTensor loading | `False` | `True` | `CheckpointConfig(strict_fsdp_dtensor_load=False)` |
+| Profiling ranks | `[0]` | `[]` (all ranks) | `ProfilingConfig(profile_ranks=[0])` |
+| Memory snapshot path | `/nemo_run/snapshot.pickle` | `snapshot.pickle` | Pass `memory_snapshot_path` explicitly |
+| Rerun mode | `disabled` | `validate_results` | `RerunStateMachineConfig(rerun_mode="disabled")` |
+
+`ConfigContainer` retains its explicit default profiling and disabled-rerun
+settings. Existing serialized configs that store these values retain them on
+reload; external code constructing individual sections must select its intended
+policy explicitly.
+
+This migration requires the shared training-schema additions and MLflow/Comet
+logger fields upstream. Older Core revisions with eager constructor validation
+cannot provide the same construct-then-override lifecycle using direct imports.
+The dependency pins must include the prerequisite changes before this draft can
+be merged; no subclass fallback or dynamically attached fields are used.
+
+The wider inventory also includes the tokenizer and GPT dataset extensions.
+They remain separate work: the tokenizer normalizes legacy HF/SFT options and
+sets vocabulary policy, while the dataset configs compose Core dataset settings
+with Bridge dataloader/builder settings. Bridge's fault-tolerance, NVRx straggler,
+in-process restart, tensor-inspection, precision, and communication-overlap configs
+also retain their distinct runtime contracts. Removing those types requires
+additional API and consumer migrations; they are not equivalent aliases today.
+
 ## Configuration Components
 
 | Component | Purpose | Required | Default |
@@ -45,7 +100,7 @@ config = ConfigContainer(
 | `dist` | Distributed training initialization | | `DistributedInitConfig()` |
 | `ddp` | Data parallel configuration (from Megatron Core) | | `DistributedDataParallelConfig()` |
 | `rng` | Random number generation settings | | `RNGConfig()` |
-| `rerun_state_machine` | Result validation and error injection | | `RerunStateMachineConfig()` |
+| `rerun_state_machine` | Result validation and error injection | | `RerunStateMachineConfig(rerun_mode="disabled")` |
 | `mixed_precision` | Mixed precision training settings | | `None` |
 | `comm_overlap` | Communication overlap optimizations | | `None` |
 | `peft` | Parameter-efficient fine-tuning (LoRA, DoRA, etc.) | | `None` |

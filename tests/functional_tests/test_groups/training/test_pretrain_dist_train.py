@@ -169,6 +169,8 @@ class TestPretrainDistTrain:
                 vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
             ),
             checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
                 save_interval=0,
                 save=None,
                 load=None,

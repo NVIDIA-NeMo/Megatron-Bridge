@@ -470,6 +470,7 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     )
 
     optimizer_cfg = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         bf16=True,
         use_distributed_optimizer=True,
@@ -518,7 +519,12 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
 
     tokenizer_cfg = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=10000)
     logger_cfg = LoggerConfig(log_interval=10, tensorboard_dir=tensorboard_dir)
-    checkpoint_cfg = CheckpointConfig(save_interval=args.train_iters, save=checkpoint_dir)
+    checkpoint_cfg = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
+        save_interval=args.train_iters,
+        save=checkpoint_dir,
+    )
     rng_cfg = RNGConfig(seed=1234)
 
     cfg = ConfigContainer(

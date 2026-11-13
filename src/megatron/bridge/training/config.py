@@ -23,9 +23,9 @@ from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
-from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import (
+    OptimizerConfig,
     ParamGroupOverride,
     ParamKey,
     get_standard_config_overrides,
@@ -33,15 +33,18 @@ from megatron.core.optimizer import (
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
-from megatron.training.config import CheckpointConfig as MTrainCheckpointConfig
-from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
-from megatron.training.config import LoggerConfig as MTrainLoggerConfig
-from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
-from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
-from megatron.training.config import RNGConfig, ValidationConfig
-from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
-from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
-from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.config import (
+    CheckpointConfig,
+    DistributedInitConfig,
+    LoggerConfig,
+    ProfilingConfig,
+    RerunStateMachineConfig,
+    RNGConfig,
+    SchedulerConfig,
+    StragglerDetectionConfig,
+    TrainingConfig,
+    ValidationConfig,
+)
 from megatron.training.determinism import apply_determinism_to_args
 
 from megatron.bridge.data.base import (
@@ -96,7 +99,7 @@ from megatron.bridge.utils.cuda_graph import (
 from megatron.bridge.utils.gdn_utils import validate_cudnn_gdn_stack
 
 
-def _apply_megatron_fsdp_grad_dtype_policy(ddp_config: MCoreDistributedDataParallelConfig) -> None:
+def _apply_megatron_fsdp_grad_dtype_policy(ddp_config: DistributedDataParallelConfig) -> None:
     """Keep Megatron-FSDP gradient precision governed by its explicit dtype fields.
 
     ``grad_reduce_in_fp32`` sizes the gradient buffers of the standard DDP wrapper.
@@ -124,115 +127,198 @@ def _apply_megatron_fsdp_grad_dtype_policy(ddp_config: MCoreDistributedDataParal
     ddp_config.grad_reduce_in_fp32 = False
 
 
-@dataclass
-class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
-    """MCore DDP configuration with Bridge's Megatron-FSDP precision policy.
-
-    MCore resolves defaults and validates settings in ``finalize()``, after recipes
-    and runtime configuration have finished editing the fields.
-    """
-
-    def finalize(self) -> None:
-        """Apply Bridge's precision policy, then finalize the MCore configuration."""
-        _apply_megatron_fsdp_grad_dtype_policy(self)
-        super().finalize()
+def finalize_optimizer_config(config: OptimizerConfig) -> None:
+    """Resolve optimizer settings after recipe and precision overrides."""
+    normalize_optimizer_config(config)
+    config.validate()
+    config.finalize_optimizer_config()
 
 
-@dataclass
-class OptimizerConfig(MCoreOptimizerConfig):
-    """Megatron Core OptimizerConfig with deferred post-init.
-
-    This class inherits from Megatron Core's OptimizerConfig but defers the
-    execution of post_init() until finalize() is explicitly called. This allows
-    for field modifications after construction but before computed fields are calculated.
-    """
-
-    use_layer_wise_param_layout: bool = False
-    """Use the precomputed shard-aligned layout for the LayerWise optimizer.
-
-    The default retains compact DDP buffers, LayerWise's variable-size parameter
-    synchronization, and the optimizer representation used by existing checkpoints.
-    Shard-aligned buffers are opt-in and require compatible parameter routing.
-    This setting has no effect unless ``use_layer_wise_distributed_optimizer`` is enabled.
-    """
-
-    def __post_init__(self) -> None:
-        """Skip MCore post_init during initial construction.
-
-        The original post_init logic is deferred until finalize() is called.
-        """
-        pass
-
-    def finalize(self) -> None:
-        """Execute the deferred MCore validation and finalization.
-
-        This method normalizes optimizer aliases, runs Megatron Core's
-        ``OptimizerConfig.validate()`` and then ``finalize_optimizer_config()`` to
-        resolve dtypes and derived fields based on the current field values.
-        """
-        normalize_optimizer_config(self)
-        if hasattr(MCoreOptimizerConfig, "finalize_optimizer_config"):
-            self.validate()
-            self.finalize_optimizer_config()
-        else:
-            super().__post_init__()
+def finalize_ddp_config(config: DistributedDataParallelConfig) -> None:
+    """Apply Bridge precision policy before upstream DDP finalization."""
+    _apply_megatron_fsdp_grad_dtype_policy(config)
+    config.finalize()
 
 
-@dataclass(kw_only=True)
-class DistributedInitConfig(MTrainDistributedInitConfig):
-    """Configuration settings for distributed training initialization."""
+def finalize_scheduler_config(config: SchedulerConfig) -> None:
+    """Post-initialization checks for scheduler config."""
+    if config.max_steps is not None and config.max_steps <= 0:
+        raise ValueError(f"scheduler.max_steps must be positive, got {config.max_steps}.")
 
-    use_torch_fsdp2: bool = False
-    """Select Torch FSDP2 in Bridge's model-provider and checkpoint setup APIs."""
+    if config.start_weight_decay is not None:
+        assert config.start_weight_decay >= 0.0, "start_weight_decay should be positive."
+        assert config.end_weight_decay >= config.start_weight_decay
 
-    external_gpu_device_mapping: bool = False
-    """If True, indicates that GPU device mapping has been externally managed
-    (e.g., via CUDA_VISIBLE_DEVICES environment variable). When True, uses device 0
-    instead of local rank for CUDA device selection. This is useful when launching
-    with external process managers that handle GPU visibility.
-    """
+    if config.override_opt_param_scheduler:
+        assert not config.use_checkpoint_opt_param_scheduler, "both override and use-checkpoint are set."
 
-    gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
-    """Accumulate GTP remat reduce-scatter results locally in FP32."""
+    # Validate mutual exclusivity between iteration-based and sample-based scheduler fields
+    has_iter_fields = (
+        config.lr_decay_iters is not None or config.lr_warmup_iters != 0 or config.lr_wsd_decay_iters is not None
+    )
+    has_sample_fields = (
+        config.lr_decay_samples is not None or config.lr_warmup_samples != 0 or config.lr_wsd_decay_samples is not None
+    )
 
-    gtp_remat_nccl_ub: bool = False
-    """Register the dense GTP remat group with an NCCL symmetric-memory user buffer."""
+    assert not (has_iter_fields and has_sample_fields), (
+        f"Cannot mix iteration-based and sample-based scheduler fields. "
+        f"Found iteration fields: lr_decay_iters={config.lr_decay_iters}, lr_warmup_iters={config.lr_warmup_iters}, lr_wsd_decay_iters={config.lr_wsd_decay_iters}. "
+        f"Found sample fields: lr_decay_samples={config.lr_decay_samples}, lr_warmup_samples={config.lr_warmup_samples}, lr_wsd_decay_samples={config.lr_wsd_decay_samples}. "
+        f"Use either iteration fields OR sample fields, not both."
+    )
 
-    enable_megatron_core_experimental: bool = False
-    """Enable experimental features for Megatron Core."""
-
-    use_decentralized_pg: bool = False
-    """Use ProcessGroupCollection passed through functions instead of relying on mcore's
-    global parallel state (mpu) variables. When True, parallel groups are obtained from
-    the pg_collection object rather than the global megatron.core.parallel_state module."""
-
-    eval_context_parallel_size: int | None = None
-    """If set and different from model.context_parallel_size, validation runs with this CP
-    degree instead of the training CP degree. Requires use_decentralized_pg=True. The caller
-    is responsible for constructing a separate eval ProcessGroupCollection and wiring it
-    through GlobalState or the evaluate() call. See eval_context_parallel_rebinding.py
-    and the examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
-
-    @property
-    def lazy_init(self) -> bool:
-        return self.lazy_mpu_init
-
-    @lazy_init.setter
-    def lazy_init(self, value: bool) -> None:
-        self.lazy_mpu_init = value
+    # Validate mutual exclusivity between lr_warmup_fraction and specific warmup fields
+    if config.lr_warmup_fraction is not None:
+        assert config.lr_warmup_iters == 0 and config.lr_warmup_samples == 0, (
+            f"Cannot specify lr_warmup_fraction={config.lr_warmup_fraction} with lr_warmup_iters={config.lr_warmup_iters} or lr_warmup_samples={config.lr_warmup_samples}. "
+            f"Use either lr_warmup_fraction OR lr_warmup_iters OR lr_warmup_samples."
+        )
 
 
-@dataclass(kw_only=True)
-class RerunStateMachineConfig(MTrainRerunStateMachineConfig):
-    """Configuration for the rerun state machine used for result validation or stats."""
+def finalize_training_config(config: TrainingConfig) -> None:
+    """Validate training mode specification and calculate train_iters from train_samples if needed."""
+    has_train_iters = config.train_iters is not None
+    has_train_samples = config.train_samples is not None
+    has_num_epochs = config.num_epochs is not None
+    num_training_modes = sum(
+        (
+            has_train_iters and not config._train_iters_from_num_epochs,
+            has_train_samples,
+            has_num_epochs,
+        )
+    )
 
-    rerun_mode: Literal["disabled", "validate_results", "report_determinism_stats"] = "disabled"
-    """Use re-run engine to validate results (default) or to emit stats
-    on variability of computations due to non-deterministic algorithms."""
+    assert num_training_modes > 0, "One of train_iters, train_samples, or num_epochs must be provided"
+    assert num_training_modes == 1, "Cannot specify more than one of train_iters, train_samples, or num_epochs"
+    if has_num_epochs:
+        assert config.num_epochs > 0, "num_epochs must be a positive number"
+        assert config.rampup_batch_size is None, "Batch size rampup not supported with epoch-based training"
+        assert config.global_batch_size is not None, "global_batch_size must be set when using num_epochs"
+    if has_train_samples:
+        assert config.train_samples > 0, "train_samples must be positive"
+        assert config.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
 
-    spiky_loss_factor: float = 10.0
-    """Factor for detecting spiky loss. A loss is considered spiky if it exceeds
-    this multiple of the max observed loss over the sample window."""
+        # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
+        assert config.global_batch_size is not None, "global_batch_size must be set when using train_samples"
+        config.train_iters = config.train_samples // config.global_batch_size
+        print_rank_0(f"Setting training iterations to {config.train_iters} based on {config.train_samples} samples")
+
+
+def finalize_checkpoint_config(config: CheckpointConfig) -> None:
+    """Validate checkpoint settings and Bridge runtime requirements."""
+    if config.pretrained_checkpoint is not None:
+        from megatron.bridge.training.utils.checkpoint_utils import file_exists
+
+        assert file_exists(config.pretrained_checkpoint), (
+            f"Pretrained checkpoint {config.pretrained_checkpoint} does not exist"
+        )
+
+    if config.load_main_params_from_ckpt:
+        assert not config.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
+
+    if config.stage_precision_aware_optimizer_state_on_cpu and config.ckpt_format != "torch_dist":
+        raise ValueError("stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'.")
+
+    if config.async_save:
+        assert config.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
+        assert config.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
+
+    if config.save_retain_interval is not None:
+        if config.save_retain_interval <= 0:
+            raise ValueError("save_retain_interval must be positive.")
+        if config.save_interval is None or config.save_interval <= 0:
+            raise ValueError("save_retain_interval requires a positive save_interval.")
+        if config.save_retain_interval % config.save_interval != 0:
+            raise ValueError("save_retain_interval must be divisible by save_interval.")
+        if config.most_recent_k != -1:
+            raise ValueError("save_retain_interval and most_recent_k cannot be enabled together.")
+
+    if config.also_save_hf_checkpoint:
+        if config.ckpt_format == "fsdp_dtensor":
+            raise ValueError(
+                "also_save_hf_checkpoint=True is not supported together with ckpt_format='fsdp_dtensor'. "
+                "Use ckpt_format='torch_dist' when exporting additional HF weights during training."
+            )
+        if config.non_persistent_ckpt_type == "local":
+            raise ValueError(
+                "also_save_hf_checkpoint=True is not compatible with local non-persistent checkpoints. "
+                "Use non_persistent_ckpt_type='global' or disable non-persistent saving."
+            )
+
+    # Validate ckpt_step if specified
+    if config.ckpt_step is not None:
+        if config.load is None:
+            raise ValueError(
+                f"ckpt_step={config.ckpt_step} specified but checkpoint.load is None. "
+                f"Please set checkpoint.load to the base checkpoint directory."
+            )
+
+    config.validate()
+
+
+def finalize_logger_config(config: LoggerConfig) -> None:
+    """Validate logger settings and optional MLFlow dependency."""
+    if config.mlflow_experiment and (config.mlflow_run_name is None or config.mlflow_run_name == ""):
+        raise ValueError("Set logger.mlflow_run_name when enabling MLFlow logging.")
+
+    using_mlflow = any(
+        [
+            config.mlflow_experiment,
+            config.mlflow_run_name,
+            config.mlflow_tracking_uri,
+            config.mlflow_tags,
+            config.mlflow_description,
+        ]
+    )
+
+    if using_mlflow:
+        try:
+            import importlib
+
+            importlib.import_module("mlflow")
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "MLFlow logging is configured, but the 'mlflow' package is not installed. "
+                "Install it via pip install mlflow or uv add mlflow"
+            ) from exc
+
+    if config.comet_project and (config.comet_experiment_name is None or config.comet_experiment_name == ""):
+        raise ValueError("Set logger.comet_experiment_name when enabling Comet ML logging.")
+
+    using_comet = any(
+        [
+            config.comet_project,
+            config.comet_experiment_name,
+            config.comet_workspace,
+            config.comet_api_key,
+            config.comet_tags,
+        ]
+    )
+
+    if using_comet:
+        try:
+            import importlib
+
+            importlib.import_module("comet_ml")
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "Comet ML logging is configured, but the 'comet_ml' package is not installed. "
+                "Install it via pip install comet-ml or uv add comet-ml"
+            ) from exc
+
+    config.validate()
+
+
+def finalize_profiling_config(config: ProfilingConfig) -> None:
+    """Validate profiling configuration."""
+    assert not (config.use_pytorch_profiler and config.use_nsys_profiler), (
+        "Exactly one of pytorch or nsys profiler should be enabled, not both, when ProfilingConfig is active."
+    )
+    assert config.profile_step_start >= 0, f"profile_step_start must be >= 0, got {config.profile_step_start}"
+    assert config.profile_step_end >= 0, f"profile_step_end must be >= 0, got {config.profile_step_end}"
+    assert config.profile_step_end > config.profile_step_start, (
+        f"profile_step_end ({config.profile_step_end}) must be > profile_step_start ({config.profile_step_start})"
+    )
 
 
 @dataclass(frozen=True)
@@ -441,398 +527,6 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
 
 
 @dataclass(kw_only=True)
-class SchedulerConfig(MTrainSchedulerConfig):
-    """Configuration settings for the learning rate scheduler and weight decay."""
-
-    max_steps: int | None = None
-    """Number of steps used to configure schedules during shortened test runs.
-
-    Set this to ``y`` together with ``TrainingConfig.train_iters=x`` when a
-    test should run only the first ``x`` steps of a full ``y``-step training
-    run. This keeps the learning-rate and weight-decay schedules the same as
-    the full ``y``-step run. ``max_steps`` must be greater than or equal to
-    ``train_iters``. When unset, existing scheduler behavior is unchanged.
-    """
-
-    def finalize(self) -> None:
-        """Post-initialization checks for scheduler config."""
-        if self.max_steps is not None and self.max_steps <= 0:
-            raise ValueError(f"scheduler.max_steps must be positive, got {self.max_steps}.")
-
-        if self.start_weight_decay is not None:
-            assert self.start_weight_decay >= 0.0, "start_weight_decay should be positive."
-            assert self.end_weight_decay >= self.start_weight_decay
-
-        if self.override_opt_param_scheduler:
-            assert not self.use_checkpoint_opt_param_scheduler, "both override and use-checkpoint are set."
-
-        # Validate mutual exclusivity between iteration-based and sample-based scheduler fields
-        has_iter_fields = (
-            self.lr_decay_iters is not None or self.lr_warmup_iters != 0 or self.lr_wsd_decay_iters is not None
-        )
-        has_sample_fields = (
-            self.lr_decay_samples is not None or self.lr_warmup_samples != 0 or self.lr_wsd_decay_samples is not None
-        )
-
-        assert not (has_iter_fields and has_sample_fields), (
-            f"Cannot mix iteration-based and sample-based scheduler fields. "
-            f"Found iteration fields: lr_decay_iters={self.lr_decay_iters}, lr_warmup_iters={self.lr_warmup_iters}, lr_wsd_decay_iters={self.lr_wsd_decay_iters}. "
-            f"Found sample fields: lr_decay_samples={self.lr_decay_samples}, lr_warmup_samples={self.lr_warmup_samples}, lr_wsd_decay_samples={self.lr_wsd_decay_samples}. "
-            f"Use either iteration fields OR sample fields, not both."
-        )
-
-        # Validate mutual exclusivity between lr_warmup_fraction and specific warmup fields
-        if self.lr_warmup_fraction is not None:
-            assert self.lr_warmup_iters == 0 and self.lr_warmup_samples == 0, (
-                f"Cannot specify lr_warmup_fraction={self.lr_warmup_fraction} with lr_warmup_iters={self.lr_warmup_iters} or lr_warmup_samples={self.lr_warmup_samples}. "
-                f"Use either lr_warmup_fraction OR lr_warmup_iters OR lr_warmup_samples."
-            )
-
-
-@dataclass(kw_only=True)
-class TrainingConfig(MTrainTrainingConfig):
-    """Configuration settings related to the training loop and validation."""
-
-    num_epochs: float | None = None
-    """Number of passes over a finite training dataset. Supports fractional epochs."""
-
-    _train_iters_from_num_epochs: bool = field(default=False, init=False, repr=False)
-
-    check_optimizer_step_success: bool = True
-    """Checks optimizer.step() succeeded at each training step ."""
-
-    skip_sync_grad_norm_across_mp: bool = False
-    """Skips syncing the grad norm across the model parallel group."""
-
-    # ---------------- Validation config. ----------------
-
-    eval_iters: int | None = None
-    """Number of iterations to run for evaluation validation/test for. Deprecated in favor of ValidationConfig."""
-
-    eval_interval: int | None = None
-    """Interval between running evaluation on validation set. Deprecated in favor of ValidationConfig."""
-
-    skip_train: bool | None = None
-    """If set, bypass the training loop, optionally do evaluation for validation/test, and exit. Deprecated in favor of ValidationConfig."""
-
-    def finalize(self) -> None:
-        """Validate training mode specification and calculate train_iters from train_samples if needed."""
-        has_train_iters = self.train_iters is not None
-        has_train_samples = self.train_samples is not None
-        has_num_epochs = self.num_epochs is not None
-        num_training_modes = sum(
-            (
-                has_train_iters and not self._train_iters_from_num_epochs,
-                has_train_samples,
-                has_num_epochs,
-            )
-        )
-
-        assert num_training_modes > 0, "One of train_iters, train_samples, or num_epochs must be provided"
-        assert num_training_modes == 1, "Cannot specify more than one of train_iters, train_samples, or num_epochs"
-        if has_num_epochs:
-            assert self.num_epochs > 0, "num_epochs must be a positive number"
-            assert self.rampup_batch_size is None, "Batch size rampup not supported with epoch-based training"
-            assert self.global_batch_size is not None, "global_batch_size must be set when using num_epochs"
-        if has_train_samples:
-            assert self.train_samples > 0, "train_samples must be positive"
-            assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
-
-            # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
-            assert self.global_batch_size is not None, "global_batch_size must be set when using train_samples"
-            self.train_iters = self.train_samples // self.global_batch_size
-            print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
-
-
-@dataclass(kw_only=True)
-class CheckpointConfig(MTrainCheckpointConfig):
-    """Configuration settings for model checkpointing (saving and loading)."""
-
-    stage_precision_aware_optimizer_state_on_cpu: bool = False
-    """Stage expanded precision-aware Transformer Engine optimizer state on CPU.
-
-    Enable this when reduced-precision Adam state fits during training but its
-    portable FP32 checkpoint representation would exceed available GPU memory.
-    The checkpoint values and dtypes are unchanged; only their device during
-    state-dict construction is affected. Supported only for ``torch_dist``
-    checkpoints.
-    """
-
-    pretrained_checkpoint: Optional[str] = None
-    """Directory containing a pretrained model checkpoint for finetuning.
-
-    This can be either:
-      - A parent checkpoint directory (e.g. ``/checkpoints/my_model/``) that
-        contains tracker files (``latest_train_state.pt``) and ``iter_*``
-        subdirectories.
-      - A specific iteration directory (e.g.
-        ``/checkpoints/my_model/iter_0001000/``) that directly contains the
-        checkpoint payload (``run_config.yaml``, weight shards, etc.).
-    """
-
-    storage_writers_per_rank: int = 1
-    """Number of storage writers per rank for torch_dist checkpoint format.
-    Affects the number of checkpoint files: saving_ranks * storage_writers_per_rank."""
-
-    use_persistent_ckpt_worker: bool = True
-    """Use a persistent background worker for async checkpoint saves. When enabled, creates a dedicated
-    worker thread/process for handling async saves. When disabled, uses temporal workers that are
-    created and destroyed for each save operation."""
-
-    async_write_results_mp_mode: str = "fork"
-    """Multiprocessing start method for the async write results queue.
-    Options: ``"fork"`` (default), ``"spawn"``, ``"forkserver"``."""
-
-    strict_fsdp_dtensor_load: bool = False
-    """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
-
-    save_rng_state_per_dp_rank: bool = False
-    """Save distinct RNG states for data-parallel ranks whose runtime RNG streams can diverge."""
-
-    custom_manager_class: str | None = None
-    """Fully qualified class name for a custom CheckpointManager implementation.
-
-    When set, checkpoint operations will instantiate and delegate to this class instead of the default
-    checkpoint manager. The custom class must implement the `CheckpointManager` protocol
-    defined in `megatron.bridge.training.checkpointing`.
-
-    Example: ``'mypackage.checkpoint.MyCheckpointManager'``
-    """
-
-    dist_ckpt_workers: int = 1
-    """Specifies the number of distributed checkpoint workers for asynchronous saving."""
-
-    also_save_hf_checkpoint: bool = False
-    """Whether to export an additional HuggingFace artifact alongside each Megatron checkpoint.
-
-    When enabled, the native Megatron checkpoint under each ``iter_*/`` directory keeps the same
-    behavior as normal checkpoint saves.  In addition, model weights are exported as HuggingFace
-    ``*.safetensors`` under ``iter_*/hf/`` together with HF ``config.json`` / tokenizer /
-    (optional) custom modeling files.
-
-    When ``cfg.peft`` is configured, the extra HF export writes a HuggingFace
-    PEFT-compatible ``adapter_model.safetensors`` + ``adapter_config.json`` instead of the
-    full base weights.
-
-    Warning:
-        Full-model HF export is synchronous and runs on the checkpoint save critical path.  It can
-        considerably slow down checkpoint saving and is intended for small models or debugging.
-        For larger models, prefer a separate background conversion job that scans for new native
-        Megatron checkpoints and exports HF weights outside the training step.
-    """
-
-    hf_source_path: Optional[str] = None
-    """Override for the HuggingFace model identifier (or local path) used as a template when
-    saving/loading checkpoints with ``also_save_hf_checkpoint=True`` (or when ``pretrained_checkpoint``
-    points to a HuggingFace directory).
-
-    When unset, Bridge resolves a source in this order (see training checkpointing helpers):
-      1. the source recorded on ``cfg.model`` by recipes / AutoBridge (preferred):
-         ``extra_checkpoint_metadata["hf_model_id"]`` for builder-backed configs, ``hf_model_id`` for providers;
-      2. ``cfg.tokenizer.tokenizer_model`` (fallback; may refer to tokenizer assets rather than model ids).
-
-    Explicit ``hf_source_path`` always overrides both when set.
-    """
-
-    hf_trust_remote_code: bool = False
-    """Whether to trust remote code when constructing the ``AutoBridge`` for HF save/load.
-    Required for models with custom modeling files."""
-
-    hf_distributed_save: bool = False
-    """When ``also_save_hf_checkpoint=True``, enable distributed weights saving where multiple ranks
-    share the safetensors write workload. See ``SafeTensorsStateSource.save_generator``."""
-
-    hf_save_every_n_ranks: int = 1
-    """Interval for saving HF safetensors shards across ranks in distributed mode.
-    Only effective when ``hf_distributed_save=True``."""
-
-    def finalize(self) -> None:
-        """Post-initialization checks for checkpoint config."""
-        if self.pretrained_checkpoint is not None:
-            from megatron.bridge.training.utils.checkpoint_utils import file_exists
-
-            assert file_exists(self.pretrained_checkpoint), (
-                f"Pretrained checkpoint {self.pretrained_checkpoint} does not exist"
-            )
-
-        if self.load_main_params_from_ckpt:
-            assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
-
-        if self.stage_precision_aware_optimizer_state_on_cpu and self.ckpt_format != "torch_dist":
-            raise ValueError("stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'.")
-
-        if self.async_save:
-            assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
-            assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
-
-        if self.save_retain_interval is not None:
-            if self.save_retain_interval <= 0:
-                raise ValueError("save_retain_interval must be positive.")
-            if self.save_interval is None or self.save_interval <= 0:
-                raise ValueError("save_retain_interval requires a positive save_interval.")
-            if self.save_retain_interval % self.save_interval != 0:
-                raise ValueError("save_retain_interval must be divisible by save_interval.")
-            if self.most_recent_k != -1:
-                raise ValueError("save_retain_interval and most_recent_k cannot be enabled together.")
-
-        if self.also_save_hf_checkpoint:
-            if self.ckpt_format == "fsdp_dtensor":
-                raise ValueError(
-                    "also_save_hf_checkpoint=True is not supported together with ckpt_format='fsdp_dtensor'. "
-                    "Use ckpt_format='torch_dist' when exporting additional HF weights during training."
-                )
-            if self.non_persistent_ckpt_type == "local":
-                raise ValueError(
-                    "also_save_hf_checkpoint=True is not compatible with local non-persistent checkpoints. "
-                    "Use non_persistent_ckpt_type='global' or disable non-persistent saving."
-                )
-
-        # Validate ckpt_step if specified
-        if self.ckpt_step is not None:
-            if self.load is None:
-                raise ValueError(
-                    f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
-                    f"Please set checkpoint.load to the base checkpoint directory."
-                )
-
-
-@dataclass(kw_only=True)
-class LoggerConfig(MTrainLoggerConfig):
-    """Configuration settings for logging, including TensorBoard and WandB."""
-
-    skip_train_metrics_log: bool = False
-    """Skips logging of training metrics to all logging backends and to the console as well."""
-
-    timing_log_level: Literal[-1, 0, 1, 2] = 0
-    """Granularity level to measure and report timing.
-    -1: To disable timing logging as the timer start from 0 and above.
-    0: report only iteration time and make sure timing does not introduce extra overhead.
-    1: report timing for operations that are executed very limited times (basically once) during each iteration
-        (such as gradient all-reduce)
-    2: report timing for operations that migh be executed numerous times during each iteration.
-    Note that setting the level to 1 or 2 might cause increase in iteration time.
-    """
-
-    mlflow_experiment: Optional[str] = None
-    """The MLFlow experiment name."""
-
-    mlflow_run_name: Optional[str] = None
-    """The MLFlow run name."""
-
-    mlflow_tracking_uri: Optional[str] = None
-    """Optional MLFlow tracking URI."""
-
-    mlflow_tags: Optional[dict[str, str]] = None
-    """Optional tags to apply to the MLFlow run."""
-
-    mlflow_description: Optional[str] = None
-    """Optional description for the MLFlow run, rendered in the UI Description panel."""
-
-    mlflow_log_artifacts: bool = True
-    """Whether to upload checkpoint artifacts to MLFlow via HTTP after each save."""
-
-    comet_project: Optional[str] = None
-    """The Comet ML project name. Comet logging is disabled when this is None."""
-
-    comet_experiment_name: Optional[str] = None
-    """The Comet ML experiment name."""
-
-    comet_workspace: Optional[str] = None
-    """The Comet ML workspace. If not set, uses the default workspace for the API key."""
-
-    comet_api_key: Optional[str] = None
-    """The Comet ML API key. Can also be set via COMET_API_KEY environment variable."""
-
-    comet_tags: Optional[list[str]] = None
-    """Optional list of tags to apply to the Comet ML experiment."""
-
-    logging_level: int | None = None
-    """Logging level. When unset, use the environment override or default to INFO."""
-
-    def finalize(self) -> None:
-        """Validate logger settings and optional MLFlow dependency."""
-        if self.mlflow_experiment and (self.mlflow_run_name is None or self.mlflow_run_name == ""):
-            raise ValueError("Set logger.mlflow_run_name when enabling MLFlow logging.")
-
-        using_mlflow = any(
-            [
-                self.mlflow_experiment,
-                self.mlflow_run_name,
-                self.mlflow_tracking_uri,
-                self.mlflow_tags,
-                self.mlflow_description,
-            ]
-        )
-
-        if using_mlflow:
-            try:
-                import importlib
-
-                importlib.import_module("mlflow")
-            except ModuleNotFoundError as exc:
-                raise ModuleNotFoundError(
-                    "MLFlow logging is configured, but the 'mlflow' package is not installed. "
-                    "Install it via pip install mlflow or uv add mlflow"
-                ) from exc
-
-        if self.comet_project and (self.comet_experiment_name is None or self.comet_experiment_name == ""):
-            raise ValueError("Set logger.comet_experiment_name when enabling Comet ML logging.")
-
-        using_comet = any(
-            [
-                self.comet_project,
-                self.comet_experiment_name,
-                self.comet_workspace,
-                self.comet_api_key,
-                self.comet_tags,
-            ]
-        )
-
-        if using_comet:
-            try:
-                import importlib
-
-                importlib.import_module("comet_ml")
-            except ModuleNotFoundError as exc:
-                raise ModuleNotFoundError(
-                    "Comet ML logging is configured, but the 'comet_ml' package is not installed. "
-                    "Install it via pip install comet-ml or uv add comet-ml"
-                ) from exc
-
-
-@dataclass(kw_only=True)
-class ProfilingConfig(MTrainProfilingConfig):
-    """Configuration settings for profiling the training process."""
-
-    profile_ranks: list[int] = field(default_factory=lambda: [0])
-    """Ranks to capture in memory snapshots / nsys / pytorch profiler.
-
-    An empty list captures on all ranks, including memory snapshots and
-    allocator history. Default ``[0]`` gives rank-0 capture
-    whenever ``record_memory_history=True`` or an nsys/pytorch profiler is
-    enabled, with no further override required.
-    """
-
-    memory_snapshot_path: str = "/nemo_run/snapshot.pickle"
-    """Path the per-rank pickle is written to (``_{rank}`` is inserted before
-    the extension). Defaults to ``/nemo_run/snapshot.pickle`` so the file lands
-    directly under the NeMo-Run experiment directory (bound at ``/nemo_run``
-    inside the container). Override for non-NeMo-Run setups.
-    """
-
-    def finalize(self) -> None:
-        """Validate profiling configuration."""
-        assert not (self.use_pytorch_profiler and self.use_nsys_profiler), (
-            "Exactly one of pytorch or nsys profiler should be enabled, not both, when ProfilingConfig is active."
-        )
-        assert self.profile_step_start >= 0, f"profile_step_start must be >= 0, got {self.profile_step_start}"
-        assert self.profile_step_end >= 0, f"profile_step_end must be >= 0, got {self.profile_step_end}"
-        assert self.profile_step_end > self.profile_step_start, (
-            f"profile_step_end ({self.profile_step_end}) must be > profile_step_start ({self.profile_step_start})"
-        )
-
-
-@dataclass(kw_only=True)
 class TensorInspectConfig:
     """Configuration for Nvidia-DL-Framework-Inspect integration."""
 
@@ -900,14 +594,6 @@ class FaultToleranceConfig:
 
     simulated_fault_base_delay: int = 0
     """Base delay before simulated fault thread is started. A small random delay is added to this."""
-
-
-@dataclass(kw_only=True)
-class StragglerDetectionConfig(MTrainStragglerDetectionConfig):
-    """Configuration settings for detecting and logging GPU stragglers."""
-
-    enable_straggler_on_startup: bool = True
-    """If set, StragglerDetector is enabled on startup."""
 
 
 @dataclass
@@ -1038,7 +724,9 @@ class ConfigContainer(Container):
     """
 
     rng: RNGConfig = field(default_factory=RNGConfig)
-    rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
+    rerun_state_machine: RerunStateMachineConfig = field(
+        default_factory=lambda: RerunStateMachineConfig(rerun_mode="disabled")
+    )
     train: TrainingConfig
     model: (
         GPTModelProvider
@@ -1071,7 +759,9 @@ class ConfigContainer(Container):
     ft: Optional[FaultToleranceConfig] = None
     straggler: Optional[StragglerDetectionConfig] = None
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
-    profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
+    profiling: ProfilingConfig = field(
+        default_factory=lambda: ProfilingConfig(profile_ranks=[0], memory_snapshot_path="/nemo_run/snapshot.pickle")
+    )
     peft: Optional[PEFT] = None
     dpo: Optional[DPOLossConfig] = None
     comm_overlap: Optional[CommOverlapConfig] = None
@@ -1624,13 +1314,9 @@ class ConfigContainer(Container):
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
-        if hasattr(self.optimizer, "finalize"):
-            self.optimizer.finalize()
-        if isinstance(self.ddp, MCoreDistributedDataParallelConfig):
-            # Recipes may use MCore's config directly, bypassing Bridge's subclass.
-            _apply_megatron_fsdp_grad_dtype_policy(self.ddp)
-        if hasattr(self.ddp, "finalize"):
-            self.ddp.finalize()
+        finalize_optimizer_config(self.optimizer)
+        finalize_ddp_config(self.ddp)
+        self.rng.validate()
 
         # Guard post-construction CUDA graph overrides before MCore post-init can
         # migrate deprecated scope fields into a different implementation.
@@ -1675,12 +1361,12 @@ class ConfigContainer(Container):
                         "MXFP8 parameters cannot be mapped into the contiguous parameter buffer."
                     )
 
-        self.logger.finalize()
-        self.train.finalize()
-        self.scheduler.finalize()
-        self.checkpoint.finalize()
+        finalize_logger_config(self.logger)
+        finalize_training_config(self.train)
+        finalize_scheduler_config(self.scheduler)
+        finalize_checkpoint_config(self.checkpoint)
         if self.profiling is not None:
-            self.profiling.finalize()
+            finalize_profiling_config(self.profiling)
         if self.nvrx_straggler is not None:
             self.nvrx_straggler.finalize()
         if self.tensor_inspect is not None:
@@ -2120,8 +1806,8 @@ class ConfigContainer(Container):
 
         # Map of config names to their (config object, Mcore parent class or None)
         mcore_configs = [
-            ("optimizer", self.optimizer, MCoreOptimizerConfig),
-            ("ddp", self.ddp, MCoreDistributedDataParallelConfig),
+            ("optimizer", self.optimizer, OptimizerConfig),
+            ("ddp", self.ddp, DistributedDataParallelConfig),
             ("model", transformer_cfg, model_mcore_class),
         ]
 
@@ -2421,16 +2107,13 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     # config and is called inside setup_megatron_mimo() right before build_infra().
     if hasattr(cfg.dataset, "finalize"):
         cfg.dataset.finalize()
-    if hasattr(cfg.optimizer, "finalize"):
-        cfg.optimizer.finalize()
-    if isinstance(cfg.ddp, MCoreDistributedDataParallelConfig):
-        _apply_megatron_fsdp_grad_dtype_policy(cfg.ddp)
-    if hasattr(cfg.ddp, "finalize"):
-        cfg.ddp.finalize()
-    cfg.logger.finalize()
-    cfg.train.finalize()
-    cfg.scheduler.finalize()
-    cfg.checkpoint.finalize()
+    finalize_optimizer_config(cfg.optimizer)
+    finalize_ddp_config(cfg.ddp)
+    cfg.rng.validate()
+    finalize_logger_config(cfg.logger)
+    finalize_training_config(cfg.train)
+    finalize_scheduler_config(cfg.scheduler)
+    finalize_checkpoint_config(cfg.checkpoint)
 
     if cfg.validation.eval_global_batch_size is None:
         assert cfg.train.global_batch_size is not None, (
@@ -2444,7 +2127,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
         cfg.validation.eval_micro_batch_size = cfg.train.micro_batch_size
 
     if cfg.profiling is not None:
-        cfg.profiling.finalize()
+        finalize_profiling_config(cfg.profiling)
         if cfg.profiling.nvtx_ranges:
             from megatron.core.utils import configure_nvtx_profiling
 

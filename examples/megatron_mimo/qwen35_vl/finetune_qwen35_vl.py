@@ -1045,7 +1045,7 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
 
 
 def _build_checkpoint_config(args: argparse.Namespace) -> CheckpointConfig:
-    checkpoint_cfg = CheckpointConfig()
+    checkpoint_cfg = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
     if args.load_checkpoint is not None and args.pretrained_checkpoint is not None:
         raise ValueError(
             "Use either --load-checkpoint for resume or --pretrained-checkpoint for model weights, not both."
@@ -1086,13 +1086,15 @@ def _register_converted_checkpoint_pre_wrap_hook(
         load_state.cfg = ConfigContainer(
             model=model_provider,
             train=None,
-            optimizer=OptimizerConfig(use_distributed_optimizer=False),
+            optimizer=OptimizerConfig(use_layer_wise_param_layout=False, use_distributed_optimizer=False),
             ddp=None,
             scheduler=None,
             dataset=None,
             logger=LoggerConfig(),
             tokenizer=None,
             checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
                 async_save=False,
                 load=checkpoint_path,
                 finetune=True,
@@ -1158,6 +1160,7 @@ def _build_config(
     logger_cfg.wandb_save_dir = args.wandb_save_dir
 
     profiling_cfg = ProfilingConfig(
+        memory_snapshot_path="/nemo_run/snapshot.pickle",
         use_nsys_profiler=args.profile == "nsys",
         use_pytorch_profiler=args.profile == "pytorch",
         profile_step_start=args.profile_step_start,

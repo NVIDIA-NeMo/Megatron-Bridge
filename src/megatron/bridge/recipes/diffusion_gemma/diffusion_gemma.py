@@ -14,17 +14,13 @@
 
 """Training recipe for the public DiffusionGemma 26B-A4B checkpoint."""
 
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.optimizer import OptimizerConfig
+from megatron.training.config import CheckpointConfig, LoggerConfig, SchedulerConfig, TrainingConfig
+
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.diffusion_gemma.data import DiffusionGemmaDatasetConfig, MockDiffusionGemmaDatasetConfig
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DistributedDataParallelConfig,
-    LoggerConfig,
-    OptimizerConfig,
-    SchedulerConfig,
-    TrainingConfig,
-)
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 
@@ -52,7 +48,9 @@ def diffusion_gemma_26b_sft_config(
     cfg = ConfigContainer(
         model=provider,
         train=TrainingConfig(train_iters=1000, global_batch_size=8, micro_batch_size=1),
-        optimizer=OptimizerConfig(lr=5e-5, min_lr=5e-6, weight_decay=0.0, use_distributed_optimizer=True),
+        optimizer=OptimizerConfig(
+            use_layer_wise_param_layout=False, lr=5e-5, min_lr=5e-6, weight_decay=0.0, use_distributed_optimizer=True
+        ),
         scheduler=SchedulerConfig(
             lr_warmup_iters=20,
             lr_decay_iters=1000,
@@ -73,6 +71,8 @@ def diffusion_gemma_26b_sft_config(
         logger=LoggerConfig(log_interval=1),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=vocab_size),
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save="diffusiongemma-checkpoints",
             load="diffusiongemma-checkpoints",
             save_interval=100,

@@ -31,22 +31,20 @@ Example::
 import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.training.config import (
+    CheckpointConfig,
+    DistributedInitConfig,
+    LoggerConfig,
+    RNGConfig,
+    TrainingConfig,
+    ValidationConfig,
+)
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DistributedInitConfig,
-    GPTDatasetConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-    ValidationConfig,
-)
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig, TokenizerConfig
 
 
 def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
@@ -114,6 +112,8 @@ def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
             vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
         ),
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=500,
             save=checkpoint_dir,
             ckpt_format="torch_dist",

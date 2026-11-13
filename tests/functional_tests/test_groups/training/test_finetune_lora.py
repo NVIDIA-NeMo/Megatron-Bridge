@@ -317,6 +317,7 @@ class TestLoRAFinetune:
     def _create_optimizer_config(self, lr=3e-3):
         """Create an optimizer configuration."""
         return OptimizerConfig(
+            use_layer_wise_param_layout=False,
             optimizer="adam",
             adam_beta1=0.9,
             adam_beta2=0.95,
@@ -434,6 +435,8 @@ class TestLoRAFinetune:
     def _create_checkpoint_config(self, save_interval, save_dir, pretrained_checkpoint=None, load_dir=None):
         """Create a checkpoint configuration."""
         return CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=save_interval,
             save=save_dir,
             pretrained_checkpoint=pretrained_checkpoint,

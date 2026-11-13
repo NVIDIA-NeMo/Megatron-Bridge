@@ -17,6 +17,8 @@ from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 
+from megatron.bridge.training.config import finalize_optimizer_config
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -255,8 +257,8 @@ class TestPretrainMegatronMIMOSetup:
         from megatron.bridge.training.config import OptimizerConfig
         from megatron.bridge.training.setup_megatron_mimo import _to_mcore_optimizer_config
 
-        bridge_config = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
-        bridge_config.finalize()
+        bridge_config = OptimizerConfig(use_layer_wise_param_layout=False, bf16=True, use_distributed_optimizer=True)
+        finalize_optimizer_config(bridge_config)
 
         module_config = replace(
             _to_mcore_optimizer_config(bridge_config),
@@ -325,7 +327,7 @@ class TestPretrainMegatronMIMOSetup:
         cfg.model.bf16 = True
         from megatron.bridge.training.config import OptimizerConfig
 
-        cfg.optimizer = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
+        cfg.optimizer = OptimizerConfig(use_layer_wise_param_layout=False, bf16=True, use_distributed_optimizer=True)
         cfg.optimizer.use_layer_wise_param_layout = False
         cfg.optimizer.finalize()
 

@@ -153,6 +153,7 @@ class TestDecentralizedPgPretrain:
                     eval_iters=0,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -207,6 +208,8 @@ class TestDecentralizedPgPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=total_iters,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
@@ -303,6 +306,7 @@ class TestDecentralizedPgPretrain:
                     eval_iters=0,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -356,6 +360,8 @@ class TestDecentralizedPgPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=total_iters,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
@@ -459,6 +465,7 @@ class TestDecentralizedPgPretrain:
                     eval_iters=0,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -513,6 +520,8 @@ class TestDecentralizedPgPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=total_iters,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
@@ -615,6 +624,7 @@ class TestDecentralizedPgPretrain:
                     eval_iters=0,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -669,6 +679,8 @@ class TestDecentralizedPgPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=total_iters,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
@@ -771,6 +783,7 @@ class TestDecentralizedPgPretrain:
                     eval_iters=0,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -825,6 +838,8 @@ class TestDecentralizedPgPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=total_iters,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
@@ -927,6 +942,7 @@ class TestDecentralizedPgPretrain:
                     eval_iters=0,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -981,6 +997,8 @@ class TestDecentralizedPgPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=total_iters,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",

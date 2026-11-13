@@ -151,7 +151,11 @@ def test_scheduler_runtime_override_changes_next_lr_and_preserves_multipliers():
     optimizer = torch.optim.SGD(groups, lr=0.2)
     scheduler = OptimizerParamScheduler(optimizer, 0, 0.2, 0.1, 0, 100, "linear", 0, 0, 100, "constant")
     scheduler.num_steps = 80
-    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002, decoupled_lr=0.04, decoupled_min_lr=0.004))
+    cfg = SimpleNamespace(
+        optimizer=OptimizerConfig(
+            use_layer_wise_param_layout=False, lr=0.02, min_lr=0.002, decoupled_lr=0.04, decoupled_min_lr=0.004
+        )
+    )
     checkpointing._restore_scheduler_runtime_overrides(
         cfg, TrainState(consumed_train_samples=50), optimizer, scheduler
     )
@@ -186,7 +190,7 @@ def test_scheduler_override_keeps_built_per_group_lr_overrides():
     # The checkpoint's groups replace the built ones; here they carry stale override bounds.
     optimizer.param_groups[1]["max_lr"], optimizer.param_groups[1]["min_lr"] = 0.9, 0.09
     scheduler = OptimizerParamScheduler(optimizer, 0, 0.2, 0.1, 0, 100, "linear", 0, 0, 100, "constant")
-    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002))
+    cfg = SimpleNamespace(optimizer=OptimizerConfig(use_layer_wise_param_layout=False, lr=0.02, min_lr=0.002))
 
     checkpointing._restore_scheduler_runtime_overrides(
         cfg, TrainState(consumed_train_samples=50), optimizer, scheduler, built
@@ -203,7 +207,7 @@ def test_scheduler_override_resets_overrides_when_groups_changed(change):
     built = checkpointing._param_group_lr_bounds(optimizer)
     # Fewer groups, or as many with the override on a different group.
     built = built[:1] if change == "count" else built[::-1]
-    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002))
+    cfg = SimpleNamespace(optimizer=OptimizerConfig(use_layer_wise_param_layout=False, lr=0.02, min_lr=0.002))
 
     checkpointing._restore_scheduler_runtime_overrides(cfg, TrainState(), optimizer, Mock(), built)
 
@@ -213,7 +217,7 @@ def test_scheduler_override_resets_overrides_when_groups_changed(change):
 
 def test_scheduler_override_preserves_unspecified_decoupled_bounds():
     optimizer = SimpleNamespace(param_groups=[{"is_decoupled_lr": True, "max_lr": 0.1, "min_lr": 0.01}])
-    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002))
+    cfg = SimpleNamespace(optimizer=OptimizerConfig(use_layer_wise_param_layout=False, lr=0.02, min_lr=0.002))
     checkpointing._restore_scheduler_runtime_overrides(cfg, TrainState(), optimizer, Mock())
     assert optimizer.param_groups[0]["max_lr"] == 0.1
     assert optimizer.param_groups[0]["min_lr"] == 0.01
@@ -337,7 +341,9 @@ def test_gtp_load_only_allows_recognized_padding(fp8, fp4, recipe, saved_rows, e
     tensor = ShardedTensor.from_rank_offsets("weight", torch.zeros(10, 4))
     saved = ShardedTensor.from_rank_offsets("weight", torch.zeros(saved_rows, 4))
     cfg = SimpleNamespace(model=SimpleNamespace(fp8=fp8, fp4=fp4, fp8_recipe=recipe))
-    ckpt_cfg = CheckpointConfig(fully_parallel_load=False)
+    ckpt_cfg = CheckpointConfig(
+        use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, fully_parallel_load=False
+    )
     with (
         patch("megatron.core.dist_checkpointing.serialization.load_tensors_metadata", return_value={"weight": saved}),
         patch.object(checkpointing.dist_checkpointing, "load", return_value={}) as load,
@@ -350,7 +356,9 @@ def test_gtp_load_only_allows_recognized_padding(fp8, fp4, recipe, saved_rows, e
 
 
 def test_missing_required_checkpoint_exits_with_failure(tmp_path):
-    cfg = CheckpointConfig(exit_on_missing_checkpoint=True)
+    cfg = CheckpointConfig(
+        use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, exit_on_missing_checkpoint=True
+    )
     with pytest.raises(SystemExit) as error:
         checkpointing._load_base_checkpoint(str(tmp_path), cfg, pg_collection=SimpleNamespace())
     assert error.value.code == 1
@@ -421,7 +429,12 @@ def _rng_round_trip_worker(rank, rendezvous, checkpoint_dir, legacy, fully_paral
             {"rng_state": shard}, algo="atomic", parallelization_group=pg.dp_cp
         )
         local_template = checkpointing.get_rng_state(False, pg_collection=pg, module_name="decoder")
-        local_cfg = CheckpointConfig(non_persistent_ckpt_type="local", non_persistent_local_ckpt_algo="atomic")
+        local_cfg = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
+            non_persistent_ckpt_type="local",
+            non_persistent_local_ckpt_algo="atomic",
+        )
         local_state, _, _, _ = checkpointing._load_non_persistent_base_checkpoint(
             "",
             local_cfg,
@@ -459,7 +472,12 @@ def test_mimo_checkpoint_load_without_top_level_quantization_fields():
     provider = MegatronMIMOProvider(language_model_spec=ModuleSpec(module=torch.nn.Identity))
     assert not hasattr(provider, "fp4")
     tensor = ShardedTensor.from_rank_offsets("weight", torch.zeros(10, 4))
-    ckpt_cfg = CheckpointConfig(fully_parallel_load=False, fully_parallel_save=False)
+    ckpt_cfg = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
+        fully_parallel_load=False,
+        fully_parallel_save=False,
+    )
     loaded = {"model": {"weight": torch.ones(10, 4)}}
     with patch.object(checkpointing.dist_checkpointing, "load", return_value=loaded) as load:
         result, _, _, _ = checkpointing._load_global_dist_base_checkpoint(

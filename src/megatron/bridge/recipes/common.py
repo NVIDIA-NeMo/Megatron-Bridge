@@ -15,6 +15,14 @@
 import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.training.config import (
+    CheckpointConfig,
+    DistributedInitConfig,
+    LoggerConfig,
+    RNGConfig,
+    TrainingConfig,
+    ValidationConfig,
+)
 
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
@@ -26,17 +34,7 @@ from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DistributedInitConfig,
-    GPTDatasetConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-    ValidationConfig,
-)
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig, TokenizerConfig
 from megatron.bridge.training.dpo import DPOLossConfig
 
 
@@ -121,6 +119,8 @@ def _pretrain_common() -> ConfigContainer:
         ),
         # Checkpoint config
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=500,
             save=checkpoint_dir,
             load=checkpoint_dir,
@@ -220,6 +220,8 @@ def _sft_common() -> ConfigContainer:
         ),
         # Checkpoint config with pretrained_checkpoint support
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=100,
             save=checkpoint_dir,
             load=checkpoint_dir,
@@ -350,6 +352,8 @@ def _peft_common() -> ConfigContainer:
         ),
         # Checkpoint config with pretrained_checkpoint support
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=100,
             save=checkpoint_dir,
             load=checkpoint_dir,

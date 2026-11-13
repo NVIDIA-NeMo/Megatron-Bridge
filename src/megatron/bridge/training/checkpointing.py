@@ -67,6 +67,7 @@ from megatron.core.utils import (
     unwrap_model,
 )
 from megatron.training.checkpointing import save_tokenizer_assets
+from megatron.training.config import CheckpointConfig
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -77,7 +78,7 @@ from torch.distributed.tensor import DTensor
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
-from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gtp import (
     _get_checkpoint_weight_topology,
     _get_dataloader_process_group,

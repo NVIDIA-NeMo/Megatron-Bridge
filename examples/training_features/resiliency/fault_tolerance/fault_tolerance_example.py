@@ -145,6 +145,7 @@ def create_config(
     )
 
     optimizer_config = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         bf16=True,
         fp16=False,
@@ -179,6 +180,8 @@ def create_config(
     )
 
     checkpoint_config = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
         save=checkpoint_dir,
         load=checkpoint_dir,
         save_interval=save_interval,

@@ -112,6 +112,7 @@ def build_config(provider, args: Args) -> ConfigContainer:
     )
 
     optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         lr=args.learning_rate,
         min_lr=args.learning_rate,
@@ -139,6 +140,8 @@ def build_config(provider, args: Args) -> ConfigContainer:
     )
 
     checkpoint = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
         save_interval=0,
         save=None,
         load=None,
