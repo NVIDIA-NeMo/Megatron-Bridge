@@ -593,10 +593,6 @@ class MegatronModelBridge(
     # default export writes these keys there, so strict saving ignores them for plain exports only.
     PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ("_scale_inv",)
 
-    # A plain export casts every float weight to ``weight_dtype``. A bridge whose checkpoint format pins
-    # some tensors to FP32 sets this so that the tensors the model holds in FP32 are exported in FP32.
-    PLAIN_EXPORT_KEEPS_FLOAT32: ClassVar[bool] = False
-
     def hf_export_ignored_source_keys(self, hf_pretrained: Any, source_keys: Iterable[str]) -> Iterable[str]:
         """Source checkpoint tensors that this bridge never writes back on export.
 
@@ -1553,22 +1549,13 @@ class MegatronModelBridge(
 
     @staticmethod
     def _cast_export_weight_dtype(
-        weights: Dict[str, torch.Tensor],
-        weight_dtype: Optional[torch.dtype],
-        keep_float32: bool = False,
+        weights: Dict[str, torch.Tensor], weight_dtype: Optional[torch.dtype]
     ) -> Dict[str, torch.Tensor]:
-        """Cast float export weights to ``weight_dtype`` (no-op if None; ints untouched).
-
-        With ``keep_float32``, FP32 weights stay FP32 (see ``PLAIN_EXPORT_KEEPS_FLOAT32``).
-        """
+        """Cast float export weights to ``weight_dtype`` (no-op if None; ints untouched)."""
         if weight_dtype is None:
             return weights
         return {
-            name: (
-                weight.to(weight_dtype)
-                if weight.is_floating_point() and not (keep_float32 and weight.dtype == torch.float32)
-                else weight
-            )
+            name: (weight.to(weight_dtype) if weight.is_floating_point() else weight)
             for name, weight in weights.items()
         }
 
@@ -2136,9 +2123,7 @@ class MegatronModelBridge(
                     grouped_sources=_grouped_sources,
                 )
                 if merged_result is not None:
-                    merged_result = self._cast_export_weight_dtype(
-                        merged_result, task.weight_dtype, keep_float32=self.PLAIN_EXPORT_KEEPS_FLOAT32
-                    )
+                    merged_result = self._cast_export_weight_dtype(merged_result, task.weight_dtype)
                     for hf_name, tensor in merged_result.items():
                         # Report every per-expert task packed into this tensor, not just the one
                         # that happened to complete the group.
@@ -2187,9 +2172,7 @@ class MegatronModelBridge(
             converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
             # Quantizer ranges keep their precision; ``weight_dtype`` applies to the weights only.
             if not isinstance(task.mapping, AmaxMapping):
-                converted_weights_dict = self._cast_export_weight_dtype(
-                    converted_weights_dict, task.weight_dtype, keep_float32=self.PLAIN_EXPORT_KEEPS_FLOAT32
-                )
+                converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             tied_output_hf_name = None
             if tied_mapping_registry is not None:

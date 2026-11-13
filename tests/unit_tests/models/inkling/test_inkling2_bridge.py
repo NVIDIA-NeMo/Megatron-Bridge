@@ -25,6 +25,7 @@ from transformers import AutoConfig, PretrainedConfig
 from transformers.models.auto.configuration_auto import CONFIG_MAPPING, CONFIG_MAPPING_NAMES
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -32,7 +33,11 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
 from megatron.bridge.models.inkling.configuration_inkling2 import Inkling2TextConfig
-from megatron.bridge.models.inkling.inkling2_bridge import _InterleavedGatedExpertMapping, _vision_config_dict
+from megatron.bridge.models.inkling.inkling2_bridge import (
+    _FLOAT32_PARAM_SUFFIXES,
+    _InterleavedGatedExpertMapping,
+    _vision_config_dict,
+)
 from megatron.bridge.models.inkling.inkling2_quantization import companion_keys
 from megatron.bridge.training.config import ConfigContainer
 
@@ -369,16 +374,50 @@ def test_interleaved_expert_mapping_round_trips_rows():
     assert torch.equal(split["gate"], gate) and torch.equal(split["up"], up)
 
 
-def test_plain_export_keeps_float32_and_skips_expert_scales():
-    """A plain export writes BF16 experts without scales and keeps the FP32 tensors."""
+def test_plain_export_skips_expert_scales():
+    """A plain export writes the experts without their scale tensors."""
     suffixes = Inkling2Bridge.PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES
     expert = "model.llm.layers.0.mlp.experts.w13_weight"
-    assert Inkling2Bridge.PLAIN_EXPORT_KEEPS_FLOAT32 is True
     assert "_scale_inv" in suffixes
     for name in companion_keys(expert, "nvfp4") + companion_keys(expert.replace("w13", "w2"), "mxfp8"):
         assert name.endswith(suffixes), name
     for name in (expert, "model.llm.layers.0.mlp.gate.bias", "model.llm.attn_res.output_query"):
         assert not name.endswith(suffixes), name
+
+
+def test_plain_export_keeps_the_float32_tensors_in_float32(monkeypatch):
+    """Each task of a plain export casts to its own dtype; the AttnRes queries and router biases stay FP32."""
+    float32 = [
+        "decoder.layers.2.attn_res_query",
+        "decoder.layers.1.mlp_res_query",
+        "decoder.layers.3.output_res_query",
+        "decoder.layers.1.mlp.router.expert_bias",
+    ]
+    cast = ["decoder.layers.1.mlp.router.weight", "decoder.layers.0.self_attention.linear_q.weight"]
+
+    def build(self, hf_pretrained, megatron_model, weight_dtype=None, **kwargs):
+        return [
+            WeightConversionTask(param_name=name, global_param_name=name, mapping=None, weight_dtype=weight_dtype)
+            for name in float32 + cast
+        ]
+
+    monkeypatch.setattr(MegatronModelBridge, "build_conversion_tasks", build)
+
+    plain = Inkling2Bridge().build_conversion_tasks(None, [], torch.bfloat16)
+    default = Inkling2Bridge().build_conversion_tasks(None, [])
+
+    assert {task.global_param_name: task.weight_dtype for task in plain} == {
+        **dict.fromkeys(float32, torch.float32),
+        **dict.fromkeys(cast, torch.bfloat16),
+    }
+    # The default export casts nothing.
+    assert {task.weight_dtype for task in default} == {None}
+
+
+def test_float32_tensors_are_named_as_their_mappings(bridge):
+    megatron_params = list(_resolved(bridge))
+    for suffix in _FLOAT32_PARAM_SUFFIXES:
+        assert any(name.endswith(suffix) for name in megatron_params), suffix
 
 
 # The config.json an export saves through Transformers, which records its version.

@@ -890,8 +890,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 carefully adjust based on your needs.*
             merge_adapter_weights: Whether to gather and merge LoRA adapter weights into the base
                 tensors during export (defaults to True). Set to False to export only the base tensors.
-            weight_dtype: Plain export dtype; skips quantized *.scale companions when set. A bridge
-                with ``PLAIN_EXPORT_KEEPS_FLOAT32`` keeps the tensors its model holds in FP32.
+            weight_dtype: Plain export dtype; skips quantized *.scale companions when set.
             with_megatron_names: Yield ``HFSourcedWeightTuple`` (param_name, weight,
                 megatron_param_names) instead of the two-field tuple, so each exported weight can
                 be traced back to the Megatron parameter(s) it came from (e.g. by RL weight-sync
@@ -1373,8 +1372,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
                 This is useful for reducing I/O pressure when dealing with large-scale distributed
                 training. Only effective when distributed_save=True. Default is 1 (all ranks save).
-            weight_dtype: Plain export dtype; skips quantized *.scale companions when set. A bridge
-                with ``PLAIN_EXPORT_KEEPS_FLOAT32`` keeps the tensors its model holds in FP32.
+            weight_dtype: Plain export dtype; skips quantized *.scale companions when set.
 
         Example:
             >>> # Save model after training
@@ -1631,8 +1629,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 part of weights independently.
             save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
-            weight_dtype: Plain export dtype; skips quantized *.scale companions when set. A bridge
-                with ``PLAIN_EXPORT_KEEPS_FLOAT32`` keeps the tensors its model holds in FP32.
+            weight_dtype: Plain export dtype; skips quantized *.scale companions when set.
 
         Raises:
             ValueError: If the state source doesn't support streaming save

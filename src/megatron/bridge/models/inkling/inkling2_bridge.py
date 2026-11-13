@@ -16,6 +16,7 @@
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,8 @@ _VISION_KEYS = (
 )
 _EXPERT_SUFFIXES = (".mlp.experts.w13_weight", ".mlp.experts.w2_weight")
 _SCALE_SUFFIXES = ("_scale", "_amax", "_outer_scale_denominator")
+# Tensors the model holds in FP32 and the release stores in FP32: the AttnRes queries and the router biases.
+_FLOAT32_PARAM_SUFFIXES = (".attn_res_query", ".mlp_res_query", ".output_res_query", ".mlp.router.expert_bias")
 # Safetensors header dtypes of the tensors an Inkling2 checkpoint stores.
 _SAFETENSORS_DTYPES = {
     "BF16": "bfloat16",
@@ -164,7 +167,6 @@ class Inkling2Bridge(MegatronModelBridge):
     PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES = MegatronModelBridge.PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES + tuple(
         f"{expert}{scale}" for expert in _EXPERT_SUFFIXES for scale in _SCALE_SUFFIXES
     )
-    PLAIN_EXPORT_KEEPS_FLOAT32 = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Map the nested Inkling2 text configuration onto ``Inkling2ModelConfig`` kwargs."""
@@ -391,6 +393,37 @@ class Inkling2Bridge(MegatronModelBridge):
             ReplicatedMapping(f"decoder.layers.{last_moe_layer}.output_res_query", f"{_LLM}.attn_res.output_query")
         )
         return MegatronMappingRegistry(*mappings)
+
+    def build_conversion_tasks(
+        self,
+        hf_pretrained: Any,
+        megatron_model: list[torch.nn.Module],
+        weight_dtype: torch.dtype | None = None,
+        *,
+        exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
+        exclude_param_patterns: tuple[str, ...] = (),
+    ) -> list[WeightConversionTask]:
+        """Build the conversion tasks, with the FP32 tensors exported in FP32 by a plain export.
+
+        A plain export casts each task's weights to the task's ``weight_dtype``. The AttnRes queries and router
+        biases are FP32 in the model and in the release, whose ``hf_quant_config.json`` lists them as FP32, so
+        their tasks export in FP32 whatever dtype the export requests.
+        """
+        tasks = super().build_conversion_tasks(
+            hf_pretrained,
+            megatron_model,
+            weight_dtype,
+            exclude_module_types=exclude_module_types,
+            exclude_param_patterns=exclude_param_patterns,
+        )
+        if weight_dtype is None:
+            return tasks
+        return [
+            replace(task, weight_dtype=torch.float32)
+            if task.global_param_name.endswith(_FLOAT32_PARAM_SUFFIXES)
+            else task
+            for task in tasks
+        ]
 
     @staticmethod
     def get_hf_import_param_names(
