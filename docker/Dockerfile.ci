@@ -283,6 +283,14 @@ RUN --mount=type=bind,from=mok-wheel,source=/opt/mok-wheels,target=/opt/mok-whee
     uv pip install --python "${UV_PROJECT_ENVIRONMENT}/bin/python" --no-deps --no-cache /opt/mok-wheels/*.whl && \
     chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
+# Backport NVIDIA/TransformerEngine#3748 (LayerNormLinear dummy gradients for sharded
+# weights) onto the pinned TE 2.21.0, which does not include it. Runs after the last
+# environment change so nothing reinstalls the unpatched file; a no-op once the pin has the fix.
+RUN --mount=type=bind,source=docker/common/patch_transformer_engine.sh,target=/opt/patch_transformer_engine.sh \
+    --mount=type=bind,source=docker/patches/transformer-engine-layernorm-linear-dummy-wgrad.patch,target=/opt/transformer-engine-layernorm-linear-dummy-wgrad.patch \
+    bash /opt/patch_transformer_engine.sh /opt/transformer-engine-layernorm-linear-dummy-wgrad.patch && \
+    chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
+
 COPY --chown=1000:1000 . /opt/Megatron-Bridge
 
 RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json
