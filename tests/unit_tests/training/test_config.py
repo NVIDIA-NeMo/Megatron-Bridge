@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
@@ -4211,6 +4212,86 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @staticmethod
+    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            model=SimpleNamespace(moe_token_dispatcher_type=dispatcher, moe_flex_dispatcher_backend=backend),
+            dist=SimpleNamespace(external_gpu_device_mapping=False),
+        )
+
+    def test_ncclep_one_gpu_per_rank_narrows_visible_devices(self, monkeypatch):
+        """NCCL EP recipes keep only the local rank's GPU and switch the trainer to device 0."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "4,5,6,7")
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "6"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    def test_ncclep_one_gpu_per_rank_uses_local_rank_when_no_device_list(self, monkeypatch):
+        """Without a CUDA_VISIBLE_DEVICES list the local rank itself selects the device."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.delenv("LOCAL_RANK", raising=False)
+        monkeypatch.setenv("SLURM_LOCALID", "3")
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "3"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    def test_ncclep_one_gpu_per_rank_single_visible_device_only_sets_mapping(self, monkeypatch):
+        """A launcher that already binds one GPU per task keeps its list; only the mapping flips."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "1")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "5")
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "5"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    @pytest.mark.parametrize("backend,dispatcher", [("hybridep", "flex"), ("ncclep", "alltoall")])
+    def test_ncclep_one_gpu_per_rank_is_noop_for_other_dispatchers(self, monkeypatch, backend, dispatcher):
+        """HybridEP and non-flex recipes keep the launcher's device list and local-rank selection."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+        cfg = self._ncclep_binding_cfg(backend=backend, dispatcher=dispatcher)
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+        assert cfg.dist.external_gpu_device_mapping is False
+
+    def test_ncclep_one_gpu_per_rank_skips_after_cuda_init(self, monkeypatch):
+        """Once CUDA is initialized the device list cannot change: warn and leave everything alone."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: True)
+        cfg = self._ncclep_binding_cfg()
+
+        with pytest.warns(UserWarning, match="CUDA was initialized"):
+            apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+        assert cfg.dist.external_gpu_device_mapping is False
+
     @pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
     def test_recipe_environment_variables_reject_invalid_values(self, env_vars):
         """Invalid recipe environment mappings should fail before training starts."""
@@ -5180,6 +5261,126 @@ class TestEpochBasedTraining:
         assert cfg.ddp.overlap_param_gather is overlap
         assert cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag is ddp_reuse
         assert cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+
+
+class TestDDPFinalization:
+    def test_recipe_edits_are_resolved_only_at_finalization(self):
+        ddp = DistributedDataParallelConfig(num_buckets=0)
+        assert ddp.expert_data_parallel_sharding_strategy is None
+
+        ddp.num_buckets = 2
+        ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        ddp.outer_dp_sharding_strategy = "optim"
+        ddp.megatron_fsdp_max_pool_double_buffer = True
+        ddp.finalize()
+
+        assert ddp.expert_data_parallel_sharding_strategy == "optim_grads_params"
+        assert ddp.expert_outer_dp_sharding_strategy == "optim"
+        assert ddp.fsdp_double_buffer is True
+
+        ddp.num_buckets = 0
+        with pytest.raises(AssertionError, match="num_buckets must be greater than 0"):
+            ddp.finalize()
+
+    def test_repeated_finalization_preserves_resolved_buckets(self):
+        ddp = DistributedDataParallelConfig(num_buckets=2, overlap_grad_reduce=True)
+        ddp.finalize()
+        ddp.resolve_bucket_size(num_parameters=128, data_parallel_size=2)
+        ddp.finalize()
+        ddp.finalize()
+
+        assert ddp.bucket_size == 64
+        assert ddp.num_buckets == 2
+
+    @pytest.mark.parametrize("ddp_cls", [DistributedDataParallelConfig, MCoreDistributedDataParallelConfig])
+    def test_mimo_applies_precision_policy_before_ddp_finalization(self, ddp_cls):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = ddp_cls(
+            use_megatron_fsdp=True,
+            grad_reduce_in_fp32=True,
+            megatron_fsdp_main_grads_dtype=torch.bfloat16,
+            megatron_fsdp_grad_comm_dtype=torch.bfloat16,
+        )
+        cfg.optimizer = OptimizerConfig()
+
+        megatron_mimo_runtime_config_update(cfg)
+
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.bfloat16
+        assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+
+
+class TestMegatronFSDPGradDtypePolicy:
+    """Megatron-FSDP gradient precision follows its explicit dtype fields."""
+
+    @staticmethod
+    def _fsdp_ddp_config(**kwargs) -> DistributedDataParallelConfig:
+        base = {
+            "grad_reduce_in_fp32": True,
+            "use_distributed_optimizer": True,
+            "use_megatron_fsdp": True,
+            "data_parallel_sharding_strategy": "optim_grads_params",
+            "average_in_collective": False,
+        }
+        base.update(kwargs)
+        return DistributedDataParallelConfig(**base)
+
+    @pytest.mark.parametrize(
+        ("main_grads_dtype", "grad_comm_dtype"),
+        [(None, None), (torch.bfloat16, torch.bfloat16), (torch.float32, torch.bfloat16)],
+    )
+    def test_finalize_clears_flag_when_fsdp_dtypes_do_not_request_fp32(self, main_grads_dtype, grad_comm_dtype):
+        ddp = self._fsdp_ddp_config(
+            megatron_fsdp_main_grads_dtype=main_grads_dtype,
+            megatron_fsdp_grad_comm_dtype=grad_comm_dtype,
+        )
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is False
+        assert ddp.megatron_fsdp_main_grads_dtype == main_grads_dtype
+        assert ddp.megatron_fsdp_grad_comm_dtype == grad_comm_dtype
+
+    @pytest.mark.parametrize("grad_comm_dtype", [None, torch.float32])
+    def test_finalize_keeps_flag_when_fsdp_dtypes_request_fp32(self, grad_comm_dtype):
+        ddp = self._fsdp_ddp_config(
+            megatron_fsdp_main_grads_dtype=torch.float32,
+            megatron_fsdp_grad_comm_dtype=grad_comm_dtype,
+        )
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is True
+
+    def test_finalize_keeps_flag_without_megatron_fsdp(self):
+        ddp = DistributedDataParallelConfig(grad_reduce_in_fp32=True, use_distributed_optimizer=True)
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is True
+
+    def test_validate_applies_policy_to_mcore_ddp_config(self):
+        """Recipes may construct Megatron Core's DDP config and finalize it through Bridge."""
+        ddp = MCoreDistributedDataParallelConfig(grad_reduce_in_fp32=True, use_distributed_optimizer=True)
+        ddp.use_megatron_fsdp = True
+        ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=create_test_training_config(train_iters=500, global_batch_size=16),
+            scheduler_config=create_test_scheduler_config(),
+            ddp_config=ddp,
+        )
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.ddp is ddp
+        assert ddp.grad_reduce_in_fp32 is False
 
 
 class TestDatasetSequenceLengthValidation:

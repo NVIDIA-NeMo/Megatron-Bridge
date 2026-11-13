@@ -93,8 +93,11 @@ def test_qwen35_vl_122b_h100_pipeline_layout(
     recipe_fn: Callable,
     expected_pp_size: int,
     expected_vp_size: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    num_layers = 48
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    num_layers = 2 * 48  # Hybrid separates attention/GDN and MLP within each HF block.
     config = recipe_fn()
     pp_size = config.model.pipeline_model_parallel_size
     vp_size = config.model.virtual_pipeline_model_parallel_size
@@ -109,7 +112,7 @@ def test_qwen35_vl_122b_h100_pipeline_layout(
 def test_qwen35_vl_35b_h100_fp8cs_pipeline_layout_builds_all_layers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The 35B FP8-CS benchmark topology should allocate all 40 language layers."""
+    """The 35B FP8-CS topology should allocate all 80 Hybrid layers (40 HF blocks)."""
     patch_recipe_construction_dependencies(monkeypatch)
     config = qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config()
     model = config.model
@@ -119,7 +122,7 @@ def test_qwen35_vl_35b_h100_fp8cs_pipeline_layout_builds_all_layers(
         num_layers_in_last_pipeline_stage=getattr(model, "num_layers_in_last_pipeline_stage", None),
         account_for_embedding_in_pipeline_split=False,
         account_for_loss_in_pipeline_split=False,
-        num_layers=40,
+        num_layers=80,
         pipeline_model_parallel_size=model.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=model.virtual_pipeline_model_parallel_size,
     )
@@ -130,7 +133,7 @@ def test_qwen35_vl_35b_h100_fp8cs_pipeline_layout_builds_all_layers(
         for vp_stage in range(model.virtual_pipeline_model_parallel_size)
     )
 
-    assert allocated_layers == 40
+    assert allocated_layers == 80
 
 
 def test_qwen35_vl_35b_h100_measured_performance_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,8 +146,9 @@ def test_qwen35_vl_35b_h100_measured_performance_defaults(monkeypatch: pytest.Mo
     assert config.model.pipeline_model_parallel_size == 2
     assert config.model.context_parallel_size == 1
     assert config.model.virtual_pipeline_model_parallel_size is None
-    assert config.model.num_layers_in_first_pipeline_stage == 17
-    assert config.model.num_layers_in_last_pipeline_stage == 23
+    # Preserve the measured 17/23 HF-block split in Hybrid layer counts.
+    assert config.model.num_layers_in_first_pipeline_stage == 2 * 17
+    assert config.model.num_layers_in_last_pipeline_stage == 2 * 23
     assert config.model.expert_model_parallel_size == 8
     assert config.model.expert_tensor_parallel_size == 1
     assert config.model.sequence_parallel is False
