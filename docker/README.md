@@ -59,6 +59,7 @@ Docker-only dependency, outside `pyproject.toml` and `uv.lock`.
 | Argument | Description |
 |---|---|
 | `BASE_IMAGE` | Base container |
+| `CUDNN_VERSION` | CUDA 13 cuDNN apt package version; defaults to `9.26.1.1-1` for x86_64 and Arm SBSA |
 | `CUBLAS_VERSION` | CUDA 13 cuBLAS archive version; defaults to `13.8.1.7` for x86_64 and Arm SBSA |
 | `MCORE_TRIGGERED_TESTING` | When `true`, skips the uv lockfile check to allow testing against a different Megatron-LM version than the one pinned in the lockfile |
 | `INSTALL_DIFFUSION_DEPS` | When `true`, runs `scripts/install_diffusion_deps.sh` to add WAN codecs to a CI image; defaults to `false` so CVE-carrying codecs stay out of shipped Framework images |
@@ -88,7 +89,7 @@ For a base image with a validated, source-built Transformer Engine/PyTorch pairi
 to `Dockerfile.ci`. The default is `False`, preserving the normal installation path.
 
 When enabled, Bridge and FW-final dependency syncs skip installing Transformer
-Engine and cuDNN frontend, and Bridge skips its public CUTLASS DSL and cuBLAS replacements.
+Engine and cuDNN frontend, and Bridge skips its public CUTLASS DSL, cuDNN, and cuBLAS replacements.
 FW-final inherits the setting from the Bridge image; it does not need a second
 build argument. The build records the selected Torch, TE, cuDNN frontend, and
 CUTLASS distribution versions and installation locations in

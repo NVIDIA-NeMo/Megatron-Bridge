@@ -79,6 +79,11 @@ ENV MBRIDGE_PRESERVE_BASE_RUNTIME=${PRESERVE_BASE_RUNTIME} \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64/:$LD_LIBRARY_PATH"
 
 ARG TARGETARCH
+ARG CUDNN_VERSION=9.26.1.1-1
+RUN --mount=type=bind,source=docker/common/install_cudnn.sh,target=/opt/install_cudnn.sh \
+    if [ "$MBRIDGE_PRESERVE_BASE_RUNTIME" = "True" ]; then exit 0; fi; \
+    bash /opt/install_cudnn.sh --CUDNN_VERSION="${CUDNN_VERSION}" --DEVEL
+
 ARG CUBLAS_VERSION=13.8.1.7
 RUN bash -euxo pipefail <<"EOF"
     if [ "$MBRIDGE_PRESERVE_BASE_RUNTIME" = "True" ]; then exit 0; fi
