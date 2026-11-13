@@ -411,6 +411,11 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
                 logger.warning(f"Error processing field {field_path}: {e}")
                 continue
 
+        from megatron.bridge.models.transformer_config import TransformerConfig
+
+        if isinstance(val_to_convert, TransformerConfig):
+            # Reapply original inputs, not inferred defaults that look like explicit overrides.
+            res.update(val_to_convert._inferred_cp_inputs())
         return res
 
     # Handle lists

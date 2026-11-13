@@ -25,6 +25,7 @@ try:
 except (ImportError, AttributeError):
     GatedDeltaNet2 = None
 
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.eval_context_parallel_rebinding import eval_cp_context
 
 
@@ -39,8 +40,12 @@ class _FakeProcessGroup:
 def _make_gdn(cp_size: int) -> GatedDeltaNet:
     gdn = GatedDeltaNet.__new__(GatedDeltaNet)
     torch.nn.Module.__init__(gdn)
-    gdn.config = SimpleNamespace(
+    gdn.config = TransformerConfig(
+        num_layers=1,
+        hidden_size=256,
+        num_attention_heads=8,
         context_parallel_size=cp_size,
+        linear_cp_mode="headwise",
         deterministic_mode=False,
         gdn_kernel_backend="fla",
         gdn_pre_gated_delta_rule_fusion=False,
@@ -63,8 +68,12 @@ def _make_gdn2(cp_size: int) -> torch.nn.Module:
         pytest.skip("GatedDeltaNet2 is not available in this MCore revision")
     gdn = GatedDeltaNet2.__new__(GatedDeltaNet2)
     torch.nn.Module.__init__(gdn)
-    gdn.config = SimpleNamespace(
+    gdn.config = TransformerConfig(
+        num_layers=1,
+        hidden_size=256,
+        num_attention_heads=8,
         context_parallel_size=cp_size,
+        linear_cp_mode="headwise",
         deterministic_mode=True,
         gdn_kernel_backend="torch",
     )
@@ -76,6 +85,8 @@ def _make_gdn2(cp_size: int) -> torch.nn.Module:
     gdn.qk_dim_local_tp = 256
     gdn.v_dim_local_tp = 256
     gdn.num_k_heads_local_tp = 8
+    gdn.num_key_heads = 8
+    gdn.num_value_heads = 8
     gdn.num_v_heads_local_tp = 8
     gdn._setup_variant_attrs()
     return gdn

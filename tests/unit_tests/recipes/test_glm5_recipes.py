@@ -19,6 +19,7 @@ import pytest
 
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
 from megatron.bridge.models.glm_moe_dsa.glm5_config import GLM5ModelConfig
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import finalize_glm_hybrid_pattern, validate_glm_hybrid_pattern
 from megatron.bridge.recipes.glm import gb200
 from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
 from megatron.bridge.recipes.glm.h100 import glm5
@@ -51,6 +52,7 @@ def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
         glm5.glm52_sft_608gpu_h100_bf16_200k_config,
         glm5.glm52_peft_208gpu_h100_bf16_config,
         gb200.glm52_pretrain_192gpu_gb200_bf16_config,
+        gb200.glm52_proxy_pretrain_16gpu_gb200_bf16_config,
         gb200.glm52_sft_192gpu_gb200_bf16_config,
         gb200.glm52_sft_192gpu_gb200_bf16_128k_config,
         gb200.glm52_peft_192gpu_gb200_bf16_config,
@@ -150,7 +152,7 @@ def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:
             None,
             [14, 16, 12, 12, 12, 12],
         ),
-        (gb200.glm52_sft_192gpu_gb200_bf16_config, 4, 8, 100, "flex", "hybridep", [14, 12, 12, 12, 12, 16]),
+        (gb200.glm52_sft_192gpu_gb200_bf16_config, 4, 8, 100, "flex", "ncclep", [14, 12, 12, 12, 12, 16]),
         (gb200.glm52_peft_192gpu_gb200_bf16_config, 1, 32, 100, "alltoall", None, [14, 12, 12, 12, 12, 16]),
     ],
 )
@@ -182,6 +184,61 @@ def test_glm52_gb200_recipe_topologies(recipe, cp, gbs, steps, dispatcher, backe
     assert cfg.train.global_batch_size % data_parallel_size == 0
 
 
+def test_glm52_proxy_recipe_keeps_glm_blocks_in_eight_layers() -> None:
+    cfg = gb200.glm52_proxy_pretrain_16gpu_gb200_bf16_config()
+
+    # GLM-5.2's first 8 decoder layers (3 dense, 5 MoE), split [6, 2] across the pipeline stages.
+    assert cfg.model.hybrid_layer_pattern == "D-D-D-DEDEDE|DEDE"
+    # The second stage starts on layer 6, which computes its own DSA top-k indices.
+    assert (6 + 1 - cfg.model.dsa_indexer_skip_topk_offset) % cfg.model.dsa_indexer_topk_freq == 0
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    world_size = 16
+    assert world_size % (cfg.model.pipeline_model_parallel_size * cfg.model.expert_model_parallel_size) == 0
+    assert cfg.train.global_batch_size % (world_size // cfg.model.pipeline_model_parallel_size) == 0
+
+    # Widths, routing, DSA index sharing and MTP stay as in the full model.
+    assert cfg.model.hidden_size == 6144
+    assert cfg.model.num_moe_experts == 256
+    assert cfg.model.moe_router_topk == 8
+    assert cfg.model.dsa_indexer_topk_freq == 4
+    assert cfg.model.dsa_indexer_skip_topk_offset == 3
+    assert cfg.model.dsa_indexer_loss_coeff == 0.001
+    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.dsa_kernel_backend == "cudnn"
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_granularity == "full"
+
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
+    assert cfg.model.vocab_size == 154880
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.train.global_batch_size == 128
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.train_iters == 100
+    assert cfg.optimizer.lr == 3e-5
+    assert cfg.optimizer.min_lr == 3e-6
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.save is None
+    assert cfg.checkpoint.load is None
+    assert cfg.env_vars == COMMON_RECIPE_ENV_VARS
+
+    # GLM's own finalization step; Core's TransformerConfig finalization needs a CUDA device for the cuDNN backend.
+    validate_glm_hybrid_pattern(cfg.model)
+    finalize_glm_hybrid_pattern(cfg.model)
+
+    assert cfg.model.num_layers == 16
+    assert cfg.model.moe_layer_freq == [0] * 6 + [0, 1] * 5
+    assert cfg.model.mtp_hybrid_override_pattern == "DE"
+
+
 def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     cfg = gb200.glm52_sft_192gpu_gb200_bf16_128k_config()
 
@@ -202,7 +259,7 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert decoder_starts == [0, 14, 30, 42, 54, 66]
     assert all((start + 1 - 3) % 4 == 0 for start in decoder_starts[1:])
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.apply_rope_fusion is False
     assert cfg.train.global_batch_size == 56
@@ -218,10 +275,11 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
 
 
 def test_glm52_gb200_sft_uses_8k_packed_tulu3() -> None:
@@ -244,7 +302,7 @@ def test_glm52_gb200_sft_uses_8k_packed_tulu3() -> None:
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
 
 
 def test_glm52_gb200_recipes_do_not_depend_on_h100_recipes() -> None:
