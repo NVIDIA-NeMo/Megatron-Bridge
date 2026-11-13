@@ -23,6 +23,7 @@ import pytest
 
 from megatron.bridge.training.config import ConfigContainer, MockVLMSFTDatasetConfig
 from tests.unit_tests.recipes.recipe_test_utils import (
+    assert_ncclep_bounds_packed_tokens,
     discover_recipe_factories,
     exported_recipe_factory_keys,
     patch_recipe_construction_dependencies,
@@ -90,3 +91,9 @@ def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]
     if "pretrain" in recipe_factory.__name__ and isinstance(cfg.dataset, MockVLMSFTDatasetConfig):
         assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
         assert cfg.tokenizer.vocab_size == cfg.model.vocab_size
+
+
+@pytest.mark.parametrize("recipe_factory", _PERF_RECIPE_FACTORIES, ids=recipe_factory_id)
+def test_ncclep_perf_recipe_bounds_packed_tokens(recipe_factory: Callable[..., object]) -> None:
+    """NCCL EP sizes its buffers once, so recipes that feed it packed sequences declare the bound."""
+    assert_ncclep_bounds_packed_tokens(recipe_factory())

@@ -136,7 +136,9 @@ class _BuilderOnlyBridge:
 @pytest.fixture(autouse=True)
 def _patch_llama_autobridge(monkeypatch: pytest.MonkeyPatch):
     for module_name in [
+        "megatron.bridge.recipes.llama.llama2",
         "megatron.bridge.recipes.llama.llama3",
+        "megatron.bridge.recipes.llama.h100.llama2",
         "megatron.bridge.recipes.llama.h100.llama3",
     ]:
         mod = importlib.import_module(module_name)

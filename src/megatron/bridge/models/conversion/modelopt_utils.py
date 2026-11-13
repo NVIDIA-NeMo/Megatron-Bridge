@@ -79,6 +79,10 @@ class _SourceState:
 # quantized in_proj, so a quantizer pattern can't exclude them; they're exported unquantized.
 _GDN_UNQUANTIZED_OUTPUTS = ("b", "a")
 
+# Grouped expert mappings with ``oai_mxfp4_export`` hold HF experts as [experts, in, out] tensors and export
+# them in OpenAI's MXFP4 layout, as released GPT-OSS checkpoints: ``<name>_blocks`` / ``<name>_scales``.
+_OAI_MXFP4_FORMAT = "w4a16_mxfp4"
+
 
 def _same_storage(left: object, right: object) -> bool:
     if left is right:
@@ -166,6 +170,8 @@ def _trace_rows(task: WeightConversionTask, parallelism: str) -> tuple[tuple[str
 
 def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
     if getattr(mapping, "is_grouped_export", False):
+        if getattr(mapping, "oai_mxfp4_export", False):
+            return "grouped"
         raise NotImplementedError("ModelOpt real-quant export does not yet support grouped HF expert weights")
     if isinstance(mapping, GatedMLPMapping):
         return "gated"
@@ -308,12 +314,19 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
     from modelopt.torch.export.quantized_weight_export import get_quantized_weight_export_spec
 
     spec = get_quantized_weight_export_spec(task.megatron_module, weight_name)
+    parallelism = None
     if spec is not None:
         _validate_quantized_task(task)
+        parallelism = _mapping_parallelism(task.mapping, task.megatron_module)
+        if parallelism == "grouped" and spec.quantization_format != _OAI_MXFP4_FORMAT:
+            raise NotImplementedError(
+                f"{task.global_param_name} is exported in OpenAI's MXFP4 layout, which holds weight-only MXFP4, "
+                f"not {spec.quantization_format!r}"
+            )
     return _SourceState(
         spec,
         tuple(task.param_weight.shape),
-        _mapping_parallelism(task.mapping, task.megatron_module) if spec is not None else None,
+        parallelism,
         _qkv_layout(task.mapping, task.megatron_module) if spec is not None else None,
         task.param_weight.dtype,
         _gdn_layout(task.mapping, task.megatron_module) if spec is not None else None,
@@ -382,6 +395,8 @@ def _transform_source_spec(
     reference = shards[0].state
     if any(shard.state != reference for shard in shards[1:]):
         raise RuntimeError(f"Inconsistent ModelOpt export format across TP for {task.global_param_name}")
+    if source.parallelism == "grouped":
+        return {task.mapping.hf_param: reference}
     if isinstance(task.mapping, MambaInProjMapping) and source.traced_rows is None:
         _mamba_row_indices(shards, task.mapping.tp_size)
     unquantized = _unquantized_outputs(task.mapping)
@@ -828,6 +843,48 @@ def _make_export_hook(
     return export_weight
 
 
+def _make_oai_mxfp4_export_hook(task: WeightConversionTask) -> HFExportHook:
+    from modelopt.torch.export.quantized_weight_export import (
+        export_quantized_weight_tensors,
+        merge_quantized_weight_export_states,
+        split_quantized_weight_export_state,
+    )
+
+    def export_experts(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
+        source, error = _capture_current_source_state(task)
+        # One expert's state packs all of them only when it holds no tensors, as weight-only MXFP4's does.
+        if error is None and (
+            getattr(source.state, "quantization_format", None) != _OAI_MXFP4_FORMAT
+            or split_quantized_weight_export_state(source.state)[1]
+        ):
+            error = f"{task.global_param_name} is no longer weight-only MXFP4"
+        _raise_distributed_errors(error, _world_group(), f"ModelOpt export of {hf_name} failed")
+        # Blocks run along each expert's input dimension, so pack [experts, out, in].
+        weight = tensor.transpose(-1, -2)
+        num_experts, rows, cols = weight.shape
+        shard_rows, shard_cols = source.weight_shape
+        if cols != shard_cols or (num_experts * rows) % shard_rows:
+            raise ValueError(f"{hf_name} of shape {tuple(tensor.shape)} does not match its experts' weights")
+        state = merge_quantized_weight_export_states([source.state] * (num_experts * rows // shard_rows), 0)
+        packed = export_quantized_weight_tensors(weight.reshape(-1, cols), state, tensor.dtype)
+        scales = packed["weight_scale"].reshape(num_experts, rows, -1)
+        yield HFWeightTuple(f"{hf_name}_blocks", packed["weight"].reshape(*scales.shape, -1))
+        yield HFWeightTuple(f"{hf_name}_scales", scales)
+
+    return export_experts
+
+
+def _oai_mxfp4_quantization_config(named_specs: dict[str, object | None], expert_names: set[str]) -> dict[str, Any]:
+    """OpenAI's MXFP4 config, which keeps every layer but the experts in BF16."""
+    quantized = sorted(name for name, spec in named_specs.items() if spec is not None and name not in expert_names)
+    if quantized:
+        raise NotImplementedError(
+            f"OpenAI's MXFP4 format keeps every layer but the experts in BF16, but these are quantized: {quantized[:4]}"
+        )
+    unquantized = (name.removesuffix(".weight") for name, spec in named_specs.items() if spec is None)
+    return {"quant_method": "mxfp4", "modules_to_not_convert": sorted(unquantized)}
+
+
 def build_modelopt_export_plan(
     conversion_tasks: list[WeightConversionTask | None],
     *,
@@ -912,14 +969,31 @@ def build_modelopt_export_plan(
     pp_group = model_bridge_utils._get_pp_group(model) if torch.distributed.is_initialized() else None
     source_specs = _sync_source_specs(local_specs, pp_group)
 
+    # A grouped HF tensor is packed by one expert's hook, so its experts must all be quantized or none,
+    # and OpenAI's MXFP4 layout has no BF16 experts. Gathered from every rank, as EP splits the experts.
+    oai_mxfp4_experts: dict[str, set[bool]] = {}
+    for task in concrete_tasks:
+        source = source_specs.get(task.global_param_name)
+        # Biases share the mapping but stay BF16.
+        if getattr(task.mapping, "oai_mxfp4_export", False) and source is not None and len(source.weight_shape) > 1:
+            oai_mxfp4_experts.setdefault(task.mapping.hf_param, set()).add(source.state is not None)
+    for rank_experts in _all_gather_objects(oai_mxfp4_experts, _world_group()):
+        for name, quantized in rank_experts.items():
+            oai_mxfp4_experts.setdefault(name, set()).update(quantized)
+
     expert_mapping_error = None
     try:
+        if any(True in quantized for quantized in oai_mxfp4_experts.values()):
+            if partial := sorted(name for name, quantized in oai_mxfp4_experts.items() if False in quantized):
+                raise NotImplementedError(
+                    f"OpenAI's MXFP4 format quantizes every expert, but these have unquantized experts: {partial[:4]}"
+                )
         for task in concrete_tasks:
             source = source_specs.get(task.global_param_name)
             if source is None or source.state is None or not task.mapping.is_expert:
                 continue
             local_mapping = local_expert_mappings.get(task.global_param_name)
-            if local_mapping is None:
+            if local_mapping is None and source.parallelism != "grouped":
                 raise NotImplementedError(
                     "ModelOpt real-quant export cannot pack expert mapping "
                     f"{type(task.mapping).__name__} before its EP gather"
@@ -957,8 +1031,11 @@ def build_modelopt_export_plan(
             for rank_specs, _ in gathered:
                 assert rank_specs is not None
                 overlap = expert_specs.keys() & rank_specs.keys()
-                if overlap:
-                    raise RuntimeError(f"Duplicate ModelOpt expert specs: {sorted(overlap)}")
+                # Every expert of a grouped HF tensor shares its name, and must share its spec.
+                if overlap and (
+                    source.parallelism != "grouped" or any(expert_specs[name] != rank_specs[name] for name in overlap)
+                ):
+                    raise RuntimeError(f"Duplicate or inconsistent ModelOpt expert specs: {sorted(overlap)}")
                 expert_specs.update(rank_specs)
             transformed = expert_specs
         elif transform_error is not None:
@@ -999,7 +1076,16 @@ def build_modelopt_export_plan(
             raise ValueError(f"Inconsistent ModelOpt export spec for tied weight {alias}")
         named_specs[alias] = source_spec
 
-    quantization_config = build_hf_quantization_config(named_specs)
+    oai_mxfp4_names = {
+        task.mapping.hf_param
+        for task in concrete_tasks
+        if (source := source_specs.get(task.global_param_name)) is not None and source.parallelism == "grouped"
+    }
+    quantization_config = (
+        _oai_mxfp4_quantization_config(named_specs, oai_mxfp4_names)
+        if oai_mxfp4_names
+        else build_hf_quantization_config(named_specs)
+    )
 
     export_tasks = []
     for task in concrete_tasks:
@@ -1061,6 +1147,9 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
             export_tasks.append(task)
             continue
         _validate_quantized_task(task)
+        if getattr(task.mapping, "oai_mxfp4_export", False):
+            export_tasks.append(replace(task, export_hook=_make_oai_mxfp4_export_hook(task)))
+            continue
 
         finalizer = None
         if isinstance(task.mapping, _LocalExpertMappingMixin):

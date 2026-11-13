@@ -58,6 +58,7 @@ class _InMemoryHFState(dict):
 
 
 @pytest.mark.run_only_on("GPU")
+@pytest.mark.usefixtures("reset_distributed")
 @pytest.mark.parametrize("fp8_format", ["fp8", "mxfp8"])
 def test_gtp_native_fp8_hf_import_and_dequantized_export(fp8_format):
     """Import twice into real GTP/TE storage and compare against independent TE casts."""
