@@ -34,6 +34,7 @@ from megatron.bridge.models.decorators import torchrun_main
 
 NVFP4 = {"num_bits": (2, 1), "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)}, "axis": None}
 FP8 = {"num_bits": (4, 3), "axis": None}
+MXFP4 = {"num_bits": (2, 1), "block_sizes": {-1: 32, "type": "dynamic", "scale_bits": (8, 0)}}
 DISABLED = [
     {"quantizer_name": "*", "enable": False},
 ]
@@ -66,12 +67,18 @@ CONFIGS = {
         {"quantizer_name": "*self_attention*weight_quantizer", "cfg": FP8},
         {"quantizer_name": "*self_attention*input_quantizer", "cfg": FP8},
     ],
+    # Weight-only MXFP4 experts, as GPT-OSS ships.
+    "mxfp4_experts": [
+        {"quantizer_name": "*experts*weight_quantizer", "cfg": MXFP4},
+    ],
 }
-# Projections deployments fuse into one GEMM read the same input and share one per-tensor weight scale.
-FUSED_SIBLINGS = (
-    ("linear_q_down_proj", "linear_kv_down_proj"),
-    ("q_a_proj", "kv_a_proj_with_mqa"),
-    ("q_proj", "k_proj", "v_proj"),
+# Projections deployments fuse into one GEMM read the same input; ModelOpt calibrates them to one weight range.
+MLA_DOWN_PROJECTIONS = (
+    "linear_q_down_proj",
+    "linear_kv_down_proj",
+    "linear_kv_proj",
+    "q_a_proj",
+    "kv_a_proj_with_mqa",
 )
 KIND_IDS = {
     "linear_qkv": 1,
@@ -80,15 +87,13 @@ KIND_IDS = {
     "linear_fc2": 4,
     "in_proj": 5,
     "out_proj": 6,
-    **dict.fromkeys(FUSED_SIBLINGS[0] + FUSED_SIBLINGS[1], 7),
-    **dict.fromkeys(FUSED_SIBLINGS[2], 8),
+    **dict.fromkeys((*MLA_DOWN_PROJECTIONS, "g_proj"), 7),  # With Kimi-K3's MLA gate.
+    **dict.fromkeys(("q_proj", "k_proj", "v_proj"), 8),
     "linear_q_up_proj": 9,
     "linear_kv_up_proj": 10,
-    "linear_kv_proj": 11,
     "q_b_proj": 12,
     "kv_b_proj": 13,
     "o_proj": 14,
-    "g_proj": 15,
     "b_proj": 16,
     "beta_proj": 17,
     "f_a_proj": 18,
@@ -117,18 +122,6 @@ def _pin_input_ranges(chunk: torch.nn.Module) -> None:
         quantizer.amax = torch.tensor(input_amax(layer, kind), device="cuda")
 
 
-def _tie_fused_sibling_weight_ranges(chunk: torch.nn.Module) -> None:
-    """Calibrate projections deployments fuse to their largest weight range, as a fused GEMM would."""
-    for parent in chunk.modules():
-        for siblings in FUSED_SIBLINGS:
-            quantizers = [getattr(getattr(parent, name, None), "weight_quantizer", None) for name in siblings]
-            quantizers = [quantizer for quantizer in quantizers if quantizer is not None and quantizer.is_enabled]
-            if len(quantizers) > 1:
-                amax = torch.stack([quantizer.amax.float().amax() for quantizer in quantizers]).amax()
-                for quantizer in quantizers:
-                    quantizer.amax = amax.to(quantizer.amax.dtype).expand_as(quantizer.amax).clone()
-
-
 @torchrun_main
 def main(
     hf_model_path: str, out: str, config: str, tp: int, pp: int, ep: int, etp: int, offline_out: str | None
@@ -151,15 +144,11 @@ def main(
     provider.initialize_model_parallel(seed=0)
     model = provider.provide_distributed_model(wrap_with_ddp=False)
 
-    # Without TP every rank holds whole weights, so there is nothing to sync. Skipping it also avoids ModelOpt
-    # syncing MCore TELinear layers (e.g. MLA down-projections) over all ranks, which hangs under PP (OMNIML-6311).
-    algorithm = {"method": "max", "distributed_sync": tp > 1 or etp > 1}
-    quant_cfg = {"quant_cfg": [*DISABLED, *CONFIGS[config], *UNQUANTIZED], "algorithm": algorithm}
+    quant_cfg = {"quant_cfg": [*DISABLED, *CONFIGS[config], *UNQUANTIZED], "algorithm": "max"}
     for chunk in model:
         chunk = unwrap_model(chunk)
         mtq.quantize(chunk, quant_cfg)  # Without a forward loop, "max" calibrates the weights only.
         _pin_input_ranges(chunk)
-        _tie_fused_sibling_weight_ranges(chunk)
     bridge.save_hf_pretrained_modelopt(model, out)
     if offline_out is not None:
         export_mcore_gpt_to_hf(unwrap_model(model[0]), hf_model_path, export_dir=offline_out)
