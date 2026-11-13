@@ -574,13 +574,13 @@ class TestDeepSeekV4HardwareCapabilities:
 
 
 class TestDeepSeekV4HardwareDefaults:
-    """DSv4 defaults cuDNN CSA on Hopper+ and maps the unfused mHC path on every GPU."""
+    """DSv4 defaults cuDNN CSA on Blackwell+ and maps the unfused mHC path on every GPU."""
 
     @pytest.mark.parametrize(
         ("capability", "expected_dsa_backend"),
         [
             ((8, 0), "none"),
-            ((9, 0), "cudnn"),
+            ((9, 0), "none"),
             ((10, 0), "cudnn"),
         ],
     )
