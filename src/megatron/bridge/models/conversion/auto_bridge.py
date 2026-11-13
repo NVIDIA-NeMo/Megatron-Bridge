@@ -1718,6 +1718,19 @@ class AutoBridge(Generic[MegatronModelT]):
             ignored_source_key_prefixes = (
                 tuple(dict.fromkeys((*(ignored_source_key_prefixes or ()), *declared_prefixes))) or None
             )
+            # Checkpoint-dependent omissions (copies of shared parameters) come from the bridge's hook; the
+            # base implementation returns nothing and is skipped so that duck-typed bridges need no change.
+            declared_keys: tuple[str, ...] = ()
+            ignored_keys_hook = getattr(type(self._model_bridge), "hf_export_ignored_source_keys", None)
+            if (
+                ignored_keys_hook is not None
+                and ignored_keys_hook is not MegatronModelBridge.hf_export_ignored_source_keys
+            ):
+                declared_keys = tuple(
+                    dict.fromkeys(ignored_keys_hook(self._model_bridge, self.hf_pretrained, source.get_all_keys()))
+                )
+                if any(not isinstance(key, str) or not key for key in declared_keys):
+                    raise ValueError("hf_export_ignored_source_keys must return nonempty tensor names.")
             ignored_source_key_suffixes = tuple(
                 dict.fromkeys(
                     (("_scale_inv",) if weight_dtype is not None else ())
@@ -1732,6 +1745,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
                 ignored_source_key_suffixes=ignored_source_key_suffixes or None,
+                ignored_source_keys=declared_keys or None,
             )
         else:
             # Config-only path: shard and write safetensors directly

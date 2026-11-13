@@ -64,8 +64,9 @@ def _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg: ConfigContainer) -
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.num_layers_in_first_pipeline_stage = 17
-    cfg.model.num_layers_in_last_pipeline_stage = 23
+    # Hybrid counts the attention/GDN and MLP positions separately for each HF block.
+    cfg.model.num_layers_in_first_pipeline_stage = 34
+    cfg.model.num_layers_in_last_pipeline_stage = 46
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
@@ -315,8 +316,8 @@ def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
     # The first pipeline stage also owns the vision encoder. Move one language
     # layer to the loss stage to retain activation headroom for variable-shape
     # DataComp images without checkpointing the complete MoE forward.
-    cfg.model.num_layers_in_first_pipeline_stage = 16
-    cfg.model.num_layers_in_last_pipeline_stage = 24
+    cfg.model.num_layers_in_first_pipeline_stage = 32
+    cfg.model.num_layers_in_last_pipeline_stage = 48
     # Variable-shape DataComp images retain more activation memory than the
     # fixed-shape benchmark. Recompute only the measured activation-heavy
     # outputs while retaining the leader's scoped language CUDA graphs.
@@ -870,7 +871,8 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 27B (dense).
 
     Default configuration: 16 GPUs
-    - TP=4, PP=4
+    - TP=4, PP=4, sequence parallel
+    - Selective activation recompute: core_attn, gdn_norm_out and mlp
     - LR=5e-6 (full SFT)
     - Sequence length: 4096
     """
@@ -888,7 +890,7 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
 
     # VLM-specific settings
     cfg.model.freeze_language_model = False
@@ -909,9 +911,13 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
-    # Memory saving
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
+    # Memory saving: at MBS 4 the first pipeline stage runs out of 80 GB H100 memory in the first
+    # iteration without activation recompute, even with sequence parallelism, and also when only
+    # core_attn and gdn_norm_out are recomputed. Adding the dense MLP fits, at about 72.6 of 79.1 GiB
+    # reserved on the first stage and 5.7 s per step for MedPix SFT on 16 H100s (2026-11-02). For more
+    # headroom, one-layer full-uniform recompute peaks at about 51 GiB at 6.2 s per step.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn", "gdn_norm_out", "mlp"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
