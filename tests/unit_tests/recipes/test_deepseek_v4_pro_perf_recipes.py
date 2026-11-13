@@ -1,3 +1,6 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Full-model and precision contracts for the DeepSeek V4 Pro BF16 benchmark."""
 
 import importlib

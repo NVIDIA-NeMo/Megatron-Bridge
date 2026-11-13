@@ -4,4 +4,4 @@
 from .llama3 import llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config
 
 
-__all__ = ["llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config"]
+__all__ = ["llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config"]  # pragma: allowlist secret
