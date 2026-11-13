@@ -64,8 +64,7 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize(
     ("precision", "parent_pipeline", "parent_mesh"),
     [
-        # The MXFP8 recipes follow the MLPerf execution settings, including PP=4 x VP=4.
-        ("fp8mx", (4, 4), (64, 2, 64)),
+        ("fp8mx", (2, 8), (128, 4, 32)),
         ("nvfp4", (2, 8), (128, 4, 32)),
     ],
 )

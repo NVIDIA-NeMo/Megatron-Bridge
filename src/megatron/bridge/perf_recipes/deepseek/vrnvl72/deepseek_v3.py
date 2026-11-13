@@ -306,36 +306,36 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VRNVL72, MXFP8, NCCL EP, with MLPerf execution settings.
+    """DeepSeek V3 pretrain: 256× VRNVL72, MXFP8, NCCL EP, with tuned Rubin execution settings.
 
     Starts from the shared GB300 MXFP8 base and keeps its training setup: mock data, NullTokenizer,
-    GBS=4096, the LR schedule, forced load balancing, the FP32 router and the auxiliary-loss
-    coefficient. The parallel layout, MoE dispatch, fusions, CUDA graphs, runtime and process
-    environment follow the MLPerf DeepSeek-V3 config
-    ``config_VR200_64x4x240xtp1pp4ep32cp1_mxfp8_full_cg.sh``, so the two can be compared on
-    throughput.
+    GBS=4096, the LR schedule, forced load balancing and the auxiliary-loss coefficient. Uses
+    PP=2 x VP=8, BF16 routing and MXFP8 backward combine with the Rubin benchmark's receive and
+    stash buffer sizing. Fusions, CUDA graphs, runtime and process environment retain the
+    MLPerf DeepSeek-V3 execution settings.
 
-    Two MLPerf settings are not mirrored. MXFP8 token dispatch and combine
-    (``moe_dispatch_fwd_dtype`` / ``moe_combine_bwd_dtype``) need Megatron-LM #7992 to run with
-    1F1B EP overlap and paged stashing, and Megatron Bridge does not expose the DataLoader prefetch
-    factor that MLPerf raises to 32.
+    MXFP8 backward combine requires Megatron Core support for quantized communication with
+    1F1B EP overlap and paged stashing. Forward dispatch retains the shared base's dtype unless
+    explicitly overridden. Megatron Bridge does not expose MLPerf's DataLoader prefetch factor.
     """
     cfg = _build_deepseek_v3_gb300_fp8mx()
 
-    # The inherited 16-stage layout "Et*4|(t*4|)*14tmL" is split over PP=4 x VP=4 instead of
-    # PP=2 x VP=8: dense DP=64, expert DP=2 and 64 microbatches per DP rank at GBS=4096.
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    # Keep the inherited 16-stage layout "Et*4|(t*4|)*14tmL" over PP=2 x VP=8:
+    # dense DP=128, expert DP=4 and 32 microbatches per DP rank at GBS=4096.
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 8
 
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
     # MLPerf passes 64 SMs in the config; the NCCL_EP_* SM counts below are its per-phase settings.
-    # The larger receive capacity and stash buffer leave headroom for natural routing.
+    # Match the receive capacity and stash buffer sizing of the Rubin benchmark.
     cfg.model.moe_flex_dispatcher_num_sms = 64
-    cfg.model.moe_expert_rank_capacity_factor = 4
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
+    cfg.model.moe_combine_bwd_dtype = "mxfp8"
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_router_dtype = "bf16"
     cfg.model.moe_router_padding_for_quantization = True
 
     # Fusions: residual add with RMSNorm, input norm with the MLA down projections, and the MLA
@@ -402,10 +402,10 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 VRNVL72 GPUs.
 
     Shrinks ``deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config`` for bring-up on fewer GPUs. Keeps
-    GBS=4096, per-layer shapes, EP=32, one MTP layer and every MLPerf execution setting of the
+    GBS=4096, per-layer shapes, EP=32, one MTP layer and the tuned execution settings of the
     parent: NCCL EP tuning, fusions, CUDA graphs, runtime and environment. PP=1 without virtual
-    pipelining gives dense DP=64, expert DP=2 and 64 microbatches; EP=32 with the parent's PP=4
-    would need 128 GPUs. This reduced-depth model does not reproduce the PP=4 x VP=4 schedule,
+    pipelining gives dense DP=64, expert DP=2 and 64 microbatches. This reduced-depth model does
+    not reproduce the parent's PP=2 x VP=8 schedule,
     at-scale pipeline traffic, convergence or memory use; GPU validation is required.
     """
     cfg = deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config()

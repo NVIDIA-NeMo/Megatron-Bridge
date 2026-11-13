@@ -225,12 +225,11 @@ def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_override
     assert cfg.env_vars == {**base.env_vars, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
 
 
-def test_deepseek_v3_vrnvl72_fp8mx_keeps_the_gb300_training_setup() -> None:
+def test_deepseek_v3_vrnvl72_fp8mx_matches_rubin_execution_settings() -> None:
     gb300 = _build("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config")
     cfg = _build("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config")
 
-    # Both start from the shared MXFP8 base. The VRNVL72 recipe changes execution only, so data, batch,
-    # schedule, routing and router precision match the GB300 recipe.
+    # Keep data, batch, schedule, forced load balancing and auxiliary loss from the shared MXFP8 base.
     assert type(cfg.dataset) is type(gb300.dataset)
     assert cfg.tokenizer.tokenizer_type == gb300.tokenizer.tokenizer_type
     assert cfg.model.seq_length == gb300.model.seq_length
@@ -243,22 +242,23 @@ def test_deepseek_v3_vrnvl72_fp8mx_keeps_the_gb300_training_setup() -> None:
     assert cfg.scheduler.lr_decay_iters == gb300.scheduler.lr_decay_iters
     assert cfg.model.moe_router_force_load_balancing is gb300.model.moe_router_force_load_balancing is True
     assert cfg.mixed_precision.fp8_recipe == gb300.mixed_precision.fp8_recipe == "mxfp8"
-    # The bridge sets these on real providers; the offline provider used here may not carry them. MXFP8
-    # token dispatch needs Megatron-LM #7992, so dispatch and combine stay as in the GB300 recipe.
-    for name in ("moe_router_dtype", "moe_aux_loss_coeff", "moe_dispatch_fwd_dtype", "moe_combine_bwd_dtype"):
+    # The bridge sets these on real providers; the offline provider used here may not carry them.
+    for name in ("moe_aux_loss_coeff", "moe_dispatch_fwd_dtype"):
         assert getattr(cfg.model, name, None) == getattr(gb300.model, name, None), name
+    assert cfg.model.moe_router_dtype == "bf16"
+    assert cfg.model.moe_combine_bwd_dtype == "mxfp8"
 
-    # The same 16-stage layout over PP=4 x VP=4 instead of PP=2 x VP=8, with EP and TP unchanged.
+    # Keep the shared base's 16-stage PP=2 x VP=8 layout, EP and TP.
     assert cfg.model.pipeline_model_parallel_layout == gb300.model.pipeline_model_parallel_layout
     assert (gb300.model.pipeline_model_parallel_size, gb300.model.virtual_pipeline_model_parallel_size) == (2, 8)
-    assert (cfg.model.pipeline_model_parallel_size, cfg.model.virtual_pipeline_model_parallel_size) == (4, 4)
+    assert (cfg.model.pipeline_model_parallel_size, cfg.model.virtual_pipeline_model_parallel_size) == (2, 8)
     assert cfg.model.expert_model_parallel_size == gb300.model.expert_model_parallel_size == 32
     assert cfg.model.tensor_model_parallel_size == gb300.model.tensor_model_parallel_size == 1
 
-    # MLPerf execution settings.
+    # Rubin buffer sizing and MLPerf-derived fusions, CUDA graphs and runtime settings.
     assert cfg.model.moe_flex_dispatcher_num_sms == 64
-    assert cfg.model.moe_expert_rank_capacity_factor == 4
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.5
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
     assert cfg.model.moe_router_padding_for_quantization is True
     assert cfg.model.fused_residual_rmsnorm is True
     assert cfg.model.mla_down_proj_fusion is True
