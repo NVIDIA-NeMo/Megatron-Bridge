@@ -40,6 +40,7 @@ from __future__ import annotations
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.inkling.data.tokenizer import inkling2_tokenizer_metadata
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import (
     _peft_common,
@@ -79,8 +80,8 @@ def inkling2_small_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
     cfg.tokenizer.tokenizer_model = _MODEL_ID
-    # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
-    cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
+    # Inkling2MegatronTokenizer assigns the BOS and EOS roles that the checkpoint's tokenizer leaves unset.
+    cfg.tokenizer.metadata_path = inkling2_tokenizer_metadata()
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -172,8 +173,8 @@ def inkling2_small_sft_128gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
     cfg.tokenizer.tokenizer_model = _MODEL_ID
-    # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
-    cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
+    # Inkling2MegatronTokenizer assigns the BOS and EOS roles that the checkpoint's tokenizer leaves unset.
+    cfg.tokenizer.metadata_path = inkling2_tokenizer_metadata()
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
@@ -278,8 +279,8 @@ def inkling2_small_sft_96gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
     cfg.tokenizer.tokenizer_model = _MODEL_ID
-    # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
-    cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
+    # Inkling2MegatronTokenizer assigns the BOS and EOS roles that the checkpoint's tokenizer leaves unset.
+    cfg.tokenizer.metadata_path = inkling2_tokenizer_metadata()
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 3
@@ -383,8 +384,8 @@ def inkling2_small_sft_128gpu_gb200_bf16_long_context_config() -> ConfigContaine
 
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
     cfg.tokenizer.tokenizer_model = _MODEL_ID
-    # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
-    cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
+    # Inkling2MegatronTokenizer assigns the BOS and EOS roles that the checkpoint's tokenizer leaves unset.
+    cfg.tokenizer.metadata_path = inkling2_tokenizer_metadata()
     cfg.model.seq_length = 32768
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
@@ -490,8 +491,8 @@ def inkling2_small_peft_32gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora"
 
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
     cfg.tokenizer.tokenizer_model = _MODEL_ID
-    # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
-    cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
+    # Inkling2MegatronTokenizer assigns the BOS and EOS roles that the checkpoint's tokenizer leaves unset.
+    cfg.tokenizer.metadata_path = inkling2_tokenizer_metadata()
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
@@ -598,8 +599,8 @@ def inkling2_small_peft_16gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora"
 
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
     cfg.tokenizer.tokenizer_model = _MODEL_ID
-    # The checkpoint's tokenizer configuration names no BOS or EOS token; use the reference tokenizer's.
-    cfg.tokenizer.hf_special_tokens = {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
+    # Inkling2MegatronTokenizer assigns the BOS and EOS roles that the checkpoint's tokenizer leaves unset.
+    cfg.tokenizer.metadata_path = inkling2_tokenizer_metadata()
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1

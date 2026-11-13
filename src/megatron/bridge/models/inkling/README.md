@@ -121,8 +121,11 @@ FlexAttention is compiled for fixed shapes. The packed SFT recipes pad every pac
 the full sequence length so that the attention kernel compiles once.
 
 The checkpoint's tokenizer configuration assigns no BOS or EOS token, which pretraining
-datasets and SFT padding need. The recipes set the reference tokenizer's roles,
-`<|begin_of_text|>` and `<|endoftext|>`, through `tokenizer.hf_special_tokens`.
+datasets and SFT padding need. The text recipes load the tokenizer as
+`Inkling2MegatronTokenizer` (`data/tokenizer.py`), which `tokenizer.metadata_path`
+selects. It assigns the reference tokenizer's roles, `<|begin_of_text|>` and
+`<|endoftext|>`, and gives text SFT the chat template's assistant turns for the loss,
+from each turn's first `<|message_model|>` through `<|content_model_end_sampling|>`.
 
 ## Training recipes
 

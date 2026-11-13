@@ -673,6 +673,17 @@ def test_infer_assistant_mask_boundary_config_from_chatml_template():
     assert all(token_variants == [[103]] for token_variants in boundary_config.role_end_token_variants.values())
 
 
+@pytest.mark.parametrize("owner", ["processor", "tokenizer"])
+def test_infer_assistant_mask_boundary_config_prefers_declared_boundaries(owner):
+    declared = AssistantMaskBoundaryConfig(role_start_tokens={"assistant": [7]}, role_end_tokens={"assistant": [8]})
+    processor = _ChatMLBoundaryProcessor()
+    # The ChatML template would match; the processor's or tokenizer's own boundaries take precedence.
+    target = processor if owner == "processor" else processor.tokenizer
+    target.assistant_mask_boundary_config = lambda: declared
+
+    assert infer_assistant_mask_boundary_config(processor) is declared
+
+
 def test_chatml_boundary_mask_does_not_treat_literal_control_markers_as_structure():
     tokenized = tokenize_chat_example(
         {

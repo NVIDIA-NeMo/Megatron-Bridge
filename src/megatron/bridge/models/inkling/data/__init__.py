@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Inkling2 image-text SFT data: image preprocessing, the processor, and the collator."""
+"""Inkling2 training data: the text tokenizer, image preprocessing, the processor, and the collator."""
 
 from megatron.bridge.models.inkling.data.image_processing import Inkling2ImageProcessor
 from megatron.bridge.models.inkling.data.processor import Inkling2Processor

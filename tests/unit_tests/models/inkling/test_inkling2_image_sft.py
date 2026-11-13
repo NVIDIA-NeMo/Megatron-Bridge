@@ -40,6 +40,13 @@ from megatron.bridge.models.inkling.data.image_processing import (
     resize_lanczos3,
 )
 from megatron.bridge.models.inkling.data.processor import reasoning_effort_level
+from megatron.bridge.models.inkling.data.tokenizer import (
+    INKLING2_BOS_TOKEN,
+    INKLING2_EOS_TOKEN,
+    inkling2_tokenizer_metadata,
+)
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
 pytestmark = pytest.mark.unit
@@ -67,7 +74,8 @@ FRAMING = (
 )
 WORDS = ("Describe", "this", "image", ".", "receipt", "total", "4", "What", "is", "2", "+", "?", "Thinking", "effort")
 WORDS += ("level", ":", "0", "9", "0.9", "tool_declare", "add", "finish")
-TOKENS = ("<unk>", "<pad>", *FRAMING, *WORDS)
+SPECIAL_TOKENS = (*FRAMING, INKLING2_BOS_TOKEN, INKLING2_EOS_TOKEN)
+TOKENS = ("<unk>", "<pad>", *FRAMING, *WORDS, INKLING2_BOS_TOKEN, INKLING2_EOS_TOKEN)
 IMAGE_TOKEN_ID = TOKENS.index(IMAGE_TOKEN)
 MEAN = np.array([0.5, 0.5, 0.5], dtype=np.float32)
 STD = np.array([0.5, 0.5, 0.5], dtype=np.float32)
@@ -87,7 +95,7 @@ def checkpoint(tmp_path: Path) -> Path:
     tokenizer = Tokenizer(WordLevel({token: index for index, token in enumerate(TOKENS)}, unk_token="<unk>"))
     tokenizer.pre_tokenizer = Whitespace()
     fast = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>", pad_token="<pad>")
-    fast.add_special_tokens({"additional_special_tokens": list(FRAMING)})
+    fast.add_special_tokens({"additional_special_tokens": list(SPECIAL_TOKENS)})
     fast.save_pretrained(tmp_path)
     config = {
         "architectures": ["Inkling2ForConditionalGeneration"],
@@ -311,9 +319,17 @@ class TestProcessor:
             {"role": "assistant", "content": "4", "reasoning_content": "2 + 2 is 4"},
         ]
         input_ids, mask, _ = processor.render(conversation)
-        # Text SFT renders with the release's template and finds the assistant turn from its markers.
-        processor.tokenizer.chat_template = RELEASE_TEMPLATE
-        reference = tokenize_chat_example({"messages": conversation}, processor.tokenizer)
+        # Text SFT loads the tokenizer as the recipes do, renders with the release's template, and takes the
+        # assistant turn from the Inkling2 tokenizer's markers.
+        text_tokenizer = build_tokenizer(
+            TokenizerConfig(
+                tokenizer_type="HuggingFaceTokenizer",
+                tokenizer_model=str(checkpoint),
+                chat_template=RELEASE_TEMPLATE,
+                metadata_path=inkling2_tokenizer_metadata(),
+            )
+        )
+        reference = tokenize_chat_example({"messages": conversation}, text_tokenizer)
 
         assert input_ids == reference.input_ids.tolist()
         assert mask == [int(value) for value in reference.assistant_mask.tolist()]

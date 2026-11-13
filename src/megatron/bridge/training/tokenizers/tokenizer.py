@@ -14,11 +14,6 @@ from megatron.core.tokenizers.utils.build_tokenizer import build_tokenizer as bu
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 
-_HF_SPECIAL_TOKEN_ROLES = frozenset(
-    {"bos_token", "eos_token", "pad_token", "unk_token", "sep_token", "cls_token", "mask_token"}
-)
-
-
 def _resolve_chat_template(config: TokenizerConfig) -> Optional[str]:
     """Resolve the effective chat template from ``config``.
 
@@ -156,22 +151,4 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
         config = copy(config)
         config.sft_tokenizer_prompt_format = prompt_format
 
-    special_tokens = getattr(config, "hf_special_tokens", None)
-    if special_tokens:
-        if config.tokenizer_type != "HuggingFaceTokenizer":
-            raise ValueError("`hf_special_tokens` applies only to tokenizer_type='HuggingFaceTokenizer'.")
-        unsupported = sorted(set(special_tokens) - _HF_SPECIAL_TOKEN_ROLES)
-        if unsupported:
-            raise ValueError(f"Unsupported `hf_special_tokens` roles: {unsupported}")
-
-    tokenizer = build_mcore_tokenizer(_resolve_hf_tokenizer_revision(config), **kwargs)
-    if special_tokens:
-        vocab_size = tokenizer.vocab_size
-        # Assign the roles on the built tokenizer: Megatron-Core's builder does not forward role arguments.
-        tokenizer.add_special_tokens(dict(special_tokens))
-        if tokenizer.vocab_size != vocab_size:
-            raise ValueError(
-                f"`hf_special_tokens` must name tokens already in the vocabulary; {special_tokens} added "
-                f"{tokenizer.vocab_size - vocab_size} new tokens."
-            )
-    return tokenizer
+    return build_mcore_tokenizer(_resolve_hf_tokenizer_revision(config), **kwargs)

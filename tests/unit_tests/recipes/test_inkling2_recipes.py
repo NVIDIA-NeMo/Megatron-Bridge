@@ -22,6 +22,7 @@ here instead of creating a phantom attribute.
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import math
 from collections.abc import Callable
 
@@ -31,6 +32,7 @@ import torch
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
 from megatron.bridge.data.sft_processing import ChatSFTPreprocessingConfig
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
+from megatron.bridge.models.inkling.data.tokenizer import Inkling2MegatronTokenizer
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.inkling.gb200 import inkling2 as inkling2_recipes
 from megatron.bridge.recipes.inkling.gb200 import (
@@ -242,7 +244,12 @@ def test_recipe_layout_is_valid_for_inkling2_small(recipe_name: str) -> None:
     assert model.freeze_vision_model is True
     assert model.freeze_vision_projection is True
     assert cfg.tokenizer.tokenizer_model == inkling2_recipes._MODEL_ID
-    assert cfg.tokenizer.hf_special_tokens == {"bos_token": "<|begin_of_text|>", "eos_token": "<|endoftext|>"}
+    # Megatron-Core loads the Hugging Face tokenizer as the class that this metadata names.
+    metadata = cfg.tokenizer.metadata_path
+    assert metadata["library"] == "huggingface"
+    assert (
+        getattr(importlib.import_module(metadata["class_path"]), metadata["class_name"]) is Inkling2MegatronTokenizer
+    )
     assert cfg.train.global_batch_size % (_data_parallel_size(cfg, world_size) * cfg.train.micro_batch_size) == 0
     assert _expert_data_parallel_size(cfg, world_size) >= 1
     assert cfg.checkpoint.load is None

@@ -61,15 +61,6 @@ class TokenizerConfig(MTrainTokenizerConfig):
         }
     """
 
-    hf_special_tokens: dict[str, str] | None = None
-    """Special-token roles for a Hugging Face tokenizer whose own configuration leaves them unset.
-
-    Maps a role (``bos_token``, ``eos_token``, ``pad_token``, ``unk_token``, ``sep_token``, ``cls_token``,
-    or ``mask_token``) to the spelling of a token in the tokenizer's vocabulary, for example
-    ``{"eos_token": "<|endoftext|>"}``. The end-of-document and padding IDs that datasets read then come
-    from these tokens. Applies only to ``tokenizer_type="HuggingFaceTokenizer"``.
-    """
-
     chat_template_path: Optional[str] = None
     """Path to a jinja chat template file, loaded at build time as ``chat_template``. Supports local
     paths and ``msc://`` URLs. Mutually exclusive with ``chat_template``. Useful for supplying a

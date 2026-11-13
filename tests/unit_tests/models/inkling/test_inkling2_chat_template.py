@@ -28,6 +28,14 @@ from megatron.bridge.data.conversation_processing import (
     tokenize_chat_example,
 )
 from megatron.bridge.data.sources.hf_adapters import _openmathinstruct2_thinking_adapter
+from megatron.bridge.models.inkling.data.tokenizer import (
+    INKLING2_BOS_TOKEN,
+    INKLING2_EOS_TOKEN,
+    Inkling2MegatronTokenizer,
+    inkling2_tokenizer_metadata,
+)
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
 pytestmark = pytest.mark.unit
@@ -122,13 +130,28 @@ CONVERSATIONS = {
 @pytest.fixture(scope="module")
 def tokenizer() -> PreTrainedTokenizerFast:
     """A word-level tokenizer that knows the Inkling2 framing tokens and carries the release's template."""
-    vocab = {token: index for index, token in enumerate(("<unk>", "<pad>", *FRAMING))}
+    special_tokens = (*FRAMING, INKLING2_BOS_TOKEN, INKLING2_EOS_TOKEN)
+    vocab = {token: index for index, token in enumerate(("<unk>", "<pad>", *special_tokens))}
     model = Tokenizer(WordLevel(vocab, unk_token="<unk>"))
     model.pre_tokenizer = Whitespace()
     fast = PreTrainedTokenizerFast(tokenizer_object=model, unk_token="<unk>", pad_token="<pad>")
-    fast.add_special_tokens({"additional_special_tokens": list(FRAMING)})
+    fast.add_special_tokens({"additional_special_tokens": list(special_tokens)})
     fast.chat_template = RELEASE_TEMPLATE
     return fast
+
+
+@pytest.fixture(scope="module")
+def megatron_tokenizer(tokenizer: PreTrainedTokenizerFast, tmp_path_factory) -> Inkling2MegatronTokenizer:
+    """The same tokenizer loaded as the recipes load the release's, which supplies the turn markers."""
+    path = tmp_path_factory.mktemp("inkling2_tokenizer")
+    tokenizer.save_pretrained(str(path))
+    return build_tokenizer(
+        TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=str(path),
+            metadata_path=inkling2_tokenizer_metadata(),
+        )
+    )
 
 
 def _render(tokenizer: PreTrainedTokenizerFast, messages: list[dict], **kwargs) -> str:
@@ -148,9 +171,13 @@ def _expected_mask(tokens: list[str]) -> list[int]:
 
 
 class TestInkling2ChatTemplate:
-    def test_bridge_finds_the_inkling2_turn_markers(self, tokenizer: PreTrainedTokenizerFast) -> None:
-        config = infer_assistant_mask_boundary_config(tokenizer)
+    def test_the_inkling2_tokenizer_supplies_the_turn_markers(
+        self, tokenizer: PreTrainedTokenizerFast, megatron_tokenizer: Inkling2MegatronTokenizer
+    ) -> None:
+        config = infer_assistant_mask_boundary_config(megatron_tokenizer)
 
+        # Bridge's shared chat-template formats do not include Inkling2's; its tokenizer declares the markers.
+        assert infer_assistant_mask_boundary_config(tokenizer) is None
         assert config is not None
         assert tokenizer.convert_ids_to_tokens(list(config.role_start_tokens["assistant"])) == ["<|message_model|>"]
         assert tokenizer.convert_ids_to_tokens(list(config.role_end_tokens["assistant"])) == [
@@ -163,17 +190,25 @@ class TestInkling2ChatTemplate:
     @pytest.mark.parametrize(
         "name", sorted(name for name in CONVERSATIONS if name not in ("prompt_only", "system_only"))
     )
-    def test_masks_cover_whole_assistant_turns(self, tokenizer: PreTrainedTokenizerFast, name: str, effort) -> None:
+    def test_masks_cover_whole_assistant_turns(
+        self,
+        tokenizer: PreTrainedTokenizerFast,
+        megatron_tokenizer: Inkling2MegatronTokenizer,
+        name: str,
+        effort,
+    ) -> None:
         example = {"messages": CONVERSATIONS[name], "tools": TOOLS if name == "tool_use" else None}
         if effort is not None:
             example["chat_template_kwargs"] = {"reasoning_effort": effort}
-        encoded = tokenize_chat_example(example, tokenizer, warn_on_all_masked=False)
+        encoded = tokenize_chat_example(example, megatron_tokenizer, warn_on_all_masked=False)
         tokens = tokenizer.convert_ids_to_tokens(encoded.input_ids.tolist())
 
         assert [int(value) for value in encoded.assistant_mask.tolist()] == _expected_mask(tokens)
 
-    def test_tool_use_is_supervised_and_the_rest_is_not(self, tokenizer: PreTrainedTokenizerFast) -> None:
-        encoded = tokenize_chat_example({"messages": CONVERSATION, "tools": TOOLS}, tokenizer)
+    def test_tool_use_is_supervised_and_the_rest_is_not(
+        self, tokenizer: PreTrainedTokenizerFast, megatron_tokenizer: Inkling2MegatronTokenizer
+    ) -> None:
+        encoded = tokenize_chat_example({"messages": CONVERSATION, "tools": TOOLS}, megatron_tokenizer)
         tokens = tokenizer.convert_ids_to_tokens(encoded.input_ids.tolist())
         masks = dict.fromkeys(SUPERVISED + UNSUPERVISED, set())
         for token, mask in zip(tokens, encoded.assistant_mask.tolist(), strict=True):
@@ -189,11 +224,13 @@ class TestInkling2ChatTemplate:
         rendered = _render(tokenizer, CONVERSATION, tools=TOOLS)
         assert rendered.index("tool_declare") < rendered.index("You are a weather agent.") < rendered.index(EFFORT)
 
-    def test_openmath_thinking_rows_render_their_reasoning(self, tokenizer: PreTrainedTokenizerFast) -> None:
+    def test_openmath_thinking_rows_render_their_reasoning(
+        self, tokenizer: PreTrainedTokenizerFast, megatron_tokenizer: Inkling2MegatronTokenizer
+    ) -> None:
         row = _openmathinstruct2_thinking_adapter(
             {"problem": "What is 2 + 2?", "generated_solution": "Add them: $\\boxed{4}$", "expected_answer": "4"}, {}
         )
-        encoded = tokenize_chat_example(row, tokenizer)
+        encoded = tokenize_chat_example(row, megatron_tokenizer)
         tokens = tokenizer.convert_ids_to_tokens(encoded.input_ids.tolist())
 
         assert _render(tokenizer, row["messages"]) == (
