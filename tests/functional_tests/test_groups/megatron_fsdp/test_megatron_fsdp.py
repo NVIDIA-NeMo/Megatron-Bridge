@@ -394,6 +394,7 @@ def _get_inner_optimizer(megatron_optimizer):
     return opt
 
 
+@pytest.mark.usefixtures("reset_distributed")
 class TestMegatronFSDP:
     """
     Test end to end training with Megatron FSDP and fsdp_dtensor checkpoint functionality.

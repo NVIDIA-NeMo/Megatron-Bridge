@@ -228,8 +228,8 @@ def test_packed_cp_forward_partitions_each_logical_row(monkeypatch):
             self.forward_kwargs = kwargs
             return torch.zeros_like(kwargs["labels"], dtype=torch.float32)
 
-    def _partition_each_row(batch, *, is_hybrid_cp, cp_group):
-        assert is_hybrid_cp is False
+    def _partition_each_row(batch, *, dynamic_cp, cp_group):
+        assert dynamic_cp is False
         assert cp_group.size() == 2
         boundaries = batch["cu_seqlens"].squeeze(0).tolist()
         indices = []

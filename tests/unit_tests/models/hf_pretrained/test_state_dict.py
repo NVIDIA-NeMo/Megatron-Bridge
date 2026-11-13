@@ -414,6 +414,36 @@ class TestStateDictIndexing:
             _ = state_dict[123]
 
 
+def _all_ignored_rank_zero_path_worker(
+    rank: int, world_size: int, rendezvous: str, source_dir: str, out_dir: str
+) -> None:
+    """One gloo rank of ``test_rank_zero_save_all_ignored_strict_failure_is_agreed_across_ranks``."""
+    import datetime
+
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=rank,
+        world_size=world_size,
+        timeout=datetime.timedelta(seconds=60),
+    )
+    outcome = {"raised": False, "error": "", "barrier_after": False}
+    try:
+        local = [("only.weight", torch.zeros(1))] if rank == 0 else []
+        try:
+            SafeTensorsStateSource(source_dir).save_generator(
+                iter(local), Path(out_dir) / "out", ignored_source_keys=("only.weight",)
+            )
+        except KeyError as error:
+            outcome["raised"] = True
+            outcome["error"] = str(error)
+        torch.distributed.barrier()
+        outcome["barrier_after"] = True
+    finally:
+        (Path(out_dir) / f"rank{rank}.json").write_text(json.dumps(outcome))
+        torch.distributed.destroy_process_group()
+
+
 class TestSafeTensorsStateSourceSave:
     """Test streaming safetensors save behavior."""
 
@@ -471,6 +501,274 @@ class TestSafeTensorsStateSourceSave:
             "model.weight": "model.safetensors",
             "mtp_extra.weight": "model.safetensors",
         }
+        assert SafeTensorsStateSource._filter_source_keys(source_map, None, None, ("mtp_extra.weight",)) == {
+            "model.weight": "model.safetensors",
+            "model.weight_scale_inv": "model.safetensors",
+            "mtp.0.weight": "model.safetensors",
+        }
+
+    @pytest.mark.parametrize("distributed_save", [False, True])
+    def test_save_generator_ignores_exact_source_keys(self, tmp_path, distributed_save):
+        """A declared, never-yielded tensor leaves its shard complete; without the declaration strict saving fails."""
+        from safetensors import safe_open
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        shard = "model-00001-of-00001.safetensors"
+        weights = {
+            "model.layers.1.weight": torch.ones(1),
+            "model.layers.2.weight": torch.full((1,), 2.0),  # a copy of layer 1 the export never writes
+            "other.weight": torch.full((1,), 3.0),
+        }
+        save_file(weights, source_dir / shard)
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump({"metadata": {}, "weight_map": {key: shard for key in weights}}, f)
+        yielded = [("model.layers.1.weight", torch.zeros(1)), ("other.weight", torch.zeros(1))]
+
+        source = SafeTensorsStateSource(source_dir)
+        with pytest.raises(RuntimeError, match="not written|Missing"):
+            source.save_generator(iter(yielded), tmp_path / "undeclared", distributed_save=distributed_save)
+
+        output_dir = tmp_path / "output"
+        source.save_generator(
+            iter(yielded),
+            output_dir,
+            distributed_save=distributed_save,
+            ignored_source_keys=("model.layers.2.weight",),
+        )
+        with safe_open(output_dir / shard, framework="pt") as output:
+            assert sorted(output.keys()) == ["model.layers.1.weight", "other.weight"]
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.layers.1.weight": shard, "other.weight": shard}
+
+    @pytest.mark.parametrize("distributed_save", [False, True])
+    def test_save_generator_with_every_source_key_ignored(self, tmp_path, distributed_save):
+        """Ignoring every source tensor writes nothing; it must not fall back to the index-less single-file save,
+        which would write whatever the generator yields and let strict mode miss an ignored-but-yielded tensor."""
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        shard = "model-00001-of-00001.safetensors"
+        save_file({"only.weight": torch.ones(1)}, source_dir / shard)
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump({"metadata": {}, "weight_map": {"only.weight": shard}}, f)
+        source = SafeTensorsStateSource(source_dir)
+
+        output_dir = tmp_path / "empty"
+        assert (
+            source.save_generator(
+                iter([]), output_dir, distributed_save=distributed_save, ignored_source_keys=("only.weight",)
+            )
+            == set()
+        )
+        assert (
+            not list(output_dir.glob("*.safetensors")) and not (output_dir / "model.safetensors.index.json").exists()
+        )
+
+        consumed: list[str] = []
+
+        def two_unexpected():
+            for name in ("only.weight", "other.weight"):
+                consumed.append(name)
+                yield name, torch.zeros(1)
+
+        with pytest.raises(KeyError, match="2 tensors from generator not found in the original model structure"):
+            source.save_generator(
+                two_unexpected(),
+                tmp_path / "strict",
+                distributed_save=distributed_save,
+                ignored_source_keys=("only.weight",),
+            )
+        assert consumed == ["only.weight", "other.weight"], "the generator must be exhausted before the error"
+        assert not list((tmp_path / "strict").glob("*.safetensors"))
+
+        lenient = tmp_path / "lenient"
+        assert (
+            source.save_generator(
+                iter([("only.weight", torch.zeros(1))]),
+                lenient,
+                strict=False,
+                distributed_save=distributed_save,
+                ignored_source_keys=("only.weight",),
+            )
+            == set()
+        )
+        assert not list(lenient.glob("*.safetensors"))
+
+    @pytest.mark.parametrize("distributed_save", [False, True])
+    @pytest.mark.parametrize("rank", [0, 1])
+    def test_distributed_all_ignored_outcome_is_agreed_across_ranks(self, tmp_path, rank, distributed_save):
+        """With every source key ignored, a rank whose generator is empty fails like the rank that saw an
+        unexpected tensor, instead of waiting at a later barrier (collectives are mocked); on the rank-0-only
+        path this means the other ranks must not take their usual early return."""
+        from unittest import mock
+
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        shard = "model-00001-of-00001.safetensors"
+        save_file({"only.weight": torch.ones(1)}, source_dir / shard)
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump({"metadata": {}, "weight_map": {"only.weight": shard}}, f)
+        source = SafeTensorsStateSource(source_dir)
+        contributions = [["only.weight"], []]  # rank 0 saw an unexpected tensor, rank 1 saw none
+        local = [("only.weight", torch.zeros(1))] if rank == 0 else []
+
+        def fake_all_gather_object(out, obj):
+            assert obj == contributions[rank]
+            out[:] = contributions
+
+        barrier = mock.Mock()
+        with (
+            mock.patch.object(torch.distributed, "is_available", return_value=True),
+            mock.patch.object(torch.distributed, "is_initialized", return_value=True),
+            mock.patch.object(torch.distributed, "get_world_size", return_value=2),
+            mock.patch.object(torch.distributed, "get_rank", return_value=rank),
+            mock.patch.object(torch.distributed, "all_gather_object", side_effect=fake_all_gather_object),
+            mock.patch.object(torch.distributed, "barrier", barrier),
+            pytest.raises(KeyError, match="1 tensors from generator not found in the original model structure"),
+        ):
+            source.save_generator(
+                iter(local),
+                tmp_path / "out",
+                distributed_save=distributed_save,
+                ignored_source_keys=("only.weight",),
+            )
+        # the barrier after creating the output directory ran; the trailing one was never reached
+        assert barrier.call_count == 1
+        assert not list((tmp_path / "out").glob("*.safetensors"))
+
+    @pytest.mark.parametrize("distributed_save", [False, True])
+    @pytest.mark.parametrize("rank", [0, 1])
+    @pytest.mark.parametrize("strict,local_names", [(True, []), (False, ["only.weight"])])
+    def test_distributed_all_ignored_success_writes_nothing(
+        self, tmp_path, rank, distributed_save, strict, local_names
+    ):
+        """Empty streams in strict mode and skipped unexpected tensors in non-strict mode return an empty
+        artifact set on every rank, with no shard and no index (collectives are mocked)."""
+        from unittest import mock
+
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        shard = "model-00001-of-00001.safetensors"
+        save_file({"only.weight": torch.ones(1)}, source_dir / shard)
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump({"metadata": {}, "weight_map": {"only.weight": shard}}, f)
+        source = SafeTensorsStateSource(source_dir)
+        contributions = [list(local_names), list(local_names)]
+        local = [(name, torch.zeros(1)) for name in local_names]
+
+        def fake_all_gather_object(out, obj):
+            out[:] = contributions
+
+        barrier = mock.Mock()
+        with (
+            mock.patch.object(torch.distributed, "is_available", return_value=True),
+            mock.patch.object(torch.distributed, "is_initialized", return_value=True),
+            mock.patch.object(torch.distributed, "get_world_size", return_value=2),
+            mock.patch.object(torch.distributed, "get_rank", return_value=rank),
+            mock.patch.object(torch.distributed, "all_gather_object", side_effect=fake_all_gather_object),
+            mock.patch.object(torch.distributed, "barrier", barrier),
+        ):
+            saved = source.save_generator(
+                iter(local),
+                tmp_path / "out",
+                strict=strict,
+                distributed_save=distributed_save,
+                ignored_source_keys=("only.weight",),
+            )
+        assert saved == set()
+        # the barrier after creating the output directory and the trailing one both ran
+        assert barrier.call_count == 2
+        assert not list((tmp_path / "out").glob("*.safetensors"))
+        assert not (tmp_path / "out" / "model.safetensors.index.json").exists()
+
+    def test_rank_zero_path_keeps_one_shot_ignore_filters_for_the_second_filtering(self, tmp_path):
+        """With an initialized group, the all-ignored pre-check filters the source map once before the normal
+        rank-0 save filters it again; one-shot filter iterables must survive that, or omitted keys would come
+        back as expected and the save would fail (collectives are mocked, rank 0)."""
+        from unittest import mock
+
+        from safetensors import safe_open
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        shard = "model-00001-of-00001.safetensors"
+        weights = {
+            "keep.weight": torch.ones(1),
+            "copy.weight": torch.ones(1),  # omitted by exact key
+            "mtp.0.weight": torch.ones(1),  # omitted by prefix
+            "keep.weight_scale_inv": torch.ones(1),  # omitted by suffix
+        }
+        save_file(weights, source_dir / shard)
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump({"metadata": {}, "weight_map": {key: shard for key in weights}}, f)
+        source = SafeTensorsStateSource(source_dir)
+        output_dir = tmp_path / "out"
+        with (
+            mock.patch.object(torch.distributed, "is_available", return_value=True),
+            mock.patch.object(torch.distributed, "is_initialized", return_value=True),
+            mock.patch.object(torch.distributed, "get_world_size", return_value=2),
+            mock.patch.object(torch.distributed, "get_rank", return_value=0),
+            mock.patch.object(torch.distributed, "barrier", mock.Mock()),
+        ):
+            saved = source.save_generator(
+                iter([("keep.weight", torch.zeros(1))]),
+                output_dir,
+                ignored_source_keys=iter(["copy.weight"]),
+                ignored_source_key_prefixes=iter(["mtp."]),
+                ignored_source_key_suffixes=iter(["_scale_inv"]),
+            )
+        assert saved == {shard, "model.safetensors.index.json"}
+        with safe_open(output_dir / shard, framework="pt") as output:
+            assert output.keys() == ["keep.weight"]
+        with open(output_dir / "model.safetensors.index.json") as f:
+            assert json.load(f)["weight_map"] == {"keep.weight": shard}
+
+    @pytest.mark.skipif(
+        not (torch.distributed.is_available() and torch.distributed.is_gloo_available()), reason="needs gloo"
+    )
+    def test_rank_zero_save_all_ignored_strict_failure_is_agreed_across_ranks(self, tmp_path):
+        """Two real gloo ranks, default ``distributed_save=False``, every source key ignored, rank 0 yielding an
+        ignored tensor and rank 1 nothing: both ranks raise after draining and a subsequent barrier completes."""
+        import time
+
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        shard = "model-00001-of-00001.safetensors"
+        save_file({"only.weight": torch.ones(1)}, source_dir / shard)
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump({"metadata": {}, "weight_map": {"only.weight": shard}}, f)
+        rendezvous = tmp_path / "rendezvous"
+        context = torch.multiprocessing.spawn(
+            _all_ignored_rank_zero_path_worker,
+            args=(2, str(rendezvous), str(source_dir), str(tmp_path)),
+            nprocs=2,
+            join=False,
+        )
+        # ProcessContext.join(timeout) returns False whenever processes are still to be joined, not only on
+        # timeout; loop with a deadline as the ERNIE CP harness does, killing survivors if it is exceeded.
+        deadline = time.monotonic() + 180
+        while not context.join(timeout=5):
+            if time.monotonic() > deadline:
+                for process in context.processes:
+                    if process.is_alive():
+                        process.kill()
+                pytest.fail("the two ranks did not finish within the deadline")
+        outcomes = [json.loads((tmp_path / f"rank{r}.json").read_text()) for r in range(2)]
+        assert all(o["raised"] for o in outcomes), outcomes
+        assert all("not found in the original model structure" in o["error"] for o in outcomes), outcomes
+        assert all(o["barrier_after"] for o in outcomes), outcomes
+        assert not list((tmp_path / "out").glob("*.safetensors"))
 
     @pytest.mark.parametrize("distributed_save", [False, True])
     def test_save_generator_ignores_source_key_suffixes(self, tmp_path, distributed_save):
