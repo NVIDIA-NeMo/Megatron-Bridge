@@ -199,7 +199,9 @@ class Inkling2MoELayer(_Inkling2HybridLayer):
     def _mlp_conv(self, output: torch.Tensor, packed_seq_params: PackedSeqParams | None) -> torch.Tensor:
         sequence_parallel = self.config.sequence_parallel
         if sequence_parallel:
-            output = gather_from_sequence_parallel_region(output, tensor_parallel_output_grad=False)
+            output = gather_from_sequence_parallel_region(
+                output, tensor_parallel_output_grad=False, group=self.pg_collection.tp
+            )
         seq_len, batch = output.shape[:2]
         cu_seqlens = packed_cu_seqlens(packed_seq_params)
         layout = context_parallel_layout(
@@ -222,7 +224,7 @@ class Inkling2MoELayer(_Inkling2HybridLayer):
             compiled=self.config.inkling2_compile_ops,
         )
         if sequence_parallel:
-            output = scatter_to_sequence_parallel_region(output)
+            output = scatter_to_sequence_parallel_region(output, group=self.pg_collection.tp)
         return output
 
     @staticmethod
