@@ -50,6 +50,11 @@ def kimi_k3_pretrain_config() -> ConfigContainer:
     the investigated runtime behavior; they are not performance optimizations.
     Keep the full learning-rate horizon when shortening train.train_iters.
     """
+    return _kimi_k3_pretrain_common()
+
+
+def _kimi_k3_pretrain_common() -> ConfigContainer:
+    """Shared early Kimi K3 BF16 configuration for NVL72 platforms."""
     hf_path = os.environ.get("KIMI_K3_HF_PATH", "moonshotai/Kimi-K3")
     cfg = _pretrain_common()
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)

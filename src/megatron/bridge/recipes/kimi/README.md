@@ -58,3 +58,11 @@ and compilation; this is not an optimized performance measurement.
 These results establish short-run functionality. They do not establish
 independent full-model loss agreement, long-run convergence, or checkpoint
 save/resume correctness; checkpoint saving was disabled for this trial.
+
+## VR NVL72 port
+
+`kimi_k3_pretrain_512gpu_vrnvl72_bf16_config` uses the same shared configuration
+as the GB200 recipe above. Select this name with `scripts/training/run_recipe.py`
+on 512 VR NVL72 GPUs. The model, precision, batch, sequence length, optimizer,
+recompute, and runtime mitigations are unchanged. Rubin training and performance
+validation are pending; the GB200 measurements above do not validate this port.

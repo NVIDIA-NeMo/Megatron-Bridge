@@ -25,9 +25,10 @@ def offline_bridge(monkeypatch, tmp_path):
     return constructor, bridge, provider
 
 
-def test_registered_recipe_preserves_native_provider_and_pipeline(offline_bridge):
+@pytest.mark.parametrize("recipe_name", ["kimi_k3_pretrain_config", "kimi_k3_pretrain_512gpu_vrnvl72_bf16_config"])
+def test_registered_recipe_preserves_native_provider_and_pipeline(offline_bridge, recipe_name):
     _, bridge, provider = offline_bridge
-    cfg = recipes.kimi_k3_pretrain_config()
+    cfg = getattr(recipes, recipe_name)()
     assert cfg.model is provider
     bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
     assert cfg.model.variable_seq_lengths
@@ -44,12 +45,13 @@ def test_registered_recipe_preserves_native_provider_and_pipeline(offline_bridge
     assert configure_kimi_k3_kernels in cfg.model._pre_wrap_hooks
 
 
-def test_local_snapshot_and_short_run_keep_optimizer_contract(offline_bridge, monkeypatch, tmp_path):
+@pytest.mark.parametrize("recipe_name", ["kimi_k3_pretrain_config", "kimi_k3_pretrain_512gpu_vrnvl72_bf16_config"])
+def test_local_snapshot_and_short_run_keep_optimizer_contract(offline_bridge, monkeypatch, tmp_path, recipe_name):
     constructor, _, _ = offline_bridge
     (tmp_path / "snapshot").mkdir()
     snapshot = str(tmp_path / "snapshot")
     monkeypatch.setenv("KIMI_K3_HF_PATH", snapshot)
-    cfg = kimi_k3.kimi_k3_pretrain_config()
+    cfg = getattr(recipes, recipe_name)()
     constructor.assert_called_once_with(snapshot, trust_remote_code=True)
     assert cfg.tokenizer.tokenizer_model == snapshot
     assert cfg.tokenizer.vocab_file == str(tmp_path / "snapshot" / "tiktoken.model")

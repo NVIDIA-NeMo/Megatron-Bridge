@@ -14,9 +14,11 @@
 
 from .kimi_k2 import kimi_k2_pretrain_config
 from .kimi_k3 import kimi_k3_pretrain_config
+from .vrnvl72 import kimi_k3_pretrain_512gpu_vrnvl72_bf16_config
 
 
 __all__ = [
     "kimi_k2_pretrain_config",
     "kimi_k3_pretrain_config",
+    "kimi_k3_pretrain_512gpu_vrnvl72_bf16_config",
 ]
