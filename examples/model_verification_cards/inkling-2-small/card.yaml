@@ -261,7 +261,7 @@ items:
         Observed with 128 GB200 GPUs at TP4/PP4/EP32/CP4/ETP1 with sequence parallelism, Inkling2's own context
         parallelism, recompute of the first 20 of 24 layers per stage, HybridEP dispatch, and compiled Inkling2
         operators: the command warm-starts from the imported checkpoint and runs all 20 recipe steps of full SFT on
-        Tulu 3 packed to 32,768 tokens at GBS 8 (two data-parallel replicas running four packs each), at peak LR 5e-6
+        Tulu 3 packed to 32,768 tokens at GBS 8 (two data-parallel replicas running four packs each), at peak LR 1e-6
         after 2 warmup steps with decay to 0 at step 20. All 20 steps finish with finite losses and 0 skipped or NaN
         iterations. Caveats: run on 2026-11-11 through a private srun wrapper around scripts/training/run_recipe.py
         rather than train.sh, on a pre-release tree whose model code matches the recorded commit; its recipe reached
