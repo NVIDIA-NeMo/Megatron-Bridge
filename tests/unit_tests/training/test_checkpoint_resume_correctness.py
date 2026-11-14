@@ -255,10 +255,10 @@ def test_rng_legacy_layout_resolves_remote_storage_metadata(tmp_path):
     try:
         with patch.object(checkpointing, "TorchDistLoadShardedStrategy") as strategy:
             strategy.return_value.load_sharded_metadata.return_value = {legacy.unique_key: legacy}
-            result = checkpointing._align_rng_state_sharded_metadata(current, f"msc://default{tmp_path}")
+            result = checkpointing._align_rng_state_sharded_metadata(current, f"msc://__filesystem__{tmp_path}")
         assert result.global_shape == (1, 1)
         assert result.replica_id == 1
-        strategy.return_value.load_sharded_metadata.assert_called_once_with(f"msc://default{tmp_path}")
+        strategy.return_value.load_sharded_metadata.assert_called_once_with(f"msc://__filesystem__{tmp_path}")
     finally:
         MultiStorageClientFeature.disable()
 
