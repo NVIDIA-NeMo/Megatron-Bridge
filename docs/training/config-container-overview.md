@@ -38,9 +38,9 @@ The shared training sections use the actual Megatron classes:
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 from megatron.training.config import (
-    CheckpointConfig, LoggerConfig, ProfilingConfig,
+    ProfilingConfig,
     RerunStateMachineConfig, RNGConfig, SchedulerConfig,
-    StragglerDetectionConfig, TrainingConfig, ValidationConfig,
+    StragglerDetectionConfig, ValidationConfig,
 )
 ```
 
@@ -56,7 +56,7 @@ to their canonical DDP representation. It also discards the unused legacy
 `enable_straggler_on_startup` field; `disable_straggler_on_startup` still controls
 the detector.
 
-The same names in `megatron.bridge.training.config` remain re-exports so existing
+The migrated names in `megatron.bridge.training.config` remain re-exports so existing
 imports and saved `_target_` paths resolve. New saved configs record the canonical
 Megatron module paths. Fields explicitly stored in older configs are retained.
 
@@ -66,14 +66,12 @@ runtime values. Do not call a removed Bridge-specific `.finalize()` method on
 an individual section. Filesystem checks, optional logging dependencies, and
 Bridge's FSDP precision policy remain part of Bridge runtime setup.
 
-Bare constructors now use Megatron's defaults. Shipped Bridge recipes explicitly
+Migrated bare constructors now use Megatron's defaults. Shipped Bridge recipes explicitly
 select their existing policy where it differs:
 
 | Construction | Previous Bridge default | Native default | Preserve the previous setting |
 | --- | --- | --- | --- |
 | Optimizer layer-wise layout | `False` | `True` | `OptimizerConfig(use_layer_wise_param_layout=False)` |
-| Persistent checkpoint worker | `True` | `False` | `CheckpointConfig(use_persistent_ckpt_worker=True)` |
-| Strict FSDP DTensor loading | `False` | `True` | `CheckpointConfig(strict_fsdp_dtensor_load=False)` |
 | Profiling ranks | `[0]` | `[]` (all ranks) | `ProfilingConfig(profile_ranks=[0])` |
 | Memory snapshot path | `/nemo_run/snapshot.pickle` | `snapshot.pickle` | Pass `memory_snapshot_path` explicitly |
 | Rerun mode | `disabled` | `validate_results` | `RerunStateMachineConfig(rerun_mode="disabled")` |
@@ -83,11 +81,22 @@ settings. Existing serialized configs that store these values retain them on
 reload; external code constructing individual sections must select its intended
 policy explicitly.
 
-This migration requires the shared training-schema additions and MLflow/Comet
-logger fields upstream. Older Core revisions with eager constructor validation
+This migration requires the shared training-schema and timer changes upstream. Older Core revisions with eager constructor validation
 cannot provide the same construct-then-override lifecycle using direct imports.
 The dependency pins must include the prerequisite changes before this draft can
 be merged; no subclass fallback or dynamically attached fields are used.
+
+Epoch scheduling (`num_epochs` and `_train_iters_from_num_epochs`) remains in
+Bridge's `TrainingConfig`, with a TODO for a separate migration. Evaluation
+settings belong only to `ValidationConfig`; old saved `train.eval_iters`,
+`train.eval_interval`, and `train.skip_train` values move there when loaded.
+Checkpoint fields and behavior remain in Bridge for a separate PR. Bridge's
+logger extension, including MLflow/Comet and its metrics gate, also remains local
+pending the dedicated logger migration.
+
+`timing_log_level=-1` suppresses timer reports and optional operator timing.
+Level-0 measurements remain active for progress, throughput, and checkpoint
+bookkeeping, so ordinary training metrics and their timing overhead remain.
 
 The wider inventory also includes the tokenizer and GPT dataset extensions.
 They remain separate work: the tokenizer normalizes legacy HF/SFT options and
@@ -102,7 +111,7 @@ additional API and consumer migrations; they are not equivalent aliases today.
 | Component | Purpose | Required | Default |
 |-----------|---------|----------|---------|
 | `model` | Model architecture and parallelism strategy (GPT, T5, Mamba) | ✅ | - |
-| `train` | Training loop parameters (batch sizes, iterations, validation) | ✅ | - |
+| `train` | Training loop parameters (batch sizes, iterations, epochs) | ✅ | - |
 | `optimizer` | Optimizer type and hyperparameters (from Megatron Core) | ✅ | - |
 | `scheduler` | Learning rate and weight decay scheduling | ✅ | - |
 | `dataset` | Data loading and preprocessing configuration | ✅ | - |

@@ -189,7 +189,8 @@ def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
     from utils.overrides import _set_common_perf_overrides
 
     recipe = SimpleNamespace(
-        train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        train=SimpleNamespace(train_iters=0, manual_gc=False, manual_gc_interval=0),
+        validation=SimpleNamespace(eval_iters=1),
         checkpoint=SimpleNamespace(save="checkpoint"),
         logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
         ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True),

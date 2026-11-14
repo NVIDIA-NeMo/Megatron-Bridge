@@ -19,7 +19,7 @@ from typing import Optional
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-from megatron.training.config import CheckpointConfig, LoggerConfig, RNGConfig, SchedulerConfig, TrainingConfig
+from megatron.training.config import RNGConfig, SchedulerConfig, ValidationConfig
 
 from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
     NemotronLabsDiffusionBridge,
@@ -31,7 +31,14 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig, TokenizerConfig
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    GPTDatasetConfig,
+    LoggerConfig,
+    TokenizerConfig,
+    TrainingConfig,
+)
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
@@ -258,10 +265,9 @@ def _nemotron_labs_diffusion_common(
     # Config Container
     cfg_container = ConfigContainer(
         model=model_cfg,
+        validation=ValidationConfig(eval_interval=eval_interval, eval_iters=32),
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,

@@ -31,13 +31,21 @@ Example::
 import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.training.config import CheckpointConfig, LoggerConfig, RNGConfig, TrainingConfig, ValidationConfig
+from megatron.training.config import RNGConfig, ValidationConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, GPTDatasetConfig, TokenizerConfig
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    DistributedInitConfig,
+    GPTDatasetConfig,
+    LoggerConfig,
+    TokenizerConfig,
+    TrainingConfig,
+)
 
 
 def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:

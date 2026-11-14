@@ -503,7 +503,7 @@ class TestTrainingLog:
         )
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
-            lambda value, mp_group: value,
+            lambda value, group: value,
             raising=True,
         )
 
@@ -544,7 +544,10 @@ class TestTrainingLog:
         comet_logger.log_metrics.assert_any_call({"learning-rate": 1e-4}, step=1)
         comet_logger.log_metrics.assert_any_call({"batch-size": 64}, step=1)
 
-    def test_detailed_timers_reach_all_enabled_backends(self, monkeypatch, mock_config, mock_global_state):
+    @pytest.mark.parametrize("timing_level", [-1, 1])
+    def test_detailed_timers_reach_all_enabled_backends(
+        self, monkeypatch, mock_config, mock_global_state, timing_level
+    ):
         """Detailed timer samples are shared by every enabled logging backend."""
         from megatron.bridge.training.state import (
             _timers_write_to_comet,
@@ -557,6 +560,7 @@ class TestTrainingLog:
                 self.samples = {"forward-backward": (4.0, 6.0)}
 
             def _get_global_min_max_time(self, names, reset, barrier, normalizer):
+                assert timing_level >= 0, "disabled reports must not collect backend timings"
                 samples = {name: self.samples[name] for name in names if name in self.samples}
                 if reset:
                     self.samples.clear()
@@ -577,13 +581,13 @@ class TestTrainingLog:
         )
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
-            lambda value, mp_group: value,
+            lambda value, group: value,
             raising=True,
         )
 
         mock_config.logger.tensorboard_log_interval = 1
         mock_config.logger.log_interval = 5
-        mock_config.logger.timing_log_level = 1
+        mock_config.logger.timing_log_level = timing_level
         mock_config.logger.log_throughput_to_tensorboard = False
         mock_config.logger.log_memory_to_tensorboard = False
         mock_config.logger.log_runtime_to_tensorboard = False
@@ -617,9 +621,12 @@ class TestTrainingLog:
             model=None,
         )
 
-        mlflow_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
-        comet_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
-        assert timers.samples == {}
+        if timing_level >= 0:
+            mlflow_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
+            comet_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
+            assert timers.samples == {}
+        else:
+            assert timers.samples == {"forward-backward": (4.0, 6.0)}
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")

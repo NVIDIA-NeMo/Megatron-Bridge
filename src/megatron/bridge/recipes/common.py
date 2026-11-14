@@ -15,7 +15,7 @@
 import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.training.config import CheckpointConfig, LoggerConfig, RNGConfig, TrainingConfig, ValidationConfig
+from megatron.training.config import RNGConfig, ValidationConfig
 
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
@@ -27,7 +27,15 @@ from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, GPTDatasetConfig, TokenizerConfig
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    DistributedInitConfig,
+    GPTDatasetConfig,
+    LoggerConfig,
+    TokenizerConfig,
+    TrainingConfig,
+)
 from megatron.bridge.training.dpo import DPOLossConfig
 
 

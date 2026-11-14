@@ -16,12 +16,18 @@ import os
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.training.config import CheckpointConfig, LoggerConfig, RNGConfig, TrainingConfig
+from megatron.training.config import RNGConfig, ValidationConfig
 
 from megatron.bridge.diffusion.conversion.flux.flux_bridge import FluxBridge
 from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
-from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    LoggerConfig,
+    TokenizerConfig,
+    TrainingConfig,
+)
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
@@ -98,10 +104,9 @@ def flux_12b_pretrain_config() -> ConfigContainer:
 
     cfg = ConfigContainer(
         model=model_cfg,
+        validation=ValidationConfig(eval_interval=2000, eval_iters=32),
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=2000,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,

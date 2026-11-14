@@ -45,6 +45,7 @@ import argparse
 import logging
 
 import torch
+from megatron.training.config import ValidationConfig
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.training.config import (
@@ -96,8 +97,6 @@ def create_config(
         train_iters=train_iters,
         micro_batch_size=4,
         global_batch_size=8,
-        eval_interval=train_iters + 1,  # Disable evaluation
-        eval_iters=0,
     )
 
     dataset_config = MockGPTDatasetConfig(
@@ -163,6 +162,7 @@ def create_config(
     )
 
     return ConfigContainer(
+        validation=ValidationConfig(eval_interval=train_iters + 1, eval_iters=0),
         train=train_config,
         model=model_config,
         optimizer=optimizer_config,

@@ -31,7 +31,8 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, get_pg_rank, to_local_if_dtensor
-from megatron.training.config import ProfilingConfig, TrainingConfig
+from megatron.training.config import ProfilingConfig
+from megatron.training.utils import reduce_max_stat_across_model_parallel_group
 
 from megatron.bridge.models.common.heads import (
     LinearForLastLayer as LinearForLastLayer,
@@ -42,7 +43,7 @@ from megatron.bridge.models.common.heads import (
     create_value_head_hook,
     ensure_model_list,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
@@ -438,32 +439,6 @@ def calc_dtensor_params_l2_norm(params):
     return total_norm_2.item() ** 0.5
 
 
-def reduce_max_stat_across_model_parallel_group(
-    stat: Optional[float], mp_group: "TorchProcessGroup"
-) -> Optional[float]:
-    """Calculates the max of a stat across the model parallel group.
-
-    Handles cases where some ranks might have the stat as None (e.g., grad norm
-    on ranks without an optimizer).
-
-    Args:
-        stat (float): The statistic value (or None) on the current rank.
-        mp_group: The process group to reduce across (typically pg_collection.mp).
-
-    Returns:
-        float: The maximum value of the statistic across the model parallel group,
-               or None if all ranks had None.
-    """
-    if stat is None:
-        stat = -1.0
-    stat = torch.tensor([stat], dtype=torch.float32, device=torch.cuda.current_device())
-    torch.distributed.all_reduce(stat, op=torch.distributed.ReduceOp.MAX, group=mp_group)
-    if stat.item() == -1.0:
-        return None
-    else:
-        return stat.item()
-
-
 def _coerce_log_scalar(
     value: float | int | torch.Tensor | None,
     *,
@@ -475,25 +450,6 @@ def _coerce_log_scalar(
     if isinstance(value, torch.Tensor):
         value = value.item()
     return int(value) if as_int else float(value)
-
-
-def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcessGroup") -> bool:
-    """Performs a logical AND operation across the model parallel group.
-
-    Args:
-        input (bool): The boolean value on the current rank.
-        mp_group: The process group to reduce across (typically pg_collection.mp).
-
-    Returns:
-        bool: The result of the logical AND across all ranks in the group.
-    """
-    if input is True:
-        input = 1
-    else:
-        input = 0
-    input = torch.tensor([input], dtype=torch.int, device=torch.cuda.current_device())
-    torch.distributed.all_reduce(input, op=torch.distributed.ReduceOp.MIN, group=mp_group)
-    return bool(input.item())
 
 
 def reduce_max_memory_across_pp_group(
@@ -942,10 +898,14 @@ def training_log(
     total_iterations = total_loss_dict[advanced_iters_key] + total_loss_dict[skipped_iters_key]
 
     # learning rate will be None on ranks without trainable params, so we must gather across mp ranks
-    learning_rate = reduce_max_stat_across_model_parallel_group(learning_rate, mp_group=pg_collection.mp)
+    learning_rate = reduce_max_stat_across_model_parallel_group(learning_rate, group=pg_collection.mp)
     # Tensorboard values.
     # Timer requires all the ranks to call.
-    if logger_config.log_timers_to_tensorboard and (iteration % logger_config.tensorboard_log_interval == 0):
+    if (
+        logger_config.timing_log_level >= 0
+        and logger_config.log_timers_to_tensorboard
+        and iteration % logger_config.tensorboard_log_interval == 0
+    ):
         timer_backends = [
             (getattr(timers, "write_to_wandb", None), wandb_writer),
             (getattr(timers, "write_to_mlflow", None), mlflow_logger),

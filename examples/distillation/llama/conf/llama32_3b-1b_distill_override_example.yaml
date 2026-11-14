@@ -37,11 +37,13 @@ model:
     kd_loss_scale: 1.0
     logit_kl_temperature: 1.0
 
+validation:
+  eval_iters: 8
+
 train:
   train_iters: 10
   global_batch_size: 8
   micro_batch_size: 1
-  eval_iters: 8
 
 optimizer:
   lr: 1e-4

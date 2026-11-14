@@ -34,18 +34,18 @@ from megatron.core.optimizer import (
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
+from megatron.training.config import CheckpointConfig as MTrainCheckpointConfig
+from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
+from megatron.training.config import LoggerConfig as MTrainLoggerConfig
 from megatron.training.config import (
-    CheckpointConfig,
-    LoggerConfig,
     ProfilingConfig,
     RerunStateMachineConfig,
     RNGConfig,
     SchedulerConfig,
     StragglerDetectionConfig,
-    TrainingConfig,
     ValidationConfig,
 )
-from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
+from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 from megatron.training.config.instantiate_utils import InstantiationMode
 from megatron.training.determinism import apply_determinism_to_args
 
@@ -146,6 +146,210 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     """Legacy Bridge switch for dense GTP symmetric-memory registration."""
 
 
+@dataclass(kw_only=True)
+class TrainingConfig(MTrainTrainingConfig):
+    """Shared training settings with Bridge-owned epoch scheduling."""
+
+    # TODO: migrate epoch scheduling and its derived state in a separate change.
+    num_epochs: float | None = None
+    """Number of passes over a finite training dataset, including fractional epochs."""
+
+    _train_iters_from_num_epochs: bool = field(default=False, init=False, repr=False)
+
+
+@dataclass(kw_only=True)
+class LoggerConfig(MTrainLoggerConfig):
+    """Bridge logging settings; TODO: migrate with the logger integration PR."""
+
+    skip_train_metrics_log: bool = False
+    """Skips logging of training metrics to all logging backends and to the console as well."""
+
+    mlflow_experiment: Optional[str] = None
+    """The MLFlow experiment name."""
+
+    mlflow_run_name: Optional[str] = None
+    """The MLFlow run name."""
+
+    mlflow_tracking_uri: Optional[str] = None
+    """Optional MLFlow tracking URI."""
+
+    mlflow_tags: Optional[dict[str, str]] = None
+    """Optional tags to apply to the MLFlow run."""
+
+    mlflow_description: Optional[str] = None
+    """Optional description for the MLFlow run, rendered in the UI Description panel."""
+
+    mlflow_log_artifacts: bool = True
+    """Whether to upload checkpoint artifacts to MLFlow via HTTP after each save."""
+
+    comet_project: Optional[str] = None
+    """The Comet ML project name. Comet logging is disabled when this is None."""
+
+    comet_experiment_name: Optional[str] = None
+    """The Comet ML experiment name."""
+
+    comet_workspace: Optional[str] = None
+    """The Comet ML workspace. If not set, uses the default workspace for the API key."""
+
+    comet_api_key: Optional[str] = None
+    """The Comet ML API key. Can also be set via COMET_API_KEY environment variable."""
+
+    comet_tags: Optional[list[str]] = None
+    """Optional list of tags to apply to the Comet ML experiment."""
+
+
+@dataclass(kw_only=True)
+class CheckpointConfig(MTrainCheckpointConfig):
+    """Bridge checkpoint settings; TODO: migrate in a separate checkpoint PR."""
+
+    stage_precision_aware_optimizer_state_on_cpu: bool = False
+    """Stage expanded precision-aware Transformer Engine optimizer state on CPU.
+
+    Enable this when reduced-precision Adam state fits during training but its
+    portable FP32 checkpoint representation would exceed available GPU memory.
+    The checkpoint values and dtypes are unchanged; only their device during
+    state-dict construction is affected. Supported only for ``torch_dist``
+    checkpoints.
+    """
+
+    pretrained_checkpoint: Optional[str] = None
+    """Directory containing a pretrained model checkpoint for finetuning.
+
+    This can be either:
+      - A parent checkpoint directory (e.g. ``/checkpoints/my_model/``) that
+        contains tracker files (``latest_train_state.pt``) and ``iter_*``
+        subdirectories.
+      - A specific iteration directory (e.g.
+        ``/checkpoints/my_model/iter_0001000/``) that directly contains the
+        checkpoint payload (``run_config.yaml``, weight shards, etc.).
+    """
+
+    storage_writers_per_rank: int = 1
+    """Number of storage writers per rank for torch_dist checkpoint format.
+    Affects the number of checkpoint files: saving_ranks * storage_writers_per_rank."""
+
+    use_persistent_ckpt_worker: bool = True
+    """Use a persistent background worker for async checkpoint saves. When enabled, creates a dedicated
+    worker thread/process for handling async saves. When disabled, uses temporal workers that are
+    created and destroyed for each save operation."""
+
+    async_write_results_mp_mode: str = "fork"
+    """Multiprocessing start method for the async write results queue.
+    Options: ``"fork"`` (default), ``"spawn"``, ``"forkserver"``."""
+
+    strict_fsdp_dtensor_load: bool = False
+    """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
+
+    save_rng_state_per_dp_rank: bool = False
+    """Save distinct RNG states for data-parallel ranks whose runtime RNG streams can diverge."""
+
+    custom_manager_class: str | None = None
+    """Fully qualified class name for a custom CheckpointManager implementation.
+
+    When set, checkpoint operations will instantiate and delegate to this class instead of the default
+    checkpoint manager. The custom class must implement the `CheckpointManager` protocol
+    defined in `megatron.bridge.training.checkpointing`.
+
+    Example: ``'mypackage.checkpoint.MyCheckpointManager'``
+    """
+
+    dist_ckpt_workers: int = 1
+    """Specifies the number of distributed checkpoint workers for asynchronous saving."""
+
+    also_save_hf_checkpoint: bool = False
+    """Whether to export an additional HuggingFace artifact alongside each Megatron checkpoint.
+
+    When enabled, the native Megatron checkpoint under each ``iter_*/`` directory keeps the same
+    behavior as normal checkpoint saves.  In addition, model weights are exported as HuggingFace
+    ``*.safetensors`` under ``iter_*/hf/`` together with HF ``config.json`` / tokenizer /
+    (optional) custom modeling files.
+
+    When ``cfg.peft`` is configured, the extra HF export writes a HuggingFace
+    PEFT-compatible ``adapter_model.safetensors`` + ``adapter_config.json`` instead of the
+    full base weights.
+
+    Warning:
+        Full-model HF export is synchronous and runs on the checkpoint save critical path.  It can
+        considerably slow down checkpoint saving and is intended for small models or debugging.
+        For larger models, prefer a separate background conversion job that scans for new native
+        Megatron checkpoints and exports HF weights outside the training step.
+    """
+
+    hf_source_path: Optional[str] = None
+    """Override for the HuggingFace model identifier (or local path) used as a template when
+    saving/loading checkpoints with ``also_save_hf_checkpoint=True`` (or when ``pretrained_checkpoint``
+    points to a HuggingFace directory).
+
+    When unset, Bridge resolves a source in this order (see training checkpointing helpers):
+      1. the source recorded on ``cfg.model`` by recipes / AutoBridge (preferred):
+         ``extra_checkpoint_metadata["hf_model_id"]`` for builder-backed configs, ``hf_model_id`` for providers;
+      2. ``cfg.tokenizer.tokenizer_model`` (fallback; may refer to tokenizer assets rather than model ids).
+
+    Explicit ``hf_source_path`` always overrides both when set.
+    """
+
+    hf_trust_remote_code: bool = False
+    """Whether to trust remote code when constructing the ``AutoBridge`` for HF save/load.
+    Required for models with custom modeling files."""
+
+    hf_distributed_save: bool = False
+    """When ``also_save_hf_checkpoint=True``, enable distributed weights saving where multiple ranks
+    share the safetensors write workload. See ``SafeTensorsStateSource.save_generator``."""
+
+    hf_save_every_n_ranks: int = 1
+    """Interval for saving HF safetensors shards across ranks in distributed mode.
+    Only effective when ``hf_distributed_save=True``."""
+
+    def finalize(self) -> None:
+        """Post-initialization checks for checkpoint config."""
+        if self.pretrained_checkpoint is not None:
+            from megatron.bridge.training.utils.checkpoint_utils import file_exists
+
+            assert file_exists(self.pretrained_checkpoint), (
+                f"Pretrained checkpoint {self.pretrained_checkpoint} does not exist"
+            )
+
+        if self.load_main_params_from_ckpt:
+            assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
+
+        if self.stage_precision_aware_optimizer_state_on_cpu and self.ckpt_format != "torch_dist":
+            raise ValueError("stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'.")
+
+        if self.async_save:
+            assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
+            assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
+
+        if self.save_retain_interval is not None:
+            if self.save_retain_interval <= 0:
+                raise ValueError("save_retain_interval must be positive.")
+            if self.save_interval is None or self.save_interval <= 0:
+                raise ValueError("save_retain_interval requires a positive save_interval.")
+            if self.save_retain_interval % self.save_interval != 0:
+                raise ValueError("save_retain_interval must be divisible by save_interval.")
+            if self.most_recent_k != -1:
+                raise ValueError("save_retain_interval and most_recent_k cannot be enabled together.")
+
+        if self.also_save_hf_checkpoint:
+            if self.ckpt_format == "fsdp_dtensor":
+                raise ValueError(
+                    "also_save_hf_checkpoint=True is not supported together with ckpt_format='fsdp_dtensor'. "
+                    "Use ckpt_format='torch_dist' when exporting additional HF weights during training."
+                )
+            if self.non_persistent_ckpt_type == "local":
+                raise ValueError(
+                    "also_save_hf_checkpoint=True is not compatible with local non-persistent checkpoints. "
+                    "Use non_persistent_ckpt_type='global' or disable non-persistent saving."
+                )
+
+        # Validate ckpt_step if specified
+        if self.ckpt_step is not None:
+            if self.load is None:
+                raise ValueError(
+                    f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
+                    f"Please set checkpoint.load to the base checkpoint directory."
+                )
+
+
 def finalize_optimizer_config(config: OptimizerConfig) -> None:
     """Resolve optimizer settings after recipe and precision overrides."""
     normalize_optimizer_config(config)
@@ -224,55 +428,8 @@ def finalize_training_config(config: TrainingConfig) -> None:
 
 
 def finalize_checkpoint_config(config: CheckpointConfig) -> None:
-    """Validate checkpoint settings and Bridge runtime requirements."""
-    if config.pretrained_checkpoint is not None:
-        from megatron.bridge.training.utils.checkpoint_utils import file_exists
-
-        assert file_exists(config.pretrained_checkpoint), (
-            f"Pretrained checkpoint {config.pretrained_checkpoint} does not exist"
-        )
-
-    if config.load_main_params_from_ckpt:
-        assert not config.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
-
-    if config.stage_precision_aware_optimizer_state_on_cpu and config.ckpt_format != "torch_dist":
-        raise ValueError("stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'.")
-
-    if config.async_save:
-        assert config.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
-        assert config.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
-
-    if config.save_retain_interval is not None:
-        if config.save_retain_interval <= 0:
-            raise ValueError("save_retain_interval must be positive.")
-        if config.save_interval is None or config.save_interval <= 0:
-            raise ValueError("save_retain_interval requires a positive save_interval.")
-        if config.save_retain_interval % config.save_interval != 0:
-            raise ValueError("save_retain_interval must be divisible by save_interval.")
-        if config.most_recent_k != -1:
-            raise ValueError("save_retain_interval and most_recent_k cannot be enabled together.")
-
-    if config.also_save_hf_checkpoint:
-        if config.ckpt_format == "fsdp_dtensor":
-            raise ValueError(
-                "also_save_hf_checkpoint=True is not supported together with ckpt_format='fsdp_dtensor'. "
-                "Use ckpt_format='torch_dist' when exporting additional HF weights during training."
-            )
-        if config.non_persistent_ckpt_type == "local":
-            raise ValueError(
-                "also_save_hf_checkpoint=True is not compatible with local non-persistent checkpoints. "
-                "Use non_persistent_ckpt_type='global' or disable non-persistent saving."
-            )
-
-    # Validate ckpt_step if specified
-    if config.ckpt_step is not None:
-        if config.load is None:
-            raise ValueError(
-                f"ckpt_step={config.ckpt_step} specified but checkpoint.load is None. "
-                f"Please set checkpoint.load to the base checkpoint directory."
-            )
-
-    config.validate()
+    """Run the existing Bridge checkpoint checks pending the separate migration."""
+    config.finalize()
 
 
 def finalize_logger_config(config: LoggerConfig) -> None:
@@ -809,6 +966,27 @@ class ConfigContainer(Container):
     def from_dict(cls, config_dict: dict[str, Any], mode: InstantiationMode = InstantiationMode.STRICT) -> Self:
         """Load saved configs, moving legacy distributed settings to their owners."""
         config_dict = copy.deepcopy(config_dict)
+        for section, native_type, bridge_type in (
+            ("train", MTrainTrainingConfig, TrainingConfig),
+            ("checkpoint", MTrainCheckpointConfig, CheckpointConfig),
+            ("logger", MTrainLoggerConfig, LoggerConfig),
+        ):
+            saved_section = config_dict.get(section)
+            if isinstance(saved_section, dict) and saved_section.get("_target_") in {
+                f"megatron.training.config.{native_type.__name__}",
+                f"{native_type.__module__}.{native_type.__name__}",
+            }:
+                saved_section["_target_"] = f"{bridge_type.__module__}.{bridge_type.__name__}"
+        train = config_dict.get("train")
+        if isinstance(train, dict):
+            for name in ("eval_iters", "eval_interval", "skip_train"):
+                value = train.pop(name, None)
+                if value is not None:
+                    validation = config_dict.setdefault(
+                        "validation", {"_target_": f"{ValidationConfig.__module__}.ValidationConfig"}
+                    )
+                    # Older Bridge runtime gave non-None deprecated training fields priority.
+                    validation[name] = value
         dist = config_dict.get("dist")
         if isinstance(dist, dict):
             if dist.get("_target_") in {
@@ -1697,15 +1875,6 @@ class ConfigContainer(Container):
             validate_flex_dispatcher_backend(self.model.transformer)
         else:
             validate_flex_dispatcher_backend(self.model)
-
-        for f in fields(ValidationConfig):
-            train_val = getattr(self.train, f.name, None)
-            if train_val is not None:
-                warnings.warn(
-                    f"TrainingConfig.{f.name} is deprecated and will be removed in a future release. Use ValidationConfig.{f.name} instead.",
-                    stacklevel=2,
-                )
-                setattr(self.validation, f.name, train_val)
 
     def _validate_cp_comm_type(self) -> None:
         """Validate cp_comm_type and hierarchical_context_parallel_sizes consistency."""

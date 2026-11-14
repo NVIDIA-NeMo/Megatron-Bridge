@@ -16,11 +16,11 @@
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-from megatron.training.config import CheckpointConfig, LoggerConfig, SchedulerConfig, TrainingConfig
+from megatron.training.config import SchedulerConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.diffusion_gemma.data import DiffusionGemmaDatasetConfig, MockDiffusionGemmaDatasetConfig
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, TrainingConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 

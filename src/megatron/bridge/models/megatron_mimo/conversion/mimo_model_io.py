@@ -21,10 +21,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
 from megatron.core.optimizer import OptimizerConfig
-from megatron.training.config import CheckpointConfig, LoggerConfig
 
 from megatron.bridge.training.checkpointing import load_checkpoint, maybe_finalize_async_save, save_checkpoint
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
 from megatron.bridge.training.state import GlobalState
 

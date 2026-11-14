@@ -77,8 +77,8 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.train.eval_interval = 500
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
@@ -126,8 +126,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.train.eval_interval = 500
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
@@ -176,8 +176,8 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.train.eval_interval = 500
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.average_in_collective = False

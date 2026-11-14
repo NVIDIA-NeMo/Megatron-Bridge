@@ -76,7 +76,7 @@ class TestMcoreFluxPretrain:
             f"checkpoint.load={checkpoint_dir}",
             "checkpoint.save_interval=200",
             "optimizer.lr=1e-4",
-            "train.eval_iters=0",
+            "validation.eval_iters=0",
             "train.train_iters=10",
             "train.global_batch_size=2",
             "train.micro_batch_size=1",

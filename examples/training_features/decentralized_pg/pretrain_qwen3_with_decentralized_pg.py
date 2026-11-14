@@ -63,6 +63,7 @@ from megatron.core.hyper_comm_grid import HyperCommGrid
 from megatron.core.num_microbatches_calculator import init_num_microbatches_calculator
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.utils import get_pg_rank
+from megatron.training.config import ValidationConfig
 
 # ==============================================================================
 # Megatron-Bridge imports
@@ -462,8 +463,6 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
 
     train_cfg = TrainingConfig(
         train_iters=args.train_iters,
-        eval_interval=args.train_iters,
-        eval_iters=0,
         global_batch_size=args.global_batch_size,
         micro_batch_size=args.micro_batch_size,
         exit_signal_handler=True,
@@ -529,6 +528,7 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
 
     cfg = ConfigContainer(
         model=model_cfg,
+        validation=ValidationConfig(eval_interval=args.train_iters, eval_iters=0),
         train=train_cfg,
         optimizer=optimizer_cfg,
         scheduler=scheduler_cfg,

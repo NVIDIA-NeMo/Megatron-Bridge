@@ -278,8 +278,6 @@ def train_megatron_mimo(
     # Get training config
     train_config = cfg.train
     eval_interval = cfg.validation.eval_interval
-    if eval_interval is None:
-        eval_interval = train_config.eval_interval
     num_microbatches = get_num_microbatches()
     seq_length = cfg.dataset.seq_length
     micro_batch_size = train_config.micro_batch_size

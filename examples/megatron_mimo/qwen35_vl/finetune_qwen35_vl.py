@@ -43,6 +43,7 @@ import torch
 import torch.distributed as dist
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.training.config import ValidationConfig
 from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
@@ -1172,12 +1173,11 @@ def _build_config(
     )
 
     cfg = ConfigContainer(
+        validation=ValidationConfig(eval_interval=None, eval_iters=None),
         train=TrainingConfig(
             micro_batch_size=args.micro_batch_size,
             global_batch_size=args.global_batch_size,
             train_iters=args.train_iters,
-            eval_interval=None,
-            eval_iters=None,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,

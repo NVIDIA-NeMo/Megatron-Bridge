@@ -843,7 +843,7 @@ def test_super_vl_pretrain_recipe_uses_tuned_h100_training_policy(fake_processor
     assert cfg.train.global_batch_size == 1280
     assert cfg.train.micro_batch_size == 1
     assert cfg.train.train_iters == 100
-    assert cfg.train.eval_iters == 0
+    assert cfg.validation.eval_iters == 0
     assert cfg.dataset.do_validation is False
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
     assert cfg.checkpoint.save is not None

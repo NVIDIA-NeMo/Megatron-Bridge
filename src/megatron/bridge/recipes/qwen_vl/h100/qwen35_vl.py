@@ -165,8 +165,8 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.train.eval_interval = 500
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
@@ -214,8 +214,8 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.train.eval_interval = 500
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
@@ -271,8 +271,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.train.eval_interval = 500
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
@@ -392,8 +392,8 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.train.eval_interval = 500
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.average_in_collective = False
@@ -445,8 +445,8 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.train.eval_interval = 500
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.average_in_collective = False

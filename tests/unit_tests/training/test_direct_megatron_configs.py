@@ -24,10 +24,7 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "name",
     [
-        "CheckpointConfig",
-        "LoggerConfig",
         "RNGConfig",
-        "TrainingConfig",
         "SchedulerConfig",
         "ProfilingConfig",
         "RerunStateMachineConfig",
@@ -159,5 +156,25 @@ def test_saved_conversion_config_keeps_ddp_disabled():
         saved["dist"]["use_torch_fsdp2"] = True
         with pytest.raises(ValueError, match="active legacy distributed settings with ddp=None"):
             bridge.ConfigContainer.from_dict(saved)
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+def test_saved_deprecated_training_fields_move_to_validation():
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config())
+    try:
+        cfg.train.num_epochs = 1.5
+        saved = cfg.to_dict()
+        saved["train"].update(eval_iters=7, eval_interval=50, skip_train=True)
+        saved["validation"].update(eval_iters=1, eval_interval=2, skip_train=False)
+        unchanged = deepcopy(saved)
+        loaded = bridge.ConfigContainer.from_dict(saved)
+        assert loaded.train.num_epochs == 1.5
+        assert loaded.validation.eval_iters == 7
+        assert loaded.validation.eval_interval == 50
+        assert loaded.validation.skip_train is True
+        assert "eval_iters" not in loaded.to_dict()["train"]
+        assert saved == unchanged
+        assert bridge.ConfigContainer.from_dict(loaded.to_dict()).to_dict() == loaded.to_dict()
     finally:
         restore_get_world_size_safe(original, module)

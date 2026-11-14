@@ -46,13 +46,12 @@ def _make_megatron_mimo_infra(*, num_active_pgs: int = 1) -> Mock:
 
 
 def test_megatron_mimo_runtime_config_update_resolves_eval_batch_size_defaults():
-    from megatron.bridge.training.config import megatron_mimo_runtime_config_update
+    from megatron.bridge.training.config import SchedulerConfig, TrainingConfig, megatron_mimo_runtime_config_update
 
     cfg = MagicMock()
     cfg.env_vars = {}
-    cfg.train.num_epochs = None
-    cfg.train.global_batch_size = 8
-    cfg.train.micro_batch_size = 2
+    cfg.train = TrainingConfig(train_iters=10, global_batch_size=8, micro_batch_size=2)
+    cfg.scheduler = SchedulerConfig()
     cfg.validation.eval_global_batch_size = None
     cfg.validation.eval_micro_batch_size = None
     cfg.profiling = None
@@ -329,7 +328,7 @@ class TestPretrainMegatronMIMOSetup:
 
         cfg.optimizer = OptimizerConfig(use_layer_wise_param_layout=False, bf16=True, use_distributed_optimizer=True)
         cfg.optimizer.use_layer_wise_param_layout = False
-        cfg.optimizer.finalize()
+        finalize_optimizer_config(cfg.optimizer)
 
         global_state = Mock()
         global_state.start_time = time.time()
@@ -462,18 +461,14 @@ class TestNonColocatedGuard:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("use_canonical_validation_config", [False, True], ids=["deprecated", "canonical"])
-def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_validation_config):
-    """Interval evaluation should honor both config paths and let the shared evaluator own its timer."""
+def test_interval_evaluation_uses_evaluator_timer_ownership():
+    """ValidationConfig controls interval evaluation; the shared evaluator owns its timer."""
     from megatron.core.timers import Timers
 
     from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
 
     state = _make_global_state(save_dir=None, train_iters=1)
-    if use_canonical_validation_config:
-        state.cfg.validation.eval_interval = 1
-    else:
-        state.cfg.train.eval_interval = 1
+    state.cfg.validation.eval_interval = 1
     state.timers = Timers(log_level=0, log_option="minmax")
 
     infra = _make_megatron_mimo_infra()

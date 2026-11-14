@@ -16,11 +16,17 @@ import os
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.training.config import CheckpointConfig, LoggerConfig, RNGConfig, TrainingConfig
+from megatron.training.config import RNGConfig, ValidationConfig
 
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
-from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    LoggerConfig,
+    TokenizerConfig,
+    TrainingConfig,
+)
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
@@ -87,10 +93,9 @@ def wan_1_3b_pretrain_config() -> ConfigContainer:
 
     cfg = ConfigContainer(
         model=model_cfg,
+        validation=ValidationConfig(eval_interval=2000, eval_iters=32),
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=2000,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
@@ -198,10 +203,9 @@ def wan_14b_pretrain_config() -> ConfigContainer:
 
     cfg = ConfigContainer(
         model=model_cfg,
+        validation=ValidationConfig(eval_interval=2000, eval_iters=32),
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=2000,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
