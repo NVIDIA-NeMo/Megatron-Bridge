@@ -60,6 +60,7 @@ models/nemotron/index.md
 models/olmoe/index.md
 models/qwen/index.md
 models/sarvam/index.md
+models/shensi/index.md
 models/stepfun/index.md
 ```
 
