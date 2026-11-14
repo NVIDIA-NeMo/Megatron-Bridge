@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pickle
-
 import pytest
 import torch
-import transformers
 from transformers.models.minimax_m3_vl import modeling_minimax_m3_vl as modeling
 from transformers.models.minimax_m3_vl.configuration_minimax_m3_vl import MiniMaxM3VLVisionConfig
-
-from megatron.bridge.models.minimax_m3.transformers_compat import patch_minimax_m3_vision_rope
 
 
 @pytest.mark.parametrize("head_dim,axis_dim", [(8, 2), (80, 26)])
@@ -34,13 +29,9 @@ def test_hf_vision_rope_preserves_three_axes_and_frequency_ladder(head_dim, axis
         rope_parameters={"rope_type": "default", "rope_theta": 10000.0},
     )
     rotary = modeling.MiniMaxM3VLVisionModel(config).rotary_emb
-    grid = torch.tensor([[2, 2, 2]])
     # Spatial merge order: width changes first, then height, then the video frame.
     positions = torch.tensor([[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1], [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1]])
-    if hasattr(modeling, "MiniMaxM3VLVisionRotaryEmbedding"):
-        cosine, sine = rotary(torch.empty(8, head_dim), positions)
-    else:
-        cosine, sine = rotary(grid, device=torch.device("cpu"), dtype=torch.float32)
+    cosine, sine = rotary(torch.empty(8, head_dim), positions)
 
     bands = axis_dim // 2
     ladder = torch.logspace(0, -(bands - 1) / bands, bands, base=10000.0)
@@ -57,31 +48,12 @@ def test_hf_vision_rope_preserves_three_axes_and_frequency_ladder(head_dim, axis
     torch.testing.assert_close(rotated_query[..., 3 * axis_dim :], query[..., 3 * axis_dim :], rtol=0, atol=0)
     torch.testing.assert_close(rotated_key[..., 3 * axis_dim :], key[..., 3 * axis_dim :], rtol=0, atol=0)
     assert not torch.equal(rotated_query[..., : 3 * axis_dim], query[..., : 3 * axis_dim])
+    # The inverse frequencies are non-persistent buffers, so checkpoints carry no RoPE tensors.
     assert rotary.state_dict() == {}
-    # The registered replacement remains a normal serializable module.
-    assert type(pickle.loads(pickle.dumps(rotary))) is type(rotary)
-
-
-def test_vision_rope_correction_is_version_gated_and_idempotent(monkeypatch):
-    active = transformers.__version__ == "5.17.0"
-    symbol = (
-        "MiniMaxM3VLVisionRotaryEmbedding"
-        if hasattr(modeling, "MiniMaxM3VLVisionRotaryEmbedding")
-        else "MiniMaxM3VL3DRotaryEmbedding"
-    )
-    original = getattr(modeling, symbol)
-    assert patch_minimax_m3_vision_rope() is active
-    assert patch_minimax_m3_vision_rope() is active
-    assert getattr(modeling, symbol) is original
-    assert bool(getattr(original, "_bridge_3d_rope", False)) is active
-    for version in ("5.15.1", "5.16.1", "5.17.1", "5.18.0", "5.18.1", "5.19.0", "5.19.1", "5.20.0", "5.20.1"):
-        monkeypatch.setattr(transformers, "__version__", version)
-        assert patch_minimax_m3_vision_rope() is False
-        assert getattr(modeling, symbol) is original
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-def test_hf_vision_rope_dtype_conversion_matches_version_contract(dtype):
+def test_hf_vision_rope_rounds_its_frequency_buffers_on_dtype_casts(dtype):
     config = MiniMaxM3VLVisionConfig(
         hidden_size=160,
         num_attention_heads=2,
@@ -90,28 +62,15 @@ def test_hf_vision_rope_dtype_conversion_matches_version_contract(dtype):
         spatial_merge_size=2,
         rope_parameters={"rope_type": "default", "rope_theta": 10000.0},
     )
-    rotary = modeling.MiniMaxM3VLVisionModel(config).rotary_emb
-    grid = torch.tensor([[2, 2, 64]])
-    if hasattr(modeling, "MiniMaxM3VLVisionRotaryEmbedding"):
-        positions = torch.tensor([[0, 0, 32], [1, 16, 0], [2, 4, 128]])
-        inputs = torch.empty(3, 80, dtype=dtype)
-        expected = rotary(inputs, positions)
-        rotary.to(dtype=dtype)
-        actual = rotary(inputs, positions)
-        if transformers.__version__ in ("5.18.0", "5.19.0", "5.20.0", "5.20.1", "5.20.2"):
-            # These releases include #49164's geometry fix and remain unpatched.
-            # Accept native buffer rounding, rather than requiring the 5.17
-            # workaround's FP32-per-forward precision after explicit casts.
-            assert not getattr(type(rotary), "_bridge_3d_rope", False)
-            axis_dim = 26
-            frequencies = 1.0 / (10000.0 ** (torch.arange(0, axis_dim, 2).float() / axis_dim))
-            frequencies = frequencies.to(dtype).float()
-            angles = (positions.float()[..., None] * frequencies).flatten(1).repeat(1, 2)
-            expected = (angles.cos().to(dtype), angles.sin().to(dtype))
-    else:
-        expected = rotary(grid, device=torch.device("cpu"), dtype=dtype)
-        rotary.to(dtype=dtype)
-        actual = rotary(grid, device=torch.device("cpu"), dtype=dtype)
-    for result, reference in zip(actual, expected):
+    rotary = modeling.MiniMaxM3VLVisionModel(config).rotary_emb.to(dtype=dtype)
+    positions = torch.tensor([[0, 0, 32], [1, 16, 0], [2, 4, 128]])
+
+    actual = rotary(torch.empty(3, 80, dtype=dtype), positions)
+
+    # The cast rounds the inverse-frequency buffers themselves, not only the outputs.
+    axis_dim = 26
+    frequencies = 1.0 / (10000.0 ** (torch.arange(0, axis_dim, 2).float() / axis_dim))
+    angles = (positions.float()[..., None] * frequencies.to(dtype).float()).flatten(1).repeat(1, 2)
+    for result, reference in zip(actual, (angles.cos().to(dtype), angles.sin().to(dtype))):
         assert result.dtype == dtype
         torch.testing.assert_close(result, reference, rtol=0, atol=0)

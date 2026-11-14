@@ -75,19 +75,13 @@ class MuseSparkModel(HybridModel):
         self._freeze_requested_modules()
 
     def _build_perception(self) -> None:
-        # Keep imports lazy: config conversion and ordinary Bridge imports do
-        # not require Transformers 5.20 or later.
-        try:
-            from transformers.models.muse_spark.configuration_muse_spark import MuseSparkConfig
-            from transformers.models.muse_spark.modeling_muse_spark import (
-                MuseSparkAudioModel,
-                MuseSparkVisionAdapter,
-                MuseSparkVisionModel,
-            )
-        except ImportError as error:
-            raise ImportError(
-                "Muse Spark Open model construction requires Transformers 5.20 or later (transformers.models.muse_spark)."
-            ) from error
+        # Import lazily: only perception construction needs the HF modeling code.
+        from transformers.models.muse_spark.configuration_muse_spark import MuseSparkConfig
+        from transformers.models.muse_spark.modeling_muse_spark import (
+            MuseSparkAudioModel,
+            MuseSparkVisionAdapter,
+            MuseSparkVisionModel,
+        )
 
         hf_config = MuseSparkConfig.from_dict(self.model_config.hf_config)
         self.vision_tower = MuseSparkVisionModel(hf_config.vision_config)
