@@ -139,7 +139,7 @@ def safe_map(fn, iterable, workers=1, ctx="fork"):
     Args:
         fn: Function to apply to each item
         iterable: Items to process
-        workers: Number of worker processes
+        workers: Maximum number of worker processes. At most one worker starts for each item.
         ctx: Multiprocessing context ("fork", "spawn", etc.)
 
     Returns:
@@ -149,6 +149,7 @@ def safe_map(fn, iterable, workers=1, ctx="fork"):
     input_queue = ctx.Queue()
     output_queue = ctx.Queue()
     indexed_inputs = list(enumerate(iterable))
+    workers = min(workers, len(indexed_inputs))
     for job in indexed_inputs:
         input_queue.put(job)
     for _ in range(workers):
@@ -687,6 +688,7 @@ def build_index_files(
 
     if workers is None:
         workers = max(1, os.cpu_count() // 2)
+    workers = min(workers, len(dataset_paths))
 
     logger.info(f"Processing {len(dataset_paths)} data files using {workers} workers")
     # load all files into memmap
