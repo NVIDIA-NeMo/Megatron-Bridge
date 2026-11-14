@@ -195,6 +195,7 @@ def test_rejects_environment_injection(render, name):
 
 @pytest.fixture
 def fake_host(tmp_path, monkeypatch):
+    monkeypatch.delenv("BASH_ENV", raising=False)
     tools = tmp_path / "bin"
     tools.mkdir()
     stat = tools / "stat"
