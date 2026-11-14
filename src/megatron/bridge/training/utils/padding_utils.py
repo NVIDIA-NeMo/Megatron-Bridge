@@ -21,11 +21,15 @@ and attention masks.
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn.functional as F
 
 
 __all__ = [
+    "get_padded_sequence_length",
+    "pad_batch_sequence_tensors",
     "pad_or_truncate_2d_to_len",
     "pad_or_truncate_pos_to_len",
     "pad_or_truncate_attn_to_len",
@@ -95,3 +99,49 @@ def pad_or_truncate_attn_to_len(mask: torch.Tensor | None, target_len: int, max_
             return mask[:, :, :max_cap, :max_cap]
         return mask
     raise ValueError(f"attention mask must be 2D or 4D, got shape {tuple(mask.shape)}")
+
+
+def get_padded_sequence_length(
+    current_length: int,
+    divisible_by: int,
+    *,
+    force_to_seq_length: bool = False,
+    seq_length: int | None = None,
+    validate_forced_seq_length: bool = False,
+    error_context: str = "sequence padding",
+) -> int:
+    """Return a sequence length aligned to a required multiple.
+
+    This helper is intentionally limited to raw-batch sequence normalization. It
+    does not perform context-parallel slicing or packed-sequence concatenation.
+    """
+
+    if divisible_by <= 0:
+        raise ValueError(f"divisible_by must be positive for {error_context}, got {divisible_by}")
+
+    if force_to_seq_length:
+        if seq_length is None:
+            raise ValueError("seq_length must be set when force_to_seq_length=True")
+        if validate_forced_seq_length and seq_length % divisible_by != 0:
+            raise ValueError(f"seq_length={seq_length} must be divisible by {divisible_by} for {error_context}")
+        return seq_length
+
+    return math.ceil(current_length / divisible_by) * divisible_by
+
+
+def pad_batch_sequence_tensors(
+    tokens: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
+    position_ids: torch.Tensor | None,
+    target_len: int,
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+    """Pad or truncate common raw batch sequence tensors to ``target_len``."""
+
+    tokens = pad_or_truncate_2d_to_len(tokens, target_len, target_len, pad_value=0)
+    labels = pad_or_truncate_2d_to_len(labels, target_len, target_len, pad_value=-100)
+    loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len, target_len, pad_value=0)
+    attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len, target_len)
+    position_ids = pad_or_truncate_pos_to_len(position_ids, target_len, target_len)
+    return tokens, labels, loss_mask, attention_mask, position_ids
