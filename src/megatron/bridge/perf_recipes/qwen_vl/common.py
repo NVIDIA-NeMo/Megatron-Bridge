@@ -31,7 +31,11 @@ from megatron.bridge.recipes.qwen_vl.qwen35_vl import (
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, set_cuda_graph_modules
+from megatron.bridge.utils.cuda_graph import (
+    clear_cuda_graph_modules,
+    enable_hybrid_cuda_graph_pairs,
+    set_cuda_graph_modules,
+)
 
 
 def _use_model_vocab_null_tokenizer(cfg: ConfigContainer) -> None:
@@ -104,6 +108,10 @@ def _enable_partial_cuda_graphs(cfg: ConfigContainer) -> None:
     """
     cfg.model.cuda_graph_impl = "transformer_engine"
     set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
+    # Once Megatron-Core supports it: one graph per HF block (attention or GDN, then its MoE router) instead of one
+    # per Hybrid position, and graphs for the MTP layers, which per-position graphs leave eager. Bitwise identical to
+    # per-position graphs with an eager MTP.
+    enable_hybrid_cuda_graph_pairs(cfg.model)
     # The RNG trackers must be re-enabled here, not left to an earlier caller.
     # ``_benchmark_common`` derives them from whatever ``cuda_graph_impl`` held at
     # ITS call time (_common.py:88-92: ``cfg.rng.te_rng_tracker =
