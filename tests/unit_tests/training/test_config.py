@@ -34,6 +34,7 @@ from megatron.bridge.data.builders import (
     MockVLMSFTDatasetConfig,
     QwenVLEnergonTaskEncoderConfig,
 )
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -5895,6 +5896,59 @@ class TestGlobalBatchPackingValidation:
         assert container.model.sequence_packing_scheduler == "default_dynamic_cp"
         # dp 4 x cp 2 = pool 8 -> 2 * pool
         assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 16
+
+    @pytest.mark.skipif(
+        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
+    )
+    def test_offline_packed_rows_feed_dynamic_cp(self):
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=64,
+            dynamic_context_parallel=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512, pad_seq_to_mult=4)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
+        )
+        container.ddp.average_in_collective = False
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.model.sequence_packing_scheduler == "default_dynamic_cp"
+        # Rows are split into sequences re-padded to the runtime multiple, 2 x (dp 4 x cp 2), not the offline 4.
+        assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 16
+
+    def test_offline_packed_row_must_fit_the_bin_capacity(self):
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2, calculate_per_token_loss=True, max_seqlen_per_dp_cp_rank=256
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=1024)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
+        )
+        container.ddp.average_in_collective = False
+        try:
+            with pytest.raises(ValueError, match="Bin capacity"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_offline_packed_global_batch_rejects_padded_cu_seqlens(self):
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512, pad_cu_seqlens=True)
+        with pytest.raises(ValueError, match="pad_cu_seqlens"):
+            dataset_cfg.validate()
 
     @pytest.mark.skipif(
         not hasattr(GPTModelProvider, "dynamic_context_parallel"),

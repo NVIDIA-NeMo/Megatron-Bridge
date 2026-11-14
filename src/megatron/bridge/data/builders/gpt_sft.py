@@ -241,7 +241,9 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     offline_packing_specs: PackedSequenceSpecs | None = None
     enable_global_batch_packing: bool = False
     """Yield unpacked per-sample rows (identity collate) for Megatron-Core's online packing
-    scheduler, which packs the global batch per step across DP x CP ranks."""
+    scheduler, which packs the global batch per step across DP x CP ranks. With
+    ``enable_offline_packing``, each offline packed row yields its sequences, so the global batch
+    counts packed rows and offline packing decides which sequences share a step."""
     global_batch_packing_pad_to_multiple_of: int = 1
     """Per-sequence alignment multiple for CP THD slicing; ``ConfigContainer.validate`` sets it."""
     fold_alignment_padding: bool = False
@@ -335,9 +337,15 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError(
                 "GPT-SFT in-batch packing does not support dataloader_type='batch'; use 'single' or 'cyclic'."
             )
-        if self.enable_global_batch_packing and (self.enable_offline_packing or self.enable_in_batch_packing):
+        if self.enable_global_batch_packing and self.enable_in_batch_packing:
+            raise ValueError("enable_global_batch_packing and enable_in_batch_packing are mutually exclusive.")
+        if (
+            self.enable_global_batch_packing
+            and self.offline_packing_specs is not None
+            and self.offline_packing_specs.pad_cu_seqlens
+        ):
             raise ValueError(
-                "enable_global_batch_packing is mutually exclusive with enable_offline_packing and enable_in_batch_packing."
+                "offline_packing_specs.pad_cu_seqlens is for CUDA graphs, which global-batch packing does not support."
             )
         if self.global_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("global_batch_packing_pad_to_multiple_of must be greater than 0.")
@@ -743,6 +751,12 @@ def build_gpt_sft_split(
         "is_test": is_test,
     }
 
+    # Offline packed rows are split back into their sequences for the global-batch scheduler.
+    packed_global_batch_kwargs = {
+        "enable_global_batch_packing": enable_global_batch_packing,
+        "global_batch_packing_pad_to_multiple_of": global_batch_packing_pad_to_multiple_of,
+        "fold_alignment_padding": fold_alignment_padding,
+    }
     if path_str.lower().endswith(".npy"):
         from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 
@@ -750,6 +764,7 @@ def build_gpt_sft_split(
             pack_metadata_file_path=effective_metadata_path,
             pad_cu_seqlens=pad_cu_seqlens,
             pad_seq_to_mult=pad_seq_to_mult,
+            **packed_global_batch_kwargs,
             **dataset_init_kwargs,
             **options,
         )
@@ -761,6 +776,7 @@ def build_gpt_sft_split(
             pack_metadata_file_path=effective_metadata_path,
             pad_cu_seqlens=pad_cu_seqlens,
             pad_seq_to_mult=pad_seq_to_mult,
+            **packed_global_batch_kwargs,
             **dataset_init_kwargs,
             **options,
         )
