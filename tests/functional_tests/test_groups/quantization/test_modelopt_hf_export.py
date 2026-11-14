@@ -14,9 +14,8 @@
 
 """ModelOpt quantized Hugging Face export: the same checkpoint at every parallelism."""
 
-# TODO: Once nvidia-modelopt is bumped to 0.49.0rc0, add tests for its FP8 rounding fix
-# (NVIDIA/Model-Optimizer#3005) and KV-cache export (NVIDIA/Model-Optimizer#2981): parity with
-# ModelOpt's export_mcore_gpt_to_hf, and k_scale / v_scale with kv_cache_quant_algo.
+# TODO: Test KV-cache export (NVIDIA/Model-Optimizer#2981), k_scale / v_scale with kv_cache_quant_algo,
+# once save_hf_pretrained_modelopt writes it.
 
 import json
 import subprocess
@@ -27,6 +26,7 @@ import pytest
 import torch
 from safetensors import safe_open
 
+from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4
 from tests.functional_tests.test_groups.quantization.modelopt_export_toys import save_toy_model
 
 
@@ -153,8 +153,8 @@ PROJECTION = {
 )
 def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, model, config, parallelisms):
     """Every parallelism writes the single-GPU checkpoint bit for bit, with a deployable quantization config."""
-    # ModelOpt 0.48 predates its FP8 rounding fix; FP8 bit parity remains deferred above.
-    offline_out = tmp_path / "offline" if model == "nemotron_h" and config == "nvfp4" else None
+    # ModelOpt's export_mcore_gpt_to_hf supports these toys and must write the same checkpoint.
+    offline_out = tmp_path / "offline" if model in ("qwen3", "nemotron_h") else None
     _export(toy_models(model), tmp_path / "reference", config, offline_out=offline_out)
     weights, hf_config = _load(tmp_path / "reference")
 
@@ -171,19 +171,42 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
 
     if offline_out is not None:
         offline_weights, offline_config = _load(offline_out)
-        assert offline_config["quantization_config"]["quant_algo"] == quantization["quant_algo"]
-        for projection in ("in_proj", "out_proj"):
-            prefix = f"backbone.layers.0.mixer.{projection}."
-            keys = {name for name in weights if name.startswith(prefix)}
-            assert {prefix + "weight", prefix + "weight_scale", prefix + "input_scale"} <= keys
-            assert {name for name in offline_weights if name.startswith(prefix)} == keys
-            for name in keys:
-                assert offline_weights[name].dtype == weights[name].dtype, name
-                assert torch.equal(_bits(offline_weights[name]), _bits(weights[name])), name
+        assert offline_config["quantization_config"] == quantization
+        assert offline_weights.keys() == weights.keys()
+        for name, tensor in weights.items():
+            assert offline_weights[name].dtype == tensor.dtype, name
+            # ModelOpt's exporter stores FP8 input scales with shape (1,).
+            assert torch.equal(_bits(offline_weights[name]).flatten(), _bits(tensor).flatten()), name
 
+    _assert_same_export_at(parallelisms, toy_models(model), tmp_path, config, weights, hf_config)
+
+
+@pytest.mark.run_only_on("GPU")
+def test_gpt_oss_experts_export_in_openai_mxfp4_format(toy_models, tmp_path):
+    """MXFP4 experts are written in OpenAI's format and dequantize to the source checkpoint's experts."""
+    source = toy_models("gpt_oss")
+    _export(source, tmp_path / "reference", "mxfp4_experts")
+    weights, hf_config = _load(tmp_path / "reference")
+    source_weights, _ = _load(source)
+
+    assert hf_config["quantization_config"]["quant_method"] == "mxfp4"
+    assert weights.keys() == source_weights.keys()
+    for name, tensor in source_weights.items():
+        if name.endswith("_blocks"):
+            scales = name.removesuffix("_blocks") + "_scales"
+            assert weights[name].dtype == weights[scales].dtype == torch.uint8, name
+            exported = dequantize_mxfp4(weights[name], weights[scales], dtype=torch.float32)
+            assert torch.equal(exported, dequantize_mxfp4(tensor, source_weights[scales], dtype=torch.float32)), name
+        elif not name.endswith("_scales"):
+            assert torch.equal(weights[name], tensor), name
+
+    _assert_same_export_at([("--ep", "2"), ("--pp", "2")], source, tmp_path, "mxfp4_experts", weights, hf_config)
+
+
+def _assert_same_export_at(parallelisms, model, tmp_path, config, weights, hf_config):
     for parallelism in parallelisms:
         out = tmp_path / "_".join(parallelism).strip("-")
-        _export(toy_models(model), out, config, *parallelism)
+        _export(model, out, config, *parallelism)
         other_weights, other_config = _load(out)
         assert other_config == hf_config, parallelism
         assert other_weights.keys() == weights.keys(), parallelism
