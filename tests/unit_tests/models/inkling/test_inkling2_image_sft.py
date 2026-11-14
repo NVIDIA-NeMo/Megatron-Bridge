@@ -26,7 +26,9 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import AutoProcessor, PreTrainedTokenizerFast
-from transformers.models.auto.configuration_auto import CONFIG_MAPPING_NAMES
+
+
+pytest.importorskip("transformers", minversion="5.23")
 
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig, load_direct_hf_sft_processor
 from megatron.bridge.data.collators.registry import always_use_model_collate, resolve_model_collate
@@ -78,8 +80,6 @@ WORDS += ("level", ":", "0", "9", "0.9", "tool_declare", "add", "finish")
 SPECIAL_TOKENS = (*FRAMING, INKLING2_BOS_TOKEN, INKLING2_EOS_TOKEN)
 TOKENS = ("<unk>", "<pad>", *FRAMING, *WORDS, INKLING2_BOS_TOKEN, INKLING2_EOS_TOKEN)
 IMAGE_TOKEN_ID = TOKENS.index(IMAGE_TOKEN)
-# Transformers implements Inkling2, with its own processor class of the same name, from v5.23.0.
-NATIVE_INKLING2 = "inkling2" in CONFIG_MAPPING_NAMES
 BRIDGE_PROCESSOR = f"{Inkling2Processor.__module__}.{Inkling2Processor.__qualname__}"
 MEAN = np.array([0.5, 0.5, 0.5], dtype=np.float32)
 STD = np.array([0.5, 0.5, 0.5], dtype=np.float32)
@@ -267,9 +267,8 @@ class TestProcessor:
         processor = load_direct_hf_sft_processor(_dataset_config(checkpoint), None)
         assert isinstance(processor, Inkling2Processor)
         assert processor.image_token_id == IMAGE_TOKEN_ID
-        # AutoProcessor returns Bridge's processor only where Transformers lacks Inkling2 (before v5.23.0); from
-        # then on it returns Transformers' processor of the same name, so the recipes name Bridge's.
-        assert isinstance(AutoProcessor.from_pretrained(checkpoint), Inkling2Processor) != NATIVE_INKLING2
+        # Keep HF's native processor registration intact; recipes explicitly select Bridge's processor.
+        assert not isinstance(AutoProcessor.from_pretrained(checkpoint), Inkling2Processor)
         assert always_use_model_collate("Inkling2Processor")
         assert resolve_model_collate("Inkling2Processor") is inkling2_collate_fn
 

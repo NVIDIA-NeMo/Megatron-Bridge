@@ -22,7 +22,12 @@ import pytest
 import torch
 from safetensors.torch import save_file
 from transformers import AutoConfig, PretrainedConfig
-from transformers.models.auto.configuration_auto import CONFIG_MAPPING, CONFIG_MAPPING_NAMES
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+
+
+pytest.importorskip("transformers", minversion="5.23")
+
+from transformers.models.inkling2.configuration_inkling2 import Inkling2TextConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -32,7 +37,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
-from megatron.bridge.models.inkling.configuration_inkling2 import Inkling2TextConfig
 from megatron.bridge.models.inkling.inkling2_bridge import (
     _FLOAT32_PARAM_SUFFIXES,
     _InterleavedGatedExpertMapping,
@@ -50,6 +54,9 @@ TEXT = {
     "num_attention_heads": 4,
     "num_key_value_heads": 2,
     "head_dim": 16,
+    "swa_head_dim": 16,
+    "swa_num_attention_heads": 4,
+    "swa_num_key_value_heads": 2,
     "vocab_size": 512,
     "unpadded_vocab_size": 500,
     "d_rel": 8,
@@ -57,6 +64,8 @@ TEXT = {
     "log_scaling_n_floor": 8192,
     "log_scaling_alpha": 0.1,
     "rms_norm_eps": 1e-6,
+    "q_bias": False,
+    "o_bias": False,
     "pre_norm_pre_affine": False,
     "final_norm_pre_affine": False,
     "use_value_norm_no_gamma": True,
@@ -78,16 +87,24 @@ TEXT = {
     "use_gate_bias": True,
     "torch_dtype": "bfloat16",
 }
-VISION = {"hidden_size": 32, "num_hidden_layers": 2, "native_patch_size": 4}
+VISION = {
+    "hidden_size": 32,
+    "num_hidden_layers": 2,
+    "native_patch_size": 4,
+    "text_hidden_size": 64,
+    "temporal_patch_size": 2,
+}
 
 
 @pytest.fixture
 def hf_config():
-    return Inkling2Config(
-        text_config=dict(TEXT),
-        vision_config=dict(VISION),
-        image_token_id=500,
-        architectures=["Inkling2ForConditionalGeneration"],
+    return Inkling2Config.from_dict(
+        dict(
+            text_config=dict(TEXT),
+            vision_config=dict(VISION),
+            image_token_id=500,
+            architectures=["Inkling2ForConditionalGeneration"],
+        )
     )
 
 
@@ -96,10 +113,6 @@ def bridge(hf_config):
     bridge = Inkling2Bridge()
     bridge.hf_config = hf_config
     return bridge
-
-
-# Transformers implements Inkling2 from v5.23.0 and keeps its own config classes; Bridge registers its own otherwise.
-NATIVE_INKLING2 = "inkling2" in CONFIG_MAPPING_NAMES
 
 
 def test_config_types_are_registered():
@@ -113,12 +126,11 @@ def test_config_types_are_registered():
             "vision_config": {"text_hidden_size": TEXT["hidden_size"]},
         }
     )
-    assert config.model_type == "inkling2" and isinstance(config, Inkling2Config) != NATIVE_INKLING2
+    assert config.model_type == "inkling2" and isinstance(config, Inkling2Config)
     assert config.text_config.sliding_window_size == 16
-    # Bridge's classes take Transformers' model types, so a saved config.json names the decoder section as
-    # Transformers does.
+    # Native HF configuration types are also used for the nested text section.
     assert type(config.text_config) is CONFIG_MAPPING["inkling2_text"]
-    assert isinstance(config.text_config, Inkling2TextConfig) != NATIVE_INKLING2
+    assert isinstance(config.text_config, Inkling2TextConfig)
     assert json.loads(config.to_json_string())["text_config"]["model_type"] == "inkling2_text"
 
 
@@ -153,7 +165,7 @@ def test_model_config_mapping(bridge, hf_config):
     # Layers have different AttnRes query and norm parameters, so each layer gets its own checkpoint keys.
     assert t.hetereogenous_dist_checkpoint is True
     assert config.position_embedding_type == "none" and not config.share_embeddings_and_output_weights
-    assert config.vision_config == VISION and config.image_token_id == 500
+    assert config.vision_config == _vision_config_dict(hf_config.vision_config) and config.image_token_id == 500
     assert config.special_token_ids == {"images": 500}
 
 
@@ -163,7 +175,7 @@ def test_model_config_mapping(bridge, hf_config):
 )
 def test_unsupported_configurations_are_rejected(field, value):
     text = dict(TEXT, **{field: value})
-    config = Inkling2Config(text_config=text, vision_config=dict(VISION))
+    config = Inkling2Config.from_dict(dict(text_config=text, vision_config=dict(VISION)))
     bridge = Inkling2Bridge()
     bridge.hf_config = config
     with pytest.raises(ValueError, match="Unsupported Inkling2 configuration"):
@@ -181,7 +193,7 @@ RELEASE_CONFIG = json.loads((Path(__file__).parent / "fixtures" / "inkling2_smal
 def test_release_config_loads_and_maps(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps(RELEASE_CONFIG))
     config = AutoConfig.from_pretrained(tmp_path)
-    assert config.model_type == "inkling2" and isinstance(config, Inkling2Config) != NATIVE_INKLING2
+    assert config.model_type == "inkling2" and isinstance(config, Inkling2Config)
     # Not in the release's config.json: the image placeholder of its processor_config.json.
     assert config.image_token_id == 200054
 
@@ -196,29 +208,18 @@ def test_release_config_loads_and_maps(tmp_path):
     assert model_config.image_token_id == 200054 and model_config.special_token_ids == {"images": 200054}
 
 
-def test_config_defaults_are_the_release_values():
-    defaults = Inkling2Config().text_config
-    assert {key: getattr(defaults, key) for key in RELEASE_CONFIG["text_config"] if key != "torch_dtype"} == {
-        key: value for key, value in RELEASE_CONFIG["text_config"].items() if key != "torch_dtype"
-    }
-
-
-@pytest.mark.skipif(NATIVE_INKLING2, reason="Transformers' own Inkling2 classes write their own config layout")
-def test_saved_config_keeps_every_release_field(tmp_path):
+def test_saved_config_keeps_the_release_architecture(tmp_path):
     (tmp_path / "in").mkdir()
     (tmp_path / "in" / "config.json").write_text(json.dumps(RELEASE_CONFIG))
-    AutoConfig.from_pretrained(tmp_path / "in").save_pretrained(tmp_path / "out")
-    saved = json.loads((tmp_path / "out" / "config.json").read_text())
+    original = AutoConfig.from_pretrained(tmp_path / "in")
+    original.save_pretrained(tmp_path / "out")
+    restored = AutoConfig.from_pretrained(tmp_path / "out")
 
-    for section in ("vision_config", "mtp_config"):
-        assert saved[section] == RELEASE_CONFIG[section]
-    # Transformers writes the text config's ``torch_dtype`` as ``dtype``.
     text = {key: value for key, value in RELEASE_CONFIG["text_config"].items() if key != "torch_dtype"}
-    assert {key: saved["text_config"][key] for key in text} == text
-    assert saved["text_config"]["dtype"] == RELEASE_CONFIG["text_config"]["torch_dtype"]
-    assert {key: saved[key] for key in ("architectures", "model_type", "eos_token_id")} == {
-        key: RELEASE_CONFIG[key] for key in ("architectures", "model_type", "eos_token_id")
-    }
+    assert {key: getattr(restored.text_config, key) for key in text} == text
+    assert _vision_config_dict(restored.vision_config) == RELEASE_CONFIG["vision_config"]
+    assert restored.mtp_config == original.mtp_config
+    assert restored.eos_token_id == original.eos_token_id
 
 
 def _save_run_config(checkpoint_dir: Path, model_config: Inkling2ModelConfig) -> None:
@@ -254,25 +255,34 @@ def release_dir(tmp_path) -> Path:
     return release_dir
 
 
-@pytest.mark.skipif(NATIVE_INKLING2, reason="Transformers' own Inkling2 classes write their own config layout")
-def test_checkpoint_export_reproduces_the_release_config(tmp_path, release_dir):
+def test_checkpoint_export_preserves_the_release_architecture(tmp_path, release_dir):
     reference = AutoConfig.from_pretrained(release_dir)
-    _save_run_config(tmp_path / "checkpoint", AutoBridge.from_hf_config(reference).get_model_config())
+    original = AutoBridge.from_hf_config(reference).get_model_config()
+    _save_run_config(tmp_path / "checkpoint", original)
 
     rebuilt = AutoBridge.from_auto_config(str(tmp_path / "checkpoint"), str(release_dir)).hf_pretrained
 
-    # The export writes this JSON as config.json.
-    assert rebuilt.to_json_string() == reference.to_json_string()
+    # Native Transformers config serialization normalizes aliases and includes derived fields.
+    # Compare the model architecture after reimport instead of requiring identical JSON spelling.
+    reimported = AutoBridge.from_hf_config(rebuilt).get_model_config()
+    assert _plain_fields(reimported.transformer) == _plain_fields(original.transformer)
+    assert _plain_fields(reimported, exclude=("extra_checkpoint_metadata",)) == _plain_fields(
+        original, exclude=("extra_checkpoint_metadata",)
+    )
+    assert rebuilt.mtp_config == reference.mtp_config
+    assert rebuilt.eos_token_id == reference.eos_token_id
 
 
 def test_checkpoint_export_keeps_the_saved_architecture(tmp_path, release_dir):
     """A checkpoint unlike the reference exports its own settings, and the reference fills only the rest."""
     vision = dict(RELEASE_CONFIG["vision_config"], hidden_size=32, num_hidden_layers=2, native_patch_size=4)
-    saved = Inkling2Config(
-        text_config=dict(TEXT, final_logit_softcapping=12.0),
-        vision_config=vision,
-        image_token_id=500,
-        architectures=["Inkling2ForConditionalGeneration"],
+    saved = Inkling2Config.from_dict(
+        dict(
+            text_config=dict(TEXT, final_logit_softcapping=12.0),
+            vision_config={**vision, "text_hidden_size": TEXT["hidden_size"]},
+            image_token_id=500,
+            architectures=["Inkling2ForConditionalGeneration"],
+        )
     )
     model_config = AutoBridge.from_hf_config(saved).get_model_config()
     _save_run_config(tmp_path / "checkpoint", model_config)
@@ -282,11 +292,9 @@ def test_checkpoint_export_keeps_the_saved_architecture(tmp_path, release_dir):
     text = {key: value for key, value in TEXT.items() if key != "torch_dtype"}
     assert {key: getattr(rebuilt.text_config, key) for key in text} == dict(text, final_logit_softcapping=12.0)
     assert _vision_config_dict(rebuilt.vision_config) == vision and rebuilt.image_token_id == 500
-    if NATIVE_INKLING2:
-        # Transformers' own classes derive these from the reference unless the export writes the checkpoint's.
-        assert rebuilt.text_config.layer_types == ["hybrid_sliding" if (i + 1) % 6 else "hybrid" for i in range(7)]
-        assert rebuilt.vision_config.text_hidden_size == TEXT["hidden_size"]
-        assert rebuilt.vision_config.intermediate_size == int(vision["hidden_size"] * vision["mlp_ratio"])
+    assert rebuilt.text_config.layer_types == ["hybrid_sliding" if (i + 1) % 6 else "hybrid" for i in range(7)]
+    assert rebuilt.vision_config.text_hidden_size == TEXT["hidden_size"]
+    assert rebuilt.vision_config.intermediate_size == int(vision["hidden_size"] * vision["mlp_ratio"])
     # The Megatron model holds neither the draft model nor the token IDs of the tokenizer.
     assert rebuilt.mtp_config == RELEASE_CONFIG["mtp_config"]
     assert rebuilt.eos_token_id == RELEASE_CONFIG["eos_token_id"]
@@ -308,25 +316,10 @@ def test_export_writes_the_layer_layout_and_projection_width_that_transformers_c
     assert exported["text_config"]["conv_kernel_size"] == exported["text_config"]["sconv_kernel_size"]
     assert exported["vision_config"]["patch_size"] == VISION["native_patch_size"]
     assert exported["vision_config"]["text_hidden_size"] == TEXT["hidden_size"]
-    # Whichever classes are registered build the exported config, the toy's depth and width included.
+    # Native Transformers classes rebuild the exported config, including the toy depth and width.
     rebuilt = CONFIG_MAPPING["inkling2"].from_dict(exported)
     assert rebuilt.text_config.num_hidden_layers == TEXT["num_hidden_layers"]
     assert list(rebuilt.text_config.local_layer_ids) == TEXT["local_layer_ids"]
-
-
-def test_bridge_config_reads_the_field_names_transformers_writes():
-    layer_types = ["hybrid" if (layer + 1) % 4 == 0 else "hybrid_sliding" for layer in range(12)]
-    text = Inkling2TextConfig(
-        num_hidden_layers=12,
-        moe_intermediate_size=96,
-        conv_kernel_size=3,
-        max_position_embeddings=8192,
-        layer_types=layer_types,
-    )
-
-    assert (text.intermediate_size, text.sconv_kernel_size, text.model_max_length) == (96, 3, 8192)
-    assert text.local_layer_ids == [layer for layer in range(12) if (layer + 1) % 4]
-    assert "layer_types" not in text.to_dict()
 
 
 def test_vision_config_reads_the_keys_transformers_writes():
@@ -342,11 +335,14 @@ def test_vision_config_reads_the_keys_transformers_writes():
 
 
 def test_model_without_the_image_encoder_exports_no_vision_config():
-    config = Inkling2Config(text_config=dict(TEXT), architectures=["Inkling2ForConditionalGeneration"])
+    config = Inkling2Config.from_dict(dict(text_config=dict(TEXT), vision_config=dict(VISION)))
     bridge = Inkling2Bridge()
     bridge.hf_config = config
 
-    exported = Inkling2Bridge.megatron_to_hf_config(bridge.hf_config_to_model_config(config))
+    model_config = bridge.hf_config_to_model_config(config)
+    model_config.vision_config = {}
+    model_config.image_token_id = None
+    exported = Inkling2Bridge.megatron_to_hf_config(model_config)
 
     assert exported["vision_config"] is None and "image_token_id" not in exported
 

@@ -4,12 +4,10 @@ Supported checkpoint: **Inkling 2 Small**,
 [`thinkingmachines/Inkling-2-Small`](https://huggingface.co/thinkingmachines/Inkling-2-Small)
 (`Inkling2ForConditionalGeneration`, model type `inkling2`), an image-and-text
 mixture-of-experts model. The release ships its configuration, tokenizer, chat template, and
-processor configuration but no modeling code. Transformers implements Inkling 2 from v5.23.0,
-which Bridge's lock file installs. Bridge also supports Transformers 5.21 and 5.22, which do not
-(their `inkling` model is the first Inkling generation, a different architecture); with those,
-Bridge registers its own configuration classes for Transformers' model types, `inkling2` and
-`inkling2_text`, so that `AutoConfig` reads the checkpoint, with the release's values as
-defaults. With 5.23, Transformers' own classes stay registered, and Bridge reads either.
+processor configuration but no modeling code. Inkling2 requires **Transformers >=5.23**,
+which provides the native `Inkling2Config` and `Inkling2TextConfig` classes that
+`AutoConfig` uses to read the checkpoint. Bridge does not register replacement config classes.
+Other Bridge model families retain their existing Transformers version requirements.
 
 The model API is `Inkling2Bridge`, `Inkling2Model`, `Inkling2ModelBuilder`, and
 `Inkling2ModelConfig`, under `megatron.bridge.models.inkling`. The configuration is
@@ -55,9 +53,8 @@ The `modeling_inkling2/` package adds the computations that Megatron-Core lacks:
   over all query blocks.
 - `vision.py`: the image encoder, a vision transformer with a class token, a
   learned position grid, 2D rotary embeddings, and LayerScale, followed by a 2x2
-  patch merge and a two-layer projection. Transformers 5.21 and 5.22 have no implementation
-  (Transformers adds one in v5.23.0), so this is a parameter-for-parameter port of the
-  reference encoder, which Bridge uses with every supported version. It takes patches already scaled to [-1, 1] (mean and standard deviation 0.5),
+  patch merge and a two-layer projection. This is a parameter-for-parameter port of the
+  reference encoder. It takes patches already scaled to [-1, 1] (mean and standard deviation 0.5),
   as the release's `processor_config.json` specifies.
 - `ops.py`: the AttnRes mixture, FP32-accumulated residual additions, the static and
   dynamic short convolutions, L2 clipping, the length-scaling factor, and the SiTU
@@ -141,9 +138,8 @@ SFT and LoRA on image-text CORD-v2. They
 dispatch the experts with HybridEP inside one NVL72 domain per expert-parallel group and
 freeze the image encoder on text data; image-text full SFT trains it.
 
-The release's `processor_config.json` names an `Inkling2Processor` and an
-`Inkling2ImageProcessor` but ships no implementation, and Transformers adds its own only in
-v5.23.0, so `data/` provides them. `Inkling2ImageProcessor`
+Bridge's `data/` provides the processor and image processor used by its image-text recipes.
+`Inkling2ImageProcessor`
 implements the release's settings:
 images keep their native size, are padded to a multiple of 40 pixels, rescaled by 1/255 and
 normalized with mean and standard deviation 0.5, and cut into 40x40-pixel patches repeated
@@ -154,9 +150,8 @@ images it stays within one level of Pillow's `LANCZOS` filter.
 `Inkling2Processor` renders conversations token for token as the release's chat template
 does, including a row's `tools` and the `reasoning_effort` in its `chat_template_kwargs`, with
 one `<|unused_200054|>` image placeholder per patch where the template writes
-one per image, and marks the assistant turns for the loss; it is registered with
-`AutoProcessor` for Bridge's `Inkling2Config`. From Transformers 5.23, `AutoProcessor`
-resolves Transformers' processor of the same name instead, so the image-text recipes name
+one per image, and marks the assistant turns for the loss. `AutoProcessor`
+resolves Transformers' native processor, so the image-text recipes name
 Bridge's through `dataset.hf_processor_class`, and `inkling2_collate_fn` rejects any other
 class. `Inkling2Config.image_token_id`, which the release's
 `config.json` leaves out, defaults to that placeholder (token 200054).

@@ -22,6 +22,9 @@ and on every gradient, including those of the relative logits and the sink.
 import pytest
 import torch
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.models.inkling.modeling_inkling2 import ops
 from megatron.bridge.models.inkling.modeling_inkling2.attention import (
     _eager_relative_sink_attention,

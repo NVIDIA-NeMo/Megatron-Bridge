@@ -23,6 +23,9 @@ import pytest
 import torch
 from safetensors import safe_open
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.models.inkling.inkling2_quantization import (
     companion_keys,
     dequantize_mxfp8,
