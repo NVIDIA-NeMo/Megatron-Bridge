@@ -105,7 +105,12 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
             gpu=args.gpu,
             protected_env_names=protected_env_names,
         )
-    return apply_one_gpu_per_rank_device_mapping(recipe)
+    recipe = apply_one_gpu_per_rank_device_mapping(recipe)
+    if args.use_gloo_process_groups is None:
+        recipe.dist.use_gloo_process_groups = bool(recipe.checkpoint.save or recipe.checkpoint.load)
+    else:
+        recipe.dist.use_gloo_process_groups = args.use_gloo_process_groups
+    return recipe
 
 
 def _prepare_perf_recipe(args, cli_overrides: list[str]):
