@@ -802,3 +802,17 @@ def test_qwen35_vl_perf_recipe_discovery_covers_the_cudnn_gdn_recipes() -> None:
     platforms = {factory.__module__.split(".")[-2] for factory in discovered}
     assert {"b200", "b300", "gb200", "gb300", "h100", "vrnvl72"} <= platforms
     assert any("122b" in factory.__name__ for factory in discovered)
+
+
+# Benchmarks that restore a library recipe's execution policy keep that recipe's RoPE setting.
+_LIBRARY_EXECUTION_POLICY_RECIPES = frozenset({"qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config"})
+
+
+@pytest.mark.parametrize("recipe_fn", _QWEN35_VL_PERF_RECIPES, ids=recipe_factory_id)
+def test_qwen35_vl_perf_recipes_fuse_rope(recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The benchmarks keep _benchmark_common's RoPE fusion: MRoPE and the vision 2D RoPE use the fused kernel."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    assert config.model.apply_rope_fusion is (recipe_fn.__name__ not in _LIBRARY_EXECUTION_POLICY_RECIPES)

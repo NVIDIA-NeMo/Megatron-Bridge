@@ -40,7 +40,9 @@ the BF16 language model it is therefore slightly more accurate than the unfused
 implementation, but not bitwise identical to it. The vision encoder follows the
 language model's setting. Inputs the kernel cannot take, such as tensors on the
 CPU, use the unfused implementation, with one warning per reason. Fusion is off
-by default.
+by default. The Qwen3.5-VL performance recipes turn it on, except the H100
+35B-A3B BF16 recipe, which keeps its library recipe's execution policy; the
+library recipes keep it off.
 
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
