@@ -281,7 +281,12 @@ def test_checkpoint_export_keeps_the_saved_architecture(tmp_path, release_dir):
 
     text = {key: value for key, value in TEXT.items() if key != "torch_dtype"}
     assert {key: getattr(rebuilt.text_config, key) for key in text} == dict(text, final_logit_softcapping=12.0)
-    assert rebuilt.vision_config == vision and rebuilt.image_token_id == 500
+    assert _vision_config_dict(rebuilt.vision_config) == vision and rebuilt.image_token_id == 500
+    if NATIVE_INKLING2:
+        # Transformers' own classes derive these from the reference unless the export writes the checkpoint's.
+        assert rebuilt.text_config.layer_types == ["hybrid_sliding" if (i + 1) % 6 else "hybrid" for i in range(7)]
+        assert rebuilt.vision_config.text_hidden_size == TEXT["hidden_size"]
+        assert rebuilt.vision_config.intermediate_size == int(vision["hidden_size"] * vision["mlp_ratio"])
     # The Megatron model holds neither the draft model nor the token IDs of the tokenizer.
     assert rebuilt.mtp_config == RELEASE_CONFIG["mtp_config"]
     assert rebuilt.eos_token_id == RELEASE_CONFIG["eos_token_id"]
@@ -291,6 +296,49 @@ def test_checkpoint_export_keeps_the_saved_architecture(tmp_path, release_dir):
     # Only the recorded source differs: the rebuilt config names the reference.
     source = ("extra_checkpoint_metadata",)
     assert _plain_fields(reimported, exclude=source) == _plain_fields(model_config, exclude=source)
+
+
+def test_export_writes_the_layer_layout_and_projection_width_that_transformers_checks(bridge, hf_config):
+    exported = Inkling2Bridge.megatron_to_hf_config(bridge.hf_config_to_model_config(hf_config))
+
+    local = set(TEXT["local_layer_ids"])
+    expected = ["hybrid_sliding" if layer in local else "hybrid" for layer in range(TEXT["num_hidden_layers"])]
+    assert exported["text_config"]["layer_types"] == expected
+    assert exported["text_config"]["moe_intermediate_size"] == exported["text_config"]["intermediate_size"]
+    assert exported["text_config"]["conv_kernel_size"] == exported["text_config"]["sconv_kernel_size"]
+    assert exported["vision_config"]["patch_size"] == VISION["native_patch_size"]
+    assert exported["vision_config"]["text_hidden_size"] == TEXT["hidden_size"]
+    # Whichever classes are registered build the exported config, the toy's depth and width included.
+    rebuilt = CONFIG_MAPPING["inkling2"].from_dict(exported)
+    assert rebuilt.text_config.num_hidden_layers == TEXT["num_hidden_layers"]
+    assert list(rebuilt.text_config.local_layer_ids) == TEXT["local_layer_ids"]
+
+
+def test_bridge_config_reads_the_field_names_transformers_writes():
+    layer_types = ["hybrid" if (layer + 1) % 4 == 0 else "hybrid_sliding" for layer in range(12)]
+    text = Inkling2TextConfig(
+        num_hidden_layers=12,
+        moe_intermediate_size=96,
+        conv_kernel_size=3,
+        max_position_embeddings=8192,
+        layer_types=layer_types,
+    )
+
+    assert (text.intermediate_size, text.sconv_kernel_size, text.model_max_length) == (96, 3, 8192)
+    assert text.local_layer_ids == [layer for layer in range(12) if (layer + 1) % 4]
+    assert "layer_types" not in text.to_dict()
+
+
+def test_vision_config_reads_the_keys_transformers_writes():
+    written = {
+        "patch_size": 14,
+        "spatial_merge_size": 2,
+        "hidden_size": 32,
+        "text_hidden_size": 64,
+        "hidden_act": "gelu",
+    }
+
+    assert _vision_config_dict(written) == {"native_patch_size": 14, "adapter_merge_size": 2, "hidden_size": 32}
 
 
 def test_model_without_the_image_encoder_exports_no_vision_config():

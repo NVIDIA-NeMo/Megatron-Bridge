@@ -65,6 +65,8 @@ VISION = {
     "mlp_ratio": 4.0,
     "posemb_grid_size": 4,
     "layer_norm_eps": 1e-05,
+    # Transformers' own Inkling2 config (v5.23.0) defaults this to the release's decoder width and checks it.
+    "text_hidden_size": HIDDEN,
 }
 TEXT_CONFIG = {
     "model_max_length": 4096,

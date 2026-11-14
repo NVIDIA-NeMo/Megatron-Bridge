@@ -15,10 +15,11 @@
 """Hugging Face configuration classes for Inkling2 checkpoints.
 
 The ``thinkingmachines/Inkling-2-Small`` release ships no configuration code. Transformers implements Inkling2 from
-v5.23.0, but the version Bridge pins does not (its ``inkling`` model is the first Inkling generation, a different
-architecture), so Bridge registers these classes under Transformers' model types, ``inkling2`` and
-``inkling2_text``. They only parse and serialize ``config.json``; the defaults are the release's values. With a
-Transformers version that implements Inkling2, its own classes stay registered.
+v5.23.0, which Bridge's lock file installs. Bridge also supports Transformers 5.21 and 5.22, which do not (their
+``inkling`` model is the first Inkling generation, a different architecture); with those, Bridge registers these
+classes under Transformers' model types, ``inkling2`` and ``inkling2_text``. They only parse and serialize
+``config.json``, with the release's values as defaults, and also read the field names that Transformers' own classes
+write. With Transformers 5.23, its own classes stay registered.
 """
 
 from typing import Any
@@ -78,6 +79,14 @@ class Inkling2TextConfig(PretrainedConfig):
         model_max_length: int = 1048576,
         **kwargs: Any,
     ) -> None:
+        # Transformers' own Inkling2 config (v5.23.0) writes three of these fields under its own names and describes
+        # the local layers per layer, so a config.json that it wrote reads the same here.
+        intermediate_size = kwargs.pop("moe_intermediate_size", intermediate_size)
+        sconv_kernel_size = kwargs.pop("conv_kernel_size", sconv_kernel_size)
+        model_max_length = kwargs.pop("max_position_embeddings", model_max_length)
+        layer_types = kwargs.pop("layer_types", None)
+        if local_layer_ids is None and layer_types is not None:
+            local_layer_ids = [layer for layer, kind in enumerate(layer_types) if kind == "hybrid_sliding"]
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads

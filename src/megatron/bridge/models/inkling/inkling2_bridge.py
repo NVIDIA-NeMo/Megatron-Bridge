@@ -63,6 +63,8 @@ _VISION_KEYS = (
     "posemb_grid_size",
     "layer_norm_eps",
 )
+# Release vision_config keys that Transformers' own Inkling2 vision config (v5.23.0) names differently.
+_VISION_KEY_ALIASES = {"native_patch_size": "patch_size", "adapter_merge_size": "spatial_merge_size"}
 _EXPERT_SUFFIXES = (".mlp.experts.w13_weight", ".mlp.experts.w2_weight")
 _SCALE_SUFFIXES = ("_scale", "_amax", "_outer_scale_denominator")
 # Tensors the model holds in FP32 and the release stores in FP32: the AttnRes queries and the router biases.
@@ -88,13 +90,22 @@ def _vision_config_dict(vision_config: Mapping[str, Any] | PretrainedConfig | No
     """Return the image encoder settings under the release's keys.
 
     Bridge's configuration class keeps ``vision_config`` as the release's dict; Transformers' own Inkling2 classes
-    hold it as a config object that reads the same keys as attributes.
+    hold it as a config object that reads the same keys as attributes, and write two of them under their own names,
+    which a dict read here may use. Keys the encoder does not read, such as the decoder width that Transformers'
+    classes add, are left out.
     """
     if vision_config is None:
         return {}
-    if isinstance(vision_config, Mapping):
-        return dict(vision_config)
-    return {key: getattr(vision_config, key) for key in _VISION_KEYS}
+    if not isinstance(vision_config, Mapping):
+        return {key: getattr(vision_config, key) for key in _VISION_KEYS}
+    settings = {}
+    for key in _VISION_KEYS:
+        alias = _VISION_KEY_ALIASES.get(key)
+        if key in vision_config:
+            settings[key] = vision_config[key]
+        elif alias in vision_config:
+            settings[key] = vision_config[alias]
+    return settings
 
 
 class _InterleavedGatedExpertMapping(FusedGatedExpertMapping):
@@ -255,10 +266,12 @@ class Inkling2Bridge(MegatronModelBridge):
             raise TypeError(f"Expected Inkling2ModelConfig, got {type(model_config).__name__}.")
         transformer = model_config.transformer
         n_floor = transformer.inkling2_log_scaling_n_floor
+        num_blocks = transformer.num_layers // 2
+        local_layers = set(transformer.inkling2_local_layers)
         text_config = {
             "hidden_size": transformer.hidden_size,
             # Each decoder block is a Hybrid attention layer followed by a MoE layer.
-            "num_hidden_layers": transformer.num_layers // 2,
+            "num_hidden_layers": num_blocks,
             "num_attention_heads": transformer.num_attention_heads,
             "num_key_value_heads": transformer.num_query_groups,
             "head_dim": transformer.kv_channels,
@@ -295,13 +308,29 @@ class Inkling2Bridge(MegatronModelBridge):
             "mlp_up_softcap": transformer.inkling2_mlp_up_softcap,
             "route_scale": transformer.moe_router_topk_scaling_factor,
             "use_gate_bias": transformer.moe_router_enable_expert_bias,
+            # Transformers' own Inkling2 config (v5.23.0) holds two of these fields under other names and derives a
+            # per-layer layout. AutoBridge.from_auto_config keeps only the keys of the reference config, so these are
+            # written in both layouts, and the one the reference uses is kept.
+            "moe_intermediate_size": transformer.moe_ffn_hidden_size,
+            "conv_kernel_size": transformer.inkling2_sconv_kernel_size,
+            "layer_types": ["hybrid_sliding" if layer in local_layers else "hybrid" for layer in range(num_blocks)],
         }
+        # A model built without the image encoder exports without one.
+        vision_config = dict(model_config.vision_config) if model_config.vision_config else None
+        if vision_config is not None:
+            # The same for the image encoder: Transformers' layout renames two keys, derives the MLP width, and
+            # records the decoder width, which it checks against the decoder.
+            for key, alias in _VISION_KEY_ALIASES.items():
+                if key in vision_config:
+                    vision_config[alias] = vision_config[key]
+            if "hidden_size" in vision_config and "mlp_ratio" in vision_config:
+                vision_config["intermediate_size"] = int(vision_config["hidden_size"] * vision_config["mlp_ratio"])
+            vision_config["text_hidden_size"] = transformer.hidden_size
         hf_config = {
             "architectures": ["Inkling2ForConditionalGeneration"],
             "model_type": "inkling2",
             "text_config": text_config,
-            # A model built without the image encoder exports without one.
-            "vision_config": dict(model_config.vision_config) if model_config.vision_config else None,
+            "vision_config": vision_config,
             "tie_word_embeddings": model_config.share_embeddings_and_output_weights,
         }
         if model_config.image_token_id is not None:
