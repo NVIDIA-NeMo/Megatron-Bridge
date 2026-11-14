@@ -359,6 +359,7 @@ items:
           --hf-model work/model-verification/nemotron-3-super-120b-a12b/h100-sft-hf
           --prompt "Name the capital of France and explain its role in one sentence."
           --max-new-tokens 45 --chat-template --disable-thinking
+          --device cuda --device-map balanced --require-gpu-only
       last_verified: null
       expected_result: >
         The H100 step-100 SFT checkpoint must export to indexed BF16

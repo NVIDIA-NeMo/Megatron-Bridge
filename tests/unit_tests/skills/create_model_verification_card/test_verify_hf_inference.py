@@ -136,6 +136,9 @@ def test_sharded_load_uses_device_map_without_moving_model(monkeypatch):
         def modules(self):
             return iter((self,))
 
+        def get_submodule(self, name):
+            return torch.nn.Identity()
+
     transformers = types.ModuleType("transformers")
     transformers.AutoModelForCausalLM = _LoadedModel
     transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: _Tokenizer())
@@ -168,6 +171,46 @@ def test_sharded_load_uses_device_map_without_moving_model(monkeypatch):
     ]
 
 
+def test_device_map_shards_run_with_their_own_current_cuda_device(monkeypatch):
+    module = _load_module()
+    model = torch.nn.Module()
+    model.embed = torch.nn.Linear(2, 2)
+    model.layer = torch.nn.Linear(2, 2)
+    model.offloaded = torch.nn.Linear(2, 2)
+    model.hf_device_map = {"embed": 0, "layer": "cuda:1", "offloaded": "cpu"}
+
+    class _LoadedModel:
+        @staticmethod
+        def from_pretrained(model_name, **kwargs):
+            return model, {key: [] for key in module._LOADING_ISSUE_KEYS}
+
+    transformers = types.ModuleType("transformers")
+    transformers.AutoModelForCausalLM = _LoadedModel
+    transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: _Tokenizer())
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    current_devices = []
+    monkeypatch.setattr(torch.cuda, "set_device", current_devices.append)
+    args = types.SimpleNamespace(
+        image=None,
+        hf_model="model",
+        trust_remote_code=False,
+        dtype="float32",
+        device_map="balanced",
+        tp_plan=None,
+        max_gpu_memory_gib=None,
+        device="cuda",
+        require_gpu_only=False,
+    )
+
+    _, loaded_model, _ = module._load_runtime(args)
+    inputs = torch.ones(1, 2)
+    loaded_model.layer(inputs)
+    loaded_model.embed(inputs)
+    loaded_model.offloaded(inputs)
+
+    assert current_devices == [1, 0]
+
+
 def test_gpu_memory_cap_bounds_every_gpu_and_offloads_to_cpu(monkeypatch):
     module = _load_module()
     calls = []
@@ -185,6 +228,9 @@ def test_gpu_memory_cap_bounds_every_gpu_and_offloads_to_cpu(monkeypatch):
 
         def modules(self):
             return iter((self,))
+
+        def get_submodule(self, name):
+            return torch.nn.Identity()
 
     transformers = types.ModuleType("transformers")
     transformers.AutoModelForCausalLM = _LoadedModel
