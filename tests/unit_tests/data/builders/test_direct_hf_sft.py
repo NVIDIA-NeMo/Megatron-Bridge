@@ -486,6 +486,56 @@ def test_processor_kwargs_cannot_override_trust_policy():
         config.validate()
 
 
+class _NamedProcessor:
+    calls = []
+
+    @classmethod
+    def from_pretrained(cls, path, **kwargs):
+        cls.calls.append((path, kwargs))
+        return _Tokenizer()
+
+
+def test_processor_loading_uses_the_named_class(monkeypatch):
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise AssertionError("AutoProcessor must not choose a named processor class")
+
+    monkeypatch.setattr(builder_module, "AutoProcessor", _AutoProcessor)
+    monkeypatch.setattr(_NamedProcessor, "calls", [])
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        hf_processor_path="org/processor",
+        hf_processor_class=f"{__name__}._NamedProcessor",
+        hf_processor_kwargs={"revision": "0123456789abcdef"},
+    )
+    config.validate()
+
+    processor = load_direct_hf_sft_processor(config, tokenizer=None)
+
+    assert isinstance(processor, _Tokenizer)
+    assert _NamedProcessor.calls == [("org/processor", {"trust_remote_code": False, "revision": "0123456789abcdef"})]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"hf_processor_class": "Processor"}, "must be an import path"),
+        ({"hf_processor_class": "package.Processor", "hf_processor_path": None}, "requires hf_processor_path"),
+    ],
+)
+def test_named_processor_class_is_validated(overrides, message):
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        **{"hf_processor_path": "org/processor", **overrides},
+    )
+
+    with pytest.raises(ValueError, match=message):
+        config.validate()
+
+
 def test_processor_loading_falls_back_to_tokenizer(monkeypatch):
     class _AutoProcessor:
         @staticmethod
