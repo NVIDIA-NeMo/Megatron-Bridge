@@ -38,10 +38,9 @@ embeddings for context parallelism. Callers must not pre-slice those inputs.
 
 ## Loading configuration
 
-Loading the checkpoint natively needs Transformers 5.20 or later, which provides
-`transformers.models.muse_spark`. Bridge registers the checkpoint's `muse_spark` config
-type when an installed Transformers build provides the module without registering it;
-source files remain unchanged.
+Every supported Transformers release provides `transformers.models.muse_spark`. Bridge
+registers the checkpoint's `muse_spark` config type when Transformers does not register
+it; source files remain unchanged.
 
 ```python
 from megatron.bridge import AutoBridge
@@ -92,7 +91,7 @@ model's output head, including its output multiplier and tanh soft-cap. It
 preserves parameter names and values, including the untied head, and delegates HF
 experts-backend detection to the Transformers model. This file is used only by
 exported HF checkpoints, never by the Megatron forward pass. Load the exported
-model with Transformers 5.20 or later and the exported local code:
+model with any supported Transformers release and the exported local code:
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer

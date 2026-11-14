@@ -287,6 +287,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 894d55832e58b5865a9a27756a63fafa70ab01bb  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 4
@@ -309,24 +310,25 @@ items:
         checkpoint.load=null checkpoint.save=null
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-13
+      last_verified: 2026-10-28
       metrics:
-        initial_loss: 6.666666
-        final_loss: 1.238030
-        last_10_steps_step_time_ms_avg: 24388.780
-        last_10_steps_model_tflops_per_gpu_avg: 5.070
-        last_10_steps_tokens_per_second_per_gpu_avg: 111.964
+        initial_loss: 6.245447
+        final_loss: 1.232932
+        last_10_steps_step_time_ms_avg: 5966.370
+        last_10_steps_model_tflops_per_gpu_avg: 24.050
+        last_10_steps_tokens_per_second_per_gpu_avg: 457.676
       expected_result: >
-        Completed 20 long-context full-SFT optimizer steps from the imported
-        checkpoint on 48x H100 with 32K sequence length, immutable Tulu3
-        selection, assistant-token masking, offline packing, TP2/SP, CP4 with
-        a2a context-parallel communication, PP6, EP4, disabled cross-entropy
-        and bias-activation fusions, and selective MoE-activation recompute.
-        All 20 optimizer-step rows are present exactly once with finite losses,
-        zero skipped iterations, and zero NaN iterations. Loss decreases from
-        6.666666 to 1.238030, all five metrics are recorded, and no checkpoint
-        is saved because this bounded long-context verification run disables
-        checkpoint output.
+        On 48x H100, run in the NeMo 26.10 release-candidate container (rc10)
+        with Bridge at this item's commit, completed 20 long-context full-SFT
+        optimizer steps from the imported checkpoint with 32K sequence length,
+        immutable Tulu3 selection, assistant-token masking, offline packing,
+        TP2/SP, CP4 with a2a context-parallel communication, PP6, EP4, disabled
+        cross-entropy and bias-activation fusions, and selective MoE-activation
+        recompute. All 20 optimizer-step rows are present exactly once with
+        finite losses, zero skipped iterations, and zero NaN iterations. Loss
+        decreases from 6.245447 to 1.232932, steps 11-20 averaged 5,966.370 ms
+        and 24.050 model TFLOP/s/GPU, and no checkpoint is saved because this
+        bounded long-context verification run disables checkpoint output.
 
   peft:
     H100:

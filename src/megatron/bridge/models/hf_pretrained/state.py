@@ -512,6 +512,7 @@ class SafeTensorsStateSource(StateSource):
         # otherwise re-opens the shard file per key on every refit (~150k opens for
         # DeepSeek-V4-Pro). Both can be disabled through environment variables.
         self._small_tensor_cache: Dict[str, torch.Tensor] = {}
+        self._read_once_keys: set[str] = set()
         self._open_handles: Dict[str, Any] = {}
         self._open_handle_keys: dict[str, set[str]] = {}
         self._cache_small = os.environ.get("MBRIDGE_STATE_CACHE_SMALL_TENSORS", "1") == "1"
@@ -737,9 +738,13 @@ class SafeTensorsStateSource(StateSource):
         return keys
 
     def _maybe_cache(self, key: str, tensor: torch.Tensor) -> None:
-        # Keep a private copy: callers may modify the tensors they get back in place.
-        if self._cache_small and tensor.numel() <= self._small_numel:
+        # Cache only keys read again; keep a private copy since callers may modify tensors in place.
+        if not self._cache_small or tensor.numel() > self._small_numel:
+            return
+        if key in self._read_once_keys:
             self._small_tensor_cache[key] = tensor.clone()
+        else:
+            self._read_once_keys.add(key)
 
     def _invalidate_handle(self, file_path: Path) -> None:
         """Drop a reused handle so the next access re-reads the shard header (e.g. after a retry)."""
@@ -798,7 +803,12 @@ class SafeTensorsStateSource(StateSource):
                             for key in keys_in_file:
                                 source_key = (self.key_prefix or "") + key
                                 if source_key in file_keys and key not in loaded_tensors:
-                                    loaded_tensors[key] = f.get_tensor(source_key)
+                                    if self._reuse_handles and self._cache_small and key in self._read_once_keys:
+                                        # reused handles share pages that callers may have modified in place
+                                        with safe_open(file_path, framework="pt", device="cpu") as fresh:
+                                            loaded_tensors[key] = fresh.get_tensor(source_key)
+                                    else:
+                                        loaded_tensors[key] = f.get_tensor(source_key)
                                     self._maybe_cache(key, loaded_tensors[key])
                                     remaining_keys.discard(key)
                         still_missing = [k for k in keys_in_file if k in remaining_keys]

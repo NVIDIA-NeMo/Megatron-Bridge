@@ -198,7 +198,11 @@ items:
         skipped or NaN iterations. The final ten steps average 27330.230 ms and
         251.590 TFLOP/s/GPU. The resolved configuration persists, and complete
         iter_0000050 and iter_0000100 checkpoints each contain 64 distributed
-        rank shards plus checkpoint metadata and training state.
+        rank shards plus checkpoint metadata and training state. Launches must
+        export TORCHINDUCTOR_COMPILE_THREADS=1 before Python starts (train.sh
+        forwards it with --env TORCHINDUCTOR_COMPILE_THREADS): on Python 3.12
+        before 3.12.8, Inductor's forked compile-worker pool can deadlock in the
+        long first step (pytorch/pytorch#200848).
 
     GB200:
       status: unverified
@@ -359,6 +363,7 @@ items:
           --hf-model work/model-verification/nemotron-3-super-120b-a12b/h100-sft-hf
           --prompt "Name the capital of France and explain its role in one sentence."
           --max-new-tokens 45 --chat-template --disable-thinking
+          --device cuda --device-map balanced --require-gpu-only
       last_verified: null
       expected_result: >
         The H100 step-100 SFT checkpoint must export to indexed BF16
@@ -609,6 +614,10 @@ items:
         configuration, and saves a complete iter_0000100 checkpoint. Staging
         the expanded precision-aware Adam state on CPU during checkpoint load
         and save is execution-only; checkpoint values and dtypes are unchanged.
+        Launches must export TORCHINDUCTOR_COMPILE_THREADS=1 before Python
+        starts (train.sh forwards it with --env TORCHINDUCTOR_COMPILE_THREADS):
+        on Python 3.12 before 3.12.8, Inductor's forked compile-worker pool can
+        deadlock in the long first step (pytorch/pytorch#200848).
 
     GB200:
       status: unverified

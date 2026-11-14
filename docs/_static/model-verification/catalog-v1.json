@@ -5026,7 +5026,7 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "nemotron-3-super-120b-a12b-pretrain-h100",
-          "expected_result": "On exactly 64 H100s, the BF16 support run completes 100 bounded RP2 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. Loss remains finite from 12.19921 to 5.705510 with zero skipped or NaN iterations. The final ten steps average 27330.230 ms and 251.590 TFLOP/s/GPU. The resolved configuration persists, and complete iter_0000050 and iter_0000100 checkpoints each contain 64 distributed rank shards plus checkpoint metadata and training state.\n",
+          "expected_result": "On exactly 64 H100s, the BF16 support run completes 100 bounded RP2 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. Loss remains finite from 12.19921 to 5.705510 with zero skipped or NaN iterations. The final ten steps average 27330.230 ms and 251.590 TFLOP/s/GPU. The resolved configuration persists, and complete iter_0000050 and iter_0000100 checkpoints each contain 64 distributed rank shards plus checkpoint metadata and training state. Launches must export TORCHINDUCTOR_COMPILE_THREADS=1 before Python starts (train.sh forwards it with --env TORCHINDUCTOR_COMPILE_THREADS): on Python 3.12 before 3.12.8, Inductor's forked compile-worker pool can deadlock in the long first step (pytorch/pytorch#200848).\n",
           "hardware": "H100",
           "last_verified": "2026-11-06",
           "metrics": {
@@ -5161,7 +5161,7 @@
           ],
           "commands": [
             "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 --hf-revision d51eab0d1f979ebc26b546e634a04f450d99158e --megatron-path work/model-verification/nemotron-3-super-120b-a12b/h100-sft/iter_0000100 --hf-path work/model-verification/nemotron-3-super-120b-a12b/h100-sft-hf --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --tp 8 --pp 1 --ep 16 --etp 1",
-            "uv run python skills/create-model-verification-card/scripts/verify_hf_inference.py --hf-model work/model-verification/nemotron-3-super-120b-a12b/h100-sft-hf --prompt \"Name the capital of France and explain its role in one sentence.\" --max-new-tokens 45 --chat-template --disable-thinking"
+            "uv run python skills/create-model-verification-card/scripts/verify_hf_inference.py --hf-model work/model-verification/nemotron-3-super-120b-a12b/h100-sft-hf --prompt \"Name the capital of France and explain its role in one sentence.\" --max-new-tokens 45 --chat-template --disable-thinking --device cuda --device-map balanced --require-gpu-only"
           ],
           "dimensions": {},
           "enabled_features": {},
@@ -5365,7 +5365,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-super-120b-a12b-checkpoint-resume-h100",
-          "expected_result": "The direct H100 continuation restores model, optimizer, scheduler, data-order, and RNG state from iter_0000050, executes exactly steps 51-100 into a distinct output root with finite loss and zero skipped or NaN iterations, matches both declared loss sentinels against the uninterrupted reference, records all five metrics, persists the resolved configuration, and saves a complete iter_0000100 checkpoint. Staging the expanded precision-aware Adam state on CPU during checkpoint load and save is execution-only; checkpoint values and dtypes are unchanged.\n",
+          "expected_result": "The direct H100 continuation restores model, optimizer, scheduler, data-order, and RNG state from iter_0000050, executes exactly steps 51-100 into a distinct output root with finite loss and zero skipped or NaN iterations, matches both declared loss sentinels against the uninterrupted reference, records all five metrics, persists the resolved configuration, and saves a complete iter_0000100 checkpoint. Staging the expanded precision-aware Adam state on CPU during checkpoint load and save is execution-only; checkpoint values and dtypes are unchanged. Launches must export TORCHINDUCTOR_COMPILE_THREADS=1 before Python starts (train.sh forwards it with --env TORCHINDUCTOR_COMPILE_THREADS): on Python 3.12 before 3.12.8, Inductor's forked compile-worker pool can deadlock in the long first step (pytorch/pytorch#200848).\n",
           "hardware": "H100",
           "last_verified": "2026-11-06",
           "metrics": {
@@ -8130,7 +8130,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "a8038f6d99d8ade33e1b715ba79bc9185b073e59",
+          "bridge_commit": "894d55832e58b5865a9a27756a63fafa70ab01bb",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -8149,15 +8149,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "gpt-oss-120b-sft-long-context-h100",
-          "expected_result": "Completed 20 long-context full-SFT optimizer steps from the imported checkpoint on 48x H100 with 32K sequence length, immutable Tulu3 selection, assistant-token masking, offline packing, TP2/SP, CP4 with a2a context-parallel communication, PP6, EP4, disabled cross-entropy and bias-activation fusions, and selective MoE-activation recompute. All 20 optimizer-step rows are present exactly once with finite losses, zero skipped iterations, and zero NaN iterations. Loss decreases from 6.666666 to 1.238030, all five metrics are recorded, and no checkpoint is saved because this bounded long-context verification run disables checkpoint output.\n",
+          "expected_result": "On 48x H100, run in the NeMo 26.10 release-candidate container (rc10) with Bridge at this item's commit, completed 20 long-context full-SFT optimizer steps from the imported checkpoint with 32K sequence length, immutable Tulu3 selection, assistant-token masking, offline packing, TP2/SP, CP4 with a2a context-parallel communication, PP6, EP4, disabled cross-entropy and bias-activation fusions, and selective MoE-activation recompute. All 20 optimizer-step rows are present exactly once with finite losses, zero skipped iterations, and zero NaN iterations. Loss decreases from 6.245447 to 1.232932, steps 11-20 averaged 5,966.370 ms and 24.050 model TFLOP/s/GPU, and no checkpoint is saved because this bounded long-context verification run disables checkpoint output.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-13",
+          "last_verified": "2026-10-28",
           "metrics": {
-            "final_loss": 1.23803,
-            "initial_loss": 6.666666,
-            "last_10_steps_model_tflops_per_gpu_avg": 5.07,
-            "last_10_steps_step_time_ms_avg": 24388.78,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 111.964
+            "final_loss": 1.232932,
+            "initial_loss": 6.245447,
+            "last_10_steps_model_tflops_per_gpu_avg": 24.05,
+            "last_10_steps_step_time_ms_avg": 5966.37,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 457.676
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.H100",

@@ -42,10 +42,8 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import transformers
 from megatron.core.activations import squared_relu
 from megatron.core.transformer.enums import AttnBackend
-from packaging.version import Version
 from safetensors.torch import save_file
 from transformers import PretrainedConfig
 
@@ -554,18 +552,12 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
 
     @staticmethod
     def _hf_language_config(hf_config):
-        # Remote-code checkpoints retain llm_config, including on older HF
-        # versions. Do not force those customers onto the native implementation.
+        # Remote-code checkpoints keep llm_config. Do not force those customers
+        # onto the native implementation.
         legacy_config = getattr(hf_config, "llm_config", None)
         if legacy_config is not None:
             return legacy_config
-        text_config = getattr(hf_config, "text_config", None)
-        if text_config is not None and Version(transformers.__version__) < Version("5.18.0"):
-            raise ValueError(
-                "Native Nemotron 3.5 Super VL conversion requires Transformers >=5.18.0; "
-                "use trust_remote_code=True with the original checkpoint on older versions."
-            )
-        return text_config
+        return getattr(hf_config, "text_config", None)
 
     @classmethod
     def _validate_shared_mtp_config(cls, llm_config) -> None:
