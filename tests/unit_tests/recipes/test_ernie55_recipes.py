@@ -19,13 +19,6 @@ validation (with the GPU-only checks stubbed), and the learning rate and weight 
 each parameter group match the reference's schedule.
 """
 
-import pytest
-
-
-# ERNIE 5.5 is pinned to Megatron-Core dev and cannot run on Megatron-Core main, which CI uses, so this test
-# module is skipped unconditionally for now.
-pytest.skip("ERNIE 5.5 is pinned to Megatron-Core dev and cannot run on Megatron-Core main.", allow_module_level=True)
-
 import contextlib
 import inspect
 import json
@@ -35,6 +28,7 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from tests.unit_tests.models.ernie.ernie55_test_utils import allow_conversion_imports_without_te
@@ -65,6 +59,7 @@ from megatron.bridge.models.ernie.ernie55_data import Ernie55SFTDataset, Ernie55
 from megatron.bridge.models.ernie.ernie55_step import ernie55_loss_function
 from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import load_cp_layout_api
 from megatron.bridge.recipes.ernie import ernie55 as recipes
+from megatron.bridge.recipes.ernie.h100 import ernie55 as h100_recipes
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import (
     OptimizerConfigOverrideProviderContext,
@@ -498,3 +493,165 @@ class TestRuntimeValidation:
             steps_taken = steps
             for group in groups:
                 assert group["lr"] == pytest.approx(expected_lr, rel=1e-9, abs=1e-15), steps
+
+
+# The H100 recipe: 16 nodes of 8 GPUs, TP1 PP8 CP1 EP16.
+H100_RECIPE = "ernie55_sft_128gpu_h100_bf16_config"
+H100_WORLD_SIZE = 128
+
+H100_RECIPE_SETTINGS = {
+    "model.hybrid_layer_pattern": FULL_SIZE_PATTERN,
+    "model.num_moe_experts": 256,
+    "model.pipeline_model_parallel_size": 8,
+    "model.pipeline_dtype": torch.float32,
+    "mixed_precision.pipeline_dtype": torch.float32,
+    "model.context_parallel_size": 1,
+    "model.expert_model_parallel_size": 16,
+    "model.seq_length": 4096,
+    "model.deterministic_mode": False,
+    "model.ernie_reference_rmsnorm": False,
+    "train.train_iters": 8260,
+    "train.global_batch_size": 32,
+    "scheduler.lr_warmup_iters": 412,
+    "scheduler.lr_decay_iters": 8260,
+    "dataset.seq_length": 4096,
+    "dataset.truncation": "split",
+    "dataset.pack": True,
+    "dataset.pad_to_multiple_of": 2,
+    "dataset.mock_document_lengths": (4096,),
+    "dataset.mock_prompt_fraction": 0.25,
+    "checkpoint.pretrained_checkpoint": None,
+    "checkpoint.save_interval": 8260,
+    "checkpoint.save_optim": False,
+    "checkpoint.save_rng": False,
+}
+
+
+@needs_cp
+class TestH100Recipe:
+    """The H100 recipe: the reference's settings in a layout for 16 nodes of 8 H100 GPUs."""
+
+    def test_settings(self):
+        cfg = getattr(h100_recipes, H100_RECIPE)()
+        assert isinstance(cfg.model, Ernie55ModelConfig)
+        expected = {**REFERENCE_SETTINGS, **H100_RECIPE_SETTINGS}
+        actual = {path: _get(cfg, path) for path in expected}
+        assert actual == expected
+
+    def test_launch_environment(self):
+        assert getattr(h100_recipes, H100_RECIPE)().env_vars == RECIPE_ENVIRONMENT
+
+    def test_exported_like_the_other_h100_recipes(self):
+        # From the family's h100 package and from megatron.bridge.recipes, where run_recipe.py looks a name up.
+        import megatron.bridge.recipes as library
+        from megatron.bridge.recipes.ernie import h100
+
+        factory = getattr(h100_recipes, H100_RECIPE)
+        assert h100.__all__ == [H100_RECIPE]
+        assert getattr(h100, H100_RECIPE) is factory
+        assert getattr(library, H100_RECIPE) is factory
+
+    def test_the_schedule_has_the_gb300_recipes_token_capacity(self):
+        # Tokens of full rows: the GB300 recipe has one sample per row, this one packs samples into rows.
+        def tokens(cfg, steps):
+            return steps * cfg.train.global_batch_size * cfg.model.seq_length
+
+        h100, gb300 = getattr(h100_recipes, H100_RECIPE)(), getattr(recipes, RECIPE)()
+        assert tokens(h100, h100.train.train_iters) == tokens(gb300, gb300.train.train_iters)
+        assert tokens(h100, h100.scheduler.lr_warmup_iters) == tokens(gb300, gb300.scheduler.lr_warmup_iters)
+
+    def test_the_checkpoint_comes_from_hf_path(self, tmp_path):
+        path = str(_checkpoint_dir(tmp_path, n_routed_experts=128))
+        cfg = getattr(h100_recipes, H100_RECIPE)(hf_path=path)
+        assert cfg.checkpoint.pretrained_checkpoint == path
+        assert cfg.model.num_moe_experts == 128
+
+    def test_the_checkpoint_comes_from_the_environment_too(self, tmp_path, monkeypatch):
+        path = str(_checkpoint_dir(tmp_path))
+        monkeypatch.setenv(recipes.ERNIE55_HF_PATH_ENV, path)
+        assert getattr(h100_recipes, H100_RECIPE)().checkpoint.pretrained_checkpoint == path
+
+    def test_synthetic_rows(self):
+        config = getattr(h100_recipes, H100_RECIPE)().dataset
+        assert isinstance(config, Ernie55SFTDatasetConfig)
+        config.finalize()
+        row = Ernie55SFTDataset(config, num_items=1, seed_offset=0)[0]
+        assert [len(tokens) for tokens, _ in row] == [4096]
+
+    def test_file_samples_are_split_and_packed_into_rows(self, tmp_path):
+        # The 5000-token sample is split into 4096 + 904 tokens. Padded to a multiple of 2 the pieces take 4096,
+        # 3002, 2000, 1000, 904 and 96 tokens, which first fit (longest first) puts in three rows:
+        # 4096 / 3002 + 1000 / 2000 + 904 + 96. The 95-token sample pads to 96 and does not fit the 94 tokens
+        # the second row has left.
+        config = getattr(h100_recipes, H100_RECIPE)().dataset
+        path = tmp_path / "train.jsonl"
+        path.write_text(
+            "".join(
+                json.dumps({"input_ids": [1] * length, "labels": [1] * length}) + "\n"
+                for length in (3001, 5000, 1000, 95, 2000)
+            )
+        )
+        config.path = str(path)
+        config.finalize()
+        dataset = Ernie55SFTDataset(config, num_items=1, seed_offset=0)
+        lengths = sorted(sorted(len(tokens) for tokens, _ in dataset[index]) for index in range(len(dataset)))
+        assert lengths == [[95, 904, 2000], [1000, 3001], [4096]]
+
+
+@needs_hook
+@needs_cp
+class TestH100RuntimeValidation:
+    def test_runtime_config_update(self, gpu_free_runtime, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *args, **kwargs: (9, 0))
+        cfg = getattr(h100_recipes, H100_RECIPE)()
+        os.environ["WORLD_SIZE"] = str(H100_WORLD_SIZE)
+        runtime_config_update(cfg)
+
+        global_batch_size = cfg.train.global_batch_size
+        # Eight stages of 16 data-parallel ranks; EP16 spans a stage's ranks, and a rank runs 2 micro-batches a step.
+        assert cfg.data_parallel_size == H100_WORLD_SIZE // 8
+        assert cfg.model.expert_model_parallel_size == cfg.data_parallel_size
+        assert global_batch_size == 2 * cfg.train.micro_batch_size * cfg.data_parallel_size
+        assert cfg.scheduler.lr_warmup_steps == cfg.scheduler.lr_warmup_iters * global_batch_size
+        assert cfg.scheduler.lr_decay_steps == cfg.train.train_iters * global_batch_size
+        assert cfg.optimizer.optimizer == "muon"
+        assert cfg.optimizer.use_layer_wise_distributed_optimizer
+        transformer = cfg.model.transformer
+        assert transformer.pipeline_model_parallel_size == 8
+        # The 43 ERNIE layers are split 6, 6, 6, 5, 5, 5, 5, 5; the MTP depth stays after the last stage.
+        assert cfg.model.hybrid_layer_pattern.count("|") == 7
+        assert cfg.model.ernie55_layout().stage_boundaries == (6, 12, 18, 23, 28, 33, 38)
+        # The stages exchange fp32 residual streams of data-dependent length; the parameters stay bf16.
+        assert transformer.pipeline_dtype == torch.float32
+        assert transformer.params_dtype == torch.bfloat16
+        assert transformer.variable_seq_lengths is True
+        for variable, value in RECIPE_ENVIRONMENT.items():
+            assert os.environ[variable] == str(value)
+        assert gpu_free_runtime == []
+
+    def test_launch_script_overrides(self, gpu_free_runtime):
+        # The overrides examples/models/ernie55/slurm_train.sh passes to run_recipe.py.
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        overrides = [
+            "checkpoint.save=/workspace/checkpoints/run",
+            "checkpoint.load=/workspace/checkpoints/run",
+            "logger.tensorboard_dir=/workspace/logs/run/tensorboard",
+            "dataset.path=/data/train.jsonl",
+            "train.train_iters=20",
+            # EXTRA_OVERRIDES of a run in segments.
+            "checkpoint.save_optim=true",
+        ]
+        cfg = process_config_with_overrides(getattr(h100_recipes, H100_RECIPE)(), cli_overrides=overrides)
+        os.environ["WORLD_SIZE"] = str(H100_WORLD_SIZE)
+        runtime_config_update(cfg)
+        assert isinstance(cfg.dataset, Ernie55SFTDatasetConfig)
+        assert (cfg.dataset.path, cfg.dataset.pack, cfg.dataset.seq_length) == ("/data/train.jsonl", True, 4096)
+        assert cfg.train.train_iters == 20
+        # The schedule and the save interval keep the recipe's length; the run still saves when it ends.
+        assert cfg.scheduler.lr_decay_iters == H100_RECIPE_SETTINGS["scheduler.lr_decay_iters"]
+        assert cfg.checkpoint.save_interval == H100_RECIPE_SETTINGS["checkpoint.save_interval"]
+        assert cfg.checkpoint.save_optim is True
+        # The fp32 pipeline dtype survives the overrides' round trip through OmegaConf.
+        assert cfg.mixed_precision.pipeline_dtype == torch.float32
+        assert cfg.model.transformer.pipeline_dtype == torch.float32

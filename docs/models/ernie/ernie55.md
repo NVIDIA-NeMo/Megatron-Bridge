@@ -8,3 +8,4 @@ Megatron Bridge supports ERNIE 5.5 (`model_type: ernie5_5_moe`) with Hugging Fac
 and supervised fine-tuning on NVIDIA GB300. For requirements, data preparation, training and export to Hugging Face
 format, see the
 [ERNIE 5.5 examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/ernie55/README.md).
+The examples also cover a fine-tuning recipe for NVIDIA H100.
