@@ -82,12 +82,27 @@ def validate_rope_fusion_compatibility(config: TransformerConfig) -> bool:
 
     # Check if position embedding type is RoPE (similar to arguments.py logic)
     position_embedding_type = getattr(config, "position_embedding_type", "learned_absolute")
-    if position_embedding_type != "rope":
+    if position_embedding_type not in ("rope", "yarn"):
         if LOG_FUSION_DISABLE:
             logger.warning(
-                f"apply_rope_fusion is only compatible with RoPE position embeddings. "
+                f"apply_rope_fusion is only compatible with RoPE position embeddings (rope or yarn). "
                 f"Current position_embedding_type: {position_embedding_type}. "
                 f"Consider disabling apply_rope_fusion."
+            )
+        return False
+
+    # With RoPE fusion, Megatron-Core moves YaRN's q/k scale into the softmax scale, which needs RoPE
+    # on the whole head. (MLA handles YaRN separately.)
+    rotary_percent = getattr(config, "rotary_percent", 1.0)
+    if (
+        position_embedding_type == "yarn"
+        and rotary_percent != 1.0
+        and not getattr(config, "multi_latent_attention", False)
+    ):
+        if LOG_FUSION_DISABLE:
+            logger.warning(
+                f"apply_rope_fusion with YaRN needs rotary_percent=1.0. "
+                f"Current rotary_percent: {rotary_percent}. Disabling apply_rope_fusion."
             )
         return False
 
