@@ -10379,7 +10379,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "bridge_commit": "c53f6734f429c4ae769ccc3869798ff0b74cb8e4",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -10396,15 +10396,15 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "qwen3-6-35b-a3b-sft-gb200",
-          "expected_result": "On 8x GB200, the shared Qwen3.5/Qwen3.6-VL functional recipe completed exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32, natural routing, HybridEP, no activation recompute, and BF16 gradient reduction. Loss was finite from 2.212866 to 0.9978729 with zero skipped or NaN iterations. Steps 91-100 averaged 9,899.640 ms and 38.180 model TFLOP/s/GPU. The recipe intentionally disables checkpoint output for this bounded functional run; reload/export coverage remains represented by the H100 SFT and sft_export_inference items.\n",
+          "expected_result": "On 8x GB200, run in the NeMo nightly container pulled 2026-11-06 with Bridge at this item's commit, the shared Qwen3.5/Qwen3.6-VL functional recipe completed exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32, natural routing, HybridEP, no activation recompute, and BF16 gradient reduction. Loss was finite from 2.209864 to 0.9722831 with zero skipped or NaN iterations. Steps 91-100 averaged 5,580.560 ms and 67.550 model TFLOP/s/GPU. The recipe intentionally disables checkpoint output for this bounded functional run; reload/export coverage remains represented by the H100 SFT and sft_export_inference items.\n",
           "hardware": "GB200",
-          "last_verified": "2026-07-30",
+          "last_verified": "2026-11-09",
           "metrics": {
-            "final_loss": 0.9978729,
-            "initial_loss": 2.212866,
-            "last_10_steps_model_tflops_per_gpu_avg": 38.18,
-            "last_10_steps_step_time_ms_avg": 9899.64,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 1655.01
+            "final_loss": 0.9722831,
+            "initial_loss": 2.209864,
+            "last_10_steps_model_tflops_per_gpu_avg": 67.55,
+            "last_10_steps_step_time_ms_avg": 5580.56,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 2935.906
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
