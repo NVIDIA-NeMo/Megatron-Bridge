@@ -155,7 +155,7 @@ def _llama2_benchmark_common(cfg: ConfigContainer) -> None:
     cfg.validation.eval_micro_batch_size = 1
     cfg.validation.full_validation = False
     cfg.validation.multiple_validation_sets = False
-    cfg.train.skip_train = False
+    cfg.validation.skip_train = False
     cfg.train.test_mode = False
     cfg.scheduler.lr_decay_style = "cosine"
     cfg.scheduler.lr_warmup_fraction = 0.0

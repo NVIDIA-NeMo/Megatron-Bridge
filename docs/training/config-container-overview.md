@@ -30,12 +30,91 @@ config = ConfigContainer(
 )
 ```
 
+## Native Megatron configuration classes
+
+The shared training sections use the actual Megatron classes:
+
+```python
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.optimizer import OptimizerConfig
+from megatron.training.config import (
+    ProfilingConfig,
+    RerunStateMachineConfig, RNGConfig, SchedulerConfig,
+    StragglerDetectionConfig, ValidationConfig,
+)
+```
+
+`DistributedInitConfig` remains a small Bridge extension for evaluation CP
+rebinding, the experimental gate, explicit process-group routing, and the legacy
+GTP NCCL-buffer switch. These settings are owned by Bridge runtime setup.
+
+Select Torch FSDP2 with `cfg.ddp = TorchFullyShardedDataParallelConfig(...)` from
+`megatron.core.distributed`; `dist.use_torch_fsdp2` is removed. Set GTP FP32
+accumulation through `cfg.ddp.gtp_remat_reduce_scatter_with_fp32_accumulation`.
+`ConfigContainer.from_dict()` moves these fields from older saved `dist` sections
+to their canonical DDP representation. It also discards the unused legacy
+`enable_straggler_on_startup` field; `disable_straggler_on_startup` still controls
+the detector.
+
+The migrated names in `megatron.bridge.training.config` remain re-exports so existing
+imports and saved `_target_` paths resolve. New saved configs record the canonical
+Megatron module paths. Fields explicitly stored in older configs are retained.
+
+Bridge's training entry points apply recipe and mixed-precision overrides, then
+call `runtime_config_update()` (or the MIMO equivalent) to validate and derive
+runtime values. Do not call a removed Bridge-specific `.finalize()` method on
+an individual section. Filesystem checks, optional logging dependencies, and
+Bridge's FSDP precision policy remain part of Bridge runtime setup.
+
+Migrated bare constructors now use Megatron's defaults. Shipped Bridge recipes explicitly
+select their existing policy where it differs:
+
+| Construction | Previous Bridge default | Native default | Preserve the previous setting |
+| --- | --- | --- | --- |
+| Optimizer layer-wise layout | `False` | `True` | `OptimizerConfig(use_layer_wise_param_layout=False)` |
+| Profiling ranks | `[0]` | `[]` (all ranks) | `ProfilingConfig(profile_ranks=[0])` |
+| Memory snapshot path | `/nemo_run/snapshot.pickle` | `snapshot.pickle` | Pass `memory_snapshot_path` explicitly |
+| Rerun mode | `disabled` | `validate_results` | `RerunStateMachineConfig(rerun_mode="disabled")` |
+
+`ConfigContainer` retains its explicit default profiling and disabled-rerun
+settings. Existing serialized configs that store these values retain them on
+reload; external code constructing individual sections must select its intended
+policy explicitly.
+
+This migration requires the shared training-schema and timer changes upstream. Older Core revisions with eager constructor validation
+cannot provide the same construct-then-override lifecycle using direct imports.
+The dependency pins must include the prerequisite changes before this draft can
+be merged; no subclass fallback or dynamically attached fields are used.
+
+The compatibility property `DistributedInitConfig.lazy_init` stays in Bridge and
+reads/writes the shared `lazy_mpu_init` field; it is not added to Megatron-LM.
+
+Epoch scheduling (`num_epochs` and `_train_iters_from_num_epochs`) remains in
+Bridge's `TrainingConfig`, with a TODO for a separate migration. Evaluation
+settings belong only to `ValidationConfig`; old saved `train.eval_iters`,
+`train.eval_interval`, and `train.skip_train` values move there when loaded.
+Checkpoint fields and behavior remain in Bridge for a separate PR. Bridge's
+logger extension, including MLflow/Comet and its metrics gate, also remains local
+pending the dedicated logger migration.
+
+`timing_log_level=-1` suppresses timer reports and optional operator timing.
+Level-0 measurements remain active for progress, throughput, and checkpoint
+bookkeeping, so ordinary training metrics and their timing overhead remain.
+
+The wider inventory also includes the tokenizer and GPT dataset extensions.
+They remain separate work: the tokenizer normalizes legacy HF/SFT options and
+sets vocabulary policy, while the dataset configs compose Core dataset settings
+with Bridge dataloader/builder settings. Bridge's fault-tolerance, NVRx straggler,
+in-process restart, tensor-inspection, precision, and communication-overlap configs
+also retain their distinct runtime contracts. Removing those types requires
+additional API and consumer migrations; they are not equivalent aliases today.
+
 ## Configuration Components
 
 | Component | Purpose | Required | Default |
 |-----------|---------|----------|---------|
 | `model` | Model architecture and parallelism strategy (GPT, T5, Mamba) | ✅ | - |
-| `train` | Training loop parameters (batch sizes, iterations, validation) | ✅ | - |
+| `train` | Training loop parameters (batch sizes, iterations, epochs) | ✅ | - |
 | `optimizer` | Optimizer type and hyperparameters (from Megatron Core) | ✅ | - |
 | `scheduler` | Learning rate and weight decay scheduling | ✅ | - |
 | `dataset` | Data loading and preprocessing configuration | ✅ | - |
@@ -45,7 +124,7 @@ config = ConfigContainer(
 | `dist` | Distributed training initialization | | `DistributedInitConfig()` |
 | `ddp` | Data parallel configuration (from Megatron Core) | | `DistributedDataParallelConfig()` |
 | `rng` | Random number generation settings | | `RNGConfig()` |
-| `rerun_state_machine` | Result validation and error injection | | `RerunStateMachineConfig()` |
+| `rerun_state_machine` | Result validation and error injection | | `RerunStateMachineConfig(rerun_mode="disabled")` |
 | `mixed_precision` | Mixed precision training settings | | `None` |
 | `comm_overlap` | Communication overlap optimizations | | `None` |
 | `peft` | Parameter-efficient fine-tuning (LoRA, DoRA, etc.) | | `None` |

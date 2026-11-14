@@ -560,7 +560,7 @@ items:
         dataset.hf_processor_path=Qwen/Qwen3.8-27B
         tokenizer.tokenizer_model=Qwen/Qwen3.8-27B
         model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
-        scheduler.lr_decay_iters=20 train.eval_iters=0
+        scheduler.lr_decay_iters=20
         validation.eval_iters=0 validation.eval_interval=0
         checkpoint.save=null checkpoint.load=null
         logger.log_interval=1 logger.log_throughput=true

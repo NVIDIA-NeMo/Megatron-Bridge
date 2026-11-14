@@ -154,6 +154,7 @@ def run_case(root: Path, case: str) -> None:
     overlap = not case.endswith("_off")
     name = "adam" if case.startswith("adam") else "dist_muon" if case == "muon_alias" else "muon"
     cfg.optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer=name,
         lr=1e-3,
         min_lr=0.0,

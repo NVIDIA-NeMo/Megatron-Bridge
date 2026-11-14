@@ -16,6 +16,8 @@ import os
 from typing import Optional, Union
 
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.training.config import RNGConfig, ValidationConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
@@ -27,12 +29,9 @@ from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    DistributedDataParallelConfig,
     LoggerConfig,
-    RNGConfig,
     TokenizerConfig,
     TrainingConfig,
-    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -204,6 +203,8 @@ def _qwen2_audio_common(
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             pretrained_checkpoint=pretrained_checkpoint,
             save_interval=save_interval,
             save=checkpoint_dir,

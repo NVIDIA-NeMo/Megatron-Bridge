@@ -52,10 +52,8 @@ def _nemotron_labs_diffusion_cpt_config(
     provider = bridge.provider_bridge(hf_pretrained)
     # For CPT, use standard attention (not NemotronLabsDiffusionAttention) by calling
     # the grandparent's provide method which creates a plain GPTModel
-    provider.provide = (
-        lambda pre_process=None, post_process=None, vp_stage=None: Ministral3ModelProvider.provide_language_model(
-            provider, pre_process, post_process, vp_stage
-        )
+    provider.provide = lambda pre_process=None, post_process=None, vp_stage=None: (
+        Ministral3ModelProvider.provide_language_model(provider, pre_process, post_process, vp_stage)
     )
     cfg.model = provider
     cfg.model.perform_initialization = False
@@ -87,8 +85,8 @@ def _nemotron_labs_diffusion_cpt_config(
 
     # Training config
     cfg.train.train_iters = 500000
-    cfg.train.eval_interval = 5000
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 5000
+    cfg.validation.eval_iters = 10
     cfg.train.save_interval = 5000
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = micro_batch_size

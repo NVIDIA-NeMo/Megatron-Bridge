@@ -124,11 +124,11 @@ class TestSampleBasedTrainingFunctional:
                 tokenizer_type="NullTokenizer",
                 vocab_size=10000,
             ),
-            checkpoint=CheckpointConfig(),
+            checkpoint=CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
             dist=DistributedInitConfig(),
             ddp=DistributedDataParallelConfig(use_distributed_optimizer=True),
             rng=RNGConfig(seed=42),
-            rerun_state_machine=RerunStateMachineConfig(),
+            rerun_state_machine=RerunStateMachineConfig(rerun_mode="disabled"),
         )
 
         assert cfg.train.train_samples == 32

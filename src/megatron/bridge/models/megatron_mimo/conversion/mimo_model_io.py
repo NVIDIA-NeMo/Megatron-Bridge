@@ -20,8 +20,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
+from megatron.core.optimizer import OptimizerConfig
+
 from megatron.bridge.training.checkpointing import load_checkpoint, maybe_finalize_async_save, save_checkpoint
-from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, OptimizerConfig
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
 from megatron.bridge.training.state import GlobalState
 
@@ -77,13 +79,14 @@ def save_megatron_mimo_model(
     state.cfg = ConfigContainer(
         model=provider,
         train=None,
-        optimizer=OptimizerConfig(use_distributed_optimizer=False),
+        optimizer=OptimizerConfig(use_layer_wise_param_layout=False, use_distributed_optimizer=False),
         ddp=None,
         scheduler=None,
         dataset=None,
         logger=LoggerConfig(),
         tokenizer=tokenizer_config,
         checkpoint=CheckpointConfig(
+            strict_fsdp_dtensor_load=False,
             # Async NVRx + block below: the sync mcore path deadlocks on
             # disjoint per-component state dicts at multi-billion-param scale.
             async_save=True,
@@ -193,13 +196,15 @@ def load_megatron_mimo_model(
     state.cfg = ConfigContainer(
         model=provider,
         train=None,
-        optimizer=OptimizerConfig(use_distributed_optimizer=False),
+        optimizer=OptimizerConfig(use_layer_wise_param_layout=False, use_distributed_optimizer=False),
         ddp=None,
         scheduler=None,
         dataset=None,
         logger=LoggerConfig(),
         tokenizer=None,
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             async_save=False,
             load=str(path),
             load_optim=False,

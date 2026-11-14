@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
+from megatron.core.distributed import TorchFullyShardedDataParallelConfig
 
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
@@ -66,6 +67,12 @@ from megatron.bridge.training.config import (
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
     apply_environment_variables,
+    finalize_checkpoint_config,
+    finalize_ddp_config,
+    finalize_logger_config,
+    finalize_profiling_config,
+    finalize_scheduler_config,
+    finalize_training_config,
     megatron_mimo_runtime_config_update,
 )
 from megatron.bridge.training.dpo import DPOLossConfig
@@ -162,6 +169,7 @@ def create_test_optimizer_config(**kwargs: Any) -> OptimizerConfig:
     """Creates an instance of OptimizerConfig with defaults for testing."""
     defaults = {
         "lr": 0.0001,
+        "use_layer_wise_param_layout": False,
         "use_distributed_optimizer": False,
     }
     defaults.update(kwargs)
@@ -242,6 +250,8 @@ def create_test_checkpoint_config(**kwargs: Any) -> CheckpointConfig:
     """Creates an instance of CheckpointConfig with defaults for testing."""
     defaults = {
         "ckpt_format": "torch_dist",
+        "use_persistent_ckpt_worker": True,
+        "strict_fsdp_dtensor_load": False,
     }
     defaults.update(kwargs)
     return CheckpointConfig(**defaults)
@@ -266,6 +276,8 @@ def create_test_profiling_config(**kwargs: Any) -> ProfilingConfig:
     """Creates an instance of ProfilingConfig with defaults for testing."""
     defaults = {
         "use_pytorch_profiler": False,
+        "profile_ranks": [0],
+        "memory_snapshot_path": "/nemo_run/snapshot.pickle",
         "use_nsys_profiler": False,
     }
     defaults.update(kwargs)
@@ -340,7 +352,7 @@ def create_test_config_container(
         dist=dist_config or create_test_distributed_init_config(),
         ddp=ddp_config or create_test_ddp_config(),
         rng=RNGConfig(),
-        rerun_state_machine=RerunStateMachineConfig(),
+        rerun_state_machine=RerunStateMachineConfig(rerun_mode="disabled"),
         profiling=profiling_config,
         validation=validation_config or ValidationConfig(),
     )
@@ -1059,9 +1071,9 @@ class TestConfigContainerValidation:
 
         if expect_assertion_error:
             with pytest.raises(AssertionError, match=expected_error_match):
-                prof_cfg.finalize()
+                finalize_profiling_config(prof_cfg)
         else:
-            prof_cfg.finalize()  # Should pass without error
+            finalize_profiling_config(prof_cfg)  # Should pass without error
 
     def test_packed_sequence_micro_batch_size_validation_error(self, monkeypatch):
         """Test validation error when micro_batch_size > 1 with packed sequences."""
@@ -2628,7 +2640,7 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        dist_cfg = create_test_distributed_init_config()
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2636,7 +2648,7 @@ class TestConfigContainerValidation:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             dist_config=dist_cfg,
-            ddp_config=create_test_ddp_config(use_megatron_fsdp=True),
+            ddp_config=TorchFullyShardedDataParallelConfig(use_megatron_fsdp=True),
         )
         try:
             with pytest.raises(ValueError, match="use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive"):
@@ -3373,7 +3385,7 @@ class TestRerunConfigValidation:
     - Tests the same behavior for ConfigContainer.validate().
     """
 
-    def _check_finalize_idempotency(self, cfg_init_fn):
+    def _check_finalize_idempotency(self, cfg_init_fn, finalize=None):
         import copy
 
         cfg = cfg_init_fn()
@@ -3381,24 +3393,24 @@ class TestRerunConfigValidation:
         assert cfg == cfg_copy
 
         # All configs now use finalize() method
-        cfg.finalize()
+        (finalize or (lambda config: config.finalize()))(cfg)
         # For configs that may change computed fields, take a new snapshot after first finalization
         cfg_after_finalize = copy.deepcopy(cfg)
         # Second finalize() should be idempotent (no further changes)
-        cfg.finalize()
+        (finalize or (lambda config: config.finalize()))(cfg)
         assert cfg == cfg_after_finalize
 
     def test_scheduler_config(self):
-        self._check_finalize_idempotency(create_test_scheduler_config)
+        self._check_finalize_idempotency(create_test_scheduler_config, finalize_scheduler_config)
 
         # Test rerun of finalize with valid and invalid changes
         cfg = create_test_scheduler_config(lr_decay_iters=10)
         cfg.lr_decay_iters = 20
-        cfg.finalize()
+        finalize_scheduler_config(cfg)
 
         with pytest.raises(AssertionError, match="start_weight_decay"):
             cfg.start_weight_decay = -5.2
-            cfg.finalize()
+            finalize_scheduler_config(cfg)
 
     def test_gptdataset_config(self):
         def gpt_dataset_seqlen_1024():
@@ -3416,17 +3428,17 @@ class TestRerunConfigValidation:
             cfg.finalize()
 
     def test_profiling_config(self):
-        self._check_finalize_idempotency(create_test_profiling_config)
+        self._check_finalize_idempotency(create_test_profiling_config, finalize_profiling_config)
 
         # Test rerun of finalize with valid and invalid changes
         cfg = create_test_profiling_config()
         cfg.profile_step_end = 1000
-        cfg.finalize()
+        finalize_profiling_config(cfg)
 
         with pytest.raises(AssertionError, match="one of pytorch or nsys profiler should be enabled"):
             cfg.use_nsys_profiler = True
             cfg.use_pytorch_profiler = True
-            cfg.finalize()
+            finalize_profiling_config(cfg)
 
     def test_nvrx_straggler_config(self):
         self._check_finalize_idempotency(create_test_nvrx_straggler_config)
@@ -3441,17 +3453,17 @@ class TestRerunConfigValidation:
             cfg.finalize()
 
     def test_checkpoint_config(self):
-        self._check_finalize_idempotency(create_test_checkpoint_config)
+        self._check_finalize_idempotency(create_test_checkpoint_config, finalize_checkpoint_config)
 
         # Test rerun of finalize with valid and invalid changes
         cfg = create_test_checkpoint_config(ckpt_format="torch_dist")
         cfg.save = "/tmp/test_checkpoint_config"
-        cfg.finalize()
+        finalize_checkpoint_config(cfg)
 
         with pytest.raises(AssertionError, match="load_main_params_from_ckpt must be used with load_optim=False"):
             cfg.load_main_params_from_ckpt = True
             cfg.load_optim = True
-            cfg.finalize()
+            finalize_checkpoint_config(cfg)
 
     def test_mixed_precision_config(self):
         from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
@@ -3550,13 +3562,13 @@ class TestCheckpointConfig:
         ckpt_cfg = create_test_checkpoint_config(**config_overrides)
 
         with pytest.raises(ValueError, match=error_message):
-            ckpt_cfg.finalize()
+            finalize_checkpoint_config(ckpt_cfg)
 
     def test_save_retain_interval_accepts_multiple_of_save_interval(self):
         """A positive retain interval divisible by the save interval is valid."""
         ckpt_cfg = create_test_checkpoint_config(save_interval=10, save_retain_interval=20)
 
-        ckpt_cfg.finalize()
+        finalize_checkpoint_config(ckpt_cfg)
 
     def test_precision_aware_optimizer_cpu_staging_defaults_off(self):
         ckpt_cfg = create_test_checkpoint_config()
@@ -3573,7 +3585,7 @@ class TestCheckpointConfig:
             ValueError,
             match="stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'",
         ):
-            ckpt_cfg.finalize()
+            finalize_checkpoint_config(ckpt_cfg)
 
     @pytest.mark.parametrize(
         "load_main_params_from_ckpt, load_optim, expect_assertion_error",
@@ -3613,7 +3625,7 @@ class TestCheckpointConfig:
         ckpt_cfg = create_test_checkpoint_config(ckpt_step=5000, load=None)
 
         with pytest.raises(ValueError) as exc_info:
-            ckpt_cfg.finalize()
+            finalize_checkpoint_config(ckpt_cfg)
 
         assert "ckpt_step=5000 specified but checkpoint.load is None" in str(exc_info.value)
         assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
@@ -3623,7 +3635,7 @@ class TestCheckpointConfig:
         ckpt_cfg = create_test_checkpoint_config(ckpt_step=5000, load="/checkpoints")
 
         # Should not raise any errors
-        ckpt_cfg.finalize()
+        finalize_checkpoint_config(ckpt_cfg)
         assert ckpt_cfg.ckpt_step == 5000
         assert ckpt_cfg.load == "/checkpoints"
 
@@ -3636,14 +3648,14 @@ class TestCheckpointConfig:
         ckpt_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True, ckpt_format="fsdp_dtensor")
 
         with pytest.raises(ValueError, match="also_save_hf_checkpoint=True is not supported"):
-            ckpt_cfg.finalize()
+            finalize_checkpoint_config(ckpt_cfg)
 
     def test_also_save_hf_checkpoint_rejects_local_non_persistent_checkpoint(self):
         """Test that HF extra export is not allowed for local non-persistent checkpoints."""
         ckpt_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True, non_persistent_ckpt_type="local")
 
         with pytest.raises(ValueError, match="also_save_hf_checkpoint=True is not compatible"):
-            ckpt_cfg.finalize()
+            finalize_checkpoint_config(ckpt_cfg)
 
     def test_also_save_hf_checkpoint_requires_hf_source_during_container_validation(self):
         """Test that HF extra export requires a source before training starts."""
@@ -3882,14 +3894,14 @@ class TestCheckpointConfig:
         """Test that finalize succeeds when pretrained_checkpoint is None (no file existence check)."""
         ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint=None)
         # Should not raise any errors
-        ckpt_cfg.finalize()
+        finalize_checkpoint_config(ckpt_cfg)
 
     @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=True)
     def test_pretrained_checkpoint_exists_passes(self, mock_file_exists):
         """Test that finalize succeeds when pretrained_checkpoint path exists."""
         ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/valid/checkpoint")
         # Should not raise any errors
-        ckpt_cfg.finalize()
+        finalize_checkpoint_config(ckpt_cfg)
         mock_file_exists.assert_called_once_with("/path/to/valid/checkpoint")
 
     @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=False)
@@ -3897,7 +3909,7 @@ class TestCheckpointConfig:
         """Test that finalize raises AssertionError when pretrained_checkpoint path does not exist."""
         ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/missing/checkpoint")
         with pytest.raises(AssertionError, match="Pretrained checkpoint /path/to/missing/checkpoint does not exist"):
-            ckpt_cfg.finalize()
+            finalize_checkpoint_config(ckpt_cfg)
         mock_file_exists.assert_called_once_with("/path/to/missing/checkpoint")
 
 
@@ -5064,7 +5076,7 @@ class TestSampleBasedTraining:
         )
 
         with pytest.raises(AssertionError, match="Cannot mix iteration-based and sample-based scheduler fields"):
-            sched_cfg.finalize()
+            finalize_scheduler_config(sched_cfg)
 
     def test_scheduler_warmup_fraction_with_iters_validation(self):
         """Test that lr_warmup_fraction with lr_warmup_iters fails in scheduler finalize."""
@@ -5074,7 +5086,7 @@ class TestSampleBasedTraining:
         )
 
         with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with lr_warmup_iters=100"):
-            sched_cfg.finalize()
+            finalize_scheduler_config(sched_cfg)
 
     def test_scheduler_warmup_fraction_with_samples_validation(self):
         """Test that lr_warmup_fraction with lr_warmup_samples fails in scheduler finalize."""
@@ -5084,7 +5096,7 @@ class TestSampleBasedTraining:
         )
 
         with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with.*lr_warmup_samples=1000"):
-            sched_cfg.finalize()
+            finalize_scheduler_config(sched_cfg)
 
 
 class TestEpochBasedTraining:
@@ -5111,7 +5123,7 @@ class TestEpochBasedTraining:
 
             assert container.train.train_iters == 6
             assert container.train._train_iters_from_num_epochs is True
-            container.train.finalize()
+            finalize_training_config(container.train)
             assert container.scheduler.lr_decay_iters == 6
             assert container.scheduler.lr_decay_steps == 192
         finally:
@@ -5128,7 +5140,7 @@ class TestEpochBasedTraining:
         train_cfg = create_test_training_config(**training_overrides)
 
         with pytest.raises(AssertionError, match="Cannot specify more than one"):
-            train_cfg.finalize()
+            finalize_training_config(train_cfg)
 
     def test_epoch_based_training_rejects_rampup_batch_size(self):
         train_cfg = create_test_training_config(
@@ -5138,14 +5150,14 @@ class TestEpochBasedTraining:
         )
 
         with pytest.raises(AssertionError, match="Batch size rampup not supported with epoch-based training"):
-            train_cfg.finalize()
+            finalize_training_config(train_cfg)
 
     @pytest.mark.parametrize("num_epochs", [0.0, -1.0])
     def test_epoch_based_training_rejects_non_positive_num_epochs(self, num_epochs):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=num_epochs)
 
         with pytest.raises(AssertionError, match="num_epochs must be a positive number"):
-            train_cfg.finalize()
+            finalize_training_config(train_cfg)
 
     def test_epoch_based_training_requires_finite_gpt_sft_dataset(self):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=1.0)
@@ -5214,7 +5226,11 @@ class TestEpochBasedTraining:
     ):
         cfg = MagicMock()
         cfg.env_vars = {}
-        cfg.train.num_epochs = None
+        cfg.train = create_test_training_config()
+        cfg.scheduler = create_test_scheduler_config()
+        cfg.logger = LoggerConfig()
+        cfg.checkpoint = create_test_checkpoint_config()
+        cfg.rng = RNGConfig()
         cfg.profiling = None
         cfg.ddp = DistributedDataParallelConfig(
             use_distributed_optimizer=True,
@@ -5224,6 +5240,7 @@ class TestEpochBasedTraining:
             grad_reduce_in_fp32=True,
         )
         cfg.optimizer = OptimizerConfig(
+            use_layer_wise_param_layout=False,
             use_distributed_optimizer=True,
             overlap_param_gather=optimizer_overlap,
             reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
@@ -5241,7 +5258,11 @@ class TestEpochBasedTraining:
     ):
         cfg = MagicMock()
         cfg.env_vars = {}
-        cfg.train.num_epochs = None
+        cfg.train = create_test_training_config()
+        cfg.scheduler = create_test_scheduler_config()
+        cfg.logger = LoggerConfig()
+        cfg.checkpoint = create_test_checkpoint_config()
+        cfg.rng = RNGConfig()
         cfg.profiling = None
         cfg.ddp = DistributedDataParallelConfig(
             use_distributed_optimizer=True,
@@ -5251,6 +5272,7 @@ class TestEpochBasedTraining:
             grad_reduce_in_fp32=True,
         )
         cfg.optimizer = OptimizerConfig(
+            use_layer_wise_param_layout=False,
             use_distributed_optimizer=True,
             overlap_param_gather=overlap,
             reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
@@ -5272,7 +5294,7 @@ class TestDDPFinalization:
         ddp.data_parallel_sharding_strategy = "optim_grads_params"
         ddp.outer_dp_sharding_strategy = "optim"
         ddp.megatron_fsdp_max_pool_double_buffer = True
-        ddp.finalize()
+        finalize_ddp_config(ddp)
 
         assert ddp.expert_data_parallel_sharding_strategy == "optim_grads_params"
         assert ddp.expert_outer_dp_sharding_strategy == "optim"
@@ -5280,14 +5302,14 @@ class TestDDPFinalization:
 
         ddp.num_buckets = 0
         with pytest.raises(AssertionError, match="num_buckets must be greater than 0"):
-            ddp.finalize()
+            finalize_ddp_config(ddp)
 
     def test_repeated_finalization_preserves_resolved_buckets(self):
         ddp = DistributedDataParallelConfig(num_buckets=2, overlap_grad_reduce=True)
-        ddp.finalize()
+        finalize_ddp_config(ddp)
         ddp.resolve_bucket_size(num_parameters=128, data_parallel_size=2)
-        ddp.finalize()
-        ddp.finalize()
+        finalize_ddp_config(ddp)
+        finalize_ddp_config(ddp)
 
         assert ddp.bucket_size == 64
         assert ddp.num_buckets == 2
@@ -5296,7 +5318,11 @@ class TestDDPFinalization:
     def test_mimo_applies_precision_policy_before_ddp_finalization(self, ddp_cls):
         cfg = MagicMock()
         cfg.env_vars = {}
-        cfg.train.num_epochs = None
+        cfg.train = create_test_training_config()
+        cfg.scheduler = create_test_scheduler_config()
+        cfg.logger = LoggerConfig()
+        cfg.checkpoint = create_test_checkpoint_config()
+        cfg.rng = RNGConfig()
         cfg.profiling = None
         cfg.ddp = ddp_cls(
             use_megatron_fsdp=True,
@@ -5304,7 +5330,7 @@ class TestDDPFinalization:
             megatron_fsdp_main_grads_dtype=torch.bfloat16,
             megatron_fsdp_grad_comm_dtype=torch.bfloat16,
         )
-        cfg.optimizer = OptimizerConfig()
+        cfg.optimizer = OptimizerConfig(use_layer_wise_param_layout=False)
 
         megatron_mimo_runtime_config_update(cfg)
 
@@ -5338,7 +5364,7 @@ class TestMegatronFSDPGradDtypePolicy:
             megatron_fsdp_grad_comm_dtype=grad_comm_dtype,
         )
 
-        ddp.finalize()
+        finalize_ddp_config(ddp)
 
         assert ddp.grad_reduce_in_fp32 is False
         assert ddp.megatron_fsdp_main_grads_dtype == main_grads_dtype
@@ -5351,14 +5377,14 @@ class TestMegatronFSDPGradDtypePolicy:
             megatron_fsdp_grad_comm_dtype=grad_comm_dtype,
         )
 
-        ddp.finalize()
+        finalize_ddp_config(ddp)
 
         assert ddp.grad_reduce_in_fp32 is True
 
     def test_finalize_keeps_flag_without_megatron_fsdp(self):
         ddp = DistributedDataParallelConfig(grad_reduce_in_fp32=True, use_distributed_optimizer=True)
 
-        ddp.finalize()
+        finalize_ddp_config(ddp)
 
         assert ddp.grad_reduce_in_fp32 is True
 
@@ -5565,28 +5591,28 @@ class TestLoggerConfigFinalize:
         """Test finalize succeeds when no MLFlow settings are configured."""
         config = LoggerConfig()
         # Should not raise
-        config.finalize()
+        finalize_logger_config(config)
 
     def test_finalize_with_mlflow_experiment_only_raises_error(self):
         """Test finalize raises error when mlflow_experiment is set but mlflow_run_name is missing."""
         config = LoggerConfig(mlflow_experiment="my_experiment")
 
         with pytest.raises(ValueError, match="Set logger.mlflow_run_name"):
-            config.finalize()
+            finalize_logger_config(config)
 
     def test_finalize_with_mlflow_experiment_and_empty_run_name_raises_error(self):
         """Test finalize raises error when mlflow_run_name is empty string."""
         config = LoggerConfig(mlflow_experiment="my_experiment", mlflow_run_name="")
 
         with pytest.raises(ValueError, match="Set logger.mlflow_run_name"):
-            config.finalize()
+            finalize_logger_config(config)
 
     def test_finalize_with_mlflow_experiment_and_run_name_succeeds(self):
         """Test finalize succeeds when both mlflow_experiment and mlflow_run_name are set."""
         config = LoggerConfig(mlflow_experiment="my_experiment", mlflow_run_name="my_run")
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
-            config.finalize()  # Should not raise
+            finalize_logger_config(config)  # Should not raise
 
     def test_finalize_mlflow_not_installed_raises_module_not_found(self):
         """Test finalize raises ModuleNotFoundError when mlflow is configured but not installed."""
@@ -5595,7 +5621,7 @@ class TestLoggerConfigFinalize:
         with patch.dict("sys.modules", {"mlflow": None}):
             with patch("importlib.import_module", side_effect=ModuleNotFoundError("No module named 'mlflow'")):
                 with pytest.raises(ModuleNotFoundError, match="mlflow"):
-                    config.finalize()
+                    finalize_logger_config(config)
 
     def test_finalize_with_mlflow_tags_only(self):
         """Test finalize with only mlflow_tags triggers MLFlow validation."""
@@ -5605,7 +5631,7 @@ class TestLoggerConfigFinalize:
         # but not require mlflow_run_name since experiment is not set
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
-            config.finalize()  # Should not raise
+            finalize_logger_config(config)  # Should not raise
 
     def test_finalize_with_mlflow_tracking_uri_only(self):
         """Test finalize with only mlflow_tracking_uri triggers MLFlow validation."""
@@ -5613,7 +5639,7 @@ class TestLoggerConfigFinalize:
 
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
-            config.finalize()  # Should not raise
+            finalize_logger_config(config)  # Should not raise
 
     def test_finalize_with_all_mlflow_settings(self):
         """Test finalize with all MLFlow settings configured."""
@@ -5626,32 +5652,32 @@ class TestLoggerConfigFinalize:
 
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
-            config.finalize()  # Should not raise
+            finalize_logger_config(config)  # Should not raise
 
     def test_finalize_no_comet_settings(self):
         """Test finalize succeeds when no Comet settings are configured."""
         config = LoggerConfig()
-        config.finalize()
+        finalize_logger_config(config)
 
     def test_finalize_with_comet_project_only_raises_error(self):
         """Test finalize raises error when comet_project is set but comet_experiment_name is missing."""
         config = LoggerConfig(comet_project="my_project")
 
         with pytest.raises(ValueError, match="comet_experiment_name"):
-            config.finalize()
+            finalize_logger_config(config)
 
     def test_finalize_with_comet_project_and_empty_experiment_name_raises_error(self):
         """Test finalize raises error when comet_experiment_name is empty string."""
         config = LoggerConfig(comet_project="my_project", comet_experiment_name="")
 
         with pytest.raises(ValueError, match="comet_experiment_name"):
-            config.finalize()
+            finalize_logger_config(config)
 
     def test_finalize_with_comet_project_and_experiment_name_succeeds(self):
         """Test finalize succeeds when both comet_project and comet_experiment_name are set."""
         config = LoggerConfig(comet_project="my_project", comet_experiment_name="my_experiment")
         with patch("importlib.import_module"):
-            config.finalize()
+            finalize_logger_config(config)
 
     def test_finalize_comet_not_installed_raises_module_not_found(self):
         """Test finalize raises ModuleNotFoundError when comet_ml is configured but not installed."""
@@ -5659,13 +5685,13 @@ class TestLoggerConfigFinalize:
 
         with patch("importlib.import_module", side_effect=ModuleNotFoundError("No module named 'comet_ml'")):
             with pytest.raises(ModuleNotFoundError, match="comet_ml"):
-                config.finalize()
+                finalize_logger_config(config)
 
     def test_finalize_with_comet_workspace_only(self):
         """Test finalize with only comet_workspace triggers Comet validation."""
         config = LoggerConfig(comet_workspace="my_workspace")
         with patch("importlib.import_module"):
-            config.finalize()
+            finalize_logger_config(config)
 
     def test_finalize_with_all_comet_settings(self):
         """Test finalize with all Comet settings configured."""
@@ -5677,7 +5703,7 @@ class TestLoggerConfigFinalize:
             comet_tags=["sft", "qwen3"],
         )
         with patch("importlib.import_module"):
-            config.finalize()
+            finalize_logger_config(config)
 
 
 class TestTokenizerConfig:
@@ -5721,7 +5747,7 @@ def test_shortcut_moe_rejects_fsdp(backend):
         1, create_test_gpt_config(moe_shortcut_connection=True, num_moe_experts=4)
     )
     try:
-        cfg.dist.use_torch_fsdp2 = backend == "torch"
+        cfg.ddp = TorchFullyShardedDataParallelConfig() if backend == "torch" else cfg.ddp
         cfg.ddp.use_megatron_fsdp = backend == "megatron"
         with pytest.raises(ValueError, match="moe_shortcut_connection"):
             cfg.validate()

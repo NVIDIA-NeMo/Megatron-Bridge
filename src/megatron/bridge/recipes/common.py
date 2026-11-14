@@ -15,6 +15,7 @@
 import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.training.config import RNGConfig, ValidationConfig
 
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
@@ -32,10 +33,8 @@ from megatron.bridge.training.config import (
     DistributedInitConfig,
     GPTDatasetConfig,
     LoggerConfig,
-    RNGConfig,
     TokenizerConfig,
     TrainingConfig,
-    ValidationConfig,
 )
 from megatron.bridge.training.dpo import DPOLossConfig
 
@@ -121,6 +120,8 @@ def _pretrain_common() -> ConfigContainer:
         ),
         # Checkpoint config
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=500,
             save=checkpoint_dir,
             load=checkpoint_dir,
@@ -220,6 +221,8 @@ def _sft_common() -> ConfigContainer:
         ),
         # Checkpoint config with pretrained_checkpoint support
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=100,
             save=checkpoint_dir,
             load=checkpoint_dir,
@@ -350,6 +353,8 @@ def _peft_common() -> ConfigContainer:
         ),
         # Checkpoint config with pretrained_checkpoint support
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=100,
             save=checkpoint_dir,
             load=checkpoint_dir,

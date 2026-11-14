@@ -209,6 +209,7 @@ class TestCallbacksEndToEnd:
                 eval_iters=eval_iters,
             ),
             optimizer=OptimizerConfig(
+                use_layer_wise_param_layout=False,
                 optimizer="adam",
                 bf16=True,
                 fp16=False,
@@ -256,6 +257,8 @@ class TestCallbacksEndToEnd:
                 vocab_size=10000,
             ),
             checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
                 save=tmp_checkpoint_dir,
                 save_interval=train_iters - 1,
                 async_save=async_save,

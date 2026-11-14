@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from megatron.core.distributed import TorchFullyShardedDataParallelConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -13,6 +14,7 @@ from megatron.bridge.training.config import (
     DistributedDataParallelConfig,
     OptimizerConfig,
     _validate_and_sync_distributed_optimizer_settings,
+    finalize_optimizer_config,
 )
 from megatron.bridge.training.setup import _build_distributed_model
 from megatron.bridge.training.utils.optimizer_utils import (
@@ -30,6 +32,7 @@ pytestmark = pytest.mark.unit
 def test_distributed_emerging_optimizer_normalization(name, source):
     cfg = SimpleNamespace(
         optimizer=OptimizerConfig(
+            use_layer_wise_param_layout=False,
             optimizer=name,
             use_distributed_optimizer=source == "optimizer",
             use_layer_wise_distributed_optimizer=source == "layerwise",
@@ -38,7 +41,7 @@ def test_distributed_emerging_optimizer_normalization(name, source):
     )
     for _ in range(2):
         _validate_and_sync_distributed_optimizer_settings(cfg)
-        cfg.optimizer.finalize()
+        finalize_optimizer_config(cfg.optimizer)
         assert cfg.optimizer.optimizer == name.removeprefix("dist_")
         assert cfg.optimizer.use_layer_wise_distributed_optimizer
         assert not cfg.optimizer.use_distributed_optimizer
@@ -48,7 +51,7 @@ def test_distributed_emerging_optimizer_normalization(name, source):
 
 @pytest.mark.parametrize("name", ["adam", "sgd", "muon", "lion"])
 def test_replicated_optimizer_stays_replicated(name):
-    cfg = OptimizerConfig(optimizer=name, use_distributed_optimizer=False)
+    cfg = OptimizerConfig(use_layer_wise_param_layout=False, optimizer=name, use_distributed_optimizer=False)
     normalize_optimizer_config(cfg)
     assert not uses_distributed_optimizer(cfg)
 
@@ -56,7 +59,7 @@ def test_replicated_optimizer_stays_replicated(name):
 @pytest.mark.parametrize("name", ["adam", "sgd"])
 def test_adam_and_sgd_keep_ordinary_distribution(name):
     cfg = SimpleNamespace(
-        optimizer=OptimizerConfig(optimizer=name),
+        optimizer=OptimizerConfig(use_layer_wise_param_layout=False, optimizer=name),
         ddp=DistributedDataParallelConfig(use_distributed_optimizer=True),
     )
     _validate_and_sync_distributed_optimizer_settings(cfg)
@@ -67,16 +70,16 @@ def test_adam_and_sgd_keep_ordinary_distribution(name):
 
 @pytest.mark.parametrize("name", ["adam", "sgd", "dist_adam"])
 def test_reject_layerwise_adam_or_sgd(name):
-    cfg = OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=True)
+    cfg = OptimizerConfig(use_layer_wise_param_layout=False, optimizer=name, use_layer_wise_distributed_optimizer=True)
     with pytest.raises(ValueError, match="Layer-wise distribution requires"):
-        cfg.finalize()
+        finalize_optimizer_config(cfg)
 
 
 @pytest.mark.parametrize("name", ["muonn", "dist_muonn"])
 def test_reject_unknown_optimizer_before_distribution_is_changed(name):
     with pytest.raises(ValueError, match="Unsupported optimizer"):
-        cfg = OptimizerConfig(optimizer=name, use_distributed_optimizer=True)
-        cfg.finalize()
+        cfg = OptimizerConfig(use_layer_wise_param_layout=False, optimizer=name, use_distributed_optimizer=True)
+        finalize_optimizer_config(cfg)
 
 
 def test_setup_optimizer_normalizes_dist_muon_without_container_validation():
@@ -109,16 +112,20 @@ def test_setup_optimizer_normalizes_dist_muon_without_container_validation():
 
 
 def test_reject_layerwise_optimizer_step_overlap():
-    cfg = OptimizerConfig(optimizer="dist_muon", overlap_param_gather_with_optimizer_step=True)
+    cfg = OptimizerConfig(
+        use_layer_wise_param_layout=False, optimizer="dist_muon", overlap_param_gather_with_optimizer_step=True
+    )
     with pytest.raises(ValueError, match="overlap_param_gather_with_optimizer_step"):
-        cfg.finalize()
+        finalize_optimizer_config(cfg)
 
 
 @pytest.mark.parametrize("name,layerwise", [("dist_muon", False), ("muon", True)])
 @pytest.mark.parametrize("overlap", [False, True])
 def test_layerwise_overlap_configuration(name, layerwise, overlap):
     provider = GPTModelProvider(num_layers=2, hidden_size=128, num_attention_heads=4)
-    optimizer = OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=layerwise)
+    optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False, optimizer=name, use_layer_wise_distributed_optimizer=layerwise
+    )
     ddp = DistributedDataParallelConfig(use_distributed_optimizer=False, overlap_param_gather=not overlap)
     comm = CommOverlapConfig(
         tp_comm_overlap=False,
@@ -238,11 +245,11 @@ def test_provider_forwards_layerwise_layout_to_get_model():
 @pytest.mark.parametrize("name", ["muon", "dist_muon", "adaptive_muon", "lion", "soap"])
 def test_layerwise_layout_defaults_to_compact_after_normalization(name: str) -> None:
     cfg = SimpleNamespace(
-        optimizer=OptimizerConfig(optimizer=name, use_distributed_optimizer=True),
+        optimizer=OptimizerConfig(use_layer_wise_param_layout=False, optimizer=name, use_distributed_optimizer=True),
         ddp=DistributedDataParallelConfig(use_distributed_optimizer=True),
     )
     _validate_and_sync_distributed_optimizer_settings(cfg)
-    cfg.optimizer.finalize()
+    finalize_optimizer_config(cfg.optimizer)
     assert cfg.optimizer.use_layer_wise_distributed_optimizer
     assert not cfg.optimizer.use_layer_wise_param_layout
     assert not cfg.ddp.use_distributed_optimizer
@@ -263,17 +270,25 @@ def test_checkpoint_metadata_tracks_both_distributed_implementations(name, layer
     from megatron.bridge.training.config import CheckpointConfig
 
     optimizer = OptimizerConfig(
-        optimizer=name, use_layer_wise_distributed_optimizer=layerwise, use_distributed_optimizer=ordinary
+        use_layer_wise_param_layout=False,
+        optimizer=name,
+        use_layer_wise_distributed_optimizer=layerwise,
+        use_distributed_optimizer=ordinary,
     )
     assert uses_distributed_optimizer(optimizer) is expected
-    metadata = _build_sharded_state_dict_metadata(uses_distributed_optimizer(optimizer), CheckpointConfig())
+    metadata = _build_sharded_state_dict_metadata(
+        uses_distributed_optimizer(optimizer),
+        CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
+    )
     assert ("distrib_optim_sharding_type" in metadata) is expected
 
 
 @pytest.mark.parametrize("name", ["muon", "dist_muon"])
 def test_reject_multiple_layerwise_optimizer_instances(name):
     cfg = SimpleNamespace(
-        optimizer=OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=True),
+        optimizer=OptimizerConfig(
+            use_layer_wise_param_layout=False, optimizer=name, use_layer_wise_distributed_optimizer=True
+        ),
         ddp=DistributedDataParallelConfig(num_distributed_optimizer_instances=2),
     )
     with pytest.raises(ValueError, match="num_distributed_optimizer_instances=1"):
@@ -287,7 +302,7 @@ def test_reject_emerging_optimizer_fsdp_before_model_construction(name, backend)
 
     cfg = vanilla_gpt_pretrain_config()
     cfg.optimizer.optimizer = name
-    cfg.dist.use_torch_fsdp2 = backend == "torch"
+    cfg.ddp = TorchFullyShardedDataParallelConfig() if backend == "torch" else cfg.ddp
     cfg.ddp.use_megatron_fsdp = backend == "megatron_ddp"
     with pytest.raises(ValueError, match="do not support Megatron-FSDP or Torch-FSDP2"):
         cfg.validate()
@@ -348,6 +363,7 @@ def test_overlap_bucket_policy(name, source, dp_size, ddp_bucket, bucket_overrid
     """LayerWise retains Core/DDP buckets; ordinary DistOpt applies its overlap preset."""
     ordinary = name in ("adam", "sgd")
     optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer=name,
         use_distributed_optimizer=source == "optimizer",
         use_layer_wise_distributed_optimizer=source == "layerwise",
@@ -364,7 +380,9 @@ def test_overlap_bucket_policy(name, source, dp_size, ddp_bucket, bucket_overrid
 @pytest.mark.parametrize("name", ["muon", "dist_muon"])
 @pytest.mark.parametrize("overlap_grad_reduce", [False, True])
 def test_layerwise_explicit_gradient_overlap_is_honored(name, overlap_grad_reduce):
-    optimizer = OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=True)
+    optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False, optimizer=name, use_layer_wise_distributed_optimizer=True
+    )
     ddp = DistributedDataParallelConfig(overlap_grad_reduce=not overlap_grad_reduce)
     overlap = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=8, overlap_grad_reduce=overlap_grad_reduce)
     overlap.finalize()
@@ -387,6 +405,7 @@ def test_layerwise_explicit_gradient_overlap_is_honored(name, overlap_grad_reduc
 def test_gradient_overlap_preserves_layerwise_defaults(name, source, dp_size, cp_size, ddp_overlap, overlap_override):
     """DP1 can still reduce across CP ranks; unset LayerWise options retain DDP settings."""
     optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer=name,
         use_distributed_optimizer=source == "optimizer",
         use_layer_wise_distributed_optimizer=source == "layerwise",

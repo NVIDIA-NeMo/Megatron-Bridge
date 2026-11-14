@@ -45,6 +45,7 @@ import argparse
 import logging
 
 import torch
+from megatron.training.config import ValidationConfig
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.training.config import (
@@ -96,8 +97,6 @@ def create_config(
         train_iters=train_iters,
         micro_batch_size=4,
         global_batch_size=8,
-        eval_interval=train_iters + 1,  # Disable evaluation
-        eval_iters=0,
     )
 
     dataset_config = MockGPTDatasetConfig(
@@ -113,6 +112,7 @@ def create_config(
     )
 
     optimizer_config = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         bf16=True,
         fp16=False,
@@ -162,6 +162,7 @@ def create_config(
     )
 
     return ConfigContainer(
+        validation=ValidationConfig(eval_interval=train_iters + 1, eval_iters=0),
         train=train_config,
         model=model_config,
         optimizer=optimizer_config,
@@ -169,7 +170,9 @@ def create_config(
         dataset=dataset_config,
         logger=LoggerConfig(log_interval=10, tensorboard_dir=None),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=model_config.vocab_size),
-        checkpoint=CheckpointConfig(save=None, load=None, save_interval=None),
+        checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, save=None, load=None, save_interval=None
+        ),
         rng=RNGConfig(seed=1234),
         ddp=ddp_config,
         nvrx_straggler=nvrx_config,

@@ -195,7 +195,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "train-samples":                     ("train.train_samples",                 None),
     "exit-duration-in-mins":             ("train.exit_duration_in_mins",         None),
     "exit-interval":                     ("train.exit_interval",                 None),
-    "skip-train":                        ("train.skip_train",                    "flag"),
+    "skip-train":                        ("validation.skip_train",                    "flag"),
     "manual-gc":                         ("train.manual_gc",                     "flag"),
     "manual-gc-interval":                ("train.manual_gc_interval",            None),
     "seq-length":                        ("dataset.seq_length",                  "seq_length"),

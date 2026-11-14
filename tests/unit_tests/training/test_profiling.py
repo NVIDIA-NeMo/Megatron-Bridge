@@ -37,19 +37,25 @@ class TestShouldProfileRank:
 
     def test_should_profile_rank_with_matching_rank(self):
         """Test that profiling is enabled for ranks in profile_ranks."""
-        config = ProfilingConfig(use_pytorch_profiler=True, profile_ranks=[0, 2])
+        config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle", use_pytorch_profiler=True, profile_ranks=[0, 2]
+        )
         assert should_profile_rank(config, 0) is True
         assert should_profile_rank(config, 2) is True
 
     def test_should_profile_rank_with_non_matching_rank(self):
         """Test that profiling is disabled for ranks not in profile_ranks."""
-        config = ProfilingConfig(use_pytorch_profiler=True, profile_ranks=[0, 2])
+        config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle", use_pytorch_profiler=True, profile_ranks=[0, 2]
+        )
         assert should_profile_rank(config, 1) is False
         assert should_profile_rank(config, 3) is False
 
     def test_should_profile_rank_empty_list(self):
         """Test that profiling is enabled on all ranks when profile_ranks is empty."""
-        config = ProfilingConfig(use_pytorch_profiler=True, profile_ranks=[])
+        config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle", use_pytorch_profiler=True, profile_ranks=[]
+        )
         assert should_profile_rank(config, 0) is True
         assert should_profile_rank(config, 1) is True
         assert should_profile_rank(config, 64) is True
@@ -63,6 +69,8 @@ class TestInitializePytorchProfiler:
     def test_initialize_pytorch_profiler_basic(self, mock_schedule, mock_profile):
         """Test PyTorch profiler initialization with basic parameters."""
         config = ProfilingConfig(
+            profile_ranks=[0],
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_start=5,
             profile_step_end=10,
@@ -102,6 +110,8 @@ class TestInitializePytorchProfiler:
     def test_initialize_pytorch_profiler_with_shapes(self, mock_schedule, mock_handler, mock_profile):
         """Test profiler initialization with shape recording enabled."""
         config = ProfilingConfig(
+            profile_ranks=[0],
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_start=3,
             profile_step_end=8,
@@ -120,6 +130,8 @@ class TestInitializePytorchProfiler:
     def test_initialize_pytorch_profiler_start_at_zero(self, mock_schedule, mock_handler, mock_profile):
         """Test profiler initialization when starting at iteration 0."""
         config = ProfilingConfig(
+            profile_ranks=[0],
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_start=0,
             profile_step_end=3,
@@ -141,6 +153,8 @@ class TestInitializePytorchProfiler:
     def test_initialize_pytorch_profiler_start_at_one(self, mock_schedule, mock_handler, mock_profile):
         """Test profiler initialization when starting at iteration 1."""
         config = ProfilingConfig(
+            profile_ranks=[0],
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_start=1,
             profile_step_end=4,
@@ -171,6 +185,8 @@ class TestInitializePytorchProfiler:
         mock_et_observer.return_value = mock_et_instance
 
         config = ProfilingConfig(
+            profile_ranks=[0],
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_start=1,
             profile_step_end=4,
@@ -203,6 +219,8 @@ class TestInitializePytorchProfiler:
         mock_path.return_value = mock_profile_dir
 
         config = ProfilingConfig(
+            profile_ranks=[0],
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_start=0,
             profile_step_end=3,
@@ -238,6 +256,8 @@ class TestStartNsysProfiler:
         mock_nvtx.return_value = mock_nvtx_context
 
         config = ProfilingConfig(
+            profile_ranks=[0],
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             record_shapes=False,
         )
@@ -268,6 +288,8 @@ class TestStartNsysProfiler:
         mock_nvtx.return_value = mock_nvtx_context
 
         config = ProfilingConfig(
+            profile_ranks=[0],
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             record_shapes=True,
         )
@@ -334,6 +356,7 @@ class TestHandleProfilingStep:
     def test_handle_profiling_step_skips_non_profiled_rank(self):
         """Test that profiling step is skipped for non-profiled ranks."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_ranks=[0],
         )
@@ -348,6 +371,7 @@ class TestHandleProfilingStep:
     def test_handle_profiling_step_pytorch_profiler(self):
         """Test profiling step calls PyTorch profiler.step()."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_ranks=[0],
         )
@@ -361,6 +385,7 @@ class TestHandleProfilingStep:
     def test_handle_profiling_step_pytorch_profiler_none(self):
         """Test profiling step handles None profiler gracefully."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_ranks=[0],
         )
@@ -372,6 +397,7 @@ class TestHandleProfilingStep:
     def test_handle_profiling_step_nsys_before_start(self, mock_start_nsys):
         """Test nsys profiler does not start before profile_step_start."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             profile_step_start=10,
             profile_step_end=15,
@@ -389,6 +415,7 @@ class TestHandleProfilingStep:
         mock_start_nsys.return_value = mock_nvtx_context
 
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             profile_step_start=10,
             profile_step_end=15,
@@ -404,6 +431,7 @@ class TestHandleProfilingStep:
     def test_handle_profiling_step_nsys_after_start(self, mock_start_nsys):
         """Test nsys profiler does not restart after profile_step_start."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             profile_step_start=10,
             profile_step_end=15,
@@ -418,6 +446,7 @@ class TestHandleProfilingStep:
     def test_handle_profiling_step_nsys_rank_filtering(self, mock_start_nsys):
         """Test nsys profiler respects rank filtering."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             profile_step_start=10,
             profile_step_end=15,
@@ -448,6 +477,7 @@ class TestHandleProfilingStop:
     def test_handle_profiling_stop_skips_non_profiled_rank(self):
         """Test that profiling stop is skipped for non-profiled ranks."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_end=10,
             profile_ranks=[0],
@@ -463,6 +493,7 @@ class TestHandleProfilingStop:
     def test_handle_profiling_stop_skips_wrong_iteration(self):
         """Test that profiling stop is skipped for iterations other than profile_step_end."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_end=10,
             profile_ranks=[0],
@@ -480,6 +511,7 @@ class TestHandleProfilingStop:
     def test_handle_profiling_stop_pytorch_profiler(self):
         """Test profiling stop calls PyTorch profiler.stop()."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_end=10,
             profile_ranks=[0],
@@ -494,6 +526,7 @@ class TestHandleProfilingStop:
     def test_handle_profiling_stop_pytorch_profiler_none(self):
         """Test profiling stop handles None profiler gracefully."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_step_end=10,
             profile_ranks=[0],
@@ -508,6 +541,7 @@ class TestHandleProfilingStop:
         mock_nvtx_context = Mock()
 
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             profile_step_end=10,
             profile_ranks=[0],
@@ -522,6 +556,7 @@ class TestHandleProfilingStop:
     def test_handle_profiling_stop_nsys_wrong_iteration(self, mock_stop_nsys):
         """Test nsys profiler does not stop at wrong iteration."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             profile_step_end=10,
             profile_ranks=[0],
@@ -537,6 +572,7 @@ class TestHandleProfilingStop:
         mock_nvtx_context = Mock()
 
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             profile_step_end=10,
             profile_ranks=[0, 2],
@@ -557,6 +593,7 @@ class TestProfilingEdgeCases:
     def test_handle_profiling_step_both_profilers_disabled(self):
         """Test that nothing happens when both profilers are disabled."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=False,
             use_nsys_profiler=False,
             profile_ranks=[0],
@@ -571,6 +608,7 @@ class TestProfilingEdgeCases:
     def test_multiple_ranks_profiling(self):
         """Test that multiple ranks can be profiled."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_pytorch_profiler=True,
             profile_ranks=[0, 1, 3],
         )
@@ -584,6 +622,7 @@ class TestProfilingEdgeCases:
     def test_handle_profiling_step_nsys_at_iteration_zero(self, mock_start_nsys):
         """Test nsys profiler can start at iteration 0."""
         config = ProfilingConfig(
+            memory_snapshot_path="/nemo_run/snapshot.pickle",
             use_nsys_profiler=True,
             profile_step_start=0,
             profile_step_end=5,

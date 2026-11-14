@@ -141,6 +141,7 @@ def _dpo_config(
         ),
         validation=ValidationConfig(eval_interval=TRAIN_ITERS, eval_iters=0),
         optimizer=OptimizerConfig(
+            use_layer_wise_param_layout=False,
             optimizer="adam",
             bf16=True,
             fp16=False,
@@ -181,6 +182,8 @@ def _dpo_config(
         logger=LoggerConfig(log_interval=1, tensorboard_dir=str(tensorboard_dir)),
         tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=str(model_dir)),
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=TRAIN_ITERS,
             save=str(checkpoint_dir),
             load=str(checkpoint_dir),

@@ -18,11 +18,13 @@ model:
   seq_length: 2048
   cross_entropy_loss_fusion: False
 
+validation:
+  eval_iters: 5
+
 train:
   train_iters: 600
   global_batch_size: 64
   micro_batch_size: 1
-  eval_iters: 5
 
 optimizer:
   finetune_lr: 0.000005
@@ -32,7 +34,6 @@ scheduler:
   lr_warmup_iters: 0
 
 dist:
-  use_torch_fsdp2: false
 
 logger:
   log_interval: 1

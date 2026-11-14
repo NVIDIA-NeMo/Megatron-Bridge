@@ -143,6 +143,7 @@ class TestTensorInspect:
                     eval_iters=2,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -193,6 +194,8 @@ class TestTensorInspect:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=40,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",

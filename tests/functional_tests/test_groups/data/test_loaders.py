@@ -83,6 +83,7 @@ def create_simple_test_config():
             make_vocab_size_divisible_by=1,
         ),
         optimizer=OptimizerConfig(
+            use_layer_wise_param_layout=False,
             lr=0.001,
             use_distributed_optimizer=False,
         ),
@@ -101,11 +102,11 @@ def create_simple_test_config():
             tokenizer_type="NullTokenizer",
             vocab_size=1000,
         ),
-        checkpoint=CheckpointConfig(),
+        checkpoint=CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
         dist=DistributedInitConfig(),
         ddp=DistributedDataParallelConfig(),
         rng=RNGConfig(),
-        rerun_state_machine=RerunStateMachineConfig(),
+        rerun_state_machine=RerunStateMachineConfig(rerun_mode="disabled"),
     )
 
 

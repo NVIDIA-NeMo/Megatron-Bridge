@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     """Set the common performance overrides."""
     recipe.train.train_iters = 50
-    recipe.train.eval_iters = 0
+    recipe.validation.eval_iters = 0
     recipe.train.manual_gc = True
     recipe.train.manual_gc_interval = 100
 

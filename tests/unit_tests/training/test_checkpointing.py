@@ -97,6 +97,7 @@ from megatron.bridge.training.config import (
     ConfigContainer,
     DistributedDataParallelConfig,
     SchedulerConfig,
+    finalize_checkpoint_config,
 )
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.utils.instantiate_utils import InstantiationException
@@ -159,7 +160,11 @@ def test_global_checkpoint_load_with_older_core(per_rank_objects, monkeypatch):
     from megatron.bridge.training import checkpointing
 
     # Model both an older config without the field and a config with an explicit policy.
-    config_values = vars(CheckpointConfig(async_save=False, fully_parallel_load=True)).copy()
+    config_values = vars(
+        CheckpointConfig(
+            use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, async_save=False, fully_parallel_load=True
+        )
+    ).copy()
     config_values.pop("ckpt_fully_parallel_load_per_rank_objects", None)
     if per_rank_objects is not None:
         config_values["ckpt_fully_parallel_load_per_rank_objects"] = per_rank_objects
@@ -4926,12 +4931,14 @@ class TestCheckpointIterationResolution:
         from megatron.bridge.training.config import CheckpointConfig
 
         config = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             ckpt_step=3000,
             load=None,  # Missing load directory
         )
 
         with pytest.raises(ValueError) as exc_info:
-            config.finalize()
+            finalize_checkpoint_config(config)
 
         assert "ckpt_step=3000 specified but checkpoint.load is None" in str(exc_info.value)
         assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
@@ -4941,13 +4948,15 @@ class TestCheckpointIterationResolution:
         from megatron.bridge.training.config import CheckpointConfig
 
         config = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             ckpt_step=5000,
             load=None,
             pretrained_checkpoint="/pretrained/model",  # Has pretrained but no load
         )
 
         with pytest.raises(AssertionError, match="Pretrained checkpoint /pretrained/model does not exist"):
-            config.finalize()
+            finalize_checkpoint_config(config)
 
     def test_no_load_dir_returns_default(self):
         """When load_dir is None, should return iteration=-1."""
@@ -5125,7 +5134,12 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for fsdp_dtensor format."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        ckpt_cfg = CheckpointConfig(fully_parallel_save=False, ckpt_format="fsdp_dtensor")
+        ckpt_cfg = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
+            fully_parallel_save=False,
+            ckpt_format="fsdp_dtensor",
+        )
         result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "fsdp_dtensor"
@@ -5136,7 +5150,12 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for torch_dist with fully parallel save."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        ckpt_cfg = CheckpointConfig(fully_parallel_save=True, ckpt_format="torch_dist")
+        ckpt_cfg = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
+            fully_parallel_save=True,
+            ckpt_format="torch_dist",
+        )
         result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "dp_reshardable"
@@ -5145,7 +5164,12 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for torch_dist with dp_zero_gather_scatter."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        ckpt_cfg = CheckpointConfig(fully_parallel_save=False, ckpt_format="torch_dist")
+        ckpt_cfg = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
+            fully_parallel_save=False,
+            ckpt_format="torch_dist",
+        )
         result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "dp_reshardable"
@@ -5159,7 +5183,7 @@ class TestFSDPDTensorFunctionality:
         from megatron.bridge.training.checkpointing import load_fsdp_dtensor_checkpoint
         from megatron.bridge.training.config import CheckpointConfig
 
-        ckpt_cfg = CheckpointConfig()
+        ckpt_cfg = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
 
         state_dict, checkpoint_name, release, ckpt_type = load_fsdp_dtensor_checkpoint(
             load_dir="/test/dir",
@@ -5184,7 +5208,7 @@ class TestFSDPDTensorFunctionality:
         from megatron.bridge.training.checkpointing import load_fsdp_dtensor_checkpoint
         from megatron.bridge.training.config import CheckpointConfig
 
-        ckpt_cfg = CheckpointConfig()
+        ckpt_cfg = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
 
         with pytest.raises(RuntimeError, match="Megatron FSDP is required but not available"):
             load_fsdp_dtensor_checkpoint(
@@ -5212,7 +5236,12 @@ class TestFSDPDTensorFunctionality:
             patch("megatron.bridge.training.checkpointing.handle_fp8_extra_state_case") as mock_fp8,
             patch("megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor") as mock_uneven,
         ):
-            ckpt_cfg = CheckpointConfig(ckpt_format="fsdp_dtensor", save_rng=False)
+            ckpt_cfg = CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
+                ckpt_format="fsdp_dtensor",
+                save_rng=False,
+            )
             result = generate_state_dict(
                 ckpt_cfg=ckpt_cfg,
                 model=[mock_model],
@@ -5320,7 +5349,12 @@ class TestFSDPDTensorFunctionality:
             patch("megatron.bridge.training.checkpointing.handle_fp8_extra_state_case") as mock_fp8,
             patch("megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor") as mock_uneven,
         ):
-            ckpt_cfg = CheckpointConfig(ckpt_format="torch_dist", save_rng=False)
+            ckpt_cfg = CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
+                ckpt_format="torch_dist",
+                save_rng=False,
+            )
             result = generate_state_dict(
                 ckpt_cfg=ckpt_cfg,
                 model=[mock_model],
@@ -5356,6 +5390,8 @@ class TestFSDPDTensorFunctionality:
         mock_scheduler.state_dict.return_value = {"scheduler": "state"}
 
         ckpt_cfg = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             ckpt_format="torch_dist",
             save_optim=False,
             save_rng=False,
@@ -5398,7 +5434,9 @@ class TestFSDPDTensorFunctionality:
         mock_rng_state = Mock() if has_rng_scaffold else None
         optim_sd_kwargs = {"is_loading": True} if is_loading else None
 
-        ckpt_cfg = CheckpointConfig(ckpt_format=ckpt_format, save_rng=False)
+        ckpt_cfg = CheckpointConfig(
+            use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, ckpt_format=ckpt_format, save_rng=False
+        )
         result = generate_state_dict(
             ckpt_cfg=ckpt_cfg,
             model=[mock_model],
@@ -5429,7 +5467,7 @@ class TestCheckpointPathOverride:
 
         state_dict, checkpoint_name, release, ckpt_type = _load_global_dist_base_checkpoint(
             load_dir="/should/not/be/used",
-            ckpt_cfg=CheckpointConfig(),
+            ckpt_cfg=CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
             rank0=True,
             sharded_state_dict=None,
             iteration=None,
@@ -5460,7 +5498,9 @@ class TestCheckpointPathOverride:
         sharded_sd = {"weight": "placeholder"}
         state_dict, checkpoint_name, release, ckpt_type = _load_global_dist_base_checkpoint(
             load_dir="/should/not/be/used",
-            ckpt_cfg=CheckpointConfig(verify_integrity=verify_integrity),
+            ckpt_cfg=CheckpointConfig(
+                use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, verify_integrity=verify_integrity
+            ),
             rank0=False,
             sharded_state_dict=sharded_sd,
             iteration=None,
@@ -5491,7 +5531,9 @@ class TestCheckpointPathOverride:
 
         state_dict, _, _, _ = _load_global_dist_base_checkpoint(
             load_dir="/checkpoints",
-            ckpt_cfg=CheckpointConfig(dist_ckpt_strictness=strictness),
+            ckpt_cfg=CheckpointConfig(
+                use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, dist_ckpt_strictness=strictness
+            ),
             rank0=False,
             sharded_state_dict={"model": {}},
             iteration=1000,
@@ -5509,7 +5551,7 @@ class TestCheckpointPathOverride:
 
         state_dict, checkpoint_name, release, ckpt_type = load_fsdp_dtensor_checkpoint(
             load_dir="/should/not/be/used",
-            ckpt_cfg=CheckpointConfig(),
+            ckpt_cfg=CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
             rank0=True,
             sharded_state_dict=None,
             iteration=None,
@@ -5830,7 +5872,7 @@ class TestCheckpointManager:
 
     def test_create_checkpoint_manager_returns_default(self):
         """Test create_checkpoint_manager returns DefaultCheckpointManager when no custom class."""
-        config = CheckpointConfig()
+        config = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
 
         manager = create_checkpoint_manager(config)
 
@@ -5839,14 +5881,20 @@ class TestCheckpointManager:
 
     def test_create_checkpoint_manager_invalid_format_raises(self):
         """Test create_checkpoint_manager raises ValueError for invalid class format."""
-        config = CheckpointConfig(custom_manager_class="InvalidClassName")
+        config = CheckpointConfig(
+            use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, custom_manager_class="InvalidClassName"
+        )
 
         with pytest.raises(ValueError, match="Invalid custom_manager_class format"):
             create_checkpoint_manager(config)
 
     def test_create_checkpoint_manager_missing_module_raises(self):
         """Test create_checkpoint_manager raises ImportError for non-existent module."""
-        config = CheckpointConfig(custom_manager_class="megatron.bridge.nonexistent_module.ClassName")
+        config = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
+            custom_manager_class="megatron.bridge.nonexistent_module.ClassName",
+        )
 
         with pytest.raises(ImportError, match="Could not import module"):
             create_checkpoint_manager(config)
@@ -5854,14 +5902,22 @@ class TestCheckpointManager:
     def test_create_checkpoint_manager_missing_class_raises(self):
         """Test create_checkpoint_manager raises AttributeError for non-existent class."""
         # Use a real module but non-existent class
-        config = CheckpointConfig(custom_manager_class="megatron.bridge.training.checkpointing.NonExistentClass")
+        config = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
+            custom_manager_class="megatron.bridge.training.checkpointing.NonExistentClass",
+        )
 
         with pytest.raises(AttributeError, match="does not have class"):
             create_checkpoint_manager(config)
 
     def test_create_checkpoint_manager_rejects_unallowed_custom_class_before_import(self):
         """Test custom manager class paths are allowlist-validated before import."""
-        config = CheckpointConfig(custom_manager_class="attacker_pkg.manager.PayloadManager")
+        config = CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
+            custom_manager_class="attacker_pkg.manager.PayloadManager",
+        )
 
         with patch("importlib.import_module") as mock_import:
             with pytest.raises(InstantiationException, match="not in the allowlist"):
@@ -5893,7 +5949,11 @@ class TestCheckpointManager:
             mock_module.CustomTestManager = CustomTestManager
             mock_import.return_value = mock_module
 
-            config = CheckpointConfig(custom_manager_class="megatron.bridge.test.CustomTestManager")
+            config = CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
+                custom_manager_class="megatron.bridge.test.CustomTestManager",
+            )
             manager = create_checkpoint_manager(config)
 
             assert isinstance(manager, CustomTestManager)
@@ -5919,14 +5979,18 @@ class TestCheckpointManager:
         with patch("importlib.import_module") as mock_import:
             mock_module = Mock(CustomTestManager=CustomTestManager)
             mock_import.return_value = mock_module
-            config = CheckpointConfig(custom_manager_class="megatron.bridge.test.CustomTestManager")
+            config = CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
+                custom_manager_class="megatron.bridge.test.CustomTestManager",
+            )
 
             with pytest.raises(TypeError, match="save"):
                 create_checkpoint_manager(config)
 
     def test_default_checkpoint_manager_init(self):
         """Test DefaultCheckpointManager initialization."""
-        config = CheckpointConfig()
+        config = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
 
         with patch("megatron.bridge.training.checkpointing.init_checkpointing_context") as mock_init_ctx:
             mock_init_ctx.return_value = {"test_key": "test_value"}
@@ -5938,7 +6002,7 @@ class TestCheckpointManager:
 
     def test_default_checkpoint_manager_save_delegates(self):
         """Test DefaultCheckpointManager.save() delegates to save_checkpoint."""
-        config = CheckpointConfig()
+        config = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
         mock_state = Mock(spec=GlobalState)
         mock_model = [Mock()]
         mock_optimizer = Mock()
@@ -5978,7 +6042,7 @@ class TestCheckpointManager:
 
     def test_default_checkpoint_manager_load_delegates(self):
         """Test DefaultCheckpointManager.load() delegates to load_checkpoint."""
-        config = CheckpointConfig()
+        config = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
         mock_state = Mock(spec=GlobalState)
         mock_model = [Mock()]
         mock_optimizer = Mock()
@@ -6018,7 +6082,7 @@ class TestCheckpointManager:
 
     def test_default_checkpoint_manager_finalize_async_saves(self):
         """Test DefaultCheckpointManager.finalize_async_saves() delegates correctly."""
-        config = CheckpointConfig()
+        config = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
         mock_state = Mock(spec=GlobalState)
 
         with (
@@ -6039,7 +6103,7 @@ class TestCheckpointManager:
 
     def test_checkpoint_manager_protocol_compliance(self):
         """Test that DefaultCheckpointManager satisfies the CheckpointManager protocol."""
-        config = CheckpointConfig()
+        config = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
 
         with patch("megatron.bridge.training.checkpointing.init_checkpointing_context"):
             manager = DefaultCheckpointManager(config)
@@ -6049,7 +6113,7 @@ class TestCheckpointManager:
 
     def test_checkpointing_context_property(self):
         """Test DefaultCheckpointManager.checkpointing_context property."""
-        config = CheckpointConfig()
+        config = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
         expected_context = {"local_checkpoint_manager": Mock(), "save_strategy": Mock()}
 
         with patch("megatron.bridge.training.checkpointing.init_checkpointing_context") as mock_init_ctx:
@@ -7087,7 +7151,7 @@ class TestAsyncCheckpointScheduling:
         async_queue = Mock()
         state = Mock()
         state.async_calls_queue = async_queue
-        state.cfg.checkpoint = CheckpointConfig()
+        state.cfg.checkpoint = CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False)
         state.cfg.checkpoint.async_save = True
         nvrx_request = NVRxAsyncRequest(
             async_fn=Mock(),
@@ -7150,6 +7214,8 @@ def test_global_checkpoint_load_honors_sharding_validation(
 ) -> None:
     """Public checkpoint policy must reach the Core loader."""
     cfg = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
         ckpt_format="torch_dist",
         ckpt_load_validate_sharding_integrity=validate_sharding,
         fully_parallel_load=fully_parallel,

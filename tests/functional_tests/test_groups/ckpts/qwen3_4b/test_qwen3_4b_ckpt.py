@@ -55,7 +55,7 @@ class TestQwen3Ckpt:
         config.checkpoint.save_optim = False
 
         config.train.train_iters = 10 if config.checkpoint.load else 5
-        config.train.eval_iters = 5
+        config.validation.eval_iters = 5
         config.train.save_interval = 5
         config.train.global_batch_size = 4
         config.train.micro_batch_size = 1

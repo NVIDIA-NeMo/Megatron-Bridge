@@ -90,7 +90,7 @@ NVTE_FUSED_ATTN=1 uv run python -m torch.distributed.run --nproc_per_node=8 scri
     checkpoint.save_interval=200 \
     optimizer.lr=5e-5 \
     optimizer.min_lr=5e-5 \
-    train.eval_iters=0 \
+    validation.eval_iters=0 \
     scheduler.lr_decay_style=constant \
     scheduler.lr_warmup_iters=1000 \
     model.seq_length=40000 \

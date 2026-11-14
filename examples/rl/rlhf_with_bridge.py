@@ -60,6 +60,7 @@ from typing import Iterable, Iterator
 
 import torch
 import torch.nn.functional as F
+from megatron.core.distributed import TorchFullyShardedDataParallelConfig
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.process_groups_config import ProcessGroupCollection
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
@@ -112,6 +113,7 @@ def build_config(provider, args: Args) -> ConfigContainer:
     )
 
     optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         lr=args.learning_rate,
         min_lr=args.learning_rate,
@@ -139,6 +141,8 @@ def build_config(provider, args: Args) -> ConfigContainer:
     )
 
     checkpoint = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
         save_interval=0,
         save=None,
         load=None,
@@ -306,7 +310,7 @@ def main() -> None:
         cfg.model,
         cfg.ddp,
         overlap_param_gather_with_optimizer_step=False,
-        use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+        use_torch_fsdp2=isinstance(cfg.ddp, TorchFullyShardedDataParallelConfig),
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
         pg_collection=pg_collection,
     )

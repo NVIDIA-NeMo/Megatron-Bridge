@@ -671,6 +671,8 @@ def save_megatron_model(
         logger=LoggerConfig(),
         tokenizer=tokenizer_config,
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             async_save=False,
             save=str(path),
             save_optim=False,

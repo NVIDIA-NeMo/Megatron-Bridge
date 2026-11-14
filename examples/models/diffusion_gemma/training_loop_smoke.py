@@ -142,12 +142,14 @@ def main() -> None:
     cfg = ConfigContainer(
         model=provider,
         train=TrainingConfig(train_iters=args.train_steps, global_batch_size=4, micro_batch_size=1),
-        optimizer=OptimizerConfig(lr=1e-4, min_lr=1e-4),
+        optimizer=OptimizerConfig(use_layer_wise_param_layout=False, lr=1e-4, min_lr=1e-4),
         scheduler=SchedulerConfig(lr_decay_iters=args.train_steps, lr_warmup_iters=0),
         dataset=MockDiffusionGemmaDatasetConfig(),
         logger=LoggerConfig(log_interval=1),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=hf_config.text_config.vocab_size),
-        checkpoint=CheckpointConfig(ckpt_format="torch_dist"),
+        checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, ckpt_format="torch_dist"
+        ),
     )
     cfg.model.tensor_model_parallel_size = args.tp
     cfg.model.pipeline_model_parallel_size = 1
