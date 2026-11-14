@@ -41,3 +41,26 @@ def test_hybrid_rotary_uses_runtime_cp_group(packed_seq):
     torch.testing.assert_close(actual, full if packed_seq else full[[2, 3, 4, 5]])
     torch.testing.assert_close(default, full if packed_seq else full[[0, 1, 6, 7]])
     assert rotary.cp_group is construction_group
+
+
+@pytest.mark.unit
+def test_hybrid_rotary_defers_to_layer_buffer_outside_forward(monkeypatch):
+    # Core's TE CUDA graph helper unwraps the VLM to this Hybrid language model, sees "rope", and asks for a
+    # static embedding before any forward, as rotary(seq_len, packed_seq=...). It must get None so it keeps
+    # the batch-shaped rotary buffer of Qwen3VLRotaryTransformerLayer.
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+    group = Mock()
+    group.size.return_value = 1
+    rotary = _HybridMultimodalRotaryEmbedding(kv_channels=8, cp_group=group)
+    rotary.mrope_section = [2, 1, 1]
+    rotary.te_attn_cuda_graph = True
+
+    assert rotary(8, packed_seq=False) is None
+
+    # Inside a forward, missing positions are still an error.
+    token = _POSITION_IDS.set(None)
+    try:
+        with pytest.raises(RuntimeError, match="requires the current forward's position_ids"):
+            rotary(8)
+    finally:
+        _POSITION_IDS.reset(token)

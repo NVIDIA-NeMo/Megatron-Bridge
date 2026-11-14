@@ -488,6 +488,13 @@ jobs:
         with:
           python-version: 3.12
 
+      - name: Login to NGC
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: nvcr.io
+          username: ${{ secrets.NGC_API_USER }}
+          password: ${{ secrets.NGC_API_KEY }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 

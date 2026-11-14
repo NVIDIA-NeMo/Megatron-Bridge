@@ -21,6 +21,7 @@ from typing import Any
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.transformer.enums import CudaGraphModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
@@ -34,18 +35,45 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification impo
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_layer import Qwen3VLRotaryTransformerLayer
 
 
-_POSITION_IDS: ContextVar[torch.Tensor | None] = ContextVar("qwen35_hybrid_position_ids", default=None)
+class _OutsideForward:
+    """Marks a rotary call made outside a Qwen3.5 Hybrid language-model forward."""
+
+
+_OUTSIDE_FORWARD = _OutsideForward()
+_POSITION_IDS: ContextVar[torch.Tensor | None | _OutsideForward] = ContextVar(
+    "qwen35_hybrid_position_ids", default=_OUTSIDE_FORWARD
+)
+
+
+def _te_attn_cuda_graph_enabled(config: TransformerConfig) -> bool:
+    """Whether Core's TE CUDA graph helper will build static inputs for attention layers."""
+    if getattr(config, "cuda_graph_impl", "none") != "transformer_engine":
+        return False
+    modules = config.cuda_graph_modules
+    return not modules or CudaGraphModule.attn in modules
 
 
 class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
+    # Set by Qwen35VLHybridLanguageModel from its config. Only then may a call outside a forward return None.
+    te_attn_cuda_graph: bool = False
+
     def forward(
         self,
         max_seq_len: int,
         *,
         packed_seq: bool = False,
         cp_group: torch.distributed.ProcessGroup | None = None,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | None:
         position_ids = _POSITION_IDS.get()
+        if position_ids is _OUTSIDE_FORWARD:
+            # Core's TE CUDA graph helper builds static attention inputs before any forward and sees this
+            # Hybrid model's "rope". mRoPE depends on each batch's positions, so return None: the helper then
+            # keeps the batch-shaped buffer from Qwen3VLRotaryTransformerLayer, which every replay refills.
+            # TODO: remove this branch once https://github.com/NVIDIA/Megatron-LM/pull/9333 lands in the
+            # pinned Megatron-LM; the helper will then keep the layer's rotary buffer without calling here.
+            if self.te_attn_cuda_graph:
+                return None
+            raise RuntimeError("Qwen3.5 Hybrid mRoPE is only valid inside the language-model forward.")
         if position_ids is None:
             raise RuntimeError("Qwen3.5 Hybrid mRoPE requires the current forward's position_ids.")
         return super().forward(position_ids, self.mrope_section, cp_group=cp_group)
@@ -106,6 +134,7 @@ class Qwen35VLHybridLanguageModel(HybridModel):
             cp_group=self.pg_collection.cp,
         )
         self.rotary_pos_emb.mrope_section = config.mrope_section
+        self.rotary_pos_emb.te_attn_cuda_graph = _te_attn_cuda_graph_enabled(config)
 
         if self.mtp_process:
             self.mtp.register_forward_pre_hook(self._mtp_token_embedding_inputs, with_kwargs=True)
@@ -163,16 +192,8 @@ class Qwen35VLHybridModel(Qwen3VLModel):
 
     language_model_class = Qwen35VLHybridLanguageModel
 
-    def _expose_language_model_for_cuda_graph_helper(self) -> None:
-        super()._expose_language_model_for_cuda_graph_helper()
-        self.position_embedding_type = "mrope"
-
 
 class Qwen35HybridForTokenClassification(Qwen3VLForTokenClassification):
     """Qwen3.5's existing classifier head over the Hybrid language model."""
 
     language_model_class = Qwen35VLHybridLanguageModel
-
-    def _expose_language_model_for_cuda_graph_helper(self) -> None:
-        super()._expose_language_model_for_cuda_graph_helper()
-        self.position_embedding_type = "mrope"

@@ -58,9 +58,16 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
     state.train_state = TrainState(step=3, consumed_train_samples=48)
     optimizer, scheduler = fixtures["mock_optimizer"], fixtures["mock_scheduler"]
     optimizer.is_stub_optimizer = mode == "stub"
-    optimizer.param_groups = [{"max_lr": 0.2, "min_lr": 0.1}]
+    # The second group has its own LR override, e.g. from an optimizer_config_override_provider.
+    optimizer.param_groups = [{"max_lr": 0.2, "min_lr": 0.1}, {"max_lr": 0.5, "min_lr": 0.05, "default_config": False}]
     events = []
-    optimizer.load_state_dict.side_effect = lambda *_: events.append("optimizer")
+
+    def load_optimizer(*_):
+        events.append("optimizer")
+        # The checkpoint's groups replace the built ones, with stale bounds for the override group.
+        optimizer.param_groups[1].update(max_lr=0.9, min_lr=0.09)
+
+    optimizer.load_state_dict.side_effect = load_optimizer
     optimizer.quantize_and_sync_model_params_from_main_params.side_effect = lambda: events.append("quantize")
     scheduler.load_state_dict.side_effect = lambda *_: events.append("scheduler")
     if mode == "load_error":
@@ -126,6 +133,7 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
     applied_override = override and mode in ("resume",)
     if applied_override:
         assert optimizer.param_groups[0] == {"max_lr": 0.02, "min_lr": 0.002}
+        assert optimizer.param_groups[1] == {"max_lr": 0.5, "min_lr": 0.05, "default_config": False}
         assert scheduler.num_steps == 48
         scheduler.step.assert_called_once_with(increment=0)
     else:
@@ -161,6 +169,46 @@ def test_scheduler_override_skips_unavailable_optimizer_or_scheduler(stub, missi
     scheduler = None if missing_scheduler else Mock()
     checkpointing._restore_scheduler_runtime_overrides(None, None, optimizer, scheduler)
     assert optimizer.param_groups == [{"max_lr": 0.1}]
+
+
+def _two_group_optimizer():
+    groups = [
+        {"params": [torch.nn.Parameter(torch.ones(1))], "max_lr": 0.2, "min_lr": 0.1, "default_config": True},
+        # A group with its own LR override, e.g. from an optimizer_config_override_provider.
+        {"params": [torch.nn.Parameter(torch.ones(1))], "max_lr": 0.5, "min_lr": 0.05, "default_config": False},
+    ]
+    return torch.optim.SGD(groups, lr=0.2)
+
+
+def test_scheduler_override_keeps_built_per_group_lr_overrides():
+    optimizer = _two_group_optimizer()
+    built = checkpointing._param_group_lr_bounds(optimizer)
+    # The checkpoint's groups replace the built ones; here they carry stale override bounds.
+    optimizer.param_groups[1]["max_lr"], optimizer.param_groups[1]["min_lr"] = 0.9, 0.09
+    scheduler = OptimizerParamScheduler(optimizer, 0, 0.2, 0.1, 0, 100, "linear", 0, 0, 100, "constant")
+    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002))
+
+    checkpointing._restore_scheduler_runtime_overrides(
+        cfg, TrainState(consumed_train_samples=50), optimizer, scheduler, built
+    )
+
+    assert (optimizer.param_groups[0]["max_lr"], optimizer.param_groups[0]["min_lr"]) == (0.02, 0.002)
+    assert (optimizer.param_groups[1]["max_lr"], optimizer.param_groups[1]["min_lr"]) == (0.5, 0.05)
+    assert optimizer.param_groups[1]["lr"] == pytest.approx(0.05 + 0.45 * 0.5)
+
+
+@pytest.mark.parametrize("change", ["count", "order"])
+def test_scheduler_override_resets_overrides_when_groups_changed(change):
+    optimizer = _two_group_optimizer()
+    built = checkpointing._param_group_lr_bounds(optimizer)
+    # Fewer groups, or as many with the override on a different group.
+    built = built[:1] if change == "count" else built[::-1]
+    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002))
+
+    checkpointing._restore_scheduler_runtime_overrides(cfg, TrainState(), optimizer, Mock(), built)
+
+    for group in optimizer.param_groups:
+        assert (group["max_lr"], group["min_lr"]) == (0.02, 0.002)
 
 
 def test_scheduler_override_preserves_unspecified_decoupled_bounds():

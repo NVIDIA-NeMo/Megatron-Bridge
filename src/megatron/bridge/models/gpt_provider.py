@@ -187,7 +187,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     # MoE / FP8
     num_moe_experts: Optional[int] = None
-    moe_grouped_gemm: bool = False
     qk_layernorm: bool = False
     fp8: Optional[str] = None
     normalization: str = "LayerNorm"
