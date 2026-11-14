@@ -503,10 +503,10 @@ class TestCheckpointUtilities:
 
         # Verify that the parent directory is created
         with tempfile.TemporaryDirectory() as temp_dir:
-            ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=True)
+            ensure_directory_exists(f"msc://__filesystem__{temp_dir}/checkpoints/iter_0000001", check_parent=True)
             assert os.path.exists(f"{temp_dir}/checkpoints")
 
-            ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=False)
+            ensure_directory_exists(f"msc://__filesystem__{temp_dir}/checkpoints/iter_0000001", check_parent=False)
             assert os.path.exists(f"{temp_dir}/checkpoints/iter_0000001")
 
 
@@ -2963,7 +2963,7 @@ class TestCleanupNonPersistentCheckpoints:
         """Retention removes old checkpoints from an MSC-backed root."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        save_dir = f"msc://default{tmp_path}/checkpoints"
+        save_dir = f"msc://__filesystem__{tmp_path}/checkpoints"
         for name in ("iter_0001000", "iter_0002000", "iter_0003000"):
             msc.os.makedirs(os.path.join(save_dir, name), exist_ok=True)
 
@@ -3529,20 +3529,20 @@ class TestLoadBaseCheckpoint:
         mock_get_format.return_value = "torch_dist"
         mock_load_global.return_value = (
             {"model": "x"},
-            "msc://default/ckpt/iter_0001000",
+            "msc://__filesystem__/ckpt/iter_0001000",
             False,
             CheckpointType.GLOBAL,
         )
 
         ctx = {}
         _load_base_checkpoint(
-            "msc://default/ckpt/iter_0001000",
+            "msc://__filesystem__/ckpt/iter_0001000",
             base_config,
             checkpointing_context=ctx,
             pg_collection=mock_pg_collection,
         )
 
-        assert ctx["dataloader_state_dir"] == "msc://default/ckpt/energon"
+        assert ctx["dataloader_state_dir"] == "msc://__filesystem__/ckpt/energon"
 
     @patch("megatron.bridge.training.checkpointing.file_exists")
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
@@ -6621,7 +6621,7 @@ class TestMaybeLoadDataloaderState:
         """An Energon state colocated with an MSC checkpoint restores through the remote adapter."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        state_root = f"msc://default{tmp_path}/energon"
+        state_root = f"msc://__filesystem__{tmp_path}/energon"
         iter_dir = get_checkpoint_name(state_root, 10)
         msc.os.makedirs(iter_dir, exist_ok=True)
         state_path = os.path.join(iter_dir, "train_dataloader_dprank000.pt")
@@ -6931,7 +6931,7 @@ class TestMaybeSaveDataloaderState:
         """An Energon state colocated with an MSC checkpoint is written through the remote adapter."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        state_root = f"msc://default{tmp_path}/energon"
+        state_root = f"msc://__filesystem__{tmp_path}/energon"
         train_iterator = self._iterator()
 
         with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
