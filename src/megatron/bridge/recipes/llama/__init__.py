@@ -52,6 +52,7 @@ from .llama3 import (
     llama32_3b_pretrain_config,
     llama32_3b_sft_config,
 )
+from .vrnvl72 import llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config
 
 
 __all__ = [
@@ -72,6 +73,7 @@ __all__ = [
     "llama31_70b_pretrain_config",
     "llama31_405b_pretrain_config",
     "llama31_405b_pretrain_64gpu_gb200_fp8mx_config",
+    "llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config",  # pragma: allowlist secret
     "llama31_405b_pretrain_deterministic_config",
     # Llama3.2 models
     "llama32_1b_pretrain_config",

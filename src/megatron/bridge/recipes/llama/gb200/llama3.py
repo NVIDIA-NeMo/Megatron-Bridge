@@ -29,6 +29,11 @@ def llama31_405b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     This is a capacity/stability check, not a long-term convergence result.
     MXFP8 checkpoint save/resume was not exercised in this validation.
     """
+    return _llama31_405b_pretrain_64gpu_fp8mx_common()
+
+
+def _llama31_405b_pretrain_64gpu_fp8mx_common() -> ConfigContainer:
+    """Shared 64-GPU MXFP8 training configuration for NVL72 platforms."""
     cfg = llama31_405b_pretrain_256gpu_h100_bf16_config()
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 8

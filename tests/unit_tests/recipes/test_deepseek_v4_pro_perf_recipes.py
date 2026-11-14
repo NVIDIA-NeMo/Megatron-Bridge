@@ -24,6 +24,8 @@ from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelCo
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config,
+    deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config,
 )
 from tests.unit_tests.recipes.recipe_test_utils import (
     DeepSeekV4BuilderOnlyBridge,
@@ -41,9 +43,16 @@ def _offline_recipe_construction(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(module, "AutoBridge", DeepSeekV4BuilderOnlyBridge)
 
 
-def test_bf16_preserves_full_pro_workload_and_optimizer() -> None:
-    bf16 = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
-    mxfp8 = deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config()
+@pytest.fixture(params=["gb300", "vrnvl72"])
+def recipes(request):
+    if request.param == "gb300":
+        return deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config, deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config
+    return deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config, deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config
+
+
+def test_bf16_preserves_full_pro_workload_and_optimizer(recipes) -> None:
+    bf16 = recipes[0]()
+    mxfp8 = recipes[1]()
 
     assert isinstance(bf16.model, DeepSeekV4ModelConfig)
     assert bf16.model.hidden_size == 7168
@@ -67,8 +76,8 @@ def test_bf16_preserves_full_pro_workload_and_optimizer() -> None:
     assert bf16.optimizer.exp_avg_dtype == bf16.optimizer.exp_avg_sq_dtype == torch.bfloat16
 
 
-def test_bf16_effective_precision_disables_quantized_compute_and_gather() -> None:
-    cfg = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
+def test_bf16_effective_precision_disables_quantized_compute_and_gather(recipes) -> None:
+    cfg = recipes[0]()
     # Exercise precision propagation on the strict builder-backed recipe config,
     # including clearing pre-existing FP8 settings.
     model = cfg.model
@@ -92,8 +101,8 @@ def test_bf16_effective_precision_disables_quantized_compute_and_gather() -> Non
     assert cfg.ddp.grad_reduce_in_fp32 is False
 
 
-def test_bf16_uses_supported_eager_recompute_combination() -> None:
-    cfg = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
+def test_bf16_uses_supported_eager_recompute_combination(recipes) -> None:
+    cfg = recipes[0]()
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["mla_up_proj", "mhc", "moe"]
     assert cfg.model.cuda_graph_impl == "none"
