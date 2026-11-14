@@ -784,6 +784,22 @@ class TestLlamaBridgeMegatronToHFConfig:
             "factor": 8.0,
         }
 
+    def test_megatron_to_hf_config_without_rope_scaling_reports_default(self):
+        """A model without RoPE scaling says so, so a config-only export can drop a reference's scaling."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=64,
+            ffn_hidden_size=128,
+            num_attention_heads=4,
+            num_query_groups=4,
+            seq_length=256,
+            vocab_size=128,
+        )
+
+        hf_config = LlamaBridge.megatron_to_hf_config(provider)
+
+        assert hf_config["rope_scaling"] == {"rope_type": "default"}
+
 
 class TestLlamaBridgeMappingRegistry:
     """Test cases for LlamaBridge.mapping_registry method."""
@@ -1096,3 +1112,98 @@ class TestAutoBridgeIntegration:
         non_causal_config = Mock()
         non_causal_config.architectures = ["LlamaModel"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) is False
+
+
+class TestLlamaCheckpointConfigExport:
+    """``convert.sh export`` rebuilds the HF config from the checkpoint through ``AutoBridge.from_auto_config``."""
+
+    REFERENCE = {
+        "architectures": ["LlamaForCausalLM"],
+        "vocab_size": 256,
+        "hidden_size": 256,
+        "intermediate_size": 512,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "max_position_embeddings": 131072,
+        "rope_theta": 10000.0,
+        "torch_dtype": "bfloat16",
+    }
+    LLAMA31 = {
+        "rope_theta": 500000.0,
+        "rope_parameters": {
+            "rope_type": "llama3",
+            "rope_theta": 500000.0,
+            "factor": 8.0,
+            **LlamaBridge._MCORE_LLAMA3_ROPE_SCALING,
+        },
+    }
+
+    def _export(self, tmp_path, use_model_config, reference_overrides=None, **checkpoint_overrides):
+        from megatron.bridge.training.config import ConfigContainer
+
+        hf_dir = tmp_path / "hf"
+        LlamaConfig(**{**self.REFERENCE, **(reference_overrides or {})}).save_pretrained(hf_dir)
+        reference = LlamaConfig.from_pretrained(hf_dir)
+        bridge = AutoBridge.from_hf_config(reference)
+        model_config = (
+            bridge.get_model_config() if use_model_config else bridge.to_megatron_provider(load_weights=False)
+        )
+        for key, value in checkpoint_overrides.items():
+            if not hasattr(model_config, key):
+                raise ValueError(f"{type(model_config).__name__} has no field {key!r}")
+            setattr(model_config, key, value)
+        checkpoint_dir = tmp_path / "checkpoint"
+        checkpoint_dir.mkdir()
+        ConfigContainer(
+            model=model_config,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        ).to_yaml(str(checkpoint_dir / "run_config.yaml"))
+        return AutoBridge.from_auto_config(str(checkpoint_dir), str(hf_dir)).hf_pretrained, reference
+
+    @pytest.mark.parametrize("use_model_config", [False, True], ids=["provider", "model_config"])
+    def test_unchanged_checkpoint_reproduces_the_reference_config(self, tmp_path, use_model_config):
+        rebuilt, reference = self._export(tmp_path, use_model_config)
+
+        assert rebuilt.to_json_string() == reference.to_json_string()
+
+    @pytest.mark.parametrize("use_model_config", [False, True], ids=["provider", "model_config"])
+    def test_rope_theta_comes_from_the_checkpoint(self, tmp_path, use_model_config):
+        rebuilt, _ = self._export(tmp_path, use_model_config, rotary_base=500000.0)
+
+        assert rebuilt.rope_parameters == {"rope_type": "default", "rope_theta": 500000.0}
+
+    @pytest.mark.parametrize("use_model_config", [False, True], ids=["provider", "model_config"])
+    def test_llama3_rope_scaling_comes_from_the_checkpoint(self, tmp_path, use_model_config):
+        rebuilt, _ = self._export(tmp_path, use_model_config, rope_scaling=True, rope_scaling_factor=8.0)
+
+        assert rebuilt.rope_parameters == {
+            "rope_type": "llama3",
+            "rope_theta": 10000.0,
+            "factor": 8.0,
+            **LlamaBridge._MCORE_LLAMA3_ROPE_SCALING,
+        }
+
+    @pytest.mark.parametrize("use_model_config", [False, True], ids=["provider", "model_config"])
+    def test_unchanged_llama31_checkpoint_reproduces_the_reference_config(self, tmp_path, use_model_config):
+        rebuilt, reference = self._export(tmp_path, use_model_config, reference_overrides=self.LLAMA31)
+
+        assert rebuilt.to_json_string() == reference.to_json_string()
+
+    @pytest.mark.parametrize("use_model_config", [False, True], ids=["provider", "model_config"])
+    def test_rope_scaling_the_checkpoint_drops_is_not_exported(self, tmp_path, use_model_config):
+        rebuilt, _ = self._export(tmp_path, use_model_config, reference_overrides=self.LLAMA31, rope_scaling=False)
+
+        assert rebuilt.rope_parameters == {"rope_type": "default", "rope_theta": 500000.0}
+
+    @pytest.mark.parametrize("use_model_config", [False, True], ids=["provider", "model_config"])
+    def test_partial_rotary_factor_comes_from_the_checkpoint(self, tmp_path, use_model_config):
+        rebuilt, _ = self._export(tmp_path, use_model_config, rotary_percent=0.5)
+
+        assert rebuilt.rope_parameters == {"rope_type": "default", "rope_theta": 10000.0, "partial_rotary_factor": 0.5}
