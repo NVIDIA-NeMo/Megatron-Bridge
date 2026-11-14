@@ -68,6 +68,7 @@ def _step35_hf_config() -> Step35Config:
         moe_layers_enum="2,3",
         rope_theta=[5e6, 1e4, 1e4, 1e4, 5e6],
         sliding_window=64,
+        initializer_range=0.01,
         torch_dtype="bfloat16",
         tie_word_embeddings=False,
         architectures=["Step3p5ForCausalLM"],
@@ -153,6 +154,10 @@ def test_step35_196b_pretrain_defaults(monkeypatch):
     assert m.sequence_parallel is True
     assert m.seq_length == 4096
     assert m.pipeline_dtype is torch.bfloat16
+    assert m.init_method_std == _step35_hf_config().initializer_range
+    assert m.sliding_attention_setting["window_size"] == [63, 0]
+    assert m.window_size is None
+    assert m.window_attn_skip_freq is None
 
     # MoE wiring
     assert m.moe_grouped_gemm is True

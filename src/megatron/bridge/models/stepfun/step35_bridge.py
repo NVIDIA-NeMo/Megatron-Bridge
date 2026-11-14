@@ -318,15 +318,18 @@ class Step35Bridge(MegatronModelBridge):
             config_kwargs["rotary_percents"] = list(partial_rotary_factors)
 
         # ── Sliding-attention shape (Step-3.5-Flash defaults; overlay HF) ─
+        # HF's sliding mask keeps keys with ``q - W < k <= q`` (W keys including the
+        # query itself), while TE's ``window_size=(left, right)`` endpoints are
+        # inclusive, so an HF window of W tokens is ``(W - 1, 0)`` on the Megatron side.
         sliding_attention_setting = {
-            "window_size": [512, 0],
+            "window_size": [511, 0],
             "num_attention_heads": 96,
             "num_query_groups": 8,
             "kv_channels": 128,
         }
         sliding_window = getattr(hf_config, "sliding_window", None)
         if sliding_window is not None:
-            sliding_attention_setting["window_size"] = [int(sliding_window), 0]
+            sliding_attention_setting["window_size"] = [int(sliding_window) - 1, 0]
         attn_other = getattr(hf_config, "attention_other_setting", None) or {}
         if isinstance(attn_other, dict) and attn_other.get("attention_type") == "sliding_attention":
             if "num_attention_heads" in attn_other:

@@ -31,7 +31,6 @@ from megatron.bridge.models.stepfun.data.flickr8k import Step37Flickr8kSFTDataPr
 from megatron.bridge.recipes.common import _sft_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import (
     ConfigContainer,
     DistributedDataParallelConfig,
@@ -167,10 +166,10 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config() -> ConfigContainer:
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
 
-    # ── Tokenizer (NullTokenizer placeholder; CLI must set padded_vocab_size) ─
+    # The dataset tokenizes with HF; the training placeholder uses the model vocabulary.
     cfg.tokenizer = TokenizerConfig(
         tokenizer_type="NullTokenizer",
-        vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
+        vocab_size=cfg.model.vocab_size,
     )
 
     # ── Logger ────────────────────────────────────────────────────────────
@@ -252,6 +251,7 @@ def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config() -> ConfigContainer:
     cfg.dataset.fixed_pack_idx = _STEP37_FLICKR8K_SMOKE_FIXED_PACK_IDX
     cfg.train.train_iters = _STEP37_FLICKR8K_SMOKE_TRAIN_ITERS
 
+    # Disable the auxiliary MTP training objective for this smoke run.
     cfg.model.mtp_num_layers = 0
     cfg.model.freeze_language_model = True
     cfg.model.freeze_vision_model = True
@@ -267,150 +267,6 @@ def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config() -> ConfigContainer:
     cfg.model.variable_seq_lengths = True
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_permute_fusion = True
-    cfg.model.attention_dropout = 0.0
-    cfg.model.rotary_percent = 0.5
-    cfg.model.window_size = [512, 0]
-    cfg.model.window_attn_skip_freq = [
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        1,
-        1,
-        0,
-    ]
-    cfg.model.moe_layer_freq = [
-        0,
-        0,
-        0,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-    ]
-    cfg.model.rotary_base_per_layer = [
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-        10000,
-        10000,
-        10000,
-        5000000,
-    ]
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "uniform"
     cfg.model.recompute_num_layers = 1
