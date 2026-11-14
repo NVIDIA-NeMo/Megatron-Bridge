@@ -47,6 +47,7 @@ from megatron.bridge.models.qwen.qwen35_bridge import Qwen35MoEBridge
 from megatron.bridge.models.qwen_vl.modeling_qwen35.hybrid_model import (
     Qwen35VLHybridAttentionLayer,
 )
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import rope
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionTransformerLayer
@@ -93,9 +94,20 @@ def qwen35_graph_process_groups():
         torch.cuda.set_stream(original_stream)
 
 
+@pytest.mark.parametrize("rope_fusion", [False, True])
 @pytest.mark.parametrize("vision", [False, True])
-def test_rotary_graph_inputs_without_eager_warmup(qwen35_graph_process_groups, vision):
+def test_rotary_graph_inputs_without_eager_warmup(qwen35_graph_process_groups, monkeypatch, vision, rope_fusion):
     """Capture must consume changing positions without observing an eager batch first."""
+    # Count the fused RoPE kernel's calls: with fusion on, capture and eager runs must take it without falling back.
+    fused_rope_calls = []
+    fused_rope_kernel = rope.fused_apply_rotary_pos_emb
+
+    def counted_fused_rope_kernel(*args, **kwargs):
+        fused_rope_calls.append(tuple(args[0].shape))
+        return fused_rope_kernel(*args, **kwargs)
+
+    monkeypatch.setattr(rope, "fused_apply_rotary_pos_emb", counted_fused_rope_kernel)
+    monkeypatch.setattr(rope, "_FUSED_ROPE_FALLBACK_REASONS", set())
     config = Qwen3VLTransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -110,7 +122,7 @@ def test_rotary_graph_inputs_without_eager_warmup(qwen35_graph_process_groups, v
         pipeline_dtype=torch.bfloat16,
         attention_dropout=0.0,
         hidden_dropout=0.0,
-        apply_rope_fusion=False,
+        apply_rope_fusion=rope_fusion,
         apply_rotary_pos_emb_in_fp32=vision,
         init_method_std=0.1,
     )
@@ -172,6 +184,8 @@ def test_rotary_graph_inputs_without_eager_warmup(qwen35_graph_process_groups, v
             for name, param in layer.named_parameters():
                 torch.testing.assert_close(param.main_grad, expected_param_grads[name], rtol=1e-2, atol=1e-4)
         assert not torch.allclose(eager_outputs[0], eager_outputs[1], rtol=1e-2, atol=1e-3)
+        assert bool(fused_rope_calls) is rope_fusion
+        assert not rope._FUSED_ROPE_FALLBACK_REASONS
         torch.cuda.synchronize()
     finally:
         if helper.graphs_created():

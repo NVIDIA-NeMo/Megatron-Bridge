@@ -28,6 +28,20 @@ This export/import migration has not yet been validated end to end; check the
 converted model's outputs before starting a new training run. Do not use
 non-strict checkpoint loading to bypass the format mismatch.
 
+## RoPE fusion
+
+Qwen3.5 and Qwen3.6 apply rotary position embeddings per token: the language
+model, including its MTP layer, rotates each token by its own multimodal (MRoPE)
+angles, and the vision encoder rotates each patch by its 2D angles. With
+`model.apply_rope_fusion=True`, all of them run Transformer Engine's fused RoPE
+kernel. The kernel computes in FP32 and rounds once, the same math as
+`apply_rotary_pos_emb_in_fp32=True`, which the vision encoder already uses. In
+the BF16 language model it is therefore slightly more accurate than the unfused
+implementation, but not bitwise identical to it. The vision encoder follows the
+language model's setting. Inputs the kernel cannot take, such as tensors on the
+CPU, use the unfused implementation, with one warning per reason. Fusion is off
+by default.
+
 {/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
