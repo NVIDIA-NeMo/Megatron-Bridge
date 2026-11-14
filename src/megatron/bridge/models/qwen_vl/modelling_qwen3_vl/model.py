@@ -76,6 +76,20 @@ def _select_sequence(
     return val.index_select(seq_dim, index).contiguous()
 
 
+def _scatter_padding_mask_to_sequence_parallel_region(
+    padding_mask: torch.Tensor, *, tp_group: torch.distributed.ProcessGroup
+) -> torch.Tensor:
+    """Shard a batch-first ``[b, s]`` MoE padding mask like sequence-parallel activations."""
+    return (
+        tensor_parallel.scatter_to_sequence_parallel_region(
+            padding_mask.transpose(0, 1).contiguous(),
+            group=tp_group,
+        )
+        .transpose(0, 1)
+        .contiguous()
+    )
+
+
 def _get_packed_seq_padding_mask(
     packed_seq_params: PackedSeqParams | None,
     *,
@@ -692,6 +706,14 @@ class Qwen3VLModel(MegatronModule):
                         ),
                         seq_dim=1,
                     )
+                if not self.pre_process and self.config.sequence_parallel:
+                    # The first pipeline stage scatters the mask together with its
+                    # embeddings below. Later stages receive hidden states that are
+                    # already sequence-parallel, so the mask built here must match
+                    # that layout before the MoE routers consume it.
+                    padding_mask = _scatter_padding_mask_to_sequence_parallel_region(
+                        padding_mask, tp_group=self.pg_collection.tp
+                    )
         if self.language_model is not None:
             self.language_model.rotary_pos_emb.is_thd_format = False
 
@@ -886,13 +908,8 @@ class Qwen3VLModel(MegatronModule):
                 )
                 combined_embeddings = combined_embeddings.contiguous()
                 if padding_mask is not None:
-                    padding_mask = (
-                        tensor_parallel.scatter_to_sequence_parallel_region(
-                            padding_mask.transpose(0, 1).contiguous(),
-                            group=self.pg_collection.tp,
-                        )
-                        .transpose(0, 1)
-                        .contiguous()
+                    padding_mask = _scatter_padding_mask_to_sequence_parallel_region(
+                        padding_mask, tp_group=self.pg_collection.tp
                     )
 
         else:
