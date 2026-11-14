@@ -5,11 +5,11 @@ Supported checkpoint: **Inkling 2 Small**,
 (`Inkling2ForConditionalGeneration`, model type `inkling2`), an image-and-text
 mixture-of-experts model. The release ships its configuration, tokenizer, chat template, and
 processor configuration but no modeling code. Transformers implements Inkling 2 from v5.23.0,
-but the version Bridge pins does not (its `inkling` model is the first Inkling generation, a
-different architecture), so Bridge registers its own configuration classes for Transformers'
-model types, `inkling2` and `inkling2_text`, so that `AutoConfig` reads the checkpoint; their
-defaults are the release's values. With a Transformers version that implements Inkling 2, its
-own classes stay registered.
+which Bridge's lock file installs. Bridge also supports Transformers 5.21 and 5.22, which do not
+(their `inkling` model is the first Inkling generation, a different architecture); with those,
+Bridge registers its own configuration classes for Transformers' model types, `inkling2` and
+`inkling2_text`, so that `AutoConfig` reads the checkpoint, with the release's values as
+defaults. With 5.23, Transformers' own classes stay registered, and Bridge reads either.
 
 The model API is `Inkling2Bridge`, `Inkling2Model`, `Inkling2ModelBuilder`, and
 `Inkling2ModelConfig`, under `megatron.bridge.models.inkling`. The configuration is
@@ -55,9 +55,9 @@ The `modeling_inkling2/` package adds the computations that Megatron-Core lacks:
   over all query blocks.
 - `vision.py`: the image encoder, a vision transformer with a class token, a
   learned position grid, 2D rotary embeddings, and LayerScale, followed by a 2x2
-  patch merge and a two-layer projection. The Transformers version Bridge pins has no
-  implementation (Transformers adds one in v5.23.0), so this is a parameter-for-parameter
-  port of the reference encoder. It takes patches already scaled to [-1, 1] (mean and standard deviation 0.5),
+  patch merge and a two-layer projection. Transformers 5.21 and 5.22 have no implementation
+  (Transformers adds one in v5.23.0), so this is a parameter-for-parameter port of the
+  reference encoder, which Bridge uses with every supported version. It takes patches already scaled to [-1, 1] (mean and standard deviation 0.5),
   as the release's `processor_config.json` specifies.
 - `ops.py`: the AttnRes mixture, FP32-accumulated residual additions, the static and
   dynamic short convolutions, L2 clipping, the length-scaling factor, and the SiTU
@@ -85,7 +85,9 @@ checkpoint's saved model config, so a model whose architecture differs from the
 Megatron model does not hold, such as `mtp_config` and `eos_token_id`. Transformers (from
 v5.23.0) applies the release's MXFP8 quantization to a `config.json` without
 `transformers_version`, as the release's is, so a default export, whose experts keep the
-source's formats, leaves the version out, and a plain export keeps it.
+source's formats, leaves the version out, and a plain export keeps it. With Transformers 5.23,
+`config.json` follows the layout of Transformers' own configuration classes, which Bridge's
+classes also read.
 
 ## Parallelism and limits
 
@@ -140,8 +142,8 @@ dispatch the experts with HybridEP inside one NVL72 domain per expert-parallel g
 freeze the image encoder on text data; image-text full SFT trains it.
 
 The release's `processor_config.json` names an `Inkling2Processor` and an
-`Inkling2ImageProcessor` but ships no implementation, and the Transformers version Bridge pins
-has none (Transformers adds both in v5.23.0), so `data/` provides them. `Inkling2ImageProcessor`
+`Inkling2ImageProcessor` but ships no implementation, and Transformers adds its own only in
+v5.23.0, so `data/` provides them. `Inkling2ImageProcessor`
 implements the release's settings:
 images keep their native size, are padded to a multiple of 40 pixels, rescaled by 1/255 and
 normalized with mean and standard deviation 0.5, and cut into 40x40-pixel patches repeated
@@ -153,7 +155,10 @@ images it stays within one level of Pillow's `LANCZOS` filter.
 does, including a row's `tools` and the `reasoning_effort` in its `chat_template_kwargs`, with
 one `<|unused_200054|>` image placeholder per patch where the template writes
 one per image, and marks the assistant turns for the loss; it is registered with
-`AutoProcessor` for `Inkling2Config`. `Inkling2Config.image_token_id`, which the release's
+`AutoProcessor` for Bridge's `Inkling2Config`. From Transformers 5.23, `AutoProcessor`
+resolves Transformers' processor of the same name instead, so the image-text recipes name
+Bridge's through `dataset.hf_processor_class`, and `inkling2_collate_fn` rejects any other
+class. `Inkling2Config.image_token_id`, which the release's
 `config.json` leaves out, defaults to that placeholder (token 200054).
 `inkling2_collate_fn` builds the padded batches, and image-text
 recipes use the VLM forward step. For full-parameter runs, the model
