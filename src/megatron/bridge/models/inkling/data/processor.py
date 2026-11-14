@@ -28,8 +28,10 @@ Two inputs go beyond the template: an assistant message may carry its reasoning 
 Bridge's dataset adapters write) or ``reasoning`` instead of ``reasoning_content``, the first one set being used,
 as Transformers does from version 5.22; and an image part carries its pixels in ``image``.
 
-Registering it with ``AutoProcessor`` for :class:`Inkling2Config` lets
-``DirectHFSFTDatasetConfig.hf_processor_path`` load it from a checkpoint directory or the Hub.
+``DirectHFSFTDatasetConfig.hf_processor_class`` names it, and ``hf_processor_path`` the checkpoint directory or Hub
+repository it loads. It is also registered with ``AutoProcessor`` for Bridge's :class:`Inkling2Config`, which
+Transformers 5.21 and 5.22 use; from Transformers 5.23, ``AutoProcessor`` resolves Transformers' processor of the
+same name instead.
 """
 
 from __future__ import annotations

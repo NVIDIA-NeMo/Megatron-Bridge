@@ -129,9 +129,10 @@ so Bridge finds each assistant turn from its markers, `<|message_model|>` throug
 `<|content_model_end_sampling|>`; the supervised span includes the turn's message headers,
 tool calls, and end-of-sampling token.
 
-The image-text recipes read CORD-v2 receipts through `Inkling2Processor`, which
-`AutoProcessor` resolves from the checkpoint directory, so point
-`dataset.hf_processor_path` at the same checkpoint as `--pretrained_checkpoint`'s source.
+The image-text recipes read CORD-v2 receipts through Bridge's `Inkling2Processor`, which
+they name with `dataset.hf_processor_class` (from Transformers 5.23, `AutoProcessor` would
+resolve Transformers' processor of the same name); point `dataset.hf_processor_path` at the
+same checkpoint as `--pretrained_checkpoint`'s source.
 An image takes one token per 40x40-pixel patch at its native size, as the release's
 `processor_config.json` specifies. CORD-v2 phone photos reach 7,676 image tokens, so
 both recipes set `dataset.hf_processor_kwargs={"max_image_tokens": 3072}`: the 106 of

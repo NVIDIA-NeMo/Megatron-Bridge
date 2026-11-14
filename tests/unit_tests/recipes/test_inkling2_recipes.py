@@ -32,6 +32,7 @@ import torch
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
 from megatron.bridge.data.sft_processing import ChatSFTPreprocessingConfig
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
+from megatron.bridge.models.inkling.data.processor import Inkling2Processor
 from megatron.bridge.models.inkling.data.tokenizer import Inkling2MegatronTokenizer
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.inkling.gb200 import inkling2 as inkling2_recipes
@@ -431,6 +432,9 @@ def test_multimodal_recipe_contract(recipe_name: str) -> None:
     dataset = cfg.dataset
     assert isinstance(dataset, DirectHFSFTDatasetConfig)
     assert dataset.hf_processor_path == inkling2_recipes._MODEL_ID
+    # Bridge's processor, not the one AutoProcessor resolves from Transformers 5.23 on.
+    module_name, _, class_name = dataset.hf_processor_class.rpartition(".")
+    assert getattr(importlib.import_module(module_name), class_name) is Inkling2Processor
     assert dataset.hf_processor_kwargs == {"max_image_tokens": 3072}
     assert dataset.source.dataset_name == "cord_v2"
     assert dataset.source.split == "train"

@@ -740,9 +740,11 @@ def inkling2_small_sft_128gpu_gb200_bf16_multimodal_config() -> ConfigContainer:
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
 
     cfg.dataset.seq_length = 4096
-    # The checkpoint holds the tokenizer and processor_config.json; AutoProcessor resolves
-    # Bridge's Inkling2Processor from its config.
+    # The checkpoint holds the tokenizer and processor_config.json. Name Bridge's Inkling2Processor, which marks the
+    # assistant turns for the loss and applies the image budget: from Transformers 5.23, AutoProcessor resolves
+    # Transformers' own processor of the same name.
     cfg.dataset.hf_processor_path = _MODEL_ID
+    cfg.dataset.hf_processor_class = "megatron.bridge.models.inkling.data.processor.Inkling2Processor"
     # CORD-v2 phone photos run to 7,676 image tokens at native size. Larger receipts are encoded at the largest
     # same-aspect size within 3,072 tokens (the reference Lanczos3 resize), which leaves room for the answer.
     cfg.dataset.hf_processor_kwargs = {"max_image_tokens": 3072}
@@ -840,9 +842,11 @@ def inkling2_small_peft_32gpu_gb200_bf16_multimodal_config(peft_scheme: str | PE
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
 
     cfg.dataset.seq_length = 4096
-    # The checkpoint holds the tokenizer and processor_config.json; AutoProcessor resolves
-    # Bridge's Inkling2Processor from its config.
+    # The checkpoint holds the tokenizer and processor_config.json. Name Bridge's Inkling2Processor, which marks the
+    # assistant turns for the loss and applies the image budget: from Transformers 5.23, AutoProcessor resolves
+    # Transformers' own processor of the same name.
     cfg.dataset.hf_processor_path = _MODEL_ID
+    cfg.dataset.hf_processor_class = "megatron.bridge.models.inkling.data.processor.Inkling2Processor"
     # CORD-v2 phone photos run to 7,676 image tokens at native size. Larger receipts are encoded at the largest
     # same-aspect size within 3,072 tokens (the reference Lanczos3 resize), which leaves room for the answer.
     cfg.dataset.hf_processor_kwargs = {"max_image_tokens": 3072}

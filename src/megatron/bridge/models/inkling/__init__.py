@@ -14,7 +14,7 @@
 
 from megatron.bridge.models.inkling.configuration_inkling2 import Inkling2Config, Inkling2TextConfig
 
-# Importing the processor registers it with AutoProcessor for Inkling2Config.
+# Importing the processor registers it with AutoProcessor for Bridge's Inkling2Config (Transformers 5.21 and 5.22).
 from megatron.bridge.models.inkling.data import Inkling2ImageProcessor, Inkling2Processor
 from megatron.bridge.models.inkling.inkling2_bridge import Inkling2Bridge
 from megatron.bridge.models.inkling.inkling2_builder import Inkling2ModelBuilder
