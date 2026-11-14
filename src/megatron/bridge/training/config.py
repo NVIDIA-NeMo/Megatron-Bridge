@@ -145,6 +145,15 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     gtp_remat_nccl_ub: bool = False
     """Legacy Bridge switch for dense GTP symmetric-memory registration."""
 
+    @property
+    def lazy_init(self) -> bool:
+        """Compatibility spelling for lazy_mpu_init."""
+        return self.lazy_mpu_init
+
+    @lazy_init.setter
+    def lazy_init(self, value: bool) -> None:
+        self.lazy_mpu_init = value
+
 
 @dataclass(kw_only=True)
 class TrainingConfig(MTrainTrainingConfig):

@@ -68,6 +68,7 @@ def test_legacy_bridge_targets_reload_as_native_configs():
         cfg.checkpoint.hf_source_path = "org/source"
         cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = True
         cfg.dist.external_gpu_device_mapping = True
+        cfg.dist.lazy_init = True
         cfg.logger.mlflow_tags = {"model": "tiny"}
         cfg.scheduler.max_steps = 2000
         saved = cfg.to_dict()
@@ -88,6 +89,10 @@ def test_legacy_bridge_targets_reload_as_native_configs():
         for name in sections:
             assert type(getattr(loaded, name)) is type(getattr(cfg, name))
             assert loaded.to_dict()[name] == cfg.to_dict()[name]
+        assert loaded.dist.lazy_init is True
+        assert loaded.dist.lazy_mpu_init is True
+        loaded.dist.lazy_mpu_init = False
+        assert loaded.dist.lazy_init is False
         bridge.runtime_config_update(loaded)
         assert loaded.scheduler.lr_decay_iters == 2000
         assert loaded.checkpoint.hf_source_path == "org/source"

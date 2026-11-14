@@ -86,6 +86,9 @@ cannot provide the same construct-then-override lifecycle using direct imports.
 The dependency pins must include the prerequisite changes before this draft can
 be merged; no subclass fallback or dynamically attached fields are used.
 
+The compatibility property `DistributedInitConfig.lazy_init` stays in Bridge and
+reads/writes the shared `lazy_mpu_init` field; it is not added to Megatron-LM.
+
 Epoch scheduling (`num_epochs` and `_train_iters_from_num_epochs`) remains in
 Bridge's `TrainingConfig`, with a TODO for a separate migration. Evaluation
 settings belong only to `ValidationConfig`; old saved `train.eval_iters`,
