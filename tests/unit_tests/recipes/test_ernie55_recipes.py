@@ -65,6 +65,7 @@ from megatron.bridge.models.ernie.ernie55_data import Ernie55SFTDataset, Ernie55
 from megatron.bridge.models.ernie.ernie55_step import ernie55_loss_function
 from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import load_cp_layout_api
 from megatron.bridge.recipes.ernie import ernie55 as recipes
+from megatron.bridge.recipes.ernie.gb200 import ernie55 as gb200_recipes
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import (
     OptimizerConfigOverrideProviderContext,
@@ -498,3 +499,147 @@ class TestRuntimeValidation:
             steps_taken = steps
             for group in groups:
                 assert group["lr"] == pytest.approx(expected_lr, rel=1e-9, abs=1e-15), steps
+
+
+GB200_RECIPE = "ernie55_sft_64gpu_gb200_bf16_config"
+
+# What the GB200 recipe sets differently from the GB300 recipe.
+GB200_SETTINGS = {
+    **RECIPE_SETTINGS,
+    "model.context_parallel_size": 8,
+    "model.seq_length": 16384,
+    "train.global_batch_size": 32,
+    "dataset.seq_length": 16384,
+    "dataset.pack": True,
+    "dataset.pad_to_multiple_of": 16,
+    "dataset.mock_document_lengths": (16384,),
+    "dist.distributed_backend": "cpu:gloo,cuda:nccl",
+}
+
+
+class TestGB200Recipe:
+    """The GB200 recipe: the GB300 recipe's settings at a shape that fits a GB200."""
+
+    @needs_cp
+    def test_settings(self):
+        cfg = getattr(gb200_recipes, GB200_RECIPE)()
+        assert isinstance(cfg.model, Ernie55ModelConfig)
+        expected = {**REFERENCE_SETTINGS, **GB200_SETTINGS}
+        actual = {path: _get(cfg, path) for path in expected}
+        assert actual == expected
+        assert cfg.env_vars == RECIPE_ENVIRONMENT
+
+    def test_the_recipe_is_exported(self):
+        import megatron.bridge.recipes as all_recipes
+        import megatron.bridge.recipes.ernie as ernie_recipes
+
+        factory = getattr(gb200_recipes, GB200_RECIPE)
+        assert getattr(ernie_recipes, GB200_RECIPE) is factory
+        assert getattr(all_recipes, GB200_RECIPE) is factory
+
+    @needs_cp
+    def test_the_checkpoint_comes_from_hf_path_or_the_environment(self, tmp_path, monkeypatch):
+        path = str(_checkpoint_dir(tmp_path, n_routed_experts=128))
+        cfg = getattr(gb200_recipes, GB200_RECIPE)(hf_path=path)
+        assert cfg.checkpoint.pretrained_checkpoint == path
+        assert cfg.model.num_moe_experts == 128
+        monkeypatch.setenv(recipes.ERNIE55_HF_PATH_ENV, path)
+        assert getattr(gb200_recipes, GB200_RECIPE)().checkpoint.pretrained_checkpoint == path
+
+    def test_recipe_builds_with_the_recipe_matrix_stand_in(self, monkeypatch):
+        # The GB200 module builds its config with the GB300 module's helpers, so that module's AutoBridge is the
+        # one Bridge's recipe matrix (test_all_recipe_factories.py) replaces with its offline stand-in.
+        from tests.unit_tests.recipes.recipe_test_utils import _OfflineAutoBridge
+
+        assert not hasattr(gb200_recipes, "AutoBridge")
+        monkeypatch.setattr(recipes, "AutoBridge", _OfflineAutoBridge)
+        factory = getattr(gb200_recipes, GB200_RECIPE)
+        inspect.signature(factory).bind()
+        cfg = factory()
+        assert cfg.tokenizer.vocab_size == cfg.model.vocab_size
+
+    @needs_cp
+    def test_synthetic_rows(self):
+        config = getattr(gb200_recipes, GB200_RECIPE)().dataset
+        assert isinstance(config, Ernie55SFTDatasetConfig)
+        config.finalize()
+        row = Ernie55SFTDataset(config, num_items=1, seed_offset=0)[0]
+        assert [len(tokens) for tokens, _ in row] == [16384]
+        tokens, _ = row[0]
+        assert all(1 <= token < 151643 for token in tokens)
+
+    @needs_cp
+    def test_file_samples_are_split_and_packed_into_rows(self, tmp_path):
+        # The 20000-token sample is split into 16384 + 3616 tokens. Padded to a multiple of 16 the pieces take
+        # 16384, 5008, 5008, 5008, 3616 and 3008 tokens, which first fit (longest first) puts in three rows:
+        # 16384 / 5008 + 5008 + 5008 / 3616 + 3008.
+        config = getattr(gb200_recipes, GB200_RECIPE)().dataset
+        path = tmp_path / "train.jsonl"
+        path.write_text(
+            "".join(
+                json.dumps({"input_ids": [1] * length, "labels": [1] * length}) + "\n"
+                for length in (5000, 20000, 5000, 3000, 5000)
+            )
+        )
+        config.path = str(path)
+        config.finalize()
+        dataset = Ernie55SFTDataset(config, num_items=1, seed_offset=0)
+        lengths = sorted(sorted(len(tokens) for tokens, _ in dataset[index]) for index in range(len(dataset)))
+        assert lengths == [[3000, 3616], [5000, 5000, 5000], [16384]]
+
+    @needs_hook
+    @needs_cp
+    def test_runtime_config_update(self, gpu_free_runtime):
+        cfg = getattr(gb200_recipes, GB200_RECIPE)()
+        os.environ["WORLD_SIZE"] = str(WORLD_SIZE)
+        runtime_config_update(cfg)
+
+        # 64 GPUs at CP8: four micro-batches on each of the 8 data-parallel ranks, over which the layer-wise
+        # distributed optimizer spreads its state.
+        assert cfg.data_parallel_size == 8
+        assert cfg.train.global_batch_size == 4 * cfg.train.micro_batch_size * cfg.data_parallel_size
+        assert cfg.optimizer.optimizer == "muon"
+        assert cfg.optimizer.use_layer_wise_distributed_optimizer
+        assert cfg.scheduler.lr_warmup_steps == 103 * 32
+        assert cfg.scheduler.lr_decay_steps == 2065 * 32
+        for variable, value in RECIPE_ENVIRONMENT.items():
+            assert os.environ[variable] == str(value)
+
+    @needs_hook
+    @needs_cp
+    def test_launch_script_overrides_keep_the_shape(self, gpu_free_runtime):
+        # The overrides examples/models/ernie55/slurm_train.sh passes to run_recipe.py.
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        overrides = [
+            "checkpoint.save=/workspace/checkpoints/run",
+            "checkpoint.load=/workspace/checkpoints/run",
+            "logger.tensorboard_dir=/workspace/logs/run/tensorboard",
+            "dataset.path=/data/train.jsonl",
+            "train.train_iters=20",
+        ]
+        cfg = process_config_with_overrides(getattr(gb200_recipes, GB200_RECIPE)(), cli_overrides=overrides)
+        os.environ["WORLD_SIZE"] = str(WORLD_SIZE)
+        runtime_config_update(cfg)
+        assert isinstance(cfg.dataset, Ernie55SFTDatasetConfig)
+        assert (cfg.dataset.path, cfg.dataset.pack, cfg.dataset.pad_to_multiple_of) == ("/data/train.jsonl", True, 16)
+        assert (cfg.model.context_parallel_size, cfg.model.seq_length, cfg.dataset.seq_length) == (8, 16384, 16384)
+        assert cfg.train.train_iters == 20
+        # The process group survives the OmegaConf round trip of the overrides.
+        assert cfg.dist.distributed_backend == "cpu:gloo,cuda:nccl"
+
+    @needs_cp
+    def test_a_process_group_override_needs_quotes_for_the_override_parser(self):
+        # The override parser reads a bare comma as a sweep. A shell removes one layer of quotes, hence the two
+        # layers around the value in examples/models/ernie55/README.md.
+        from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
+
+        recipe = getattr(gb200_recipes, GB200_RECIPE)
+        quoted = ['dist.distributed_backend="cpu:gloo,cuda:nccl"']
+        assert process_config_with_overrides(recipe(), cli_overrides=quoted).dist.distributed_backend == (
+            "cpu:gloo,cuda:nccl"
+        )
+        plain = ["dist.distributed_backend=nccl"]
+        assert process_config_with_overrides(recipe(), cli_overrides=plain).dist.distributed_backend == "nccl"
+        with pytest.raises(OverridesError):
+            process_config_with_overrides(recipe(), cli_overrides=["dist.distributed_backend=cpu:gloo,cuda:nccl"])

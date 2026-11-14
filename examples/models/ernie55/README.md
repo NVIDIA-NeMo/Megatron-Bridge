@@ -7,6 +7,7 @@
 This directory provides a recipe and instructions for supervised fine-tuning (SFT) of an ERNIE 5.5 Hugging Face
 checkpoint with Megatron Bridge, covering data preparation, training, and export to Hugging Face format. The
 recipe runs on 16 nodes with four GB300 GPUs per node.
+A second recipe runs the same fine-tuning on 16 nodes with four GB200 GPUs per node.
 
 ## Requirements
 
@@ -27,14 +28,17 @@ recipe runs on 16 nodes with four GB300 GPUs per node.
 
   The recipe builds the model from its `config.json` and starts from its weights.
 * **GPUs**: the full model trains on 16 nodes of 4 GB300 GPUs (see [Hardware](#hardware)).
+  On 16 nodes of 4 GB200 GPUs, use the GB200 recipe (see [GB200](#gb200-the-full-model-on-16-nodes)).
 
 ## Recipe
 
 The recipe is in `megatron.bridge.recipes.ernie.ernie55` and trains with the ERNIE 5.5 forward step
 (`--step_func ernie55_step`).
+The GB200 recipe is in `megatron.bridge.recipes.ernie.gb200.ernie55` and trains with the same step.
 
 |Recipe|GPUs|Parallelism|Row length|Global batch|Use it for|
 |:---|:---|:---|:---|:---|:---|
+|`ernie55_sft_64gpu_gb200_bf16_config`|16 x 4|TP1 PP1 CP8 EP64|16384|32|Fine-tuning the full model on GB200 from `$ERNIE55_HF_PATH`|
 |`ernie55_sft_64gpu_gb300_bf16_config`|16 x 4|TP1 PP1 CP64 EP64|262144|2|Fine-tuning the full model from `$ERNIE55_HF_PATH`|
 
 * The `sft` recipe needs `$ERNIE55_HF_PATH` (or the recipe's `hf_path` argument). Without either, it builds a
@@ -80,6 +84,7 @@ match the dataset settings.
 
 The recipe makes each sample its own row and splits samples longer than 262144 tokens. A sample with a token id at
 or above the model's `vocab_size` raises a `ValueError` when training first reads it, not when the dataset is built.
+The GB200 recipe packs samples into 16384-token rows instead, and splits samples longer than a row.
 
 ### 2. Train
 
@@ -121,6 +126,40 @@ python -m torch.distributed.run --nnodes 16 --nproc_per_node 4 --node_rank <0..1
 
 The context-parallel split is Megatron-Core's contiguous partition, the DSv4 layout. Each D layer converts its
 input to the zigzag partition and back. Every rank holds 4096 of a row's 262144 tokens.
+
+#### GB200: the full model on 16 nodes
+
+`ernie55_sft_64gpu_gb200_bf16_config` trains the same model with the same loss, optimizer and schedule on 16 nodes of
+4 GB200 GPUs, at a shape that fits their memory. Select it with `RECIPE` and ask for the time of a full run; the
+rest of the command is unchanged:
+
+```bash
+RECIPE=ernie55_sft_64gpu_gb200_bf16_config \
+ERNIE55_HF_PATH=/path/to/ernie55_hf DATA_PATH=/path/to/train.jsonl \
+CONTAINER_IMAGE=/path/to/image.sqsh MEGATRON_LM_PATH=/path/to/Megatron-LM \
+MEGATRON_BRIDGE_PATH=/path/to/Megatron-Bridge WORKSPACE=/path/to/workspace CONTAINER_MOUNTS=/path:/path \
+    sbatch --account=<account> --partition=<partition> --qos=<qos> --time=14:00:00 \
+    examples/models/ernie55/slurm_train.sh
+```
+
+At the 18.8 s per step of the validation run, the 2065 steps take about 11 hours. The recipe saves once, at the
+end, and the script asks for 4 hours, hence `--time` in the command above.
+
+What differs from the GB300 recipe, and why:
+
+* **CP8 instead of CP64.** With CP64 on 64 GPUs the data-parallel size is 1, so every GPU holds the whole optimizer
+  state of the parameters that expert parallelism does not split. With CP8 the data-parallel size is 8, and the
+  layer-wise distributed optimizer spreads that state over the 8 ranks.
+* **16384-token packed rows.** Every context-parallel rank holds 2048 of a row's tokens. Samples shorter than a row
+  share one (`dataset.pack=true`, the reference's `--packing`); samples longer than 16384 tokens are split. Longer
+  rows have not been validated on GB200.
+* **Global batch 32.** Four micro-batches on each of the 8 data-parallel ranks: 524288 tokens per step, as many as
+  the GB300 recipe's two 262144-token rows, so the schedule (2065 steps, 103 of them warmup) is the GB300 recipe's.
+* **Process group `cpu:gloo,cuda:nccl`.** CUDA tensors still go through NCCL; the object collectives of a distributed
+  checkpoint save go through gloo. On an NCCL-only group on GB200, a save leaves about 24 GiB of point-to-point
+  buffers on rank 0 at 64 ranks, and the next training step runs out of memory there. As a command-line override
+  the value needs two layers of quotes, one for the shell and one for the override parser, which reads a bare comma
+  as a sweep: `'dist.distributed_backend="cpu:gloo,cuda:nccl"'`.
 
 ### 3. Export to Hugging Face
 
