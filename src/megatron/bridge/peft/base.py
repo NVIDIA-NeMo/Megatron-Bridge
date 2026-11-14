@@ -32,6 +32,72 @@ logger: logging.Logger = logging.getLogger(__name__)
 ModelType = TypeVar("ModelType", bound=Union[nn.Module, list[MegatronModule]])
 
 
+def excluded_module_paths(model: nn.Module) -> frozenset[str]:
+    """Module paths a model keeps out of PEFT.
+
+    A model, or one pipeline chunk of it, may define ``peft_excluded_module_paths()`` returning the dotted paths
+    (as ``named_modules()`` reports them) of modules that no PEFT method may replace or wrap module by module. The
+    case this exists for is parameter sharing by aliasing: ERNIE 5.5's shared-decoder MTP body holds the very
+    ``nn.Parameter`` objects of the decoder's last layer in its own modules, so wrapping either side would give the
+    shared weights two independent adapters and move them behind wrapper attributes. Modules on the returned paths
+    keep their frozen base parameters; everything else is transformed as usual. :meth:`PEFT.__call__` reads the
+    declaration once per traversal root and reuses that snapshot for its validation and transform walks, so the
+    method may return any iterable, including one that can be consumed only once.
+
+    Args:
+        model: A model chunk, possibly behind a wrapper that exposes it as ``.module`` (Float16Module, DDP).
+
+    Returns:
+        The excluded paths relative to ``model`` (prefixed with ``module.`` when the method lives on the wrapped
+        module), or an empty set when the model does not define the method.
+
+    Raises:
+        TypeError: If the method returns anything but an iterable of nonempty strings.
+    """
+    target, prefix = model, ""
+    getter = getattr(target, "peft_excluded_module_paths", None)
+    if getter is None and isinstance(getattr(model, "module", None), nn.Module):
+        target, prefix = model.module, "module."
+        getter = getattr(target, "peft_excluded_module_paths", None)
+    if getter is None:
+        return frozenset()
+    declared = getter()
+    message = (
+        f"{type(target).__name__}.peft_excluded_module_paths() must return an iterable of nonempty module paths, "
+        f"got {declared!r}"
+    )
+    if isinstance(declared, (str, bytes)):
+        raise TypeError(message)
+    try:
+        paths = list(declared)  # materialize once: a generator must not be consumed by the check below
+    except TypeError as error:
+        raise TypeError(message) from error
+    if not all(isinstance(path, str) and path for path in paths):
+        raise TypeError(message)
+    return frozenset(prefix + path for path in paths)
+
+
+def _skipping_excluded(func, excluded: frozenset[str]):
+    """Wrap a walk callback so that it returns modules on ``excluded`` paths unchanged."""
+
+    def guarded(module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None, **kwargs):
+        full_name = f"{prefix}.{name}" if prefix else name
+        if full_name in excluded:
+            return module
+        return func(module, name=name, prefix=prefix, **kwargs)
+
+    return guarded
+
+
+def _traversal_roots(model: nn.Module | list[MegatronModule]) -> list[nn.Module]:
+    """The modules a PEFT walk starts from: every chunk of a list, the wrapped module of a DDP model, or the model."""
+    if isinstance(model, list):
+        return list(model)
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        return [model.module]
+    return [model]
+
+
 @dataclass
 class PEFT(ABC):
     """Abstract base class for Parameter-Efficient Fine-Tuning (PEFT) methods.
@@ -85,7 +151,9 @@ class PEFT(ABC):
         """Apply the PEFT method to the entire model.
 
         This method freezes the model parameters and walks through the model
-        structure, applying the transform method to each module.
+        structure, applying the transform method to each module. Modules a model chunk
+        names in ``peft_excluded_module_paths()`` are left as they are (see
+        :func:`excluded_module_paths`).
 
         Args:
             model: The model to be fine-tuned. Can be a single model or a list of model chunks
@@ -96,6 +164,10 @@ class PEFT(ABC):
         Returns:
             The same type as the input model, transformed with PEFT applied.
         """
+        # The excluded paths of every traversal root, read once and shared by the validation and transform walks
+        # below: a declaration that can be iterated only once (a stored iterator) must protect its modules in both.
+        exclusions = {id(root): excluded_module_paths(root) for root in _traversal_roots(model)}
+
         if isinstance(self, ModuleMatcher):
             # Rebuild alias/match bookkeeping from the *current* target_modules so that
             # any post-construction mutation (common in recipes) is respected. Then walk
@@ -108,13 +180,15 @@ class PEFT(ABC):
                 self.match(module, name, prefix)
                 return module
 
-            self._walk_model(model, _validate_only)
+            # Skip the excluded modules here too, so a target that only names excluded modules is reported
+            # as unmatched instead of being counted as a hit that then adapts nothing.
+            self._walk_model(model, _validate_only, exclusions=exclusions)
             self._validate_target_matches()
             self._reset_target_match_state()
 
         self.freeze_model(model, training=training)
 
-        self._walk_model(model, self.transform)
+        self._walk_model(model, self.transform, exclusions=exclusions)
 
         if training:
             maybe_enable_recompute_inputs_grad(model)
@@ -131,14 +205,17 @@ class PEFT(ABC):
 
         return model
 
-    def _walk_model(self, model: ModelType, func) -> None:
-        if isinstance(model, list):
-            for model_chunk in model:
-                walk(model_chunk, func)
-        elif isinstance(model, torch.nn.parallel.DistributedDataParallel):
-            walk(model.module, func)
-        else:
-            walk(model, func)
+    def _walk_model(self, model: ModelType, func, *, exclusions: dict[int, frozenset[str]] | None = None) -> None:
+        """Apply ``func`` to every module of ``model`` (a module, a DDP-wrapped module or a list of chunks).
+
+        ``exclusions`` maps the ``id()`` of a traversal root (see :func:`_traversal_roots`) to the module paths that
+        root keeps out of PEFT (see :func:`excluded_module_paths`); those modules are returned unchanged. Each
+        chunk's exclusions apply to that chunk only.
+        """
+        exclusions = exclusions or {}
+        for root in _traversal_roots(model):
+            excluded = exclusions.get(id(root), frozenset())
+            walk(root, _skipping_excluded(func, excluded) if excluded else func)
 
     def enable_adapter_layers(self, model: ModelType) -> None:
         """Enable adapter layers for all PEFT-wrapped modules in the model."""
