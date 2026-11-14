@@ -152,6 +152,11 @@ def qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_use_grouped_tensor = True
 
     cfg.train.micro_batch_size = 4
+    # Enough HBM to keep routed-expert activations at capacity size, so skip paged stash's copies.
+    # The capacity factor stays: PagedStashRunner still reruns over-budget steps dropless.
+    cfg.model.moe_paged_stash = False
+    # Split QKV, apply the Q/K RMSNorm and RoPE in one Triton kernel (needs MCore with qk_layernorm support).
+    cfg.model.fused_single_qkv_rope = True
 
     from megatron.core.transformer.enums import AttnBackend
 
