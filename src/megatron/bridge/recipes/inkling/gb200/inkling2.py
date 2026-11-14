@@ -20,8 +20,8 @@ MCore HybridModel whose decoder blocks are an attention and a MoE layer (``*E``)
 the Hybrid pattern's ``|`` separators set the pipeline stages. The image encoder
 stays frozen on text data.
 
-Pretraining holds the optimizer state of every expert slice on 128 GPUs: four
-pipeline stages of 13, 13, 12, and 10 decoder blocks with EP32 and full activation recompute. The
+Pretraining holds the optimizer state of every expert slice on 128 GPUs: two
+pipeline stages of 26 and 22 decoder blocks, each with two EP32 groups, and full activation recompute. The
 packed SFT and LoRA recipes train GBS 8 on eight data-parallel replicas, one pack
 each, so a step is a single pass through the 48 decoder blocks and more pipeline
 stages only add GPUs. Full SFT therefore also runs on 96 GPUs, the smallest layout
@@ -64,14 +64,16 @@ _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowl
 def inkling2_small_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
     """Return a 100-step bounded text pretraining config on 128 GB200 GPUs.
 
-    TP1/PP4/EP32: each pipeline stage holds one EP32 group of 32 contiguous ranks
-    (8 nodes) inside one NVL72 domain, which dispatches the experts with HybridEP;
-    full activation recompute keeps the AttnRes residual blocks of in-flight
-    microbatches small. The stages hold 13, 13, 12, and 10 decoder blocks: a
+    TP1/PP2/EP32: each pipeline stage is 64 contiguous ranks (16 nodes) in one
+    NVL72 domain and holds two EP32 groups of 32 contiguous ranks (8 nodes), which
+    dispatch the experts with HybridEP and reduce their expert gradients between
+    each other; full activation recompute keeps the AttnRes residual blocks of
+    in-flight microbatches small. The stages hold 26 and 22 decoder blocks: a
     block's cost grows with depth, as the AttnRes state it reads grows, and the
-    last stage also computes the output layer and loss. Twelve blocks per stage
-    makes the step about 11% slower; the first stage, with four microbatches in
-    flight, peaks near 114 GB. Pass the imported checkpoint with
+    last stage also computes the output layer and loss. Two stages leave a smaller
+    pipeline bubble than four; in exchange each GPU holds the weights and gradients
+    of twice as many expert slices, and the first stage peaks near 145 GB. EP64 on
+    the same two stages makes the step about 18% slower. Pass the imported checkpoint with
     ``--pretrained_checkpoint`` for natural expert routing; the recipe leaves it
     unset. The peak learning rate is 3e-5 because the run continues a trained
     model rather than starting from random weights.
@@ -84,9 +86,9 @@ def inkling2_small_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.tokenizer.metadata_path = inkling2_tokenizer_metadata()
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
-    # Later blocks cost more and the last stage also computes the loss, so the earlier stages hold more blocks.
-    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (13, 13, 12, 10))
+    cfg.model.pipeline_model_parallel_size = 2
+    # Later blocks cost more and the last stage also computes the loss, so the first stage holds more blocks.
+    cfg.model.hybrid_layer_pattern = "|".join("*E" * blocks for blocks in (26, 22))
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.expert_model_parallel_size = 32
@@ -109,7 +111,7 @@ def inkling2_small_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "uniform"
     cfg.model.recompute_num_layers = 1
-    # HybridEP: each EP32 group is one pipeline stage's 32 contiguous ranks (8 nodes) in one NVL72 domain.
+    # HybridEP: each EP32 group is 32 contiguous ranks (8 nodes) of a pipeline stage's NVL72 domain.
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_flex_dispatcher_num_sms = 32
