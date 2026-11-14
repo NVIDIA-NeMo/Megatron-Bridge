@@ -176,7 +176,7 @@ def test_model_setup_forwards_layerwise_layout(builder, name, layerwise, param_l
             _build_distributed_model(cfg, Mock())
             kwargs = model.provide_distributed_model.call_args.kwargs
     assert kwargs["use_layer_wise_distributed_optimizer"] is (name not in ("adam", "sgd"))
-    assert kwargs["use_layer_wise_param_layout"] is (param_layout is True)
+    assert kwargs["use_layer_wise_param_layout"] is (True if param_layout is None else param_layout)
 
 
 @pytest.mark.parametrize("name,layerwise", [("adam", False), ("muon", True)])
@@ -213,7 +213,9 @@ def test_mimo_setup_preserves_layout_override_with_core_optimizer_config(
     ):
         setup_megatron_mimo(SimpleNamespace(cfg=cfg), use_layer_wise_param_layout=layout_override)
 
-    expected_layout = layout_override if layout_override is not None else param_layout is True
+    expected_layout = (
+        layout_override if layout_override is not None else (True if param_layout is None else param_layout)
+    )
     assert build.call_args.kwargs["use_layer_wise_param_layout"] is expected_layout
     assert build.call_args.kwargs["use_layer_wise_distributed_optimizer"] is layerwise
 

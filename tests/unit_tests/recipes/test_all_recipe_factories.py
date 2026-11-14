@@ -23,6 +23,7 @@ import pytest
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
+    assert_ncclep_bounds_packed_tokens,
     discover_recipe_factories,
     exported_recipe_factory_keys,
     patch_recipe_construction_dependencies,
@@ -93,6 +94,12 @@ def test_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> 
         "dist",
     ):
         assert getattr(cfg, section) is not None
+
+
+@pytest.mark.parametrize("recipe_factory", _RUNNABLE_RECIPE_FACTORIES, ids=recipe_factory_id)
+def test_ncclep_recipe_bounds_packed_tokens(recipe_factory: Callable[..., object]) -> None:
+    """NCCL EP sizes its buffers once, so recipes that feed it packed sequences declare the bound."""
+    assert_ncclep_bounds_packed_tokens(recipe_factory())
 
 
 @pytest.mark.parametrize("recipe_factory", _UNSUPPORTED_RECIPE_FACTORIES, ids=recipe_factory_id)
