@@ -393,13 +393,14 @@ class TestGetAdapterAttributes:
                 "TELayerNormColumnParallelLinear",
                 FakeTELayerNormColumnParallelLinear,
             ),
-            patch.object(peft_utils, "version", return_value="1.10.0"),
         ):
             baseline = FakeTELayerNormColumnParallelLinear()
             baseline_attrs = get_adapter_attributes_from_linear(baseline)
             assert baseline.return_layernorm_output
-            assert baseline.return_layernorm_output_gathered
-            assert baseline_attrs.disable_sequence_parallel_comm
+            # TE drops the gradient of a gathered LayerNorm output (#6453), so the default path must
+            # keep the local shard and let the adapter own the gather.
+            assert not baseline.return_layernorm_output_gathered
+            assert not baseline_attrs.disable_sequence_parallel_comm
 
             regather = FakeTELayerNormColumnParallelLinear()
             regather_attrs = get_adapter_attributes_from_linear(regather, sequence_parallel_input_regather=True)

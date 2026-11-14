@@ -23,11 +23,9 @@ from contextlib import nullcontext
 from dataclasses import dataclass, fields
 from functools import cache
 from importlib import import_module
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
-import packaging
 import torch
 import torch.nn as nn
 from megatron.core import ModelParallelConfig, dist_checkpointing
@@ -570,6 +568,7 @@ def get_adapter_attributes_from_linear(
         is_expert: Whether the linear belongs to an expert module.
         pg_collection: Optional process-group collection associated with the module.
         sequence_parallel_input_regather: Whether LoRA-A should re-gather its sequence-parallel input in backward.
+            Currently unused: both settings produce the same attributes (see #6453).
 
     Returns:
         AdapterAttributes containing:
@@ -639,22 +638,12 @@ def get_adapter_attributes_from_linear(
             else:
                 ub_overlap_ag = False
             if hasattr(m, "config") and m.config.sequence_parallel and not ub_overlap_ag:
-                # The adapter's MCore SP linear must own the gather so it can retain the local shard.
-                # Preserve the existing TE optimization for the default path.
-                m.return_layernorm_output_gathered = not sequence_parallel_input_regather
-                te_version = packaging.version.Version(version("transformer-engine"))
-                if (
-                    not sequence_parallel_input_regather
-                    and te_version >= packaging.version.Version("1.5.0dev")
-                    and (
-                        not getattr(m.config, "tp_comm_overlap", False)
-                        or getattr(m.config, "tp_comm_overlap_disable_qkv", False)
-                    )
-                ):
-                    # TE 1.5 introduces the option `return_layernorm_output_gathered`, so the all gather
-                    # in the forward method is not needed, so disable sp communications
-                    # unless TP communication overlap is used
-                    disable_sequence_parallel_comm = True
+                # Do not use TE's `return_layernorm_output_gathered`: TE's backward drops the gradient
+                # of a gathered LayerNorm output, so the LoRA-A term never reaches the input gradient
+                # (https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/6453). The adapter consumes the
+                # local shard and owns the gather, whose backward reduce-scatters into TE's dgrad.
+                # TODO: restore the gathered-output optimization once TE adds this gradient.
+                m.return_layernorm_output_gathered = False
     elif HAVE_TE and any(isinstance(m, te_row_parallel) for te_row_parallel in TERL):
         input_is_parallel = True
         in_features = m.in_features * tp_size
