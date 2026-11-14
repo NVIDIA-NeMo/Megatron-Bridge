@@ -1554,3 +1554,50 @@ def test_dpo_mode_selects_dpo_recipe_step_and_train_loop():
     handles.recipe_runner.load_recipe.assert_called_once_with("qwen3_30b_a3b_dpo_config", peft_scheme=None)
     handles.recipe_runner.load_forward_step.assert_called_once_with("dpo_step", mode="dpo")
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "dpo"
+
+
+def test_training_check_flags_pass_report_callbacks_to_the_runner(monkeypatch, tmp_path):
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+    checks = types.ModuleType("megatron.bridge.training.utils.training_checks")
+    checks.PARAMETER_UPDATES_REPORT = "parameter_updates.json"
+    checks.EXPERT_LOAD_REPORT = "expert_load.json"
+    checks.ParameterUpdateCheck = lambda path: ("parameter updates", path)
+    checks.ExpertLoadMonitor = lambda path: ("expert load", path)
+    monkeypatch.setitem(sys.modules, "megatron.bridge.training.utils", _package("megatron.bridge.training.utils"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge.training.utils.training_checks", checks)
+
+    module.main(
+        [
+            "--recipe",
+            "gpt_oss_20b_pretrain_config",
+            "--mode",
+            "pretrain",
+            "--check-parameter-updates",
+            "--log-expert-load",
+            "--training-checks-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert handles.recipe_runner.run_config.call_args.kwargs["callbacks"] == [
+        ("parameter updates", tmp_path / "parameter_updates.json"),
+        ("expert load", tmp_path / "expert_load.json"),
+    ]
+
+
+def test_runs_without_training_checks_pass_no_callbacks():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+
+    module.main(["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"])
+
+    assert "callbacks" not in handles.recipe_runner.run_config.call_args.kwargs
+
+
+@pytest.mark.parametrize("option", ["--check-parameter-updates", "--log-expert-load"])
+def test_training_checks_require_a_report_directory(option):
+    module, _ = _load_module()
+
+    with pytest.raises(SystemExit):
+        module.parse_args(["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain", option])

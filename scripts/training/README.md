@@ -311,6 +311,22 @@ argument.
 Overrides take a benchmark recipe outside its canonical configuration. Use
 `scripts/performance/setup_experiment.py` for specialized workflows that the unified launcher has not migrated yet.
 
+## Training checks
+
+Two flags record what a run did, for regression tests to compare with their limits. Neither changes training. Both
+write a JSON report on rank 0 into `--training-checks-dir`.
+
+- `--check-parameter-updates` writes `parameter_updates.json` with one entry per parameter tensor. A trainable tensor
+  passes when the optimizer holds it, its Adam second moment is nonzero and its FP32 master weights changed after the
+  first step. A frozen tensor passes when the optimizer does not hold it and its values are unchanged.
+- `--log-expert-load` counts the tokens each expert of every MoE layer receives after dispatch. It logs the worst
+  layer's max/mean and min/mean load and the number of experts without tokens each step, and writes the per-layer
+  values to `expert_load.json`.
+
+`scripts/performance/utils/evaluate.py` checks both reports (`validate_parameter_updates`,
+`validate_expert_balance`). It also compares a run resumed from a checkpoint with the uninterrupted run's logs
+(`validate_resume_continuity`).
+
 ## Slurm and containers
 
 Required Slurm arguments are:

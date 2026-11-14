@@ -617,6 +617,22 @@ def test_training_stack_is_registered_for_lazy_import(recipe_runner: ModuleType)
     }
 
 
+def test_run_config_passes_callbacks_to_the_training_loop(
+    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    train = Mock(name="train")
+    monkeypatch.setitem(recipe_runner.TRAIN_FUNCTIONS, "pretrain", train)
+    monkeypatch.setattr(recipe_runner, "_get_rank_safe", lambda: 1)
+    monkeypatch.setattr(recipe_runner, "_destroy_process_group", lambda: None)
+    config, step_func, callbacks = object(), object(), [object()]
+
+    recipe_runner.run_config(config=config, mode="pretrain", step_func=step_func, callbacks=callbacks)
+    recipe_runner.run_config(config=config, mode="pretrain", step_func=step_func)
+
+    assert train.call_args_list[0].kwargs == {"config": config, "forward_step_func": step_func, "callbacks": callbacks}
+    assert train.call_args_list[1].kwargs == {"config": config, "forward_step_func": step_func}
+
+
 def test_run_config_dryrun_saves_without_training(recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     config = object()
     events: list[str] = []

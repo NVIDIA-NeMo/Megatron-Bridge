@@ -514,8 +514,19 @@ def run_config(
     save_config_filepath: str | None = None,
     dryrun_world_size: int | None = None,
     dump_environment: bool = False,
+    callbacks: list[object] | None = None,
 ) -> bool:
     """Run or dry-run a ConfigContainer with the selected training function.
+
+    Args:
+        config: Configuration to run.
+        mode: Training loop to use, a key of ``TRAIN_FUNCTIONS``.
+        step_func: Forward step function.
+        dryrun: Save the configuration instead of training.
+        save_config_filepath: Where a dry run saves the configuration.
+        dryrun_world_size: World size to resolve the configuration for in a dry run.
+        dump_environment: Print the environment on rank 0 first.
+        callbacks: Training callbacks passed to the training loop.
 
     Returns:
         True when the caller should return without launching training.
@@ -548,7 +559,7 @@ def run_config(
         config.print_yaml()
 
     train_func = _load_train_function(mode)
-    train_func(config=config, forward_step_func=step_func)
+    train_func(config=config, forward_step_func=step_func, **({"callbacks": callbacks} if callbacks else {}))
 
     _destroy_process_group()
 

@@ -265,6 +265,29 @@ def _build_parser() -> argparse.ArgumentParser:
     runtime.add_argument("--dry-run", "--dry_run", action="store_true", dest="dryrun")
     runtime.add_argument("--deterministic", action="store_true")
     runtime.add_argument("--dump-env", "--dump_env", action="store_true", dest="dump_env")
+
+    checks = parser.add_argument_group("Training checks (reports for regression tests)")
+    checks.add_argument(
+        "--check-parameter-updates",
+        "--check_parameter_updates",
+        action="store_true",
+        dest="check_parameter_updates",
+        help="Record which parameter tensors trained and which stayed frozen, in parameter_updates.json.",
+    )
+    checks.add_argument(
+        "--log-expert-load",
+        "--log_expert_load",
+        action="store_true",
+        dest="log_expert_load",
+        help="Log the tokens each expert of every MoE layer receives per step, in expert_load.json.",
+    )
+    checks.add_argument(
+        "--training-checks-dir",
+        "--training_checks_dir",
+        dest="training_checks_dir",
+        metavar="DIR",
+        help="Directory for the training-check reports; required with either check.",
+    )
     return parser
 
 
@@ -511,7 +534,29 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
     trailing_overrides = _collect_overrides(parser, unknown)
     cli_overrides = [*_common_config_overrides(args), *trailing_overrides]
     _infer_mode(args)
+    if (args.check_parameter_updates or args.log_expert_load) and not args.training_checks_dir:
+        parser.error("--check-parameter-updates and --log-expert-load require --training-checks-dir")
     return args, cli_overrides
+
+
+def _training_check_callbacks(args: argparse.Namespace) -> list[object]:
+    """Build the requested training-check callbacks; imported only after the environment bootstrap."""
+    if not (args.check_parameter_updates or args.log_expert_load):
+        return []
+    from megatron.bridge.training.utils.training_checks import (
+        EXPERT_LOAD_REPORT,
+        PARAMETER_UPDATES_REPORT,
+        ExpertLoadMonitor,
+        ParameterUpdateCheck,
+    )
+
+    directory = Path(args.training_checks_dir)
+    callbacks: list[object] = []
+    if args.check_parameter_updates:
+        callbacks.append(ParameterUpdateCheck(directory / PARAMETER_UPDATES_REPORT))
+    if args.log_expert_load:
+        callbacks.append(ExpertLoadMonitor(directory / EXPERT_LOAD_REPORT))
+    return callbacks
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -597,6 +642,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     step_func_name = _resolve_step_for_mode(step_func_name, args.mode)
     forward_step = load_forward_step(step_func_name, mode=step_mode)
+    callbacks = _training_check_callbacks(args)
     run_config(
         config=recipe,
         mode=execution_mode,
@@ -604,6 +650,7 @@ def main(argv: list[str] | None = None) -> None:
         dryrun=args.dryrun,
         dryrun_world_size=benchmark_world_size,
         dump_environment=args.dump_env,
+        **({"callbacks": callbacks} if callbacks else {}),
     )
 
 

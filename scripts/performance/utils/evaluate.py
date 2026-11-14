@@ -75,6 +75,8 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         "GPU utilization": r"GPU utilization:\s+([\d.]+)",
         "step time": r"Step Time :\s+([\d.]+)s",
         "grad norm": r"grad norm:\s+([\d.]+|nan|inf)",
+        "learning rate": r"\| learning rate:\s+([\d.E+\-]+)",
+        "consumed samples": r"consumed samples:\s+(\d+)",
         "alloc": r"mem-allocated-gigabytes:\s*([\d\.]+)",
         "max_alloc": r"mem-max-allocated-gigabytes:\s*([\d\.]+)",
         "max_reserved": r"mem-max-reserved-gigabytes:\s*([\d\.]+)",
@@ -567,6 +569,235 @@ def validate_memory(
             logger.info(f"  {key}: {value}")
 
     return results
+
+
+def _check_result(failures: List[str], metrics: Dict[str, Any], name: str, logger: logging.Logger) -> Dict[str, Any]:
+    """Build the result dict the other validators return, and log it."""
+    passed = not failures
+    summary = f"All {name} checks passed" if passed else f"{name} check failed: {len(failures)} problem(s)"
+    if passed:
+        logger.info(f"✓ {summary}")
+    else:
+        logger.error(f"❌ {summary}")
+        for failure in failures[:20]:
+            logger.error(f"  {failure}")
+        if len(failures) > 20:
+            logger.error(f"  ... and {len(failures) - 20} more")
+    for key, value in metrics.items():
+        logger.info(f"  {key}: {value}")
+    return {
+        "passed": passed,
+        "failed_metrics": [name] if failures else [],
+        "summary": summary,
+        "details": "\n".join(failures),
+        "metrics": metrics,
+    }
+
+
+def validate_parameter_updates(
+    report_path: str,
+    *,
+    frozen_pattern: Optional[str] = None,
+    without_updates_pattern: Optional[str] = None,
+    logger: logging.Logger = logger,
+) -> Dict[str, Any]:
+    """Check a parameter-update report from Bridge's ``ParameterUpdateCheck``.
+
+    Every trainable tensor must be held by the optimizer, have received a gradient and have changed master weights,
+    unless its key matches ``without_updates_pattern`` (declared exceptions, such as weights that get a zero gradient
+    by design). Every frozen tensor must match ``frozen_pattern``, stay outside the optimizer and stay unchanged, and
+    no trainable tensor may match ``frozen_pattern``. Patterns are regular expressions searched in the tensor keys.
+
+    Args:
+        report_path: Path of the JSON report.
+        frozen_pattern: Keys of the tensors the case freezes; ``None`` when nothing is frozen.
+        without_updates_pattern: Keys of trainable tensors that are expected not to update.
+        logger: Logger for the result.
+
+    Returns:
+        Dict with ``passed``, ``failed_metrics``, ``summary``, ``details`` and ``metrics``.
+    """
+    with open(report_path) as handle:
+        tensors = json.load(handle)["tensors"]
+    frozen = re.compile(frozen_pattern) if frozen_pattern else None
+    exempt = re.compile(without_updates_pattern) if without_updates_pattern else None
+    failures = []
+    exempt_but_trained = []
+    for key, record in tensors.items():
+        declared_frozen = bool(frozen and frozen.search(key))
+        if not record["trainable"]:
+            if not declared_frozen:
+                failures.append(f"{key}: frozen, but the case does not declare it frozen")
+            if record.get("optimizer"):
+                failures.append(f"{key}: frozen, but held by the optimizer")
+            if record.get("changed"):
+                failures.append(f"{key}: frozen, but its values changed")
+            continue
+        if declared_frozen:
+            failures.append(f"{key}: declared frozen, but trainable")
+            continue
+        problems = []
+        if not record.get("optimizer"):
+            problems.append("not held by the optimizer")
+        else:
+            if record.get("gradient") is False:
+                problems.append("never received a gradient")
+            if record.get("changed") is False:
+                problems.append("master weights unchanged")
+        if exempt and exempt.search(key):
+            if not problems:
+                exempt_but_trained.append(key)
+            continue
+        failures.extend(f"{key}: {problem}" for problem in problems)
+    if not any(record["trainable"] for record in tensors.values()):
+        failures.append("the report lists no trainable tensors")
+    if exempt_but_trained:
+        logger.warning(
+            f"{len(exempt_but_trained)} tensor(s) declared without updates did update, for example "
+            f"{exempt_but_trained[0]}; the declaration may be out of date"
+        )
+    metrics = {
+        "trainable_tensors": sum(record["trainable"] for record in tensors.values()),
+        "frozen_tensors": sum(not record["trainable"] for record in tensors.values()),
+        "declared_without_updates_but_updated": len(exempt_but_trained),
+    }
+    return _check_result(failures, metrics, "parameter_updates", logger)
+
+
+def validate_expert_balance(
+    report_path: str,
+    *,
+    max_load_ratio: Optional[float] = None,
+    min_mean_max_load_ratio: Optional[float] = None,
+    max_idle_experts_per_step: Optional[int] = None,
+    max_experts_without_tokens_in_run: Optional[int] = None,
+    logger: logging.Logger = logger,
+) -> Dict[str, Any]:
+    """Check an expert-load report from Bridge's ``ExpertLoadMonitor``.
+
+    A limit left as ``None`` is not enforced; its observed value is still logged, so a first run can calibrate it.
+
+    Args:
+        report_path: Path of the JSON report.
+        max_load_ratio: Upper limit, at every step, on the most loaded expert of the worst layer as a multiple of
+            that layer's mean load.
+        min_mean_max_load_ratio: Lower limit on the run mean of the per-layer max/mean load; natural routing stays
+            well above 1.0, forced balancing gives about 1.0.
+        max_idle_experts_per_step: Upper limit, at every step, on experts that receive no tokens, over all layers.
+        max_experts_without_tokens_in_run: Upper limit on experts that receive no tokens in the whole run.
+        logger: Logger for the result.
+
+    Returns:
+        Dict with ``passed``, ``failed_metrics``, ``summary``, ``details`` and ``metrics``.
+    """
+    with open(report_path) as handle:
+        report = json.load(handle)
+    steps = report["steps"]
+    failures = []
+    if not steps:
+        return _check_result(["the report has no training steps"], {}, "expert_balance", logger)
+
+    worst_load, worst_step, max_idle = 0.0, None, 0
+    layer_means = []
+    for step in steps:
+        loads = step["max_load"]
+        if any(load is None for load in loads):
+            empty = [report["layers"][index] for index, load in enumerate(loads) if load is None]
+            failures.append(f"iteration {step['iteration']}: no tokens reached {', '.join(empty)}")
+            continue
+        if max(loads) > worst_load:
+            worst_load, worst_step = max(loads), step["iteration"]
+        max_idle = max(max_idle, sum(step["idle"]))
+        layer_means.append(sum(loads) / len(loads))
+        if max_load_ratio is not None and max(loads) > max_load_ratio:
+            layer = report["layers"][loads.index(max(loads))]
+            failures.append(
+                f"iteration {step['iteration']}: max/mean load {max(loads):.3f} in {layer} > limit {max_load_ratio}"
+            )
+        if max_idle_experts_per_step is not None and sum(step["idle"]) > max_idle_experts_per_step:
+            failures.append(
+                f"iteration {step['iteration']}: {sum(step['idle'])} experts received no tokens "
+                f"> limit {max_idle_experts_per_step}"
+            )
+    mean_max_load = sum(layer_means) / len(layer_means) if layer_means else float("nan")
+    if min_mean_max_load_ratio is not None and not mean_max_load >= min_mean_max_load_ratio:
+        failures.append(f"run mean max/mean load {mean_max_load:.3f} < limit {min_mean_max_load_ratio}")
+    without_tokens = sum(tokens == 0 for layer in report["total_tokens"] for tokens in layer)
+    if max_experts_without_tokens_in_run is not None and without_tokens > max_experts_without_tokens_in_run:
+        failures.append(
+            f"{without_tokens} experts received no tokens in the whole run > limit {max_experts_without_tokens_in_run}"
+        )
+    metrics = {
+        "worst_max_load_ratio": worst_load,
+        "worst_max_load_iteration": worst_step,
+        "mean_max_load_ratio": mean_max_load,
+        "max_idle_experts_per_step": max_idle,
+        "experts_without_tokens_in_run": without_tokens,
+        "steps": len(steps),
+    }
+    return _check_result(failures, metrics, "expert_balance", logger)
+
+
+def validate_resume_continuity(
+    reference_log_paths: List[str],
+    resumed_log_paths: List[str],
+    *,
+    expected_iterations: Optional[List[int]] = None,
+    loss_tolerance: float = 0.0,
+    logger: logging.Logger = logger,
+) -> Dict[str, Any]:
+    """Check that a run resumed from a checkpoint repeats the uninterrupted run's steps.
+
+    The learning rate and consumed samples must be equal at every resumed step. With ``loss_tolerance`` 0 the LM
+    loss and grad norm must also be equal as printed; otherwise the LM loss must agree within that relative
+    tolerance and the grad norm is only reported.
+
+    Args:
+        reference_log_paths: Logs of the uninterrupted run.
+        resumed_log_paths: Logs of the resumed run.
+        expected_iterations: 1-based iterations the resumed run must log, for example 51 to 55.
+        loss_tolerance: Allowed relative LM-loss difference; 0 requires equality.
+        logger: Logger for the result.
+
+    Returns:
+        Dict with ``passed``, ``failed_metrics``, ``summary``, ``details`` and ``metrics``.
+    """
+    names = ("lm loss", "grad norm", "learning rate", "consumed samples")
+    reference = {name: get_metrics_from_logfiles(reference_log_paths, name) for name in names}
+    resumed = {name: get_metrics_from_logfiles(resumed_log_paths, name) for name in names}
+    steps = sorted(resumed["lm loss"], key=int)
+    failures = []
+    if expected_iterations is not None:
+        missing = [iteration for iteration in expected_iterations if str(iteration - 1) not in resumed["lm loss"]]
+        if missing:
+            failures.append(f"the resumed run did not log iterations {missing}")
+    if not steps:
+        failures.append("the resumed run logged no training steps")
+    exact = ["learning rate", "consumed samples"] + (["lm loss", "grad norm"] if loss_tolerance == 0 else [])
+    worst_loss_difference = 0.0
+    for step in steps:
+        iteration = int(step) + 1
+        if step not in reference["lm loss"]:
+            failures.append(f"iteration {iteration}: missing from the uninterrupted run")
+            continue
+        for name in exact:
+            expected, actual = reference[name].get(step), resumed[name].get(step)
+            if expected != actual:
+                failures.append(f"iteration {iteration}: {name} {actual} after resuming, {expected} uninterrupted")
+        expected_loss, actual_loss = reference["lm loss"][step], resumed["lm loss"][step]
+        difference = abs(actual_loss - expected_loss) / abs(expected_loss) if expected_loss else abs(actual_loss)
+        worst_loss_difference = max(worst_loss_difference, difference)
+        if loss_tolerance > 0 and difference > loss_tolerance:
+            failures.append(
+                f"iteration {iteration}: lm loss {actual_loss} after resuming differs from {expected_loss} by "
+                f"{difference:.2e} > {loss_tolerance:.2e}"
+            )
+    metrics = {
+        "resumed_iterations": [int(step) + 1 for step in steps],
+        "worst_relative_lm_loss_difference": worst_loss_difference,
+        "loss_tolerance": loss_tolerance,
+    }
+    return _check_result(failures, metrics, "resume_continuity", logger)
 
 
 def downsample_golden_values(values: Dict[str, Any], max_steps: int = MAX_PERSISTED_GOLDEN_STEPS) -> Dict[str, Any]:
