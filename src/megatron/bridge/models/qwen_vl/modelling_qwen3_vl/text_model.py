@@ -19,7 +19,7 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 """
 
 from dataclasses import replace
-from typing import Any, Callable, Literal, Optional
+from typing import Callable, Literal, Optional, TypeVar, cast
 
 import torch
 from megatron.core import tensor_parallel
@@ -54,6 +54,9 @@ def _get_mtp_packed_seq_params(packed_seq_params: PackedSeqParams | None) -> Pac
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_kv=cu_seqlens_kv,
     )
+
+
+OutputT = TypeVar("OutputT")
 
 
 class Qwen3VLGPTModel(GPTModel):
@@ -171,9 +174,9 @@ class Qwen3VLGPTModel(GPTModel):
         # args for deepstack
         visual_pos_masks: Optional[torch.Tensor] = None,
         deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
-        output_processor: Callable[..., Tensor] | None = None,
-        output_processor_context: Any | None = None,
-    ) -> Tensor:
+        output_processor: Callable[..., OutputT] | None = None,
+        output_processor_context: object | None = None,
+    ) -> Tensor | OutputT:
         """Forward function of the GPT Model This function passes the input tensors
         through the embedding layer, and then the decoeder and finally into the post
         processing layer (optional).
@@ -190,7 +193,7 @@ class Qwen3VLGPTModel(GPTModel):
                 z-loss, and expert-bias statistics by the current MCore router.
             output_processor (Callable, optional): Custom postprocess hook forwarded to
                 the GPT model postprocessing path.
-            output_processor_context (Any, optional): User-defined context forwarded to
+            output_processor_context (object, optional): User-defined context forwarded to
                 `output_processor`.
         """
 
@@ -283,4 +286,5 @@ class Qwen3VLGPTModel(GPTModel):
         if _shadow_embedding:
             del self.__dict__["embedding"]
 
-        return result
+        # Core's untyped _postprocess returns the tensor path or the supplied callback result.
+        return cast(Tensor | OutputT, result)
