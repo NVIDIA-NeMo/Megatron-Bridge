@@ -1994,6 +1994,38 @@ def _make_grouped_expert_sharded_tensor(
     )
 
 
+@dataclass(frozen=True)
+class _GroupedExpertShard:
+    """This rank's slice of a grouped-expert weight: the EP rank's experts and the expert-TP shard of each matrix."""
+
+    ep_rank: int
+    ep_size: int
+    etp_rank: int
+    etp_size: int
+
+    def init_local_weight(
+        self,
+        init_fn: Callable[[torch.Tensor], torch.Tensor],
+        local_shape: Tuple[int, int, int],
+        tp_axis: int,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Draw the weight for all experts at full width and keep this rank's slice.
+
+        Every EP/ETP rank shares one RNG stream here, so a local-only draw would repeat across ranks and change with EP.
+        """
+        full_shape = list(local_shape)
+        full_shape[0] *= self.ep_size
+        full_shape[tp_axis] *= self.etp_size
+        weight = torch.empty(full_shape, device=device, dtype=dtype)
+        init_fn(weight)
+        weight = weight.narrow(0, self.ep_rank * local_shape[0], local_shape[0])
+        weight = weight.narrow(tp_axis, self.etp_rank * local_shape[tp_axis], local_shape[tp_axis])
+        return weight.clone(memory_format=torch.contiguous_format)
+
+
 class _GroupedExpertAdapterWeight(nn.Module):
     """Callable parameter container so DDP forward pre-hooks see grouped LoRA weights."""
 
@@ -2108,24 +2140,34 @@ class GroupedExpertLinearAdapter(nn.Module):
             )
         dtype = params_dtype or model_parallel_config.params_dtype
 
-        linear_in_weight = torch.empty(linear_in_shape, device=params_device, dtype=dtype)
-        linear_out_weight = torch.empty(linear_out_shape, device=params_device, dtype=dtype)
+        ep_size = _process_group_size(self.ep_group, model_parallel_config.expert_model_parallel_size or 1)
+        shard = _GroupedExpertShard(
+            ep_rank=_process_group_rank(self.ep_group),
+            ep_size=ep_size,
+            etp_rank=_process_group_rank(self.expert_tp_group),
+            etp_size=expert_tp_size,
+        )
         # The weights are stacked per-expert matrices. Resolve the fan-dependent
         # init methods from the full (unsharded) per-expert dims: a fan read off
         # the 3-D tensor would scale with ``dim * in_features`` and with the
         # number of local experts, so the init would depend on EP/ETP size and
         # start far too small (see ``_get_init_fn``).
-        ParallelLinearAdapter._get_init_fn(self, column_init_method, fan_in=in_features, fan_out=dim)(linear_in_weight)
-        ParallelLinearAdapter._get_init_fn(self, row_init_method, fan_in=dim, fan_out=out_features)(linear_out_weight)
-
-        use_expert_process_groups = (
-            _process_group_size(
-                self.ep_group,
-                model_parallel_config.expert_model_parallel_size or 1,
-            )
-            > 1
-            or expert_tp_size != tensor_parallel_size
+        linear_in_weight = shard.init_local_weight(
+            ParallelLinearAdapter._get_init_fn(self, column_init_method, fan_in=in_features, fan_out=dim),
+            linear_in_shape,
+            linear_in_tp_axis,
+            device=params_device,
+            dtype=dtype,
         )
+        linear_out_weight = shard.init_local_weight(
+            ParallelLinearAdapter._get_init_fn(self, row_init_method, fan_in=dim, fan_out=out_features),
+            linear_out_shape,
+            linear_out_tp_axis,
+            device=params_device,
+            dtype=dtype,
+        )
+
+        use_expert_process_groups = ep_size > 1 or expert_tp_size != tensor_parallel_size
         self._linear_in_tp_axis = linear_in_tp_axis
         self._linear_out_tp_axis = linear_out_tp_axis
         self.linear_in = _GroupedExpertAdapterWeight(linear_in_weight)
@@ -2639,6 +2681,8 @@ class PackedPerExpertLinear(nn.Module):
         init_method: Optional[Callable] = None,
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
+        ep_rank: int = 0,
+        ep_size: int = 1,
     ):
         super().__init__()
         if not hasattr(torch, "_grouped_mm"):
@@ -2648,8 +2692,14 @@ class PackedPerExpertLinear(nn.Module):
         self.out_features = out_features
         weight = torch.empty(num_local_experts, out_features, in_features, dtype=dtype, device=device)
         if init_method is not None:
-            for e in range(num_local_experts):
-                init_method(weight[e])
+            # Every EP rank draws from the same RNG stream: replay the draws of all EP ranks' experts and keep this
+            # rank's, so each global expert gets its own init, the same at every EP size.
+            first_local_expert = ep_rank * num_local_experts
+            expert_weight = torch.empty_like(weight[0])
+            for expert in range(num_local_experts * ep_size):
+                init_method(expert_weight)
+                if first_local_expert <= expert < first_local_expert + num_local_experts:
+                    weight[expert - first_local_expert].copy_(expert_weight)
         else:
             nn.init.zeros_(weight)
         self.weight = nn.Parameter(weight)
@@ -2749,6 +2799,8 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
 
         self.pg_collection = _get_pg_collection(pg_collection, model_parallel_config, required_pgs=["ep"])
         self.ep_group = _get_process_group(self.pg_collection, "ep")
+        ep_rank = _process_group_rank(self.ep_group)
+        ep_size = _process_group_size(self.ep_group, model_parallel_config.expert_model_parallel_size or 1)
 
         # ``input_is_parallel`` selects fc1 (column-parallel base) vs fc2
         # (row-parallel base). Mirrors :class:`ParallelLinearAdapter` and
@@ -2778,6 +2830,8 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
                 init_method=row_init,
                 device=params_device,
                 dtype=params_dtype,
+                ep_rank=ep_rank,
+                ep_size=ep_size,
             )
         else:
             # Per-expert A (intermediate → rank); shared B (rank → hidden).
@@ -2788,6 +2842,8 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
                 init_method=column_init,
                 device=params_device,
                 dtype=params_dtype,
+                ep_rank=ep_rank,
+                ep_size=ep_size,
             )
             self.linear_out = RowParallelLinear(
                 dim,
