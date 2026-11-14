@@ -12,18 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import inspect
 import logging
 from dataclasses import dataclass
 from typing import ClassVar
 
 import torch
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.models.gpt import GPTModel
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
+from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.training.models.gpt import GPTModelBuilder as MCoreGPTModelBuilder
 from megatron.training.models.gpt import GPTModelConfig as MCoreGPTModelConfig
+from megatron.training.models.gpt import default_layer_spec as mcore_default_layer_spec
 from megatron.training.models.gpt import mtp_block_spec
 
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
@@ -59,7 +65,38 @@ class GPTModelBuilder(MCoreGPTModelBuilder):
     ) -> GPTModel:
         """Build a GPT stage after validating MCore logit-dtype support."""
         logit_dtype_kwarg(GPTModel, self._model_config.logit_dtype)
-        return super().build_model(pg_collection, pre_process, post_process, vp_stage)
+        model_config = self._model_config
+        if model_config.attention_backend != AttnBackend.local:
+            return super().build_model(pg_collection, pre_process, post_process, vp_stage)
+
+        configured_spec = model_config.transformer_layer_spec
+        model_config.transformer_layer_spec = self._local_attention_block_spec(vp_stage)
+        try:
+            return super().build_model(pg_collection, pre_process, post_process, vp_stage)
+        finally:
+            model_config.transformer_layer_spec = configured_spec
+
+    def _local_attention_block_spec(self, vp_stage: int | None) -> ModuleSpec | TransformerBlockSubmodules:
+        """Resolve the layer spec once, replacing TE core attention with local attention in a block spec."""
+        model_config = self._model_config
+        spec = model_config.transformer_layer_spec
+        if spec is None:
+            spec = mcore_default_layer_spec(model_config, vp_stage)
+        elif not isinstance(spec, ModuleSpec) and callable(spec):
+            if "vp_stage" in inspect.signature(spec).parameters:
+                spec = spec(model_config, vp_stage=vp_stage)
+            else:
+                spec = spec(model_config)
+        if not isinstance(spec, TransformerBlockSubmodules):
+            return spec
+
+        spec = copy.deepcopy(spec)
+        for layer_spec in spec.layer_specs:
+            self_attention = getattr(layer_spec.submodules, "self_attention", None)
+            attention_submodules = getattr(self_attention, "submodules", None)
+            if getattr(attention_submodules, "core_attention", None) is TEDotProductAttention:
+                attention_submodules.core_attention = MCoreDotProductAttention
+        return spec
 
 
 def transformer_engine_layer_spec(config: "GPTModelConfig") -> ModuleSpec:
