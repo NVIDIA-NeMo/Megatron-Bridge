@@ -442,6 +442,21 @@ uv run python examples/conversion/compare_hf_and_megatron/compare.py \
   --enable_debug_hooks
 ```
 
+**Use the comparison as a validation gate:**
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/compare_hf_and_megatron/compare.py \
+  --hf_model_path Qwen/Qwen3-1.7B \
+  --prompt "Hello world" \
+  --tp 2 \
+  --fail-on-mismatch
+```
+
+With `--fail-on-mismatch`, next-token predictions must match within the HF vocabulary
+and cosine similarity must be at least 0.99. A failed comparison raises an error on
+every rank, including earlier pipeline stages. Maximum and mean absolute logit
+differences remain diagnostic metrics. Without this flag, the script only reports
+the comparison metrics.
+
 **Example Output:**
 ```
 Processing inputs - Prompt: 'Hello, how are you?', Image: None

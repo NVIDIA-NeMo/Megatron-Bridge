@@ -195,4 +195,5 @@ with job-level fault tolerance.
 - [skills/nemo-mbridge-resiliency/SKILL.md](../skills/nemo-mbridge-resiliency/SKILL.md)
 - [skills/nemo-mbridge-resiliency/card.yaml](../skills/nemo-mbridge-resiliency/card.yaml)
 - [NVIDIA Resiliency Extension](https://github.com/NVIDIA/nvidia-resiliency-ext)
+- [In-Process Restart Guide](https://github.com/NVIDIA/nvidia-resiliency-ext/blob/v0.4.1/docs/source/inprocess/index.rst)
 - [NVRx Fault Tolerance Usage Guide](https://nvidia.github.io/nvidia-resiliency-ext/fault_tolerance/usage_guide.html)

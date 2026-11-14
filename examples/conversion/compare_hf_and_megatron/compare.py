@@ -932,6 +932,19 @@ def _broadcast_hf_results(hf_logits, hf_next_token, device):
     return hf_logits, hf_next_token
 
 
+def _check_comparison_result(comparison_passed: bool, device: torch.device) -> None:
+    """Raise on every rank if any comparison rank failed the correlation gate."""
+    if torch.distributed.is_initialized():
+        result = torch.tensor(int(comparison_passed), dtype=torch.int32, device=device)
+        torch.distributed.all_reduce(result, op=torch.distributed.ReduceOp.MIN)
+        comparison_passed = bool(result.item())
+    if not comparison_passed:
+        raise ValueError(
+            "HF/Megatron comparison failed: next tokens must match and cosine similarity "
+            f"must be at least {SIMILARITY_THRESHOLD}. See the comparison output for details."
+        )
+
+
 def compare_models_one_step(args) -> None:
     """Compare 1-step generation between HF and Megatron models with debugging.
 
@@ -1067,6 +1080,8 @@ def compare_models_one_step(args) -> None:
         hf_logits, hf_next_token = _broadcast_hf_results(hf_logits, hf_next_token, input_ids.device)
         print_rank_0("HF results broadcast complete.")
 
+    comparison_passed = True
+
     # Run Megatron model forward pass
     print_rank_0("=== RUNNING MEGATRON MODEL (1-STEP) ===")
     with torch.no_grad():
@@ -1175,6 +1190,7 @@ def compare_models_one_step(args) -> None:
                 print(f"Logits diff - max: {diff.max():.6f}, mean: {diff.mean():.6f}")
                 cosine_sim = torch.cosine_similarity(hf_logits.unsqueeze(0), megatron_logits_cmp.unsqueeze(0))
                 cos_val = cosine_sim.item()
+                comparison_passed = token_match and cos_val >= SIMILARITY_THRESHOLD
                 percent = cos_val * 100.0
                 status_emoji = "✅" if cos_val >= SIMILARITY_THRESHOLD else "❌"
                 limit_text = "within" if cos_val >= SIMILARITY_THRESHOLD else "outside"
@@ -1192,6 +1208,9 @@ def compare_models_one_step(args) -> None:
         # Broadcast Megatron results from last rank to all ranks (following generate_from_hf.py pattern)
         if torch.distributed.is_initialized():
             torch.distributed.broadcast(megatron_next_token, get_last_rank())
+
+        if getattr(args, "fail_on_mismatch", False):
+            _check_comparison_result(comparison_passed, input_ids.device)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1245,6 +1264,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument(
+        "--fail-on-mismatch",
+        action="store_true",
+        help="Exit with an error on all ranks if next tokens differ or cosine similarity is below 0.99.",
+    )
+    parser.add_argument(
         "--hf-device",
         default="cuda",
         help="CUDA device used by the rank-0 Hugging Face reference model (for example, cuda:2).",
@@ -1285,7 +1309,8 @@ if __name__ == "__main__":
     args = build_parser().parse_args()
 
     maybe_initialize_distributed()
-    compare_models_one_step(args)
-
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
+    try:
+        compare_models_one_step(args)
+    finally:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
