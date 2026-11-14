@@ -588,6 +588,11 @@ class MegatronModelBridge(
     # these source keys instead of reporting them as missing.
     DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ()
 
+    # Source checkpoint key suffixes that only a plain export (an explicit ``weight_dtype``) leaves out:
+    # the scale companions of quantized source weights. A bridge that quantizes such weights back on its
+    # default export writes these keys there, so strict saving ignores them for plain exports only.
+    PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ("_scale_inv",)
+
     def hf_export_ignored_source_keys(self, hf_pretrained: Any, source_keys: Iterable[str]) -> Iterable[str]:
         """Source checkpoint tensors that this bridge never writes back on export.
 

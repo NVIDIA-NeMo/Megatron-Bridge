@@ -178,6 +178,9 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
     [
         ("bagel_7b_pretrain_32gpu_h100_bf16_config", "bagel_step"),
         ("gpt_oss_20b_pretrain_config", "llm_step"),
+        ("inkling2_small_peft_32gpu_gb200_bf16_multimodal_config", "vlm_step"),
+        ("inkling2_small_sft_128gpu_gb200_bf16_config", "llm_step"),
+        ("inkling2_small_sft_128gpu_gb200_bf16_multimodal_config", "vlm_step"),
         ("nemotron_35_super_vl_peft_config", "nemotron_omni_step"),
         ("nemotron_35_super_vl_sft_config", "nemotron_omni_step"),
         ("nemotron_omni_cord_v2_sft_config", "nemotron_omni_step"),

@@ -1,0 +1,25 @@
+{
+  "image_processor": {
+    "do_convert_rgb": true,
+    "do_normalize": true,
+    "do_rescale": true,
+    "image_mean": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "image_processor_type": "Inkling2ImageProcessor",
+    "image_std": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "rescale_factor": 0.00392156862745098,
+    "size": {
+      "height": 40,
+      "width": 40
+    }
+  },
+  "image_token": "<|unused_200054|>",
+  "processor_class": "Inkling2Processor"
+}

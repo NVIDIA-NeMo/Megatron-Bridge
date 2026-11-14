@@ -1731,9 +1731,14 @@ class AutoBridge(Generic[MegatronModelT]):
                 )
                 if any(not isinstance(key, str) or not key for key in declared_keys):
                     raise ValueError("hf_export_ignored_source_keys must return nonempty tensor names.")
+            plain_export_suffixes = getattr(type(bridge), "PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES", ("_scale_inv",))
+            if not isinstance(plain_export_suffixes, tuple) or any(
+                not isinstance(suffix, str) or not suffix for suffix in plain_export_suffixes
+            ):
+                raise ValueError("PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES must contain nonempty strings.")
             ignored_source_key_suffixes = tuple(
                 dict.fromkeys(
-                    (("_scale_inv",) if weight_dtype is not None else ())
+                    (plain_export_suffixes if weight_dtype is not None else ())
                     + tuple(getattr(type(bridge), "DEQUANTIZED_SOURCE_KEY_SUFFIXES", ()))
                 )
             )

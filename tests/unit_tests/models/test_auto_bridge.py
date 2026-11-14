@@ -396,6 +396,41 @@ class TestAutoBridge:
 
         assert source.save_generator_kwargs["ignored_source_key_suffixes"] == expected
 
+    @pytest.mark.parametrize(
+        ("weight_dtype", "expected"),
+        [(None, None), (torch.bfloat16, ("_scale_inv", "_amax"))],
+    )
+    def test_save_hf_weights_ignores_bridge_plain_export_suffixes(self, tmp_path, weight_dtype, expected):
+        """A bridge that quantizes back on its default export names the scales a plain export leaves out."""
+
+        class _RequantizingBridge(Mock):
+            PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES = ("_scale_inv", "_amax")
+
+        source = _make_fake_source(present=set())
+        self._run_save_hf_weights(
+            source,
+            tmp_path,
+            mtp_num_layers=1,
+            weight_dtype=weight_dtype,
+            model_bridge_cls=_RequantizingBridge,
+        )
+
+        assert source.save_generator_kwargs["ignored_source_key_suffixes"] == expected
+
+    def test_save_hf_weights_rejects_empty_plain_export_suffixes(self, tmp_path):
+        class _MisconfiguredBridge(Mock):
+            PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES = ("",)
+
+        source = _make_fake_source(present=set())
+        with pytest.raises(ValueError, match="PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES"):
+            self._run_save_hf_weights(
+                source,
+                tmp_path,
+                mtp_num_layers=1,
+                weight_dtype=torch.bfloat16,
+                model_bridge_cls=_MisconfiguredBridge,
+            )
+
     def test_save_hf_weights_combines_ignored_prefixes_and_dequantized_suffixes(self, tmp_path):
         """Family omissions and dequantization accounting must coexist with MTP omissions."""
 

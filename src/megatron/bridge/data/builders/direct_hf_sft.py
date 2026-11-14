@@ -14,6 +14,7 @@
 
 """Serializable config and runtime builder for direct Hugging Face SFT."""
 
+import importlib
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -73,6 +74,12 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     ``lazy_examples`` keeps each split as its memory-mapped Hugging Face dataset
     and adapts a row when it is read, instead of holding every row as Python
     objects in each rank (a one-source training split only).
+
+    ``hf_processor_class`` names the processor class that loads ``hf_processor_path``,
+    as an import path such as ``"package.module.ProcessorClass"``. By default
+    ``AutoProcessor`` chooses the class from the checkpoint's model type; naming
+    it keeps a recipe on its processor when a Transformers release registers a
+    different class for that model type.
     """
 
     seq_length: int
@@ -83,6 +90,7 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     test_source: HFDatasetSourceConfig | None = None
     preprocessing: SFTPreprocessingConfig = field(default_factory=ChatSFTPreprocessingConfig)
     hf_processor_path: str | None = None
+    hf_processor_class: str | None = None
     hf_processor_kwargs: dict[str, Any] | None = None
     do_validation: bool = True
     do_test: bool = True
@@ -154,6 +162,15 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
             if self.megatron_mimo_reorder_window_size < 1:
                 raise ValueError("megatron_mimo_reorder_window_size must be >= 1.")
         validate_declarative_mapping(self.hf_processor_kwargs, field_name="hf_processor_kwargs")
+        if self.hf_processor_class is not None:
+            module_name, _, class_name = self.hf_processor_class.rpartition(".")
+            if not module_name or not class_name:
+                raise ValueError(
+                    "hf_processor_class must be an import path such as 'package.module.Class', "
+                    f"got {self.hf_processor_class!r}."
+                )
+            if self.hf_processor_path is None:
+                raise ValueError("hf_processor_class requires hf_processor_path.")
         if self.hf_processor_kwargs is not None and "trust_remote_code" in self.hf_processor_kwargs:
             raise ValueError(
                 "hf_processor_kwargs must not override trust_remote_code; use the dataset trust policy instead."
@@ -251,6 +268,16 @@ def load_direct_hf_sft_processor(config: DirectHFSFTDatasetConfig, tokenizer: An
         hf_path=config.hf_processor_path,
     )
     processor_kwargs = dict(config.hf_processor_kwargs or {})
+    if config.hf_processor_class is not None:
+        module_name, _, class_name = config.hf_processor_class.rpartition(".")
+        processor_class = getattr(importlib.import_module(module_name), class_name)
+        return normalize_direct_hf_sft_processor(
+            processor_class.from_pretrained(
+                config.hf_processor_path,
+                trust_remote_code=trust_remote_code,
+                **processor_kwargs,
+            )
+        )
     try:
         return normalize_direct_hf_sft_processor(
             AutoProcessor.from_pretrained(

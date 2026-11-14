@@ -331,7 +331,10 @@ Examples:
     export_parser.add_argument(
         "--export-weight-dtype",
         choices=DTYPE_CHOICES,
-        help="Cast exported Hugging Face weights to this dtype (GPU backend only).",
+        help=(
+            "Cast exported Hugging Face weights to this dtype (GPU backend only). Bridges whose checkpoint "
+            "format pins tensors to FP32 keep those tensors in FP32."
+        ),
     )
 
     roundtrip_parser = subparsers.add_parser(

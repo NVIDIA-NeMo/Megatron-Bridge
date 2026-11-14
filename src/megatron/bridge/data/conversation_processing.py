@@ -1084,8 +1084,15 @@ def tokenize_text_without_special_tokens(tokenizer: Any, text: str) -> list[int]
 
 
 def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundaryConfig | None:
-    """Infer assistant role boundaries from known HF chat-template formats."""
+    """Infer assistant role boundaries from known HF chat-template formats.
+
+    A processor or tokenizer that defines ``assistant_mask_boundary_config()`` supplies its own boundaries instead.
+    """
     tokenizer = get_processor_tokenizer(processor)
+    for owner in (processor, tokenizer):
+        declared = _get_explicit_attribute(owner, "assistant_mask_boundary_config")
+        if callable(declared):
+            return declared()
     template = _get_chat_template(tokenizer, processor)
 
     if template is None:
