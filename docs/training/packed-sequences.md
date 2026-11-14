@@ -76,6 +76,11 @@ Packed sequences are usually not the right answer when:
   the main technique
 - your model family or recipe explicitly opts out of packed-sequence support
 
+For Core `GPTDataset` pretraining, `dataset.inter_document_masking=True` restricts
+attention to each document fragment in the sampled row, including across pipeline stages.
+This requires micro-batch size 1 and context-parallel size 1 for both training and
+evaluation, plus THD attention support in the model.
+
 ## Choosing the Offline Pack Length
 
 For text-only LLM SFT and PEFT, use 8192 as the first offline-pack target when

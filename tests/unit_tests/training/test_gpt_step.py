@@ -21,9 +21,11 @@ import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.moe.router import TopKRouter
 
+from megatron.bridge.models.deepseek import deepseek_v4_step
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.training import gpt_step
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     _cu_seqlens_for_cp_partition,
@@ -99,6 +101,7 @@ def _make_cfg(
     mtp_num_layers=0,
     dataset_kwargs=None,
     position_embedding_type=None,
+    inter_document_masking=False,
 ):
     cfg = type("Cfg", (), {})()
     cfg.dataset = type(
@@ -108,6 +111,7 @@ def _make_cfg(
             "dataset_kwargs": dataset_kwargs,
             "enable_offline_packing": enable_offline_packing,
             "offline_packing_specs": offline_packing_specs,
+            "inter_document_masking": inter_document_masking,
             "skip_getting_attention_mask_from_dataset": skip_getting_attention_mask_from_dataset,
         },
     )()
@@ -1687,3 +1691,27 @@ def test_unpacked_padding_mask_reaches_every_pipeline_stage_after_cp(monkeypatch
     assert torch.equal(seen[0], mask)
     assert set(result[-1]) == {"padding_mask"}
     assert torch.equal(result[-1]["padding_mask"], mask[:, [0, 1, 6, 7]])
+
+
+@pytest.mark.parametrize("step", [gpt_step, deepseek_v4_step], ids=["gpt", "dsv4"])
+@pytest.mark.parametrize("pp_rank", [0, 1, 2])
+def test_inter_document_masking_boundaries(monkeypatch, step, pp_rank):
+    batch = {
+        "tokens": _as_nocuda(torch.arange(8).unsqueeze(0)),
+        "labels": _as_nocuda(torch.arange(8).unsqueeze(0)),
+        "loss_mask": _as_nocuda(torch.ones(1, 8)),
+        "position_ids": _as_nocuda(torch.tensor([[0, 1, 2, 0, 1, 2, 3, 4]])),
+        "attention_mask": None,
+        "cu_seqlens": _as_nocuda(torch.tensor([[0, 3, 8, 8, 8, 8, 8, 8, 8]], dtype=torch.int32)),
+        "max_seqlen": torch.tensor([5], dtype=torch.int32),
+    }
+    monkeypatch.setattr(step, "is_pp_first_stage", lambda pg: pg.rank() == 0)
+    monkeypatch.setattr(step, "is_pp_last_stage", lambda pg: pg.rank() == 2)
+    monkeypatch.setattr(step, "get_batch_on_this_cp_rank", lambda batch, **kwargs: batch)
+    result = step.get_batch(
+        _Iterator(batch),
+        _make_cfg(inter_document_masking=True),
+        pg_collection=_MockPGCollection(pp_rank=pp_rank, pp_size=3),
+    )
+    packed_seq_params = get_packed_seq_params(result[-1])
+    assert packed_seq_params.cu_seqlens_q.tolist() == [0, 3, 8]
