@@ -95,8 +95,10 @@ ran out of memory creating a communicator after the first step.
 The pretraining recipe splits the 48 decoder blocks unevenly over its two pipeline stages,
 26 and 22. A block's cost grows with depth, as the AttnRes state it reads grows, and the
 last stage also computes the output layer and loss. Two stages leave a smaller pipeline
-bubble than four, at the cost of twice the expert weights and gradients per GPU; the first
-stage peaks near 145 GB. EP64 on the same two stages makes the step about 18% slower.
+bubble than four and split the blocks more evenly, so the step is about 6% faster than on
+four stages of 13, 13, 12, and 10 blocks. In exchange each GPU holds twice the expert
+weights and gradients, and the first stage peaks near 145 GB. EP64 on the same two stages
+is over 20% slower.
 
 The packed SFT and LoRA recipes train GBS 8 on eight data-parallel replicas, one pack
 each, so a step is a single pass through the 48 decoder blocks: more pipeline stages add

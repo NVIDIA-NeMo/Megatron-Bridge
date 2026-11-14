@@ -71,12 +71,13 @@ def inkling2_small_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
     in-flight microbatches small. The stages hold 26 and 22 decoder blocks: a
     block's cost grows with depth, as the AttnRes state it reads grows, and the
     last stage also computes the output layer and loss. Two stages leave a smaller
-    pipeline bubble than four; in exchange each GPU holds the weights and gradients
-    of twice as many expert slices, and the first stage peaks near 145 GB. EP64 on
-    the same two stages makes the step about 18% slower. Pass the imported checkpoint with
-    ``--pretrained_checkpoint`` for natural expert routing; the recipe leaves it
-    unset. The peak learning rate is 3e-5 because the run continues a trained
-    model rather than starting from random weights.
+    pipeline bubble than four and split the blocks more evenly, so the step is about
+    6% faster than on four stages of 13, 13, 12, and 10 blocks; in exchange each GPU
+    holds the weights and gradients of twice as many expert slices, and the first
+    stage peaks near 145 GB. EP64 on the same two stages is over 20% slower. Pass
+    the imported checkpoint with ``--pretrained_checkpoint`` for natural expert
+    routing; the recipe leaves it unset. The peak learning rate is 3e-5 because the
+    run continues a trained model rather than starting from random weights.
     """
     cfg = _pretrain_common()
 
@@ -126,7 +127,7 @@ def inkling2_small_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.average_in_collective = False
-    # Overlapping the data-parallel gradient reduce and parameter gather makes the step about 4% slower.
+    # Overlapping the data-parallel gradient reduce and parameter gather made the four-stage step about 4% slower.
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
