@@ -614,13 +614,16 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     if args.hidden_size is not None:
         recipe.model.hidden_size = args.hidden_size
     if args.num_layers is not None or args.first_k_dense_replace is not None:
-        if args.first_k_dense_replace is not None:
-            num_dense_layers = args.first_k_dense_replace
-        else:
-            num_dense_layers = recipe.model.moe_layer_freq.count(0)
         if args.num_layers is not None:
             recipe.model.num_layers = args.num_layers
-        recipe.model.moe_layer_freq = [0] * num_dense_layers + [1] * (recipe.model.num_layers - num_dense_layers)
+        # An int moe_layer_freq (every k-th layer is MoE; dense models keep the default 1) fits any
+        # depth. A per-layer list is rebuilt as dense layers followed by MoE layers.
+        if args.first_k_dense_replace is not None or isinstance(recipe.model.moe_layer_freq, list):
+            if args.first_k_dense_replace is not None:
+                num_dense_layers = args.first_k_dense_replace
+            else:
+                num_dense_layers = recipe.model.moe_layer_freq.count(0)
+            recipe.model.moe_layer_freq = [0] * num_dense_layers + [1] * (recipe.model.num_layers - num_dense_layers)
     if args.num_moe_experts is not None:
         recipe.model.num_moe_experts = args.num_moe_experts
     if args.pipeline_model_parallel_layout is not None:
