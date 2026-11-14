@@ -109,6 +109,16 @@ class SarvamMoEBridge(MegatronModelBridge):
         """
         return self.hf_config_to_model_config_kwargs(hf_config)
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict[str, Any]:
+        """Convert the Megatron config to a Hugging Face Sarvam MoE config dict."""
+        hf_cfg = super(SarvamMoEBridge, cls).megatron_to_hf_config(provider)
+
+        # Megatron uses None="not set/disabled", but HF expects integers
+        hf_cfg["n_group"] = hf_cfg.get("n_group") or 1
+        hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
+        return hf_cfg
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
             # Embed
