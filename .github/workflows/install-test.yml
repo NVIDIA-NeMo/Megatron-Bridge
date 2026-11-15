@@ -125,13 +125,17 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-container
+    # Use the Docker runner: the Kubernetes exec hook can report an interrupted
+    # source build as successful before installation finishes.
+    # https://github.com/actions/runner-container-hooks/issues/396
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC PyTorch
     container:
       # Keep the basic install environment aligned with docker/Dockerfile.ci.
       # TransformerEngine's current NCCL-EP build requires NCCL device headers
       # that are not present in the legacy 25.05 image.
       image: nvcr.io/nvidia/pytorch:26.06-py3
+      options: --gpus all --runtime=nvidia
     strategy:
       fail-fast: false
       matrix:

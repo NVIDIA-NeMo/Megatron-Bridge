@@ -101,7 +101,10 @@ jobs:
       has-src-dir: true
       skip-test-wheel: true
       custom-container: nvcr.io/nvidia/pytorch:25.11-py3
-      runner: ${{ needs.pre-flight.outputs.runner_prefix }}-container
+      # Use Docker execution for the long dependency build. The Kubernetes exec
+      # hook can report success without reaching the wheel/output commands.
+      # https://github.com/actions/runner-container-hooks/issues/396
+      runner: ${{ needs.pre-flight.outputs.runner_prefix }}
       no-build-isolation: true
       app-id: ${{ vars.BOT_ID }}
       publish-docs: ${{ inputs.publish-docs || true }}
