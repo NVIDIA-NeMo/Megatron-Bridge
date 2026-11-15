@@ -26,10 +26,6 @@ from megatron.bridge.models.minimax_m3.minimax_m3_config import (  # noqa: F401
     MiniMaxM3VLTransformerConfig,
 )
 from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3VLModel  # noqa: F401
-from megatron.bridge.models.minimax_m3.transformers_compat import patch_minimax_m3_vision_rope
-
-
-patch_minimax_m3_vision_rope()
 
 
 __all__ = [

@@ -133,6 +133,10 @@ from megatron.bridge.models.hybrid import (
     HybridModelConfig,
     HybridModelProvider,
 )
+from megatron.bridge.models.inkling import (
+    Inkling2Bridge,
+    Inkling2ModelConfig,
+)
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
     KimiK3Bridge,
@@ -307,6 +311,8 @@ __all__ = [
     "HybridModelConfig",
     "HybridModelProvider",
     "KimiK2Bridge",
+    "Inkling2Bridge",
+    "Inkling2ModelConfig",
     "KimiK3Bridge",
     "KimiK3ModelProvider",
     "KimiK25VLModel",

@@ -44,6 +44,7 @@ from megatron.bridge.recipes.gpt import *
 from megatron.bridge.recipes.gpt.h100 import *
 from megatron.bridge.recipes.gpt_oss import *
 from megatron.bridge.recipes.gpt_oss.h100 import *
+from megatron.bridge.recipes.inkling import *
 from megatron.bridge.recipes.kimi import *
 from megatron.bridge.recipes.kimi.h100 import *
 from megatron.bridge.recipes.kimi_vl import *
