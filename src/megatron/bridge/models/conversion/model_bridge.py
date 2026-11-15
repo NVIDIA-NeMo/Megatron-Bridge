@@ -2114,6 +2114,9 @@ class MegatronModelBridge(
                         adapter_weights,
                         model_config.num_moe_experts,
                     )
+                if cpu and task.export_hook is None:
+                    # Stage expert slices on CPU so the grouped buffer does not hold a full layer on device.
+                    converted_weights_dict = {name: weight.cpu() for name, weight in converted_weights_dict.items()}
                 merged_result = self._accumulate_grouped_export(
                     task,
                     converted_weights_dict,
