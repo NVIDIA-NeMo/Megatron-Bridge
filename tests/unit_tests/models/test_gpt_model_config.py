@@ -21,8 +21,13 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.nn.functional as F
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.models.gpt import GPTModel
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention
+from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from transformers import DeepseekV3Config, Qwen2Config
 
 import megatron.bridge.models  # noqa: F401  (registers every model-family bridge)
@@ -258,6 +263,82 @@ def test_requested_logit_dtype_fails_before_old_mcore_builder() -> None:
 
     with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
         GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True)
+
+
+class TestGPTBuilderLocalAttentionBackend:
+    """Tests that GPTModelBuilder applies the local attention backend to every layer spec."""
+
+    @staticmethod
+    def _make_moe_model_config(
+        attention_backend: AttnBackend, num_moe_experts: int | None = 2
+    ) -> BridgeGPTModelConfig:
+        transformer = TransformerConfig(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            ffn_hidden_size=256,
+            num_moe_experts=num_moe_experts,
+            moe_router_topk=1 if num_moe_experts else 2,
+            use_cpu_initialization=True,
+            activation_func=F.silu,
+            attention_backend=attention_backend,
+        )
+        return BridgeGPTModelConfig(transformer=transformer, vocab_size=256, seq_length=128)
+
+    @staticmethod
+    def _core_attention_per_layer(mock_model) -> list[type]:
+        block_spec = mock_model.call_args.kwargs["transformer_layer_spec"]
+        return [layer.submodules.self_attention.submodules.core_attention for layer in block_spec.layer_specs]
+
+    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank", return_value=0)
+    @patch("megatron.training.models.gpt.GPTModel")
+    def test_local_backend_reaches_every_layer_of_default_moe_block_spec(self, mock_model, _pp_rank) -> None:
+        config = self._make_moe_model_config(AttnBackend.local)
+
+        GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True)
+
+        assert self._core_attention_per_layer(mock_model) == [DotProductAttention, DotProductAttention]
+        assert config.transformer_layer_spec is None
+
+    @patch("megatron.training.models.gpt.GPTModel")
+    def test_local_backend_on_callable_block_spec_keeps_custom_attention(self, mock_model) -> None:
+        config = self._make_moe_model_config(AttnBackend.local)
+        custom_attention = type("CustomTEDotProductAttention", (TEDotProductAttention,), {})
+        calls = []
+
+        def block_spec(model_config, vp_stage=None):
+            calls.append(vp_stage)
+            layer = get_gpt_layer_with_transformer_engine_spec(num_experts=2)
+            custom_layer = get_gpt_layer_with_transformer_engine_spec(num_experts=2)
+            custom_layer.submodules.self_attention.submodules.core_attention = custom_attention
+            return TransformerBlockSubmodules(layer_specs=[layer, custom_layer])
+
+        config.transformer_layer_spec = block_spec
+
+        GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True, vp_stage=0)
+
+        assert calls == [0]
+        assert self._core_attention_per_layer(mock_model) == [DotProductAttention, custom_attention]
+        assert config.transformer_layer_spec is block_spec
+
+    @patch("megatron.training.models.gpt.GPTModel")
+    def test_local_backend_on_dense_layer_spec_uses_local_attention(self, mock_model) -> None:
+        config = self._make_moe_model_config(AttnBackend.local, num_moe_experts=None)
+
+        GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True)
+
+        layer_spec = mock_model.call_args.kwargs["transformer_layer_spec"]
+        assert layer_spec.submodules.self_attention.submodules.core_attention is DotProductAttention
+        assert config.transformer_layer_spec is None
+
+    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank", return_value=0)
+    @patch("megatron.training.models.gpt.GPTModel")
+    def test_non_local_backend_keeps_te_attention_in_moe_block_spec(self, mock_model, _pp_rank) -> None:
+        config = self._make_moe_model_config(AttnBackend.auto)
+
+        GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True)
+
+        assert self._core_attention_per_layer(mock_model) == [TEDotProductAttention, TEDotProductAttention]
 
 
 def _mla_transformer(**kwargs) -> MLATransformerConfig:
