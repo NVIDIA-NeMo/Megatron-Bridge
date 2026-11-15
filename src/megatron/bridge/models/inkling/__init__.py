@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.inkling.configuration_inkling2 import Inkling2Config, Inkling2TextConfig
+from transformers.utils.versions import require_version
 
-# Importing the processor registers it with AutoProcessor for Bridge's Inkling2Config (Transformers 5.21 and 5.22).
+
+require_version("transformers>=5.23", "Inkling2 requires Transformers >=5.23 for its native configuration classes.")
+
+from transformers.models.inkling2.configuration_inkling2 import Inkling2Config, Inkling2TextConfig
+
 from megatron.bridge.models.inkling.data import Inkling2ImageProcessor, Inkling2Processor
 from megatron.bridge.models.inkling.inkling2_bridge import Inkling2Bridge
 from megatron.bridge.models.inkling.inkling2_builder import Inkling2ModelBuilder

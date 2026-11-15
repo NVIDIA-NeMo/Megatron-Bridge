@@ -19,6 +19,9 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.models.inkling.modeling_inkling2 import layers, ops
 from megatron.bridge.models.inkling.modeling_inkling2.model import Inkling2Model, reject_document_masks
 

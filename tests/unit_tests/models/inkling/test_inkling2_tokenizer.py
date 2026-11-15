@@ -18,6 +18,9 @@ import pytest
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.models.inkling.data.tokenizer import (
     INKLING2_BOS_TOKEN,
     INKLING2_EOS_TOKEN,

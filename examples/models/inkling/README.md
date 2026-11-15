@@ -8,8 +8,8 @@ routed experts in NVFP4 and MXFP8. Megatron Bridge converts the complete checkpo
 including the image encoder and its projection, and keeps the speculative-decoding draft
 network outside the Megatron model. The release,
 [`thinkingmachines/Inkling-2-Small`](https://huggingface.co/thinkingmachines/Inkling-2-Small),
-ships no modeling code, and released Transformers versions do not implement Inkling 2
-(huggingface/transformers#50682 adds it). The
+ships no modeling code. Inkling2 requires **Transformers >=5.23**, which provides its
+native Hugging Face configuration classes. The
 [model README](../../../src/megatron/bridge/models/inkling/README.md) describes the
 implementation, the conversion of the quantized experts, and the supported parallelism.
 

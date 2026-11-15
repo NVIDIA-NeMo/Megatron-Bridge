@@ -17,6 +17,9 @@
 import pytest
 import torch
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.models.inkling.inkling2_quantization import (
     align_precision_config,
     companion_keys,

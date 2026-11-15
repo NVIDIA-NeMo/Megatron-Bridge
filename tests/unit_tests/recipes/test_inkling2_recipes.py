@@ -29,6 +29,9 @@ from collections.abc import Callable
 import pytest
 import torch
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
 from megatron.bridge.data.sft_processing import ChatSFTPreprocessingConfig
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
@@ -67,6 +70,8 @@ _SMALL_TEXT_CONFIG = {
     "log_scaling_n_floor": 8192,
     "log_scaling_alpha": 0.1,
     "rms_norm_eps": 1e-6,
+    "q_bias": False,
+    "o_bias": False,
     "pre_norm_pre_affine": False,
     "final_norm_pre_affine": False,
     "use_value_norm_no_gamma": True,
@@ -100,10 +105,17 @@ class _ModelConfigBridge:
         return cls()
 
     def get_model_config(self) -> Inkling2ModelConfig:
-        hf_config = Inkling2Config(
-            text_config=dict(_SMALL_TEXT_CONFIG),
-            vision_config={"hidden_size": 1024, "num_hidden_layers": 23, "native_patch_size": 20},
-            architectures=["Inkling2ForConditionalGeneration"],
+        hf_config = Inkling2Config.from_dict(
+            dict(
+                text_config=dict(_SMALL_TEXT_CONFIG),
+                vision_config={
+                    "hidden_size": 1024,
+                    "num_hidden_layers": 23,
+                    "native_patch_size": 20,
+                    "temporal_patch_size": 2,
+                },
+                architectures=["Inkling2ForConditionalGeneration"],
+            )
         )
         bridge = Inkling2Bridge()
         bridge.hf_config = hf_config

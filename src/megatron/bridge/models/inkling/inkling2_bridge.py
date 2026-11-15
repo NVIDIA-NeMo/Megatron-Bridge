@@ -34,7 +34,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
-from megatron.bridge.models.inkling import configuration_inkling2  # noqa: F401  (registers the HF config types)
 from megatron.bridge.models.inkling.inkling2_config import Inkling2ModelConfig
 from megatron.bridge.models.inkling.inkling2_quantization import (
     LazyQuantizedExperts,
@@ -89,9 +88,8 @@ def _replace_text(path: Path, text: str) -> None:
 def _vision_config_dict(vision_config: Mapping[str, Any] | PretrainedConfig | None) -> dict[str, Any]:
     """Return the image encoder settings under the release's keys.
 
-    Bridge's configuration class keeps ``vision_config`` as the release's dict; Transformers' own Inkling2 classes
-    hold it as a config object that reads the same keys as attributes, and write two of them under their own names,
-    which a dict read here may use. Keys the encoder does not read, such as the decoder width that Transformers'
+    The release stores ``vision_config`` as a dict; native Transformers configs hold it as a config object
+    that reads the same keys as attributes and writes two of them under aliases, which a dict read here may use. Keys the encoder does not read, such as the decoder width that Transformers'
     classes add, are left out.
     """
     if vision_config is None:

@@ -18,6 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 
@@ -30,6 +33,9 @@ _TEXT = {
     "num_attention_heads": 4,
     "num_key_value_heads": 2,
     "head_dim": 16,
+    "swa_head_dim": 16,
+    "swa_num_attention_heads": 4,
+    "swa_num_key_value_heads": 2,
     "vocab_size": 512,
     "unpadded_vocab_size": 500,
     "d_rel": 8,
@@ -37,6 +43,8 @@ _TEXT = {
     "log_scaling_n_floor": 8192,
     "log_scaling_alpha": 0.1,
     "rms_norm_eps": 1e-6,
+    "q_bias": False,
+    "o_bias": False,
     "pre_norm_pre_affine": False,
     "final_norm_pre_affine": False,
     "use_value_norm_no_gamma": True,
@@ -61,7 +69,12 @@ _TEXT = {
 
 
 def _model_config(**text_overrides):
-    hf_config = Inkling2Config(text_config={**_TEXT, **text_overrides}, vision_config={})
+    hf_config = Inkling2Config.from_dict(
+        {
+            "text_config": {**_TEXT, **text_overrides},
+            "vision_config": {"text_hidden_size": 64, "temporal_patch_size": 2},
+        }
+    )
     bridge = Inkling2Bridge()
     bridge.hf_config = hf_config
     config = bridge.hf_config_to_model_config(hf_config)
