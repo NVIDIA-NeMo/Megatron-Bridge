@@ -598,6 +598,7 @@ class TestInitializeDistributedBranching:
         mock_dist_config.create_all_gather_group = False
 
         mock_parallel_state.model_parallel_is_initialized.return_value = False
+        mock_parallel_state.initialize_model_parallel.return_value = None
         mock_parallel_state.initialize_model_parallel.__signature__ = inspect.Signature(
             parameters=[
                 inspect.Parameter("gtp_remat_size", inspect.Parameter.KEYWORD_ONLY),
@@ -632,7 +633,9 @@ class TestInitializeDistributedBranching:
     @patch("torch.cuda.device_count", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0)
-    def test_mpu_path_attaches_requested_all_gather_groups(
+    @pytest.mark.parametrize("already_initialized", [False, True])
+    @pytest.mark.parametrize("missing_ag", [None, "dense", "expert"])
+    def test_mpu_path_uses_core_all_gather_groups(
         self,
         mock_get_rank,
         mock_is_init,
@@ -640,8 +643,10 @@ class TestInitializeDistributedBranching:
         mock_is_gtp_remat_active,
         mock_parallel_state,
         mock_pg_collection_class,
+        already_initialized,
+        missing_ag,
     ):
-        """The standard MPU path attaches MCore-created AG groups to the returned collection."""
+        """Bridge attaches returned Core AG handles and validates a supplied reused collection."""
         from megatron.bridge.training.initialize import _initialize_distributed
 
         mock_model_config = MagicMock()
@@ -658,27 +663,38 @@ class TestInitializeDistributedBranching:
 
         dense_ag = MagicMock()
         expert_ag = MagicMock()
-        mock_parallel_state.model_parallel_is_initialized.return_value = True
-        mock_parallel_state.create_all_gather_groups.return_value = (dense_ag, expert_ag)
+        mock_parallel_state.model_parallel_is_initialized.return_value = already_initialized
         pg_collection = MagicMock()
+        pg_collection.dp_cp_ag = None if missing_ag == "dense" else dense_ag
+        pg_collection.expt_dp_ag = None if missing_ag == "expert" else expert_ag
         mock_pg_collection_class.use_mpu_process_groups.return_value = pg_collection
+        mock_parallel_state.initialize_model_parallel.return_value = (pg_collection.dp_cp_ag, pg_collection.expt_dp_ag)
 
-        result = _initialize_distributed(
-            model_config=mock_model_config,
-            dist_config=mock_dist_config,
-            num_distributed_optimizer_instances=1,
-            get_embedding_ranks=None,
-            get_position_embedding_ranks=None,
-        )
+        def initialize():
+            return _initialize_distributed(
+                model_config=mock_model_config,
+                dist_config=mock_dist_config,
+                num_distributed_optimizer_instances=1,
+                get_embedding_ranks=None,
+                get_position_embedding_ranks=None,
+                pg_collection=pg_collection if already_initialized else None,
+            )
 
-        mock_parallel_state.create_all_gather_groups.assert_called_once()
-        call_kwargs = mock_parallel_state.create_all_gather_groups.call_args.kwargs
-        assert call_kwargs["for_expert_parallelism"] is True
-        assert call_kwargs["timeout"].total_seconds() == 30 * 60
-        assert call_kwargs["nccl_comm_cfgs"] is None
-        assert result is pg_collection
-        assert pg_collection.dp_cp_ag is dense_ag
-        assert pg_collection.expt_dp_ag is expert_ag
+        if missing_ag:
+            with pytest.raises(RuntimeError, match="Pass the retained caller-owned pg_collection"):
+                initialize()
+        else:
+            result = initialize()
+            assert result is pg_collection
+            assert result.dp_cp_ag is dense_ag
+            assert result.expt_dp_ag is expert_ag
+        mock_parallel_state.create_all_gather_groups.assert_not_called()
+        if already_initialized:
+            mock_parallel_state.initialize_model_parallel.assert_not_called()
+        else:
+            kwargs = mock_parallel_state.initialize_model_parallel.call_args.kwargs
+            assert kwargs["create_all_gather_group"] is True
+            assert "pg_collection" not in kwargs
 
     @patch("megatron.bridge.training.initialize._create_pg_collection")
     @patch("megatron.bridge.training.initialize.parallel_state")

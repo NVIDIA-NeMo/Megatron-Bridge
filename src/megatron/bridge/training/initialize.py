@@ -69,6 +69,7 @@ def initialize_megatron(
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     restart_store: Optional[torch.distributed.Store] = None,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> Callable[[], None] | ProcessGroupCollection | None:
     """Initialize Megatron core components and distributed setup.
 
@@ -82,6 +83,7 @@ def initialize_megatron(
         get_embedding_ranks: Optional function to determine embedding layer ranks.
         get_position_embedding_ranks: Optional function to determine position embedding ranks.
         restart_store: Optional store for in-process restart.
+        pg_collection: Retained collection when reusing an initialized standard Core grid.
 
     Returns:
         An optional callable to finish MPU initialization if lazy_mpu_init is True,
@@ -144,6 +146,7 @@ def initialize_megatron(
         skip_mpu_initialization=skip_mpu_initialization,
         restart_store=restart_store,
         use_inprocess_restart=use_inprocess_restart,
+        pg_collection=pg_collection,
     )
 
     # Compile dataset helpers after distributed initialization
@@ -175,6 +178,7 @@ def torch_dist_init(
     skip_mpu_initialization: bool,
     restart_store: Optional[torch.distributed.Store] = None,
     use_inprocess_restart: bool = False,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> Callable[[], None] | ProcessGroupCollection | None:
     """Initialize torch.distributed and dependent components.
 
@@ -201,6 +205,7 @@ def torch_dist_init(
     set_default_log_ranks({0})
 
     def finish_mpu_init() -> ProcessGroupCollection:
+        nonlocal pg_collection
         # Pytorch distributed.
         pg_collection = _initialize_distributed(
             model_config=model_config.transformer
@@ -212,6 +217,7 @@ def torch_dist_init(
             get_position_embedding_ranks=get_position_embedding_ranks,
             restart_store=restart_store,
             use_inprocess_restart=use_inprocess_restart,
+            pg_collection=pg_collection,
         )
 
         # Random seeds for reproducibility.
@@ -736,6 +742,7 @@ def _initialize_distributed(
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     restart_store: Optional[torch.distributed.Store] = None,
     use_inprocess_restart: bool = False,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> ProcessGroupCollection:
     """Initialize torch.distributed and core model parallel."""
 
@@ -813,6 +820,8 @@ def _initialize_distributed(
             raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
 
     if dist_config.use_decentralized_pg:
+        if pg_collection is not None:
+            raise ValueError("A retained pg_collection is only supported for the standard Core grid")
         # Use HyperCommGrid to create local parallel groups passed through functions
         # instead of relying on mcore's global parallel state (mpu) variables.
         parallel_state._set_global_memory_buffer()
@@ -843,6 +852,8 @@ def _initialize_distributed(
         # Use the original mcore parallel_state.initialize_model_parallel approach
         if parallel_state.model_parallel_is_initialized():
             print("model parallel is already initialized")
+            if pg_collection is None:
+                pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         else:
             # Guard for main/dev branch submodule compatibility while Bridge pins
             # MCore commits across the Dynamic CP rename.
@@ -863,7 +874,7 @@ def _initialize_distributed(
                 if parameter in _init_mp_params:
                     _optional_kwargs[parameter] = getattr(model_config, attribute, 1)
 
-            parallel_state.initialize_model_parallel(
+            ag_groups = parallel_state.initialize_model_parallel(
                 tensor_model_parallel_size=model_config.tensor_model_parallel_size,
                 pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
                 virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
@@ -880,10 +891,14 @@ def _initialize_distributed(
                 get_position_embedding_ranks=get_position_embedding_ranks,
                 create_gloo_process_groups=dist_config.use_gloo_process_groups,
                 use_sharp=dist_config.use_sharp,
+                create_all_gather_group=dist_config.create_all_gather_group,
                 high_priority_stream_groups=dist_config.high_priority_stream_groups,
                 sharp_enabled_group=dist_config.sharp_enabled_group,
                 **_optional_kwargs,
             )
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+            if ag_groups is not None:
+                pg_collection.dp_cp_ag, pg_collection.expt_dp_ag = ag_groups
             if get_rank_safe() == 0:
                 print(
                     f"> initialized tensor model parallel with size "
@@ -895,20 +910,13 @@ def _initialize_distributed(
                 )
 
         if dist_config.create_all_gather_group:
-            for_expert_parallelism = (getattr(model_config, "expert_model_parallel_size", 1) or 1) > 1
-            dp_cp_ag, expt_dp_ag = parallel_state.create_all_gather_groups(
-                for_expert_parallelism=for_expert_parallelism,
-                timeout=datetime.timedelta(minutes=dist_config.distributed_timeout_minutes),
-                nccl_comm_cfgs=None,
-            )
-            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
-            pg_collection.dp_cp_ag = dp_cp_ag
-            if expt_dp_ag is not None:
-                pg_collection.expt_dp_ag = expt_dp_ag
-            return pg_collection
-
-        # Return a ProcessGroupCollection using mpu process groups
-        return ProcessGroupCollection.use_mpu_process_groups()
+            needs_expert_ag = (getattr(model_config, "expert_model_parallel_size", 1) or 1) > 1
+            if pg_collection.dp_cp_ag is None or (needs_expert_ag and pg_collection.expt_dp_ag is None):
+                raise RuntimeError(
+                    "All-gather groups were requested but are missing from the process-group collection. "
+                    "Pass the retained caller-owned pg_collection when reusing its parallel state."
+                )
+        return pg_collection
 
 
 def _set_random_seed(

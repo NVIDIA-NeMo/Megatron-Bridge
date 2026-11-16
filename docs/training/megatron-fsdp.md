@@ -83,11 +83,18 @@ reduce-scatter, enable a second communicator over the same replica ranks:
 cfg.dist.create_all_gather_group = True
 ```
 
-Bridge then populates `ProcessGroupCollection.dp_cp_ag`; with expert parallelism
+In the standard MPU path, Core initialization creates the groups. In the
+decentralized path, Bridge creates them from its explicit grid. Both populate
+`ProcessGroupCollection.dp_cp_ag`; with expert parallelism
 it also populates `ProcessGroupCollection.expt_dp_ag`. This works with both the
 standard MCore process-group initialization and `use_decentralized_pg=True`.
-The extra groups reuse the exact dense and expert replica topology selected at
-initialization, including context/expert parallel layout and rank offsets.
+Non-default expert rank ordering and offsets also require the separate
+[Core topology correction](https://github.com/NVIDIA/Megatron-LM/pull/5754).
+
+Core returns optional AG handles; Bridge attaches them to the collection it already
+builds and passes to the model. AG handles have no MPU accessor. When reusing an
+initialized standard Core grid with this option, pass the retained collection as `pg_collection` to
+`initialize_megatron`; otherwise initialization fails rather than allocating duplicates.
 
 The option only creates and wires the communicators. The FSDP/optimizer overlap
 configuration must still select parameter-gather overlap for them to provide a
