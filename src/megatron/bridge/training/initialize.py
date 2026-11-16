@@ -874,7 +874,7 @@ def _initialize_distributed(
                 if parameter in _init_mp_params:
                     _optional_kwargs[parameter] = getattr(model_config, attribute, 1)
 
-            ag_groups = parallel_state.initialize_model_parallel(
+            pg_collection = parallel_state.initialize_model_parallel(
                 tensor_model_parallel_size=model_config.tensor_model_parallel_size,
                 pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
                 virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
@@ -896,9 +896,6 @@ def _initialize_distributed(
                 sharp_enabled_group=dist_config.sharp_enabled_group,
                 **_optional_kwargs,
             )
-            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
-            if ag_groups is not None:
-                pg_collection.dp_cp_ag, pg_collection.expt_dp_ag = ag_groups
             if get_rank_safe() == 0:
                 print(
                     f"> initialized tensor model parallel with size "

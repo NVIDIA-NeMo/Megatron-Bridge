@@ -598,7 +598,6 @@ class TestInitializeDistributedBranching:
         mock_dist_config.create_all_gather_group = False
 
         mock_parallel_state.model_parallel_is_initialized.return_value = False
-        mock_parallel_state.initialize_model_parallel.return_value = None
         mock_parallel_state.initialize_model_parallel.__signature__ = inspect.Signature(
             parameters=[
                 inspect.Parameter("gtp_remat_size", inspect.Parameter.KEYWORD_ONLY),
@@ -606,9 +605,9 @@ class TestInitializeDistributedBranching:
             ]
         )
         mock_pg_collection = MagicMock()
-        mock_pg_collection_class.use_mpu_process_groups.return_value = mock_pg_collection
+        mock_parallel_state.initialize_model_parallel.return_value = mock_pg_collection
 
-        _initialize_distributed(
+        result = _initialize_distributed(
             model_config=mock_model_config,
             dist_config=mock_dist_config,
             num_distributed_optimizer_instances=1,
@@ -616,6 +615,8 @@ class TestInitializeDistributedBranching:
             get_position_embedding_ranks=None,
         )
 
+        assert result is mock_pg_collection
+        mock_pg_collection_class.use_mpu_process_groups.assert_not_called()
         # Verify _create_pg_collection was NOT called
         mock_create_pg_collection.assert_not_called()
         # Verify parallel_state.initialize_model_parallel WAS called
@@ -646,7 +647,7 @@ class TestInitializeDistributedBranching:
         already_initialized,
         missing_ag,
     ):
-        """Bridge attaches returned Core AG handles and validates a supplied reused collection."""
+        """Bridge retains the complete Core collection and validates a supplied reused collection."""
         from megatron.bridge.training.initialize import _initialize_distributed
 
         mock_model_config = MagicMock()
@@ -668,7 +669,7 @@ class TestInitializeDistributedBranching:
         pg_collection.dp_cp_ag = None if missing_ag == "dense" else dense_ag
         pg_collection.expt_dp_ag = None if missing_ag == "expert" else expert_ag
         mock_pg_collection_class.use_mpu_process_groups.return_value = pg_collection
-        mock_parallel_state.initialize_model_parallel.return_value = (pg_collection.dp_cp_ag, pg_collection.expt_dp_ag)
+        mock_parallel_state.initialize_model_parallel.return_value = pg_collection
 
         def initialize():
             return _initialize_distributed(
@@ -689,6 +690,7 @@ class TestInitializeDistributedBranching:
             assert result.dp_cp_ag is dense_ag
             assert result.expt_dp_ag is expert_ag
         mock_parallel_state.create_all_gather_groups.assert_not_called()
+        mock_pg_collection_class.use_mpu_process_groups.assert_not_called()
         if already_initialized:
             mock_parallel_state.initialize_model_parallel.assert_not_called()
         else:
