@@ -35,7 +35,7 @@ ENV NVIDIA_PRODUCT_NAME="NeMo Framework" \
 
 FROM base AS vllm_wheel_build
 
-ARG VLLM_VERSION=v0.14.1
+ARG VLLM_VERSION=v0.30.0
 ARG MAX_JOBS=4
 ENV VLLM_VERSION=$VLLM_VERSION
 
@@ -144,6 +144,10 @@ RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
     patch -p1 < /opt/vllm.patch && \
     popd; \
     fi
+
+# Also validate vLLM inherited from the base image when wheel building is disabled.
+RUN --mount=type=bind,source=docker/common/check_vllm.py,target=/tmp/check_vllm.py \
+    /usr/bin/python3 /tmp/check_vllm.py
 
 ##############################################################################
 ##
