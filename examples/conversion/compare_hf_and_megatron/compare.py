@@ -645,9 +645,9 @@ def _torch_kernel_fallbacks() -> Iterator[None]:
     if is_exporting is None:
         yield
         return
-    hub_kernels.is_torchdynamo_exporting = lambda: True
-    print_rank_0("CPU HF reference: transformers kernel helpers use their PyTorch implementations.")
+    print_rank_0("CPU HF reference: kernel-backed transformers helpers, if any, use their PyTorch implementations.")
     try:
+        hub_kernels.is_torchdynamo_exporting = lambda: True
         yield
     finally:
         hub_kernels.is_torchdynamo_exporting = is_exporting
