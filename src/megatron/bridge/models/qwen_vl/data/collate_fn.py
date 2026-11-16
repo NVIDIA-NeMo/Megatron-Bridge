@@ -135,12 +135,21 @@ def _takes_default_pixel_bounds(part: Any) -> bool:
     )
 
 
-def _with_default_pixel_bounds(part: Any, *, min_pixels: int | None, max_pixels: int | None) -> Any:
+def with_default_pixel_bounds(part: Any, *, min_pixels: int | None, max_pixels: int | None) -> Any:
     """Return a content part with the default pixel bounds of ``qwen3_vl_collate_fn``.
 
     Only an image part without its own ``min_pixels`` and ``max_pixels`` gets the default bounds. An image part
     that sets one of them keeps its own bounds, as at inference. qwen-vl-utils gives the default of a bound that
     is not set.
+
+    Args:
+        part: One content part of a conversation turn.
+        min_pixels: Default lower pixel bound of an image. ``None`` keeps the default of qwen-vl-utils.
+        max_pixels: Default upper pixel bound of an image. ``None`` keeps the default of qwen-vl-utils. A
+            ``max_pixels`` below ``min_pixels`` also lowers ``min_pixels``.
+
+    Returns:
+        The part itself, or a copy of the image part with the default bounds.
     """
     if not _takes_default_pixel_bounds(part):
         return part
@@ -164,7 +173,7 @@ def _with_image_pixel_bounds(conversation: list[Any], *, min_pixels: int | None,
             bounded_conversation.append(turn)
             continue
         content = [
-            _with_default_pixel_bounds(part, min_pixels=min_pixels, max_pixels=max_pixels) for part in turn["content"]
+            with_default_pixel_bounds(part, min_pixels=min_pixels, max_pixels=max_pixels) for part in turn["content"]
         ]
         bounded_conversation.append({**turn, "content": content})
     return bounded_conversation

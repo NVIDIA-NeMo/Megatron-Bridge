@@ -557,12 +557,16 @@ def _qwen_image_grid_for_part(
 ) -> tuple[int, int, int]:
     from qwen_vl_utils.vision_process import smart_resize
 
+    from megatron.bridge.models.qwen_vl.data.collate_fn import with_default_pixel_bounds
+
     # qwen3_vl_collate_fn resizes each image one time, in qwen_vl_utils.fetch_image(), at the patch size
     # of the processor. Match that size-only transform without materializing pixels.
     width, height = _image_size_from_part(part)
     patch_size = int(getattr(image_processor, "patch_size", 16))
     merge_size = int(getattr(image_processor, "merge_size", 2))
     factor = patch_size * merge_size
+    # fetch_image() gets the image part with the pixel bounds of the collate.
+    part = with_default_pixel_bounds(part, min_pixels=min_pixels, max_pixels=max_pixels)
     if "resized_height" in part and "resized_width" in part:
         resized_height, resized_width = smart_resize(
             int(part["resized_height"]), int(part["resized_width"]), factor=factor
@@ -572,8 +576,8 @@ def _qwen_image_grid_for_part(
             height,
             width,
             factor=factor,
-            min_pixels=part.get("min_pixels", min_pixels),
-            max_pixels=part.get("max_pixels", max_pixels),
+            min_pixels=part.get("min_pixels"),
+            max_pixels=part.get("max_pixels"),
         )
     return 1, resized_height // patch_size, resized_width // patch_size
 
