@@ -30,21 +30,36 @@ Dataset Structure:
     ├── 00453/
     │   └── 004539375.jpg
     └── ...
+
+Each sample stores its image files as a pickled list of bytes in ``.jpgs``. It stores each video as the
+frames that qwen-vl-utils samples, at the source resolution, as a pickled list of PNG bytes in ``.videos``.
+The shards keep the source pixels, so the Qwen-VL collate resizes the media one time, as in the model card.
 """
 
+import io
 import json
 import os
 import pickle
 from argparse import ArgumentParser
 
 import webdataset as wds
+from PIL import Image
 from tqdm import tqdm
-from webdataset.writer import add_handlers, default_handlers
 
 
 os.environ["FORCE_QWENVL_VIDEO_READER"] = "torchvision"
-import numpy as np
-from qwen_vl_utils import fetch_image, fetch_video
+from qwen_vl_utils.vision_process import VIDEO_READER_BACKENDS, get_video_reader_backend
+
+
+def _video_frames(file_path):
+    """Return the frames that qwen-vl-utils samples from a video file, as PNG bytes at the source resolution."""
+    video, _, _ = VIDEO_READER_BACKENDS[get_video_reader_backend()]({"video": file_path})
+    frames = []
+    for frame in video:
+        buffer = io.BytesIO()
+        Image.fromarray(frame.permute(1, 2, 0).numpy()).save(buffer, format="PNG")
+        frames.append(buffer.getvalue())
+    return frames
 
 
 def convert(dataset_dir, json_name, max_count=10000, mediate_path=""):
@@ -63,12 +78,6 @@ def convert(dataset_dir, json_name, max_count=10000, mediate_path=""):
     with open(json_file, "r") as f:
         data = json.load(f)
 
-    # custom webdataset ShardWriter Encoder
-    add_handlers(default_handlers, "jpgs", lambda data: pickle.dumps([np.array(d) for d in data]))
-    add_handlers(
-        default_handlers, "videos", lambda data: pickle.dumps([[np.array(d) for d in video] for video in data])
-    )
-
     has_idx = None
     with wds.ShardWriter(os.path.join(output, "pretrain-%d.tar"), maxcount=max_count) as shard_writer:
         for idx, entry in enumerate(tqdm(data)):
@@ -85,7 +94,8 @@ def convert(dataset_dir, json_name, max_count=10000, mediate_path=""):
                 pop_item = [pop_item]
             for image in pop_item:
                 file_path = os.path.normpath(os.path.join(dataset_dir, mediate_path, image))
-                images_data.append(fetch_image({"image": file_path}))
+                with open(file_path, "rb") as image_file:
+                    images_data.append(image_file.read())
 
             videos_data = []
             if "video" in entry:
@@ -99,8 +109,7 @@ def convert(dataset_dir, json_name, max_count=10000, mediate_path=""):
                 pop_item = [pop_item]
             for video in pop_item:
                 file_path = os.path.normpath(os.path.join(dataset_dir, mediate_path, video))
-                fvideo = fetch_video({"video": file_path})
-                videos_data.append(fvideo)
+                videos_data.append(_video_frames(file_path))
 
             if has_idx is None:
                 has_idx = "id" in entry
@@ -115,8 +124,8 @@ def convert(dataset_dir, json_name, max_count=10000, mediate_path=""):
 
             sample = {
                 "__key__": entry.pop("id", str(idx)),
-                "jpgs": images_data,
-                "videos": videos_data,
+                "jpgs": pickle.dumps(images_data),
+                "videos": pickle.dumps(videos_data),
                 "json": conv,
             }
             shard_writer.write(sample)
