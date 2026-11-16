@@ -269,6 +269,42 @@ def test_qwen35_vl_mimo_metadata_collate_builds_batch():
         sys.modules.pop(name, None)
 
 
+@pytest.mark.parametrize(
+    "image_options",
+    [
+        {},
+        {"min_pixels": 3136, "max_pixels": 100352},
+        {"resized_height": 500, "resized_width": 300},
+    ],
+    ids=["collate bounds", "part min and max", "part resize"],
+)
+def test_qwen35_vl_mimo_metadata_image_grid_matches_qwen3_vl_collate(image_options):
+    """Metadata-only ranks must get the image grid that the visual ranks get from ``qwen3_vl_collate_fn``."""
+    pytest.importorskip("qwen_vl_utils")
+    from megatron.bridge.models.qwen_vl.data.collate_fn import _fetch_qwen_vl_media
+
+    name = "qwen35_vl_mimo_metadata_image_grid_under_test"
+    try:
+        module = _load_example_module(name)
+        image_processor = SimpleNamespace(patch_size=16, merge_size=2)
+        part = {"type": "image", "image": Image.new("RGB", (2000, 1400)), **image_options}
+        # The media path of the collate: its pixel bounds, then the one resize of qwen_vl_utils.
+        media = _fetch_qwen_vl_media(
+            [{"role": "user", "content": [part]}],
+            SimpleNamespace(image_processor=image_processor),
+            qwen3_vl=True,
+            min_pixels=_MIN_PIXELS,
+            max_pixels=_MAX_PIXELS,
+        )
+        width, height = media.images[0].size
+
+        grid = module._qwen_image_grid_for_part(part, image_processor, min_pixels=_MIN_PIXELS, max_pixels=_MAX_PIXELS)
+
+        assert grid == (1, height // 16, width // 16)
+    finally:
+        sys.modules.pop(name, None)
+
+
 def test_qwen35_vl_mimo_rejects_truncated_visual_tokens():
     name = "qwen35_vl_mimo_visual_truncation_under_test"
     try:

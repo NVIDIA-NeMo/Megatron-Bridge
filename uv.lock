@@ -2416,7 +2416,7 @@ requires-dist = [
     { name = "peft", specifier = ">=0.20.0,<=0.21.0" },
     { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=14.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "qwen-vl-utils" },
+    { name = "qwen-vl-utils", specifier = ">=0.0.14" },
     { name = "regex", specifier = ">=2024.11.6" },
     { name = "rich" },
     { name = "safetensors", marker = "extra == 'bagel'", specifier = ">=0.4.5" },

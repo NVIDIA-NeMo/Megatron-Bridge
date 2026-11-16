@@ -125,10 +125,10 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     # Vision-encoder CUDA graph. The cap is the number of vision patches per microbatch: a longer
     # vision sequence stops the run, and a shorter one is padded to the cap on every replay, so set it
     # to MBS x images per sample x patches per image whenever one of them changes. The Qwen-VL data
-    # path resizes each 256x256 mock image twice: qwen_vl_utils snaps it to 252x252, then the HF
-    # processor scales it up to at least QWEN_VL_MIN_PIXELS (448 * 448) pixels in area. Each image
-    # therefore reaches the encoder as 448x448 = 28x28 patches of 16x16 pixels, 784 patches, and MBS 4
-    # gives 3136. With the graph, training runs the encoder as one dense attention over all images of a
+    # path resizes each 256x256 mock image one time: qwen_vl_utils scales it up to at least
+    # QWEN_VL_MIN_PIXELS (448 * 448) pixels in area, at a multiple of 32. Each image therefore reaches
+    # the encoder as 448x448 = 28x28 patches of 16x16 pixels, 784 patches, and MBS 4 gives 3136.
+    # With the graph, training runs the encoder as one dense attention over all images of a
     # microbatch (images attend to each other, and padding is not masked) and without the 2D rotary
     # embedding, which the capture does not record; evaluation runs eagerly, per image and with the
     # rotary embedding. vision_cuda_graph_impl = "none" restores that behavior in training as well.

@@ -113,17 +113,197 @@ def _normalize_qwen_video_paths(example: dict[str, Any]) -> dict[str, Any]:
     return normalized_example
 
 
+@dataclass(frozen=True)
+class _QwenVLMedia:
+    """Images and videos of one example after qwen-vl-utils decodes them."""
+
+    images: list[Any]
+    videos: list[Any]
+    video_metadata: list[Any]
+
+
+def _takes_default_pixel_bounds(part: Any) -> bool:
+    """Return whether a content part is an image without its own pixel bounds.
+
+    A bound with the value ``None`` is not set, as in qwen-vl-utils.
+    """
+    return (
+        isinstance(part, Mapping)
+        and ("image" in part or "image_url" in part)
+        and part.get("min_pixels") is None
+        and part.get("max_pixels") is None
+    )
+
+
+def with_default_pixel_bounds(part: Any, *, min_pixels: int | None, max_pixels: int | None) -> Any:
+    """Return a content part with the default pixel bounds of ``qwen3_vl_collate_fn``.
+
+    Only an image part without its own ``min_pixels`` and ``max_pixels`` gets the default bounds. An image part
+    that sets one of them keeps its own bounds, as at inference. qwen-vl-utils gives the default of a bound that
+    is not set.
+
+    Args:
+        part: One content part of a conversation turn.
+        min_pixels: Default lower pixel bound of an image. ``None`` keeps the default of qwen-vl-utils.
+        max_pixels: Default upper pixel bound of an image. ``None`` keeps the default of qwen-vl-utils. A
+            ``max_pixels`` below ``min_pixels`` also lowers ``min_pixels``.
+
+    Returns:
+        The part itself, or a copy of the image part with the default bounds.
+    """
+    if not _takes_default_pixel_bounds(part):
+        return part
+    if min_pixels is not None and max_pixels is not None:
+        # qwen-vl-utils requires min_pixels <= max_pixels. max_pixels sets the visual token budget, so a
+        # max_pixels below min_pixels also lowers min_pixels.
+        min_pixels = min(min_pixels, max_pixels)
+    bounds = {
+        key: value for key, value in (("min_pixels", min_pixels), ("max_pixels", max_pixels)) if value is not None
+    }
+    return {**part, **bounds}
+
+
+def _with_image_pixel_bounds(conversation: list[Any], *, min_pixels: int | None, max_pixels: int | None) -> list[Any]:
+    """Return a copy of the conversation with default pixel bounds on its image parts."""
+    if min_pixels is None and max_pixels is None:
+        return conversation
+    bounded_conversation = []
+    for turn in conversation:
+        if not isinstance(turn, Mapping) or not isinstance(turn.get("content"), list):
+            bounded_conversation.append(turn)
+            continue
+        content = [
+            with_default_pixel_bounds(part, min_pixels=min_pixels, max_pixels=max_pixels) for part in turn["content"]
+        ]
+        bounded_conversation.append({**turn, "content": content})
+    return bounded_conversation
+
+
+def _fetch_qwen_vl_media(
+    conversation: list[Any],
+    processor: Any,
+    *,
+    qwen3_vl: bool,
+    min_pixels: int | None,
+    max_pixels: int | None,
+) -> _QwenVLMedia:
+    """Decode the images and videos of one conversation with qwen-vl-utils.
+
+    qwen-vl-utils samples the video frames. Its video metadata keeps the source fps and the indices of
+    the sampled frames. Qwen3-VL writes the frame timestamps from this metadata, and Qwen2.5-VL
+    calculates ``second_per_grid_ts`` from it.
+
+    For Qwen3-VL, qwen-vl-utils also resizes the media, as in the Qwen3-VL model card, and the processor
+    does not resize them again. qwen-vl-utils uses the patch size of the processor and the image pixel
+    bounds of the collate.
+    """
+    vision_kwargs: dict[str, Any] = {"return_video_metadata": True}
+    if qwen3_vl:
+        conversation = _with_image_pixel_bounds(conversation, min_pixels=min_pixels, max_pixels=max_pixels)
+        vision_kwargs["image_patch_size"] = processor.image_processor.patch_size
+    images, videos = process_vision_info(conversation, **vision_kwargs)
+    if images is None:
+        images = []
+    elif not isinstance(images, list):
+        images = [images]
+    return _QwenVLMedia(
+        images=images,
+        videos=[frames for frames, _ in videos or []],
+        video_metadata=[metadata for _, metadata in videos or []],
+    )
+
+
+def _qwen_vl_media_kwargs(
+    media: list[_QwenVLMedia],
+    *,
+    qwen3_vl: bool,
+    min_pixels: int | None,
+    max_pixels: int | None,
+) -> dict[str, Any]:
+    """Return the media arguments of one processor call on the rows in ``media``.
+
+    A call on one row gets flat media lists. A call on more rows gets one media list for each row.
+    """
+    kwargs: dict[str, Any] = {}
+    if qwen3_vl:
+        # qwen-vl-utils resized the media already. A second resize gives sizes that inference does not use.
+        kwargs["do_resize"] = False
+    else:
+        if min_pixels is not None:
+            kwargs["min_pixels"] = min_pixels
+        if max_pixels is not None:
+            kwargs["max_pixels"] = max_pixels
+    single_row = len(media) == 1
+    if any(row.images for row in media):
+        kwargs["images"] = media[0].images if single_row else [row.images for row in media]
+    if any(row.videos for row in media):
+        kwargs["videos"] = media[0].videos if single_row else [row.videos for row in media]
+        kwargs["video_metadata"] = media[0].video_metadata if single_row else [row.video_metadata for row in media]
+        # qwen-vl-utils sampled the frames already. Without this flag, Qwen3-VL samples them again.
+        kwargs["do_sample_frames"] = False
+    return kwargs
+
+
+def is_qwen3_vl_processor(processor: Any) -> bool:
+    """Return whether a processor takes the media settings of ``qwen3_vl_collate_fn``.
+
+    The collate registry selects ``qwen3_vl_collate_fn`` for a ``Qwen3VLProcessor``.
+    """
+    return type(processor).__name__ == "Qwen3VLProcessor"
+
+
+def qwen3_vl_media_kwargs(conversation: list[Any], processor: Any) -> dict[str, Any]:
+    """Return the media arguments of a ``Qwen3VLProcessor`` call on one conversation, for inference.
+
+    The media get the preprocessing of ``qwen3_vl_collate_fn``, which is that of the Qwen3-VL model card,
+    without the default pixel bounds of the collate.
+
+    Args:
+        conversation: HF-style conversation with image and video parts.
+        processor: Qwen3-VL HF processor.
+
+    Returns:
+        Keyword arguments for ``processor(text=..., **kwargs)``.
+    """
+    if not HAVE_QWEN_VL_UTILS:
+        raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
+    media = _fetch_qwen_vl_media(conversation, processor, qwen3_vl=True, min_pixels=None, max_pixels=None)
+    return _qwen_vl_media_kwargs([media], qwen3_vl=True, min_pixels=None, max_pixels=None)
+
+
+def _raise_if_truncation_cuts_visual_tokens(
+    input_ids: torch.Tensor, processor: Any, sequence_length: int | None
+) -> None:
+    """Raise a ValueError if a truncation to ``sequence_length`` removes visual tokens.
+
+    The visual features stay complete, so the remaining visual tokens would not match them.
+    """
+    if sequence_length is None or input_ids.size(1) <= sequence_length:
+        return
+    token_ids = [
+        token_id
+        for token_id in (getattr(processor, "image_token_id", None), getattr(processor, "video_token_id", None))
+        if isinstance(token_id, int)
+    ]
+    if not token_ids:
+        return
+    cut_rows = torch.isin(input_ids[:, sequence_length:], torch.tensor(token_ids, device=input_ids.device)).any(dim=1)
+    if cut_rows.any():
+        raise ValueError(
+            f"Truncating sequence batch from {input_ids.size(1)} to {sequence_length} tokens removes visual tokens "
+            f"from rows {cut_rows.nonzero().flatten().tolist()}. Increase sequence_length, or lower max_pixels or "
+            "the number of video frames."
+        )
+
+
 def _prepare_qwen_vl_sequence(
     example: dict[str, Any],
     processor: Any,
     *,
     text: str,
-    images: list[Any],
-    videos: list[Any],
+    media_kwargs: dict[str, Any],
     skipped_tokens: torch.Tensor,
     boundary_config: Any,
-    min_pixels: int | None,
-    max_pixels: int | None,
     require_assistant_matches: bool,
 ) -> QwenVLPreparedSequence:
     """Process one example into the exact row consumed by THD packing."""
@@ -131,15 +311,8 @@ def _prepare_qwen_vl_sequence(
         "text": [text],
         "padding": False,
         "return_tensors": "pt",
+        **media_kwargs,
     }
-    if min_pixels is not None:
-        processor_kwargs["min_pixels"] = min_pixels
-    if max_pixels is not None:
-        processor_kwargs["max_pixels"] = max_pixels
-    if images:
-        processor_kwargs["images"] = images
-    if videos:
-        processor_kwargs["videos"] = videos
 
     with use_processor_right_padding(processor):
         sample_batch = {
@@ -202,10 +375,26 @@ def prepare_qwen_vl_sequence(
     min_pixels: int | None = QWEN_VL_MIN_PIXELS,
     max_pixels: int | None = QWEN_VL_MAX_PIXELS,
     require_assistant_matches: bool = False,
+    qwen3_vl: bool | None = None,
 ) -> QwenVLPreparedSequence:
-    """Process one Qwen-VL example once for online or collate-time packing."""
+    """Process one Qwen-VL example once for online or collate-time packing.
+
+    Args:
+        example: HF-style example with a ``conversation``.
+        processor: Qwen-VL HF processor.
+        min_pixels: Lower pixel bound of each image.
+        max_pixels: Upper pixel bound of each image.
+        require_assistant_matches: Do not warn when the loss mask has no assistant token.
+        qwen3_vl: Use the media settings of ``qwen3_vl_collate_fn``. ``None`` uses them for a ``Qwen3VLProcessor``,
+            as the collate registry does.
+
+    Returns:
+        The unpadded sequence and its visual tensors.
+    """
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
+    if qwen3_vl is None:
+        qwen3_vl = is_qwen3_vl_processor(processor)
 
     example = _normalize_qwen_video_paths(example)
     skipped_tokens = extract_skipped_token_ids(processor)
@@ -221,26 +410,17 @@ def prepare_qwen_vl_sequence(
         tokenize=False,
         **resolve_chat_template_kwargs(processor, chat_template_kwargs_from_example(example)),
     )
-    images, videos = process_vision_info(example["conversation"])
-    if images is None:
-        images = []
-    elif not isinstance(images, list):
-        images = [images]
-    if videos is None:
-        videos = []
-    elif not isinstance(videos, list):
-        videos = [videos]
+    media = _fetch_qwen_vl_media(
+        example["conversation"], processor, qwen3_vl=qwen3_vl, min_pixels=min_pixels, max_pixels=max_pixels
+    )
 
     return _prepare_qwen_vl_sequence(
         example,
         processor,
         text=text,
-        images=images,
-        videos=videos,
+        media_kwargs=_qwen_vl_media_kwargs([media], qwen3_vl=qwen3_vl, min_pixels=min_pixels, max_pixels=max_pixels),
         skipped_tokens=skipped_tokens,
         boundary_config=boundary_config,
-        min_pixels=min_pixels,
-        max_pixels=max_pixels,
         require_assistant_matches=require_assistant_matches,
     )
 
@@ -291,7 +471,77 @@ def qwen2_5_collate_fn(
 ) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2.5 VL model."""
     del visual_keys
+    return _collate_qwen_vl_examples(
+        examples,
+        processor,
+        qwen3_vl=False,
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+        require_assistant_matches=require_assistant_matches,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+    )
 
+
+def qwen3_vl_collate_fn(
+    examples: list,
+    processor: Any,
+    *,
+    min_pixels: int | None = QWEN_VL_MIN_PIXELS,
+    max_pixels: int | None = QWEN_VL_MAX_PIXELS,
+    visual_keys: object = None,
+    require_assistant_matches: bool = False,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
+    """Collate function for models that use ``Qwen3VLProcessor``, for example Qwen3-VL and Qwen3.5-VL.
+
+    The media get the preprocessing of the Qwen3-VL model card. qwen-vl-utils resizes the media at the
+    patch size of the processor: an image one time, a video file one time after it samples the frames,
+    and a list of frames two times (each frame as an image, then the clip). The processor gets the video
+    metadata, ``do_sample_frames=False``, and ``do_resize=False``. Thus each video keeps its sampled
+    frames and its frame timestamps.
+
+    ``min_pixels`` and ``max_pixels`` are the default pixel bounds of each image in that resize. An
+    image part that sets its own bounds keeps them. Set them to ``None`` to use the bounds of qwen-vl-utils.
+    """
+    del visual_keys
+    return _collate_qwen_vl_examples(
+        examples,
+        processor,
+        qwen3_vl=True,
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+        require_assistant_matches=require_assistant_matches,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+    )
+
+
+def _collate_qwen_vl_examples(
+    examples: list,
+    processor: Any,
+    *,
+    qwen3_vl: bool,
+    min_pixels: int | None,
+    max_pixels: int | None,
+    require_assistant_matches: bool,
+    sequence_length: int | None,
+    pad_to_max_length: bool,
+    pad_to_multiple_of: int,
+    enable_in_batch_packing: bool,
+    in_batch_packing_pad_to_multiple_of: int,
+) -> dict[str, torch.Tensor]:
+    """Collate Qwen-VL examples with the media settings of Qwen3-VL or Qwen2.5-VL."""
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
 
@@ -316,37 +566,26 @@ def qwen2_5_collate_fn(
     # Build per-example media (list) and split by presence.  Qwen processors accept
     # nested per-example image/video lists; splitting avoids passing empty media
     # kwargs for text-only rows.
-    per_example_images = []
-    per_example_videos = []
-    has_media = []
-
-    for example in examples:
-        imgs, videos = process_vision_info(example["conversation"])
-        if imgs is None:
-            imgs = []
-        elif not isinstance(imgs, list):
-            imgs = [imgs]
-        if videos is None:
-            videos = []
-        elif not isinstance(videos, list):
-            videos = [videos]
-        per_example_images.append(imgs)
-        per_example_videos.append(videos)
-        has_media.append(len(imgs) > 0 or len(videos) > 0)
+    media = [
+        _fetch_qwen_vl_media(
+            example["conversation"], processor, qwen3_vl=qwen3_vl, min_pixels=min_pixels, max_pixels=max_pixels
+        )
+        for example in examples
+    ]
+    has_media = [bool(row.images or row.videos) for row in media]
 
     if enable_in_batch_packing:
         prepared_sequences = []
-        for example, text, images, videos in zip(examples, texts, per_example_images, per_example_videos, strict=True):
+        for example, text, row_media in zip(examples, texts, media, strict=True):
             prepared = _prepare_qwen_vl_sequence(
                 example,
                 processor,
                 text=text,
-                images=images,
-                videos=videos,
+                media_kwargs=_qwen_vl_media_kwargs(
+                    [row_media], qwen3_vl=qwen3_vl, min_pixels=min_pixels, max_pixels=max_pixels
+                ),
                 skipped_tokens=skipped_tokens,
                 boundary_config=boundary_config,
-                min_pixels=min_pixels,
-                max_pixels=max_pixels,
                 require_assistant_matches=require_assistant_matches,
             )
             prepared_sequences.append(prepared)
@@ -366,22 +605,14 @@ def qwen2_5_collate_fn(
 
     with use_processor_right_padding(processor):
         if idx_with:
-            texts_with = [texts[i] for i in idx_with]
-            images_with = [per_example_images[i] for i in idx_with]
-            videos_with = [per_example_videos[i] for i in idx_with]
             processor_kwargs = {
-                "text": texts_with,
+                "text": [texts[i] for i in idx_with],
                 "padding": True,
                 "return_tensors": "pt",
+                **_qwen_vl_media_kwargs(
+                    [media[i] for i in idx_with], qwen3_vl=qwen3_vl, min_pixels=min_pixels, max_pixels=max_pixels
+                ),
             }
-            if min_pixels is not None:
-                processor_kwargs["min_pixels"] = min_pixels
-            if max_pixels is not None:
-                processor_kwargs["max_pixels"] = max_pixels
-            if any(images_with):
-                processor_kwargs["images"] = images_with
-            if any(videos_with):
-                processor_kwargs["videos"] = videos_with
             batch_with = {
                 key: value.contiguous() if isinstance(value, torch.Tensor) else value
                 for key, value in processor(**processor_kwargs).items()
@@ -481,6 +712,7 @@ def qwen2_5_collate_fn(
     for key in QWEN_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
+    _raise_if_truncation_cuts_visual_tokens(batch["input_ids"], processor, sequence_length)
     prepare_sequence_batch(
         batch,
         sequence_length=sequence_length,
