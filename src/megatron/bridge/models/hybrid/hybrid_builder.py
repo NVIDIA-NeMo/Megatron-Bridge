@@ -150,8 +150,7 @@ class BridgeHybridModelBuilder(HybridModelBuilder):
 
     The configured stack spec may be a ``ModuleSpec`` or a factory that takes no
     arguments or the model config. When it is unset, Bridge's default selection
-    applies, which also remaps fused Transformer Engine layer norms for ModelOpt
-    checkpoints. The local attention backend and a non-default Mamba chunk size
+    applies. The local attention backend and a non-default Mamba chunk size
     are applied to a copy of the resolved spec.
     """
 
