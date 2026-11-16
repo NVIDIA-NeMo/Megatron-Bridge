@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+# Llama2 models
 from .gb200 import llama31_405b_pretrain_64gpu_gb200_fp8mx_config
+from .llama2 import (
+    llama2_70b_peft_config,
+)
 
 # Llama3 models
 from .llama3 import (
@@ -52,6 +55,8 @@ from .llama3 import (
 
 
 __all__ = [
+    # Llama2 models
+    "llama2_70b_peft_config",
     # Llama3 models
     "llama3_8b_pretrain_config",
     "llama3_8b_16k_pretrain_config",

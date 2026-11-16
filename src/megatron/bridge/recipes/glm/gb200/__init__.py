@@ -23,6 +23,7 @@ __all__ = [
     "glm52_gb200_sft_config",
     "glm52_peft_192gpu_gb200_bf16_config",
     "glm52_pretrain_192gpu_gb200_bf16_config",
+    "glm52_proxy_pretrain_16gpu_gb200_bf16_config",
     "glm52_sft_192gpu_gb200_bf16_128k_config",
     "glm52_sft_192gpu_gb200_bf16_config",
 ]

@@ -49,6 +49,7 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor, nn
 from torch.distributed._tensor import DTensor
+from transformers import Glm5NextForConditionalGeneration
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -74,12 +75,6 @@ from megatron.bridge.training.utils.packed_seq_utils import (
     preprocess_packed_seqs,
 )
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
-
-
-try:
-    from transformers import Glm5NextForConditionalGeneration
-except ImportError:  # pragma: no cover
-    Glm5NextForConditionalGeneration = "Glm5NextForConditionalGeneration"  # type: ignore[assignment]
 
 
 if TYPE_CHECKING:
