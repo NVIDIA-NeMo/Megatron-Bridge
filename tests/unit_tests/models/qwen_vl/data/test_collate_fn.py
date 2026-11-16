@@ -226,6 +226,40 @@ def test_qwen3_vl_collate_bounds_image_pixels_in_one_resize(tmp_path):
     ]
 
 
+def test_energon_visual_token_budget_counts_the_collate_tokens(tmp_path):
+    energon = pytest.importorskip("megatron.bridge.models.qwen_vl.data.energon")
+    from megatron.energon import SkipSample
+
+    from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
+
+    processor = _load_processor(tmp_path, qwen3_vl=True)
+    sample = energon.ChatMLSample(
+        **sample_metadata_kwargs(key="clip", restore_key="clip", subflavors={}),
+        imgs=None,
+        videos=[_clip(8, sample_fps=2.0)["video"]],
+        conversation=json.dumps(
+            [
+                {"role": "user", "content": "<video>What happens?"},
+                {"role": "assistant", "content": "It gets brighter."},
+            ]
+        ),
+    )
+
+    def encode(max_visual_tokens):
+        encoder = energon.QwenVLTaskEncoder(
+            tokenizer=processor.tokenizer, image_processor=processor, max_visual_tokens=max_visual_tokens
+        )
+        return encoder.encode_sample(sample)
+
+    batch = resolve_model_collate(type(processor).__name__)([encode(None).example], processor)
+    collate_tokens = int(batch["visual_inputs"].video_grid_thw.prod(dim=-1).sum()) // 4
+
+    # The HF video processor alone counts fewer tokens for these frames than the collate makes.
+    assert encode(collate_tokens).example is not None
+    with pytest.raises(SkipSample):
+        encode(collate_tokens - 1)
+
+
 def test_qwen2_5_collate_passes_sampled_fps_to_video_positions(tmp_path):
     processor = _load_processor(tmp_path, qwen3_vl=False)
 

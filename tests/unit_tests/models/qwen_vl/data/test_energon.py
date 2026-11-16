@@ -167,12 +167,14 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
 
         self.image_processor = MagicMock()
 
+        # These tests check the sample schema. TestQwenVLTaskEncoderLimits checks the visual token budget.
         self.encoder = QwenVLTaskEncoder(
             tokenizer=self.tokenizer,
             image_processor=self.image_processor,
             max_padding_length=512,
             patch_size=14,
             spatial_merge_size=2,
+            max_visual_tokens=None,
         )
 
     def test_process_vision(self):
@@ -617,12 +619,19 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
         self.assertIsInstance(encoded, QwenVLTaskSample)
 
     def test_max_visual_tokens_skip_when_exceeded(self):
-        self.image_processor.return_value = {"image_grid_thw": torch.tensor([[1, 28, 28]])}
-        enc = self._make_encoder(max_visual_tokens=100)
+        # The collate processing of the example gives 28 * 28 / 4 = 196 visual tokens.
+        prepared = QwenVLPreparedSequence(
+            row={"input_ids": torch.tensor([1, 2, 3])},
+            visual_values={"image_grid_thw": torch.tensor([[1, 28, 28]])},
+        )
         sample = self._make_sample(n_images=1)
 
-        with self.assertRaises(SkipSample):
-            enc.encode_sample(sample)
+        with patch.object(task_encoder_module, "prepare_qwen_vl_sequence", return_value=prepared):
+            with self.assertRaises(SkipSample):
+                self._make_encoder(max_visual_tokens=195).encode_sample(sample)
+            kept = self._make_encoder(max_visual_tokens=196).encode_sample(sample)
+
+        self.assertIsInstance(kept, QwenVLTaskSample)
 
     def test_small_seq_len_defers_to_collate_and_training_padding(self):
         enc = self._make_encoder(max_padding_length=50, max_visual_tokens=None)

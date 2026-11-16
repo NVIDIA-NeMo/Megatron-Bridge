@@ -297,8 +297,10 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         Output format:
             Without native packing, returns a ``QwenVLTaskSample`` containing
             the HF-style VLM ``example``; model processing remains deferred to
-            the Qwen collator. With native packing, the same model-owned
-            processing runs eagerly and the result is stored in
+            the Qwen collator. A sample with media is also processed here one
+            time when ``max_visual_tokens`` is set, to count its visual tokens
+            as the collator makes them. With native packing, the same
+            model-owned processing runs eagerly and the result is stored in
             ``prepared_sequence`` while ``example`` is ``None``.
         """
         normalized_sample = normalize_energon_vlm_sample(sample)
@@ -330,38 +332,17 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                     clipped.append(v)
             videos_for_processing = clipped
 
-        if (
-            not self.enable_energon_packing
-            and self.max_visual_tokens is not None
-            and (imgs_for_processing is not None or videos_for_processing is not None)
-        ):
-            processed_vision = process_vision(
-                self.image_processor,
-                imgs_for_processing,
-                videos_for_processing,
-                min_pixels=self.min_pixels,
-                max_pixels=self.max_pixels,
-            )
-            image_tokens = _visual_token_count(processed_vision["image_grid_thw"], self.merge_size)
-            video_tokens = _visual_token_count(processed_vision["video_grid_thw"], self.merge_size)
-            total_visual_tokens = image_tokens + video_tokens
-            if total_visual_tokens > self.max_visual_tokens:
-                logging.warning(
-                    "Skipping sample %s: %d visual tokens exceeds max_visual_tokens=%d",
-                    sample.__key__,
-                    total_visual_tokens,
-                    self.max_visual_tokens,
-                )
-                raise SkipSample()
-
         normalized_sample = dataclasses.replace(
             normalized_sample,
             images=imgs_for_processing,
             videos=videos_for_processing,
         )
         example = normalized_vlm_sample_to_hf_example(normalized_sample, media_first=True)
+        has_media = imgs_for_processing is not None or videos_for_processing is not None
         prepared_sequence = None
-        if self.enable_energon_packing:
+        # The visual token budget counts the visual tokens of the collate, so it processes the example as the
+        # collate does.
+        if self.enable_energon_packing or (self.max_visual_tokens is not None and has_media):
             prepared_sequence = prepare_qwen_vl_sequence(
                 example,
                 self.image_processor,
@@ -387,12 +368,16 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                     )
                     raise SkipSample()
 
+        if self.enable_energon_packing:
             packing_length = _aligned_sequence_length(prepared_sequence, self.in_batch_packing_pad_to_multiple_of)
             if packing_length > self.seq_length:
                 raise ValueError(
                     f"Sample {sample.__key__} aligned sequence length {packing_length} "
                     f"exceeds seq_length={self.seq_length}."
                 )
+        else:
+            # The collate in batch() processes the example again.
+            prepared_sequence = None
 
         return QwenVLTaskSample(
             __key__=sample.__key__,
