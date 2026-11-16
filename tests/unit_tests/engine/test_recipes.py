@@ -1,10 +1,14 @@
+import copy
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import pytest
+from megatron.training.models.base import ModelConfig
+from transformers import AutoConfig, Qwen3_5MoeConfig, Qwen3_5MoeTextConfig
 
-from megatron.bridge.engine.recipes import registry
-from megatron.bridge.engine.recipes.base import data_parallel_size, min_gpus
+from megatron.bridge import AutoBridge
+from megatron.bridge.engine.recipes import qwen35, registry
+from megatron.bridge.engine.recipes.base import data_parallel_size, is_multimodal, min_gpus
 from megatron.bridge.engine.recipes.registry import (
     RecipeEntry,
     apply_recipe_overrides,
@@ -171,3 +175,96 @@ def test_apply_recipe_overrides_rejects_unknown_paths(path):
     with pytest.raises(ValueError, match="Unknown recipe field"):
         apply_recipe_overrides(recipe, {path: 1})
     assert recipe == _Recipe()
+
+
+# A tiny Qwen3.5 MoE text model with the 35B-A3B layout: three GatedDeltaNet layers per attention layer, MTP 1.
+_TINY_QWEN35_TEXT = dict(
+    vocab_size=512,
+    hidden_size=64,
+    num_hidden_layers=4,
+    layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"],
+    full_attention_interval=4,
+    num_attention_heads=4,
+    num_key_value_heads=2,
+    head_dim=32,
+    attn_output_gate=True,
+    linear_num_key_heads=2,
+    linear_num_value_heads=4,
+    linear_key_head_dim=16,
+    linear_value_head_dim=16,
+    linear_conv_kernel_dim=4,
+    num_experts=16,
+    num_experts_per_tok=2,
+    moe_intermediate_size=32,
+    shared_expert_intermediate_size=32,
+    max_position_embeddings=8192,
+    mtp_num_hidden_layers=1,
+    rope_parameters={
+        "mrope_interleaved": True,
+        "mrope_section": [2, 1, 1],
+        "partial_rotary_factor": 0.25,
+        "rope_theta": 10000000,
+        "rope_type": "default",
+    },
+)
+
+
+class _BuilderOnlyBridge:
+    """Stands in for ``AutoBridge``: real builder-backed configs; the removed provider path fails the test."""
+
+    def __init__(self, hf_config):
+        self._hf_config = hf_config
+
+    @classmethod
+    def from_hf_config(cls, hf_config):
+        return cls(hf_config)
+
+    @classmethod
+    def from_hf_pretrained(cls, hf_path, revision=None):
+        return cls(AutoConfig.from_pretrained(hf_path, revision=revision))
+
+    def get_model_config(self):
+        return AutoBridge.from_hf_config(self._hf_config).get_model_config()
+
+    def to_megatron_provider(self, load_weights=False):
+        raise AssertionError("engine recipes must build builder-backed configs with get_model_config()")
+
+
+def _assert_35b_a3b_execution_settings(model, seq_length):
+    assert isinstance(model, ModelConfig)
+    assert (model.seq_length, model.context_parallel_size, model.expert_model_parallel_size) == (seq_length, 8, 16)
+    assert (model.gdn_kernel_backend, model.moe_flex_dispatcher_backend) == ("transformer_engine", "hybridep")
+    assert model.recompute_modules == ["gdn_norm_out", "moe"]
+    assert model.mtp_num_layers == 1
+
+
+def test_qwen35_text_recipe_builds_a_builder_backed_config(monkeypatch, tmp_path):
+    Qwen3_5MoeTextConfig(architectures=["Qwen3_5MoeForCausalLM"], **_TINY_QWEN35_TEXT).save_pretrained(tmp_path)
+    monkeypatch.setattr(qwen35, "AutoBridge", _BuilderOnlyBridge)
+    recipe = qwen35.qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(hf_path=str(tmp_path), seq_length=4096)
+    _assert_35b_a3b_execution_settings(recipe.model, 4096)
+    assert not is_multimodal(recipe)
+    # TrainingEngine.from_recipe deep-copies the recipe; the copy must keep the outer config.
+    _assert_35b_a3b_execution_settings(copy.deepcopy(recipe).model, 4096)
+
+
+def test_qwen35_vl_recipe_builds_a_builder_backed_config(monkeypatch, tmp_path):
+    vision = dict(
+        depth=2,
+        hidden_size=32,
+        intermediate_size=64,
+        num_heads=2,
+        out_hidden_size=64,
+        num_position_embeddings=64,
+        deepstack_visual_indexes=[],
+    )
+    Qwen3_5MoeConfig(
+        architectures=["Qwen3_5MoeForConditionalGeneration"], text_config=_TINY_QWEN35_TEXT, vision_config=vision
+    ).save_pretrained(tmp_path)
+    monkeypatch.setattr(qwen35, "AutoBridge", _BuilderOnlyBridge)
+    recipe = qwen35.qwen35_vl_35b_a3b_rl_16gpu_gb200_bf16(hf_path=str(tmp_path), seq_length=4096)
+    _assert_35b_a3b_execution_settings(recipe.model, 4096)
+    assert is_multimodal(recipe)
+    # The vision-freeze overrides and LoRA's target scoping read these flags from the recipe's config.
+    assert recipe.model.freeze_vision_model is False
+    assert recipe.model.vision_recompute_granularity == "full"

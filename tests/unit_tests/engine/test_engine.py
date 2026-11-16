@@ -1,16 +1,19 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import torch
 from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker, get_moe_metrics_tracker
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.engine import AdamParams, Datum, ForwardBackwardOutput, TrainingEngine, topology_from_recipe
 from megatron.bridge.engine.accumulation import AccumulationWindow
 from megatron.bridge.engine.batching import MicrobatchMapping, SequenceMapping, local_sample_count
 from megatron.bridge.engine.datum import NormalizationPolicy, PreparedMicrobatch
-from megatron.bridge.engine.engine import Topology, _SharedRuntime
+from megatron.bridge.engine.engine import Topology, _build_frozen_model, _SharedRuntime
 from megatron.bridge.engine.recipes import check_supported, data_parallel_size
 from megatron.bridge.engine.router_replay import RouterReplayState
+from megatron.bridge.models.model_provider import ModelProviderMixin
 
 
 def _recipe_like() -> SimpleNamespace:
@@ -449,3 +452,39 @@ def test_shared_runtime_tracks_attached_engines():
     runtime.detach(a)
     runtime.detach(a)
     assert runtime.num_engines == 1
+
+
+def _frozen_recipe(model):
+    return SimpleNamespace(model=model, rng=SimpleNamespace(data_parallel_random_init=False))
+
+
+def test_frozen_engine_builds_a_builder_backed_config_without_ddp(monkeypatch):
+    calls = []
+
+    def build(model_config, pg_collection, **kwargs):
+        calls.append((model_config, pg_collection, kwargs))
+        return [torch.nn.Linear(2, 2)]
+
+    monkeypatch.setattr("megatron.bridge.engine.engine.build_distributed_models", build)
+    config = Mock(spec=ModelConfig)
+    model = _build_frozen_model(_frozen_recipe(config), "pg")
+    assert calls == [(config, "pg", {"ddp_config": None, "wrap_with_ddp": False, "data_parallel_random_init": False})]
+    assert not any(parameter.requires_grad for parameter in model[0].parameters())
+
+
+def test_frozen_engine_still_builds_a_provider(monkeypatch):
+    provider = Mock(spec=ModelProviderMixin)
+    provider.provide_distributed_model.return_value = [torch.nn.Linear(2, 2)]
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.build_distributed_models", lambda *a, **k: pytest.fail("builder path used")
+    )
+    model = _build_frozen_model(_frozen_recipe(provider), "pg")
+    provider.provide_distributed_model.assert_called_once_with(
+        ddp_config=None, wrap_with_ddp=False, data_parallel_random_init=False, pg_collection="pg"
+    )
+    assert not any(parameter.requires_grad for parameter in model[0].parameters())
+
+
+def test_frozen_engine_rejects_other_model_configs():
+    with pytest.raises(TypeError, match="ModelConfig or a ModelProviderMixin"):
+        _build_frozen_model(_frozen_recipe(SimpleNamespace()), "pg")

@@ -15,7 +15,7 @@ from megatron.bridge.engine.losses import (
     target_logprobs,
     value_loss,
 )
-from megatron.bridge.engine.optim import apply_adam_params
+from megatron.bridge.engine.optim import apply_adam_params, scale_gradients
 from megatron.bridge.engine.schedule import (
     call_model,
     model_loss_mask,
@@ -385,3 +385,26 @@ def test_call_model_hands_mrope_models_three_position_rows(embedding, shape):
     position_ids = model.kwargs["position_ids"]
     assert position_ids.shape == shape
     assert (position_ids == torch.arange(4)).all()
+
+
+class _ScaledChunk(torch.nn.Module):
+    """Holds a parameter and records the factor its DDP-style ``scale_gradients`` receives."""
+
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.zeros(2))
+        self.factors = []
+
+    def scale_gradients(self, scaling_factor):
+        # Megatron Core's gradient buffers read these attributes from the factor.
+        assert scaling_factor.ndim == 0 and scaling_factor.is_cuda == self.weight.is_cuda
+        self.factors.append(scaling_factor)
+
+
+def test_scale_gradients_passes_a_float32_tensor_on_the_gradients_device():
+    chunks = [_ScaledChunk(), _ScaledChunk()]
+    scale_gradients(chunks, 1 / 3)
+    for chunk in chunks:
+        (factor,) = chunk.factors
+        assert factor.dtype == torch.float32 and factor.device == chunk.weight.device
+        assert factor.item() == pytest.approx(1 / 3)

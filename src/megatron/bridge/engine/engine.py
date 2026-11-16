@@ -37,6 +37,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker, set_moe_metrics_tracker
 from megatron.core.utils import get_model_config
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.engine import losses
 from megatron.bridge.engine.accumulation import AccumulationWindow
@@ -73,7 +74,7 @@ from megatron.bridge.engine.recipes.registry import apply_recipe_overrides, reso
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
-from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin, build_distributed_models
 from megatron.bridge.training.config import RerunStateMachineConfig
 from megatron.bridge.training.initialize import init_rerun_state, torch_dist_init
 from megatron.bridge.training.setup import (
@@ -1065,16 +1066,35 @@ def _release_ddp_autograd_refs(chunk: MegatronModule) -> None:
 
 
 def _build_frozen_model(recipe: TrainingRecipe, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
-    """Build a model without DDP or gradient buffers and freeze its parameters."""
-    provider = recipe.model
-    if not isinstance(provider, ModelProviderMixin):
-        raise NotImplementedError("trainable=False currently requires a ModelProviderMixin model config.")
-    model = provider.provide_distributed_model(
-        ddp_config=None,
-        wrap_with_ddp=False,
-        data_parallel_random_init=recipe.rng.data_parallel_random_init,
-        pg_collection=pg_collection,
-    )
+    """Build a model without DDP or gradient buffers and freeze its parameters.
+
+    A builder-backed config builds through Bridge's ``build_distributed_models``, which runs the config's
+    pre-wrap hooks and keeps router expert biases and FP32-marked parameters in FP32 through the
+    mixed-precision wrapper, as the provider path does.
+
+    Raises:
+        TypeError: If ``recipe.model`` is neither a ``ModelConfig`` nor a ``ModelProviderMixin``.
+    """
+    model_config = recipe.model
+    if isinstance(model_config, ModelConfig):
+        model = build_distributed_models(
+            model_config,
+            pg_collection,
+            ddp_config=None,
+            wrap_with_ddp=False,
+            data_parallel_random_init=recipe.rng.data_parallel_random_init,
+        )
+    elif isinstance(model_config, ModelProviderMixin):
+        model = model_config.provide_distributed_model(
+            ddp_config=None,
+            wrap_with_ddp=False,
+            data_parallel_random_init=recipe.rng.data_parallel_random_init,
+            pg_collection=pg_collection,
+        )
+    else:
+        raise TypeError(
+            f"recipe.model must be a ModelConfig or a ModelProviderMixin, got {type(model_config).__name__}."
+        )
     for chunk in model:
         for parameter in chunk.parameters():
             parameter.requires_grad_(False)
