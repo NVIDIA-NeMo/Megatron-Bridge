@@ -13,7 +13,7 @@
 # limitations under the License.
 
 ARG NEMO_FW_FINAL_BASE_IMAGE
-FROM ${NEMO_FW_FINAL_BASE_IMAGE} AS nemo_fw_assembled
+FROM ${NEMO_FW_FINAL_BASE_IMAGE} AS nemo_fw_final
 
 # The CI base image runs as UID 1000, while framework assembly writes to root-owned system paths.
 USER root
@@ -164,25 +164,10 @@ RUN GO_GIT_VERSION=5.19.2 && \
         -o "${WANDB_CORE_BIN}" ./cmd/wandb-core/ && \
     rm -rf /tmp/wandb-src /tmp/go /tmp/gopath
 
-##############################################################################
-##
-## Patch Ray's relocated Jackson libraries without retaining Java build tools.
-##
-##############################################################################
+# This image supports Python Ray workloads; remove the optional Java runtime.
+# Removing the directory also prevents Ray from advertising Java worker support.
+RUN rm -rf /opt/venv/lib/python3.12/site-packages/ray/jars
 
-FROM maven:3.9.11-eclipse-temurin-17 AS ray_java_patch
-WORKDIR /build
-COPY --from=nemo_fw_assembled /opt/venv/lib/python3.12/site-packages/ray/jars/ray_dist.jar /build/ray_dist.jar
-COPY docker/common/ray-jackson-pom.xml /build/pom.xml
-COPY tests/functional_tests/docker/RayJacksonSmokeTest.java /build/RayJacksonSmokeTest.java
-RUN mvn --batch-mode --no-transfer-progress org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file \
-        -Dfile=/build/ray_dist.jar -DgroupId=io.ray -DartifactId=ray-dist -Dversion=1 -Dpackaging=jar && \
-    mvn --batch-mode --no-transfer-progress package && \
-    javac -cp target/ray-dist-patched.jar RayJacksonSmokeTest.java && \
-    java -cp target/ray-dist-patched.jar:. RayJacksonSmokeTest
-
-FROM nemo_fw_assembled AS nemo_fw_final
-COPY --from=ray_java_patch /build/target/ray-dist-patched.jar /opt/venv/lib/python3.12/site-packages/ray/jars/ray_dist.jar
 RUN --mount=type=bind,source=docker/common/check_vllm.py,target=/tmp/check_vllm.py \
     /usr/bin/python3 /tmp/check_vllm.py
 

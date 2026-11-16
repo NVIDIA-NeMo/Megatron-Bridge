@@ -269,10 +269,10 @@ docker build \
 
 ## Supporting files
 
-FW-final replaces Ray's bundled Jackson libraries with the patched 2.18.10 line in a
-separate Maven build stage. It preserves Ray's relocated package names and other Java
-dependencies. Maven and the JDK are excluded from the final image. Re-run this build
-after any later Ray reinstall, which would replace the patched archive.
+FW-final removes Ray's optional `jars/` directory, including `ray_dist.jar`, and clears
+the uv cache. Python Ray workloads remain supported; Java workers and Python-to-Java
+cross-language calls are unsupported in this image. A later Ray reinstall restores
+the Java archive and requires rerunning the removal.
 
 | File | Description |
 |---|---|
