@@ -244,6 +244,33 @@ def _qwen_vl_media_kwargs(
     return kwargs
 
 
+def is_qwen3_vl_processor(processor: Any) -> bool:
+    """Return whether a processor takes the media settings of ``qwen3_vl_collate_fn``.
+
+    The collate registry selects ``qwen3_vl_collate_fn`` for a ``Qwen3VLProcessor``.
+    """
+    return type(processor).__name__ == "Qwen3VLProcessor"
+
+
+def qwen3_vl_media_kwargs(conversation: list[Any], processor: Any) -> dict[str, Any]:
+    """Return the media arguments of a ``Qwen3VLProcessor`` call on one conversation, for inference.
+
+    The media get the preprocessing of ``qwen3_vl_collate_fn``, which is that of the Qwen3-VL model card,
+    without the default pixel bounds of the collate.
+
+    Args:
+        conversation: HF-style conversation with image and video parts.
+        processor: Qwen3-VL HF processor.
+
+    Returns:
+        Keyword arguments for ``processor(text=..., **kwargs)``.
+    """
+    if not HAVE_QWEN_VL_UTILS:
+        raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
+    media = _fetch_qwen_vl_media(conversation, processor, qwen3_vl=True, min_pixels=None, max_pixels=None)
+    return _qwen_vl_media_kwargs([media], qwen3_vl=True, min_pixels=None, max_pixels=None)
+
+
 def _raise_if_truncation_cuts_visual_tokens(
     input_ids: torch.Tensor, processor: Any, sequence_length: int | None
 ) -> None:
@@ -367,7 +394,7 @@ def prepare_qwen_vl_sequence(
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
     if qwen3_vl is None:
-        qwen3_vl = type(processor).__name__ == "Qwen3VLProcessor"
+        qwen3_vl = is_qwen3_vl_processor(processor)
 
     example = _normalize_qwen_video_paths(example)
     skipped_tokens = extract_skipped_token_ids(processor)

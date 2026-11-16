@@ -14,6 +14,7 @@
 
 """Qwen-VL collates with real HF processors, built offline from local files."""
 
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -33,6 +34,7 @@ qwen_vl_utils = pytest.importorskip("qwen_vl_utils")
 pytestmark = pytest.mark.unit
 
 VISUAL_KEYS = ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw")
+INFERENCE_HELPERS = ("scripts/inference/vlm_generation_utils.py", "examples/conversion/vlm_generate_utils.py")
 TIMESTAMP = re.compile(r"<([\d.]+) seconds>")
 # ChatML, with the media placeholders of the Qwen-VL chat templates.
 CHAT_TEMPLATE = (
@@ -125,28 +127,29 @@ def _cat(values: list[torch.Tensor | None]) -> torch.Tensor | None:
     return torch.cat(present) if present else None
 
 
+def _model_card_inputs(processor, conversation: list[dict], *, add_generation_prompt: bool = False):
+    """Preprocess one conversation as the Qwen3-VL model card does for inference."""
+    images, videos, video_kwargs = qwen_vl_utils.process_vision_info(
+        conversation,
+        image_patch_size=processor.image_processor.patch_size,
+        return_video_kwargs=True,
+        return_video_metadata=True,
+    )
+    text = processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=add_generation_prompt)
+    kwargs = {"text": [text], "do_resize": False, "return_tensors": "pt", **video_kwargs}
+    if images:
+        kwargs["images"] = images
+    if videos:
+        frames, metadata = zip(*videos)
+        kwargs["videos"], kwargs["video_metadata"] = list(frames), list(metadata)
+    return processor(**kwargs)
+
+
 def _model_card_rows(examples: list[dict], processor) -> tuple[list[torch.Tensor], dict]:
     """Preprocess each example as the Qwen3-VL model card does for inference."""
     input_ids, visual = [], {key: [] for key in VISUAL_KEYS}
     for example in examples:
-        images, videos, video_kwargs = qwen_vl_utils.process_vision_info(
-            example["conversation"],
-            image_patch_size=processor.image_processor.patch_size,
-            return_video_kwargs=True,
-            return_video_metadata=True,
-        )
-        kwargs = {
-            "text": [processor.apply_chat_template(example["conversation"], tokenize=False)],
-            "do_resize": False,
-            "return_tensors": "pt",
-            **video_kwargs,
-        }
-        if images:
-            kwargs["images"] = images
-        if videos:
-            frames, metadata = zip(*videos)
-            kwargs["videos"], kwargs["video_metadata"] = list(frames), list(metadata)
-        batch = processor(**kwargs)
+        batch = _model_card_inputs(processor, example["conversation"])
         input_ids.append(batch["input_ids"][0])
         for key in VISUAL_KEYS:
             visual[key].append(batch.get(key))
@@ -177,6 +180,15 @@ def _timestamps(processor, input_ids: torch.Tensor) -> list[float]:
     return [float(value) for value in TIMESTAMP.findall(processor.tokenizer.decode(input_ids))]
 
 
+def _load_inference_helpers(relative_path: str):
+    """Load one of the VLM generation helper files of the repository as a module."""
+    path = Path(__file__).resolve().parents[5] / relative_path
+    spec = importlib.util.spec_from_file_location(f"inference_helpers_{path.parent.name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.mark.parametrize("path", ["padded", "in_batch_packing", "prepare_qwen_vl_sequence"])
 def test_qwen3_vl_collate_matches_model_card_preprocessing(tmp_path, path):
     processor = _load_processor(tmp_path, qwen3_vl=True)
@@ -197,6 +209,62 @@ def test_qwen3_vl_collate_matches_model_card_preprocessing(tmp_path, path):
     assert visual["video_grid_thw"][:, 0].tolist() == [6, 4]
     assert _timestamps(processor, input_ids[1]) == [0.2, 1.2, 2.2, 3.2, 4.2, 5.2]
     assert _timestamps(processor, input_ids[2]) == [0.5, 2.5, 4.5, 6.5]
+
+
+@pytest.mark.parametrize("helpers_path", INFERENCE_HELPERS)
+def test_inference_helpers_preprocess_qwen3_vl_images_as_the_model_card(tmp_path, helpers_path):
+    helpers = _load_inference_helpers(helpers_path)
+    processor = _load_processor(tmp_path, qwen3_vl=True)
+    image_paths = []
+    for index, size in enumerate([(1000, 700), (200, 140)]):
+        image_paths.append(str(tmp_path / f"image_{index}.png"))
+        Image.new("RGB", size, "red").save(image_paths[-1])
+    prompt = "What do you see?"
+
+    def chat(*images: str) -> list[dict]:
+        content = [*({"type": "image", "image": image} for image in images), {"type": "text", "text": prompt}]
+        return [{"role": "user", "content": content}]
+
+    input_ids, pixel_values, image_grid_thw, *_ = helpers.process_image_inputs(processor, image_paths[0], prompt)
+    expected = _model_card_inputs(processor, chat(image_paths[0]), add_generation_prompt=True)
+    multi_input_ids, multi_pixel_values, multi_grid_thw = helpers.process_multi_image_inputs(
+        processor, image_paths, prompt
+    )
+    expected_multi = _model_card_inputs(processor, chat(*image_paths), add_generation_prompt=True)
+
+    assert torch.equal(input_ids, expected["input_ids"])
+    assert torch.equal(pixel_values, expected["pixel_values"])
+    # One resize at factor 32: 1000x700 becomes 992x704, not 1024x704.
+    assert image_grid_thw.tolist() == expected["image_grid_thw"].tolist() == [[1, 44, 62]]
+    assert torch.equal(multi_input_ids, expected_multi["input_ids"])
+    assert torch.equal(multi_pixel_values, expected_multi["pixel_values"])
+    assert torch.equal(multi_grid_thw, expected_multi["image_grid_thw"])
+
+
+@pytest.mark.parametrize("helpers_path", INFERENCE_HELPERS)
+def test_inference_helpers_preprocess_qwen3_vl_videos_as_the_model_card(tmp_path, helpers_path):
+    torchvision_io = pytest.importorskip("torchvision.io")
+    pytest.importorskip("av")
+    if not hasattr(torchvision_io, "read_video"):
+        pytest.skip("The torchvision video reader of qwen-vl-utils needs torchvision.io.read_video.")
+    helpers = _load_inference_helpers(helpers_path)
+    processor = _load_processor(tmp_path, qwen3_vl=True)
+    video_path = str(tmp_path / "clip.mp4")
+    frames = torch.stack([torch.full((180, 320, 3), index * 20, dtype=torch.uint8) for index in range(8)])
+    torchvision_io.write_video(video_path, frames, fps=4)
+    prompt = "What happens?"
+
+    input_ids, pixel_values_videos, video_grid_thw = helpers.process_video_inputs(processor, video_path, prompt)
+    video = {"type": "video", "video": video_path, "fps": 2.0}
+    expected = _model_card_inputs(
+        processor, [{"role": "user", "content": [video, {"type": "text", "text": prompt}]}], add_generation_prompt=True
+    )
+
+    assert torch.equal(input_ids, expected["input_ids"])
+    assert torch.equal(pixel_values_videos, expected["pixel_values_videos"])
+    assert torch.equal(video_grid_thw, expected["video_grid_thw"])
+    # The processor writes the timestamps of the frames that qwen-vl-utils sampled.
+    assert _timestamps(processor, input_ids[0])
 
 
 def test_qwen3_vl_collate_bounds_image_pixels_in_one_resize(tmp_path):
