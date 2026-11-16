@@ -327,6 +327,9 @@ write a JSON report on rank 0 into `--training-checks-dir`.
 `validate_expert_balance`). It also compares a run resumed from a checkpoint with the uninterrupted run's logs
 (`validate_resume_continuity`).
 
+The evaluator also records the validation LM loss of each evaluation during training. When the golden values include
+it and a tolerance is given, it compares that loss at every evaluation step.
+
 ## Slurm and containers
 
 Required Slurm arguments are:

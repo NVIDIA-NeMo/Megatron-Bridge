@@ -397,7 +397,8 @@ class ExpertLoadMonitor(Callback):
     A forward pre-hook on each MoE layer's experts reads the tokens per local expert after dispatch, so the counts
     are what the experts actually processed, and the hook keeps working when the router runs inside a CUDA graph.
     After each step one all-reduce sums the ``[layers, experts]`` counts over all ranks; MTP and hash-routed MoE
-    layers are included. This callback only records; the CI evaluator applies the case's limits.
+    layers are included, and evaluation during training is not counted. This callback only records; the CI
+    evaluator applies the case's limits.
 
     Args:
         report_path: Where rank 0 writes the JSON report.
@@ -413,6 +414,7 @@ class ExpertLoadMonitor(Callback):
         self._steps: list[dict[str, Any]] = []
         self._handles: list[Any] = []
         self._num_experts = 0
+        self._paused = False
 
     def on_train_start(self, context: CallbackContext) -> None:
         """Register one counting hook per local MoE layer."""
@@ -455,7 +457,7 @@ class ExpertLoadMonitor(Callback):
         kwargs: dict[str, Any],
     ) -> None:
         tokens = args[1] if len(args) > 1 else kwargs.get("tokens_per_expert")
-        if tokens is None:
+        if tokens is None or self._paused:
             return
         tokens = torch.as_tensor(tokens).reshape(-1).to(torch.int64)
         target = self._host_counts if tokens.device.type == "cpu" else self._counts
@@ -465,6 +467,14 @@ class ExpertLoadMonitor(Callback):
                 f"An MoE layer's experts received counts for {tokens.numel()} experts but hold {local_indices.numel()}."
             )
         target[row].index_add_(0, local_indices, tokens.to(target.device))
+
+    def on_eval_start(self, context: CallbackContext) -> None:
+        """Stop counting while the model evaluates; validation tokens are not a training step's load."""
+        self._paused = True
+
+    def on_eval_end(self, context: CallbackContext) -> None:
+        """Count again once evaluation has finished."""
+        self._paused = False
 
     def on_train_step_end(self, context: CallbackContext) -> None:
         """Sum this step's counts over all ranks and record them."""

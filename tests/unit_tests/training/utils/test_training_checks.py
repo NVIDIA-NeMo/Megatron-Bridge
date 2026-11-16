@@ -278,3 +278,23 @@ def test_expert_load_monitor_does_nothing_for_a_dense_model(tmp_path):
     monitor.on_train_end(_context(torch.nn.Linear(2, 2), None))
     assert not (tmp_path / "experts.json").exists()
     assert training_checks.EXPERT_LOAD_REPORT == "expert_load.json"
+
+
+def test_expert_load_monitor_ignores_tokens_seen_during_evaluation(tmp_path):
+    model = torch.nn.Module()
+    model.layer = _MoELayer([0, 1, 2, 3])
+    monitor = ExpertLoadMonitor(tmp_path / "experts.json")
+    monitor.on_train_start(_context(model, None))
+
+    hidden = torch.zeros(1)
+    model.layer.experts(hidden, torch.tensor([1, 1, 1, 1]), None)
+    monitor.on_eval_start(_context(model, None))
+    model.layer.experts(hidden, torch.tensor([100, 0, 0, 0]), None)
+    monitor.on_eval_end(_context(model, None))
+    model.layer.experts(hidden, torch.tensor([1, 1, 1, 1]), None)
+    monitor.on_train_step_end(_context(model, None, step=50))
+    monitor.on_train_end(_context(model, None))
+
+    report = json.loads((tmp_path / "experts.json").read_text())
+    assert report["steps"][0]["tokens"] == [8]
+    assert report["steps"][0]["max_load"] == [1.0]

@@ -55,34 +55,8 @@ MAX_PERSISTED_GOLDEN_STEPS = 10000
 _PINNED_GOLDEN_STEPS = ("0", "49")
 
 
-def get_metrics_from_logfiles(log_paths: List[str], metric: str):
-    """
-    Parse training log files and extract metrics.
-
-    Args:
-        log_paths: Paths to the log files
-        metric: Metric name to extract
-
-    Returns:
-        For scalar metrics (alloc, max_alloc): float or None
-        For max_reserved: max float across occurrences or None
-        For per-step metrics: Dict[str, float] keyed by 0-indexed step number
-    """
-    patterns = {
-        "iteration": r"iteration\s+(\d+)/\s+\d+",
-        "elapsed time per iteration (ms)": r"elapsed time per iteration \(ms\):\s+([\d.]+)",
-        "lm loss": r"lm loss:\s+([\d.E+\-]+)",
-        "GPU utilization": r"GPU utilization:\s+([\d.]+)",
-        "step time": r"Step Time :\s+([\d.]+)s",
-        "grad norm": r"grad norm:\s+([\d.]+|nan|inf)",
-        "learning rate": r"\| learning rate:\s+([\d.E+\-]+)",
-        "consumed samples": r"consumed samples:\s+(\d+)",
-        "alloc": r"mem-allocated-gigabytes:\s*([\d\.]+)",
-        "max_alloc": r"mem-max-allocated-gigabytes:\s*([\d\.]+)",
-        "max_reserved": r"mem-max-reserved-gigabytes:\s*([\d\.]+)",
-    }
-
-    metrics: Dict[str, List] = {k: [] for k in patterns}
+def _read_log_lines(log_paths: List[str]) -> List[str]:
+    """Read every line of the chosen training logs."""
     all_lines = []
     handles = []
     # Prefer the aggregated all-ranks capture when present: it already contains
@@ -116,8 +90,107 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     finally:
         for f in handles:
             f.close()
+    return all_lines
 
-    for line in all_lines:
+
+VALIDATION_LOSS_METRIC = "validation lm loss"
+_VALIDATION_LOSS_PATTERN = re.compile(
+    r"validation loss at iteration\s+(\d+)\s+\|\s+lm loss value:\s+([\d.E+\-]+|nan|inf)"
+)
+
+
+def get_validation_losses_from_logfiles(log_paths: List[str]) -> Dict[str, float]:
+    """Parse the LM loss of each evaluation that runs during training.
+
+    The evaluation after training ("validation loss at iteration N on validation set") is not included: it repeats
+    the last in-training evaluation's step on other validation batches.
+
+    Args:
+        log_paths: Paths to the log files.
+
+    Returns:
+        Validation LM loss keyed by 0-indexed step, like the per-step training metrics.
+    """
+    losses = {}
+    for line in _read_log_lines(log_paths):
+        if match := _VALIDATION_LOSS_PATTERN.search(line):
+            losses[str(int(match.group(1)) - 1)] = float(match.group(2))
+    return losses
+
+
+def validate_validation_loss(
+    current_values: Dict[str, float],
+    golden_values: Dict[str, float],
+    *,
+    loss_tolerance: float,
+    logger: logging.Logger = logger,
+) -> Dict[str, Any]:
+    """Compare the validation LM loss at each golden evaluation step within a relative tolerance.
+
+    Args:
+        current_values: Validation LM loss of this run, keyed by 0-indexed step.
+        golden_values: Golden validation LM loss, keyed by 0-indexed step.
+        loss_tolerance: Allowed relative difference at every evaluation step.
+        logger: Logger for the result.
+
+    Returns:
+        Dict with ``passed``, ``failed_metrics``, ``summary``, ``details`` and ``metrics``.
+    """
+    failures = []
+    worst = 0.0
+    for step in sorted(golden_values, key=int):
+        golden, current = golden_values[step], current_values.get(step)
+        iteration = int(step) + 1
+        if current is None:
+            failures.append(f"iteration {iteration}: no validation loss logged")
+            continue
+        if not math.isfinite(current):
+            failures.append(f"iteration {iteration}: validation loss is {current}")
+            continue
+        difference = abs(current - golden) / abs(golden) if golden else abs(current)
+        worst = max(worst, difference)
+        if difference > loss_tolerance:
+            failures.append(
+                f"iteration {iteration}: validation loss {current:.6f} vs golden {golden:.6f} "
+                f"(diff {difference:.2e} > {loss_tolerance:.2e})"
+            )
+    metrics = {
+        "validation_iterations": [int(step) + 1 for step in sorted(golden_values, key=int)],
+        "worst_relative_validation_loss_difference": worst,
+        "loss_tolerance": loss_tolerance,
+    }
+    return _check_result(failures, metrics, "validation_loss", logger)
+
+
+def get_metrics_from_logfiles(log_paths: List[str], metric: str):
+    """
+    Parse training log files and extract metrics.
+
+    Args:
+        log_paths: Paths to the log files
+        metric: Metric name to extract
+
+    Returns:
+        For scalar metrics (alloc, max_alloc): float or None
+        For max_reserved: max float across occurrences or None
+        For per-step metrics: Dict[str, float] keyed by 0-indexed step number
+    """
+    patterns = {
+        "iteration": r"iteration\s+(\d+)/\s+\d+",
+        "elapsed time per iteration (ms)": r"elapsed time per iteration \(ms\):\s+([\d.]+)",
+        "lm loss": r"lm loss:\s+([\d.E+\-]+)",
+        "GPU utilization": r"GPU utilization:\s+([\d.]+)",
+        "step time": r"Step Time :\s+([\d.]+)s",
+        "grad norm": r"grad norm:\s+([\d.]+|nan|inf)",
+        "learning rate": r"\| learning rate:\s+([\d.E+\-]+)",
+        "consumed samples": r"consumed samples:\s+(\d+)",
+        "alloc": r"mem-allocated-gigabytes:\s*([\d\.]+)",
+        "max_alloc": r"mem-max-allocated-gigabytes:\s*([\d\.]+)",
+        "max_reserved": r"mem-max-reserved-gigabytes:\s*([\d\.]+)",
+    }
+
+    metrics: Dict[str, List] = {k: [] for k in patterns}
+    for line in _read_log_lines(log_paths):
         for metric_name, pattern in patterns.items():
             if metric_name == "max_reserved":
                 metrics[metric_name].extend(float(value) for value in re.findall(pattern, line))
@@ -914,6 +987,7 @@ def calc_convergence_and_performance(
     _logger: logging.Logger = None,
     max_reserved_metric: str = "max_reserved",
     prior_values: Optional[Dict[str, Any]] = None,
+    validation_config: Optional[Dict[str, Any]] = None,
 ):
     """
     Calculate convergence metrics and validate against golden values.
@@ -937,6 +1011,9 @@ def calc_convergence_and_performance(
             skip_first_percent_loss
         wandb_run: An optional wandb run object to log metrics to
         _logger: Logger to use; defaults to this module's logger if not provided
+        validation_config: Optional ``{"loss_tolerance": float}``. The validation LM loss of each in-training
+            evaluation is always recorded with its step; it is compared with the golden values when they include
+            it and this tolerance is given.
     """
     _logger = _logger or logger
 
@@ -953,6 +1030,7 @@ def calc_convergence_and_performance(
     current_max_alloc = get_metrics_from_logfiles(log_paths, max_alloc_metric)
     current_max_reserved = get_metrics_from_logfiles(log_paths, max_reserved_metric)
     current_gpu_util = get_metrics_from_logfiles(log_paths, "GPU utilization")
+    current_validation_loss = get_validation_losses_from_logfiles(log_paths)
 
     golden_values_file_name = pathlib.Path(golden_values_path).name
     next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
@@ -979,6 +1057,9 @@ def calc_convergence_and_performance(
             max_reserved_metric: current_max_reserved,
         },
     )
+    for step, loss in current_validation_loss.items():
+        if isinstance(segment_values.get(step), dict):
+            segment_values[step][VALIDATION_LOSS_METRIC] = loss
     # A resumed long-convergence slice only logs its own steps, so persisting this
     # slice alone records a partial (tail-only) curve. Merge with the per-step values
     # carried over from earlier slices (read from the persistent dir by the launcher
@@ -1022,6 +1103,7 @@ def calc_convergence_and_performance(
     golden_train_loss = {}
     golden_iter_time = {}
     golden_gpu_util = {}
+    golden_validation_loss = {}
     golden_alloc = None
     golden_max_alloc = None
     golden_max_reserved = None
@@ -1041,6 +1123,8 @@ def calc_convergence_and_performance(
         golden_train_loss[key] = value[loss_metric]
         golden_iter_time[key] = value[timing_metric]
         golden_gpu_util[key] = value.get("GPU utilization")
+        if VALIDATION_LOSS_METRIC in value:
+            golden_validation_loss[key] = value[VALIDATION_LOSS_METRIC]
 
     # Extract golden_lm_loss and golden_iter_time lists
     _logger.info(f"Comparing {len(steps)} training steps for convergence")
@@ -1064,6 +1148,19 @@ def calc_convergence_and_performance(
         error_msg += f"Failed metrics: {', '.join(convergence_result['failed_metrics'])}\n"
         if convergence_result.get("details"):
             error_msg += "Details:\n" + convergence_result["details"]
+
+    # check for validation loss
+    validation_result = None
+    validation_tolerance = (validation_config or {}).get("loss_tolerance")
+    if golden_validation_loss and validation_tolerance is not None:
+        validation_result = validate_validation_loss(
+            current_validation_loss, golden_validation_loss, loss_tolerance=validation_tolerance, logger=_logger
+        )
+        if not validation_result["passed"]:
+            error_msg += f"Validation loss check failed. {validation_result['summary']}\n"
+            error_msg += validation_result["details"] + "\n"
+    elif current_validation_loss:
+        _logger.info(f"Validation losses (reported, not checked): {current_validation_loss}")
 
     # check for performance
     golden_iter_time_values = np.array([golden_iter_time[str(step)] for step in steps])
@@ -1150,6 +1247,8 @@ def calc_convergence_and_performance(
     has_validation_failures = (
         not convergence_result["passed"] or not performance_result["passed"] or has_nan_grad_norm or has_inf_grad_norm
     )
+    if validation_result is not None:
+        has_validation_failures = has_validation_failures or not validation_result["passed"]
 
     if not memory_metrics_missing:
         has_validation_failures = has_validation_failures or not memory_result["passed"]

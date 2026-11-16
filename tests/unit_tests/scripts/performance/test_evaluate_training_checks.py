@@ -186,3 +186,109 @@ def test_resume_continuity_with_a_loss_tolerance_and_missing_steps(tmp_path):
         reference, drifted, expected_iterations=list(range(51, 56)), loss_tolerance=1e-3
     )
     assert "did not log iterations [54, 55]" in short["details"]
+
+
+def _log_with_validation(path, losses):
+    lines = []
+    for iteration in range(1, 101):
+        lines.append(
+            f" [2026-11-16 10:00:00] iteration {iteration:8d}/     100 | consumed samples: {iteration * 256:12d} | "
+            f"elapsed time per iteration (ms): 3400.0 | learning rate: 1.000000E-04 | global batch size:   256 | "
+            f"lm loss: {2.0 - iteration / 1000:.6E} | loss scale: 1.0 | grad norm: 1.000 |"
+        )
+        if iteration in losses:
+            lines.append(
+                f" validation loss at iteration {iteration} | lm loss value: {losses[iteration]:.6E} | "
+                f"lm loss PPL: 7.000000E+00 | "
+            )
+    lines.append(" validation loss at iteration 100 on validation set | lm loss value: 9.000000E+00 | ")
+    path.write_text("\n".join(lines) + "\n")
+    return [str(path)]
+
+
+def test_validation_losses_are_parsed_per_in_training_evaluation(tmp_path):
+    log = _log_with_validation(tmp_path / "log-allranks.out", {50: 1.95, 100: 1.9})
+    # The evaluation after training repeats step 100 on other validation batches and is not used.
+    assert evaluate.get_validation_losses_from_logfiles(log) == {"49": 1.95, "99": 1.9}
+    # Validation lines do not leak into the training-loss parse.
+    assert evaluate.get_metrics_from_logfiles(log, "lm loss")["49"] == pytest.approx(1.95)
+    assert len(evaluate.get_metrics_from_logfiles(log, "lm loss")) == 100
+
+
+def test_validation_loss_check_within_and_outside_the_tolerance():
+    golden = {"49": 2.0, "99": 1.9}
+    assert evaluate.validate_validation_loss({"49": 2.001, "99": 1.9}, golden, loss_tolerance=1e-3)["passed"]
+    outside = evaluate.validate_validation_loss({"49": 2.01, "99": 1.9}, golden, loss_tolerance=1e-3)
+    assert "iteration 50: validation loss 2.010000 vs golden 2.000000" in outside["details"]
+    missing = evaluate.validate_validation_loss({"49": 2.0, "99": float("nan")}, golden, loss_tolerance=1e-3)
+    assert "iteration 100: validation loss is nan" in missing["details"]
+    assert (
+        "iteration 50: no validation loss logged"
+        in (evaluate.validate_validation_loss({"99": 1.9}, golden, loss_tolerance=1e-3)["details"])
+    )
+
+
+def _golden(path, validation):
+    steps = {
+        str(step): {
+            "lm loss": 2.0 - (step + 1) / 1000,
+            "elapsed time per iteration (ms)": 3400.0,
+            "GPU utilization": 1,
+        }
+        for step in range(100)
+    }
+    for step, loss in validation.items():
+        steps[step]["validation lm loss"] = loss
+    steps.update({"alloc": 1.0, "max_alloc": 1.0})
+    path.write_text(json.dumps(steps))
+    return str(path)
+
+
+def _calc(tmp_path, log, golden, validation_config, monkeypatch):
+    monkeypatch.setattr(
+        evaluate, "get_metrics_from_logfiles", _metrics_with_memory(evaluate.get_metrics_from_logfiles)
+    )
+    return evaluate.calc_convergence_and_performance(
+        model_family_name="test",
+        model_recipe_name="test_recipe",
+        assets_dir=str(tmp_path / "assets"),
+        log_paths=log,
+        loss_metric="lm loss",
+        timing_metric="elapsed time per iteration (ms)",
+        alloc_metric="alloc",
+        max_alloc_metric="max_alloc",
+        golden_values_path=golden,
+        convergence_config={},
+        performance_config={"timing_threshold": 0.1},
+        memory_config={"memory_threshold": 0.05},
+        validation_config=validation_config,
+    )
+
+
+def _metrics_with_memory(parse):
+    def metrics(log_paths, metric):
+        if metric in ("alloc", "max_alloc"):
+            return 1.0
+        if metric == "max_reserved":
+            return None
+        if metric == "GPU utilization":
+            return {str(step): 1.0 for step in range(100)}
+        return parse(log_paths, metric)
+
+    return metrics
+
+
+def test_calc_records_validation_losses_and_checks_them_against_golden_values(tmp_path, monkeypatch):
+    log = _log_with_validation(tmp_path / "log-allranks.out", {50: 1.95, 100: 1.9})
+
+    passed, message, current = _calc(tmp_path, log, _golden(tmp_path / "golden.json", {}), None, monkeypatch)
+    assert passed, message
+    assert current["49"]["validation lm loss"] == 1.95  # recorded for the next golden refresh
+
+    golden = _golden(tmp_path / "golden.json", {"49": 1.95, "99": 1.8})
+    passed, message, _ = _calc(tmp_path, log, golden, {"loss_tolerance": 0.01}, monkeypatch)
+    assert not passed
+    assert "Validation loss check failed" in message and "iteration 100" in message
+    # Without a declared tolerance the golden validation losses are reported, not checked.
+    passed, message, _ = _calc(tmp_path, log, golden, None, monkeypatch)
+    assert passed, message
