@@ -20,6 +20,7 @@ auto-generate its causal mask) and the HF path uses torch.ones_like(input_ids, d
 
 import os
 import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -662,3 +663,98 @@ class TestCompareMaskHandling:
         assert "tp_plan" not in load_kwargs
         assert "tp_size" not in load_kwargs
         loaded_model.to.assert_called_once_with("cuda")
+
+
+_NEMOTRON_H_KERNEL_HELPERS = (
+    "causal_conv1d_fn",
+    "causal_conv1d_update",
+    "mamba2_chunk_scan",
+    "mamba2_selective_state_update",
+    "mamba2_split_conv1d_scan_combined",
+)
+
+
+def _small_nemotron_h():
+    from transformers import NemotronHConfig, NemotronHForCausalLM
+
+    torch.manual_seed(0)
+    config = NemotronHConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        vocab_size=128,
+        max_position_embeddings=64,
+        layers_block_type=["mamba", "attention", "moe", "mamba"],
+        mamba_num_heads=4,
+        mamba_head_dim=16,
+        ssm_state_size=16,
+        n_groups=2,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        moe_intermediate_size=32,
+        moe_shared_expert_intermediate_size=64,
+        num_nextn_predict_layers=0,
+    )
+    return NemotronHForCausalLM(config).to(torch.bfloat16).eval()
+
+
+def _bind_cuda_only_causal_conv1d(monkeypatch, modeling_nemotron_h):
+    """Bind NemotronH's conv helper the way transformers does when causal_conv1d is installed."""
+    from transformers.integrations import use_kernel_func_from_hub_with_fallback
+
+    def causal_conv1d_fn(x, weight, bias=None, activation=None, **kwargs):
+        if not x.is_cuda:
+            raise RuntimeError("Expected x.is_cuda() to be true, but got false.")
+        raise AssertionError("CPU tests never reach the CUDA kernel")
+
+    package = types.ModuleType("causal_conv1d")
+    package.causal_conv1d_fn = causal_conv1d_fn
+    monkeypatch.setitem(sys.modules, "causal_conv1d", package)
+    wrapper = use_kernel_func_from_hub_with_fallback("causal_conv1d_fn", "causal_conv1d")(
+        modeling_nemotron_h.causal_conv1d_fn.__wrapped__
+    )
+    monkeypatch.setattr(modeling_nemotron_h, "causal_conv1d_fn", wrapper)
+    return wrapper
+
+
+@pytest.mark.unit
+class TestCpuReferenceKernelFallbacks:
+    """A CPU HF reference must not reach the CUDA-only kernels transformers binds at import."""
+
+    def test_cpu_reference_runs_mamba_helpers_in_pytorch(self, monkeypatch):
+        from transformers.models.nemotron_h import modeling_nemotron_h
+
+        model = _small_nemotron_h()
+        input_ids = torch.tensor([[3, 17, 42, 5, 99, 64, 7]])
+        with monkeypatch.context() as torch_only:
+            for name in _NEMOTRON_H_KERNEL_HELPERS:
+                torch_only.setattr(modeling_nemotron_h, name, getattr(modeling_nemotron_h, name).__wrapped__)
+            with torch.no_grad():
+                attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+                expected = model(input_ids=input_ids, attention_mask=attention_mask).logits[0, -1]
+        cuda_only = _bind_cuda_only_causal_conv1d(monkeypatch, modeling_nemotron_h)
+
+        hf_logits, hf_next_token, *_ = _run_hf_inference(model, input_ids, None, None, MagicMock())
+
+        assert torch.isfinite(hf_logits).all()
+        torch.testing.assert_close(hf_logits, expected, rtol=0, atol=0)
+        assert hf_next_token.item() == expected.argmax().item()
+        assert modeling_nemotron_h.causal_conv1d_fn is cuda_only
+
+    @pytest.mark.parametrize(("device", "uses_fallbacks"), [("cpu", True), ("meta", False)])
+    def test_only_cpu_reference_swaps_kernels(self, device, uses_fallbacks):
+        class Reference(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.empty(1, device=device))
+
+            def forward(self, input_ids, attention_mask):
+                return SimpleNamespace(logits=torch.zeros(1, input_ids.shape[1], 8))
+
+        with patch.object(compare, "_torch_kernel_fallbacks", wraps=compare._torch_kernel_fallbacks) as fallbacks:
+            _run_hf_inference(Reference(), torch.tensor([[1, 2]]), None, None, MagicMock())
+
+        assert fallbacks.called is uses_fallbacks

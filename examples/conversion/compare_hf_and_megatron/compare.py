@@ -91,11 +91,14 @@ Output:
 """
 
 import argparse
+import contextlib
 import gc
 import importlib
 import io
 import os
 import sys
+from collections.abc import Iterator
+from types import CodeType
 from typing import Optional
 
 import torch
@@ -627,6 +630,52 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
+def _kernel_fallback_wrapper_code() -> CodeType | None:
+    """Return the code object shared by transformers' kernel-or-PyTorch helper wrappers.
+
+    ``use_kernel_func_from_hub_with_fallback`` (transformers 5.15+) wraps every helper with the same
+    inner function. Older releases have no such wrappers and check the device in the model code.
+    """
+    try:
+        from transformers.integrations import use_kernel_func_from_hub_with_fallback
+    except ImportError:
+        return None
+    # An empty package name cannot be imported, so the probe wraps its own PyTorch function.
+    probe = use_kernel_func_from_hub_with_fallback("compare_probe", "")(lambda: None)
+    return getattr(probe, "__code__", None)
+
+
+@contextlib.contextmanager
+def _torch_kernel_fallbacks(model: torch.nn.Module) -> Iterator[None]:
+    """Run ``model`` with transformers' PyTorch references instead of package kernels.
+
+    transformers 5.15+ wraps model helpers such as NemotronH's ``causal_conv1d_fn`` with
+    ``use_kernel_func_from_hub_with_fallback``, which binds an installed package (``causal_conv1d``,
+    ``mamba_ssm``, ``fla``) once at import without checking the tensor device. Those kernels are
+    CUDA-only, so a CPU forward fails with "Expected x.is_cuda() to be true". Inside this context the
+    modeling modules of ``model`` call each wrapped PyTorch reference directly, as transformers itself
+    does under ``torch.export``.
+    """
+    wrapper_code = _kernel_fallback_wrapper_code()
+    modules = {sys.modules.get(cls.__module__) for submodule in model.modules() for cls in type(submodule).__mro__}
+    patched = [
+        (module, name, value)
+        for module in modules - {None}
+        for name, value in vars(module).items()
+        if wrapper_code is not None and getattr(value, "__code__", None) is wrapper_code
+    ]
+    for module, name, value in patched:
+        setattr(module, name, value.__wrapped__)
+    if patched:
+        names = ", ".join(sorted({name for _, name, _ in patched}))
+        print_rank_0(f"CPU HF reference uses the PyTorch implementations of: {names}")
+    try:
+        yield
+    finally:
+        for module, name, value in patched:
+            setattr(module, name, value)
+
+
 def _get_hf_forward_model(hf_model, pixel_values, pixel_values_videos=None):
     """Select a composite model's language backbone for text-only comparison."""
     language_model = getattr(hf_model, "language_model", None)
@@ -696,7 +745,9 @@ def _run_hf_inference(
         if mm_token_type_ids is not None:
             hf_inputs["mm_token_type_ids"] = mm_token_type_ids.to(hf_device)
 
-        hf_output = hf_forward_model(**hf_inputs)
+        on_cpu = torch.device(hf_device).type == "cpu"
+        with _torch_kernel_fallbacks(hf_forward_model) if on_cpu else contextlib.nullcontext():
+            hf_output = hf_forward_model(**hf_inputs)
 
         # Debug: Check output type
         print_rank_0(f"HF output type: {type(hf_output)}")
@@ -1247,7 +1298,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hf-device",
         default="cuda",
-        help="CUDA device used by the rank-0 Hugging Face reference model (for example, cuda:2).",
+        help="Device used by the rank-0 Hugging Face reference model (for example, cuda:2 or cpu).",
     )
     parser.add_argument(
         "--model_class",
