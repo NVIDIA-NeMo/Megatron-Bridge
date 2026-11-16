@@ -338,10 +338,12 @@ def _load(model, config: dict, tensors: dict[str, torch.Tensor]) -> _Ernie55Test
     return bridge
 
 
-def _export(bridge, model, config: dict, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+def _export(
+    bridge, model, config: dict, tensors: dict[str, torch.Tensor], *, conversion_tasks=None
+) -> dict[str, torch.Tensor]:
     exported: dict[str, torch.Tensor] = {}
     for name, tensor in bridge.stream_weights_megatron_to_hf(
-        [model], _hf_pretrained(config, tensors), cpu=True, show_progress=False
+        [model], _hf_pretrained(config, tensors), cpu=True, show_progress=False, conversion_tasks=conversion_tasks
     ):
         assert name not in exported, f"{name} exported twice"
         exported[name] = tensor.detach().clone()
@@ -834,6 +836,62 @@ class TestExportOfReleasedCheckpoints:
         saved = SafeTensorsStateSource(tmp_path / "strict")
         for copy, body in _released_copies(toy.config, toy.tensors).items():
             assert torch.equal(saved[copy], saved[body]), copy
+
+    def test_export_with_tasks_built_by_another_bridge(self, toy):
+        """``AutoBridge`` resolves a new bridge per call: the tasks of ``get_conversion_tasks`` reach
+        ``export_hf_weights`` on a bridge that built none. The copies are written all the same."""
+        source = _with_released_copies(toy.config, toy.tensors)
+        _load(toy.model, toy.config, source)
+        tasks = _Ernie55TestBridge().build_conversion_tasks(_hf_pretrained(toy.config, source), [toy.model])
+        exported = _export(_Ernie55TestBridge(), toy.model, toy.config, source, conversion_tasks=tasks)
+        _assert_bitwise_equal(exported, source)
+
+
+@pytest.fixture(scope="module")
+def toy_without_mtp(pg_collection):
+    """The proxy-layout toy built without its MTP depth, loaded from the checkpoint of the layout with it."""
+    config = _toy_hf_config()
+    source = _with_released_copies(config, _toy_hf_tensors(config, seed=1))
+    model = _build_model(pg_collection, pattern=_PATTERN.split("/")[0], seed=0, **_megatron_overrides())
+    _load(model, config, source)
+    mtp = f"model.layers.{config['num_hidden_layers']}."
+    assert any(name.startswith(mtp) for name in source)
+    decoder = {name: tensor for name, tensor in source.items() if not name.startswith(mtp)}
+    return SimpleNamespace(config=config, source=source, model=model, decoder=decoder)
+
+
+class TestExportOfAModelWithoutMtp:
+    """A model built without MTP, exported against a checkpoint that has an MTP layer and the body's copies: the
+    export holds the decoder's tensors and nothing under the MTP layer, neither its own tensors nor the copies."""
+
+    def test_export_with_its_own_tasks(self, toy_without_mtp):
+        toy = toy_without_mtp
+        bridge = _Ernie55TestBridge()
+        _assert_bitwise_equal(_export(bridge, toy.model, toy.config, toy.source), toy.decoder)
+        assert bridge._ernie55_export_writes_mtp is False
+
+    def test_export_with_tasks_built_by_another_bridge(self, toy_without_mtp):
+        """The bridge that exports never built tasks; it decides from the tasks it is given."""
+        toy = toy_without_mtp
+        tasks = _Ernie55TestBridge().build_conversion_tasks(_hf_pretrained(toy.config, toy.source), [toy.model])
+        exported = _export(_Ernie55TestBridge(), toy.model, toy.config, toy.source, conversion_tasks=tasks)
+        _assert_bitwise_equal(exported, toy.decoder)
+
+    def test_supplied_tasks_decide_and_not_an_earlier_export(self, toy_without_mtp, toy):
+        """One exporting bridge, two exports with supplied tasks: the model without MTP, then the model with it.
+        Each task list comes from a bridge of its own, as a bridge keeps the parameter names of the model it
+        built tasks for."""
+        without = toy_without_mtp
+        source = _with_released_copies(toy.config, toy.tensors)
+        _load(toy.model, toy.config, source)
+        bridge = _Ernie55TestBridge()
+        tasks = _Ernie55TestBridge().build_conversion_tasks(
+            _hf_pretrained(without.config, without.source), [without.model]
+        )
+        exported = _export(bridge, without.model, without.config, without.source, conversion_tasks=tasks)
+        _assert_bitwise_equal(exported, without.decoder)
+        tasks = _Ernie55TestBridge().build_conversion_tasks(_hf_pretrained(toy.config, source), [toy.model])
+        _assert_bitwise_equal(_export(bridge, toy.model, toy.config, source, conversion_tasks=tasks), source)
 
 
 # ---------------------------------------------------------------------------------------------

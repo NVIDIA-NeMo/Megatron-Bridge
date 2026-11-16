@@ -1048,6 +1048,11 @@ def _check_checkpoint_of(hf_pretrained: Any) -> None:
         check_ernie55_checkpoint_keys(hf_pretrained.config, source.get_all_keys())
 
 
+def _exports_an_mtp_layer(tasks: Iterable[Any]) -> bool:
+    """Whether ``tasks`` convert a parameter an MTP layer owns, which a model built without MTP does not have."""
+    return any(task is not None and task.global_param_name.startswith("mtp.") for task in tasks)
+
+
 class Ernie55WeightConversionMixin:
     """ERNIE 5.5 weight conversion for a ``MegatronModelBridge`` subclass, listed before it among the bases.
 
@@ -1105,8 +1110,42 @@ class Ernie55WeightConversionMixin:
             The conversion tasks.
         """
         tasks = super().build_conversion_tasks(hf_pretrained, megatron_model, *args, **kwargs)
-        self._ernie55_export_writes_mtp = any(task.global_param_name.startswith("mtp.") for task in tasks)
+        self._ernie55_export_writes_mtp = _exports_an_mtp_layer(tasks)
         return tasks
+
+    def _stream_weight_events_megatron_to_hf(
+        self,
+        megatron_model: Any,
+        hf_pretrained: Any,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: Any = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+        with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
+    ) -> Iterable[Any]:
+        """Export as ``MegatronModelBridge`` does, and note from caller-supplied tasks whether the model has MTP.
+
+        Tasks the export builds itself go through :meth:`build_conversion_tasks` on this bridge. Supplied tasks
+        do not, and ``AutoBridge`` resolves a new bridge for every call, so the tasks of
+        ``AutoBridge.get_conversion_tasks`` reach the export on a bridge that never built any. The decision of
+        :meth:`maybe_modify_converted_hf_weight` is therefore taken here from the tasks this export runs, before
+        any pipeline-stage filtering, and not from an earlier call.
+        """
+        if conversion_tasks is not None:
+            self._ernie55_export_writes_mtp = _exports_an_mtp_layer(conversion_tasks)
+        yield from super()._stream_weight_events_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+            with_megatron_names=with_megatron_names,
+            current_pp_stage_only=current_pp_stage_only,
+        )
 
     def maybe_modify_converted_hf_weight(
         self,
@@ -1122,7 +1161,7 @@ class Ernie55WeightConversionMixin:
         is written with the exported tensor, so the export has the source checkpoint's tensor names and a strict
         save completes the shards that hold the copies. Nothing is added for a source checkpoint without copies
         (one written by an export that left them out, or a config-only wrapper), nor for a model built without
-        MTP (:meth:`build_conversion_tasks`).
+        MTP (:meth:`build_conversion_tasks`, :meth:`_stream_weight_events_megatron_to_hf`).
 
         Args:
             task: The conversion task of the exported tensors.
