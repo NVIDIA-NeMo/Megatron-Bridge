@@ -10,16 +10,22 @@ from megatron.bridge.training.config import ConfigContainer
 def llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """Configure 405B MXFP8 pretraining at 8K on 64 VR NVL72 GPUs.
 
-    Shares the GB200 64-GPU training configuration: TP8/PP8/VPP8/CP1,
-    sequence parallelism, tensor-parallel communication overlap, no activation
-    recomputation, and no CUDA graphs. Place all sixteen four-GPU nodes in
-    one NVLink domain. Global batch 1536 and microbatch one give 1536
-    microbatches per optimizer update at DP1.
+    Uses TP4/PP8/VPP4/CP1 with sequence parallelism, tensor-parallel
+    communication overlap disabled, no activation recomputation, and no
+    CUDA graphs. Place all sixteen four-GPU nodes in one NVLink domain.
+    Global batch 1536 and microbatch one give 768 microbatches per optimizer
+    update at DP2.
 
     MXFP8 parameter gather reuses the gradient buffer. Gradient accumulation
     is BF16; optimizer master parameters and Adam moments remain FP32.
     The training schedule, checkpointing, and numerical checks retain their
     training defaults. The default dataset is synthetic; configure a tokenizer
-    and indexed dataset for real-text training.
+    and indexed dataset for real-text training. Causal attention is provided
+    by the attention backend without materializing a dense dataset mask.
     """
-    return _llama31_405b_pretrain_64gpu_fp8mx_common()
+    cfg = _llama31_405b_pretrain_64gpu_fp8mx_common()
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.comm_overlap.tp_comm_overlap = False
+    cfg.dataset.create_attention_mask = False
+    return cfg
