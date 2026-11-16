@@ -623,10 +623,10 @@ class TestConfigContainer_ToYaml:
 
         # Verify that the file is created in the temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
-            config.to_yaml(f"msc://default{temp_dir}/test_output.yaml")
+            config.to_yaml(f"msc://__filesystem__{temp_dir}/test_output.yaml")
             assert os.path.exists(f"{temp_dir}/test_output.yaml")
 
-            loaded_config = TestConfigContainer.from_yaml(f"msc://default{temp_dir}/test_output.yaml")
+            loaded_config = TestConfigContainer.from_yaml(f"msc://__filesystem__{temp_dir}/test_output.yaml")
             assert config.to_dict() == loaded_config.to_dict()
 
 

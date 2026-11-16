@@ -429,6 +429,47 @@ def test_stream_weights_hf_to_megatron_uses_external_state_and_bridge_preprocess
     assert converted[0].weight is mapping.hf_to_megatron.return_value
 
 
+def test_stream_weights_hf_to_megatron_dequantizes_fp8_weights_the_bridge_hook_leaves_quantized():
+    bridge = DummyBridge()
+    bridge.hf_config = SimpleNamespace(quantization_config={"quant_method": "fp8", "weight_block_size": [2, 2]})
+    mapping = Mock()
+    mapping.hf_param = "hf.weight"
+    mapping.hf_to_megatron.side_effect = lambda weight, module: weight
+    task = WeightConversionTask(
+        param_name="weight",
+        global_param_name="weight",
+        mapping=mapping,
+        megatron_module=torch.nn.Module(),
+    )
+    codes = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [-1.0, -2.0, -3.0]], dtype=torch.float8_e4m3fn)
+    state = {"hf.weight": codes, "hf.weight_scale_inv": torch.tensor([[0.5, 2.0], [4.0, 0.25]])}
+
+    [converted] = bridge.stream_weights_hf_to_megatron(
+        SimpleNamespace(state=state), [torch.nn.Module()], [task], hf_state_dict=state
+    )
+
+    expected = torch.tensor([[0.5, 1.0, 6.0], [2.0, 2.5, 12.0], [-4.0, -8.0, -0.75]])
+    torch.testing.assert_close(converted.weight, expected, rtol=0, atol=0)
+
+
+def test_load_hf_weights_leaves_bridges_that_dequantize_in_their_hook_unchanged():
+    from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
+
+    torch.manual_seed(0)
+    state = {
+        "q.weight": (torch.randn(200, 160) * 50).to(torch.float8_e4m3fn),
+        "q.weight_scale_inv": torch.rand(2, 2) + 0.5,
+    }
+    bridge = DeepSeekV3Bridge()
+    bridge.hf_config = SimpleNamespace(quantization_config={"quant_method": "fp8", "weight_block_size": [128, 128]})
+
+    expected = bridge.maybe_modify_loaded_hf_weight("q.weight", state)
+    result = bridge._load_hf_weights("q.weight", state)
+
+    assert result.dtype == expected.dtype == torch.bfloat16
+    assert torch.equal(result, expected)
+
+
 @pytest.mark.parametrize(
     ("available_names", "expected_names"),
     [
@@ -2440,3 +2481,16 @@ def test_mapping_reads_partial_rotary_factor_from_hf_config():
     kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
 
     assert kwargs["rotary_percent"] == 0.5
+
+
+def test_plain_export_casts_every_float_weight_by_default():
+    assert MegatronModelBridge.PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES == ("_scale_inv",)
+    weights = {"router": torch.randn(4), "proj": torch.randn(4).half(), "ids": torch.arange(4)}
+
+    cast = MegatronModelBridge._cast_export_weight_dtype(weights, torch.bfloat16)
+
+    assert {name: tensor.dtype for name, tensor in cast.items()} == {
+        "router": torch.bfloat16,
+        "proj": torch.bfloat16,
+        "ids": torch.int64,
+    }

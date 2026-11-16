@@ -136,8 +136,17 @@ TrainMode = Literal["pretrain", "finetune", "dpo"]
 # environment. A library recipe that declares one of them (and the user has not set it) is re-executed with the
 # recipe environment in place. Transformer Engine reads NVTE_CUTEDSL_FUSED_GROUPED_MLP once, when it registers the
 # CuTe DSL fused grouped MLP at import time; set any later, it is ignored and the unfused grouped GEMM runs. Python
-# reads PYTHONHASHSEED when the interpreter starts (deterministic recipes pin the str hash seed).
-IMPORT_TIME_RECIPE_ENV_VARS = frozenset({"NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP", "PYTHONHASHSEED"})
+# reads PYTHONHASHSEED when the interpreter starts (deterministic recipes pin the str hash seed). PyTorch reads the
+# allocator configuration once, when CUDA initializes, which importing the training stack already does.
+IMPORT_TIME_RECIPE_ENV_VARS = frozenset(
+    {
+        "NVTE_CPU_OFFLOAD_V1",
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP",
+        "PYTHONHASHSEED",
+        "PYTORCH_ALLOC_CONF",
+        "PYTORCH_CUDA_ALLOC_CONF",
+    }
+)
 
 
 COMMON_OVERRIDE_FIELDS = (
