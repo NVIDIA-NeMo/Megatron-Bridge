@@ -260,6 +260,30 @@ def test_energon_visual_token_budget_counts_the_collate_tokens(tmp_path):
         encode(collate_tokens - 1)
 
 
+def test_qwen3_vl_collate_rejects_only_a_truncation_inside_the_visual_tokens(tmp_path):
+    processor = _load_processor(tmp_path, qwen3_vl=True)
+    collate = resolve_model_collate(type(processor).__name__)
+    # The first answer comes before the clip, so the truncated row keeps supervised tokens.
+    example = {
+        "conversation": [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello"},
+            {"role": "user", "content": [_clip(8, sample_fps=2.0), {"type": "text", "text": "What happens?"}]},
+            {"role": "assistant", "content": "It gets brighter."},
+        ]
+    }
+    batch = collate([example], processor)
+    video_tokens = batch["input_ids"][0] == processor.video_token_id
+    first_video_token = int(video_tokens.nonzero()[0])
+    length = int(batch["attention_mask"][0].sum())
+
+    with pytest.raises(ValueError, match="removes visual tokens from rows \\[0\\]"):
+        collate([example], processor, sequence_length=first_video_token + 1)
+    # A truncation that cuts only the text after the clip keeps every visual token.
+    truncated = collate([example], processor, sequence_length=length - 3)["input_ids"][0]
+    assert int((truncated == processor.video_token_id).sum()) == int(video_tokens.sum())
+
+
 def test_qwen2_5_collate_passes_sampled_fps_to_video_positions(tmp_path):
     processor = _load_processor(tmp_path, qwen3_vl=False)
 

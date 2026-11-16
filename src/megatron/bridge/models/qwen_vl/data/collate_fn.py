@@ -235,6 +235,31 @@ def _qwen_vl_media_kwargs(
     return kwargs
 
 
+def _raise_if_truncation_cuts_visual_tokens(
+    input_ids: torch.Tensor, processor: Any, sequence_length: int | None
+) -> None:
+    """Raise a ValueError if a truncation to ``sequence_length`` removes visual tokens.
+
+    The visual features stay complete, so the remaining visual tokens would not match them.
+    """
+    if sequence_length is None or input_ids.size(1) <= sequence_length:
+        return
+    token_ids = [
+        token_id
+        for token_id in (getattr(processor, "image_token_id", None), getattr(processor, "video_token_id", None))
+        if isinstance(token_id, int)
+    ]
+    if not token_ids:
+        return
+    cut_rows = torch.isin(input_ids[:, sequence_length:], torch.tensor(token_ids, device=input_ids.device)).any(dim=1)
+    if cut_rows.any():
+        raise ValueError(
+            f"Truncating sequence batch from {input_ids.size(1)} to {sequence_length} tokens removes visual tokens "
+            f"from rows {cut_rows.nonzero().flatten().tolist()}. Increase sequence_length, or lower max_pixels or "
+            "the number of video frames."
+        )
+
+
 def _prepare_qwen_vl_sequence(
     example: dict[str, Any],
     processor: Any,
@@ -651,6 +676,7 @@ def _collate_qwen_vl_examples(
     for key in QWEN_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
+    _raise_if_truncation_cuts_visual_tokens(batch["input_ids"], processor, sequence_length)
     prepare_sequence_batch(
         batch,
         sequence_length=sequence_length,
