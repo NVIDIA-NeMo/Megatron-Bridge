@@ -43,7 +43,7 @@ from megatron.bridge.models.qwen_vl.data.collate_fn import (
     QwenVLPreparedSequence,
     build_qwen_vl_packed_batch,
     prepare_qwen_vl_sequence,
-    qwen2_5_collate_fn,
+    qwen3_vl_collate_fn,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -217,7 +217,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
 
     Args:
         tokenizer: HF tokenizer for resolving multimodal token ids.
-        image_processor: HF processor passed to the Qwen collate function.
+        image_processor: HF processor passed to ``qwen3_vl_collate_fn``.
         temporal_patch_size: Temporal patch size used for video token accounting.
         spatial_merge_size: Spatial merge size used for visual token accounting.
         patch_size: Vision patch size.
@@ -365,6 +365,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             prepared_sequence = prepare_qwen_vl_sequence(
                 example,
                 self.image_processor,
+                qwen3_vl=True,
                 min_pixels=self.min_pixels,
                 max_pixels=self.max_pixels,
                 require_assistant_matches=True,
@@ -437,11 +438,11 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             with multimodal ``content`` parts.
 
         Output format:
-            Returns the exact dictionary produced by ``qwen2_5_collate_fn``:
+            Returns the exact dictionary produced by ``qwen3_vl_collate_fn``:
             ``input_ids``, ``labels``, ``loss_mask``, ``position_ids``, optional
             ``attention_mask``, and ``visual_inputs``.
         """
-        return qwen2_5_collate_fn(
+        return qwen3_vl_collate_fn(
             examples,
             self.image_processor,
             sequence_length=self.seq_length,
@@ -465,7 +466,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
 
         Output format:
             Returns ``QwenVLTaskBatch`` carrying the same tensors as
-            ``qwen2_5_collate_fn`` plus Energon batch metadata. Native packs may
+            ``qwen3_vl_collate_fn`` plus Energon batch metadata. Native packs may
             be padded to ``seq_length`` while retaining separate real and
             physical THD boundaries.
         """

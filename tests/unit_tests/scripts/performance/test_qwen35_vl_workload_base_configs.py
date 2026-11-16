@@ -16,7 +16,6 @@
 
 import dataclasses
 import importlib
-import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -401,21 +400,15 @@ _QWEN35_VL_MERGE_SIZE = 2
 def _vision_patches_per_mock_image(config) -> int:
     """Vision patches that one mock image becomes on the Qwen-VL data path.
 
-    The collate resizes every image twice: ``qwen_vl_utils.process_vision_info`` first snaps it to a multiple of
-    ``image_patch_size * SPATIAL_MERGE_SIZE`` (28) within its default pixel bounds, then the HF processor resizes it
-    with transformers' ``smart_resize`` at factor 32 within QWEN_VL_MIN_PIXELS and QWEN_VL_MAX_PIXELS. The collate
-    passes no ``image_patch_size``, so the default of ``process_vision_info`` applies.
+    ``qwen3_vl_collate_fn`` resizes every image one time: ``qwen_vl_utils.process_vision_info`` snaps it to a
+    multiple of ``patch_size * merge_size`` (32) within QWEN_VL_MIN_PIXELS and QWEN_VL_MAX_PIXELS, and the HF
+    processor gets ``do_resize=False``.
     """
     from qwen_vl_utils import vision_process
-    from transformers.models.qwen2_vl.image_processing_qwen2_vl import smart_resize
 
-    image_patch_size = inspect.signature(vision_process.process_vision_info).parameters["image_patch_size"].default
     # The mock builder reads ``image_size`` as (width, height).
     width, height = config.dataset.image_size
     height, width = vision_process.smart_resize(
-        height, width, factor=image_patch_size * vision_process.SPATIAL_MERGE_SIZE
-    )
-    height, width = smart_resize(
         height,
         width,
         factor=_QWEN35_VL_PATCH_SIZE * _QWEN35_VL_MERGE_SIZE,

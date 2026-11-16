@@ -72,13 +72,13 @@ def test_vlm_collate_keeps_qwen_vl_registration():
 
 
 def test_resolver_cache_clear_refreshes_registered_module_symbol():
-    original = qwen_vl_collate.qwen2_5_collate_fn
+    original = qwen_vl_collate.qwen3_vl_collate_fn
 
     def replacement(*args, **kwargs):  # noqa: ARG001
         return {}
 
     with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(qwen_vl_collate, "qwen2_5_collate_fn", replacement)
+        monkeypatch.setattr(qwen_vl_collate, "qwen3_vl_collate_fn", replacement)
         resolve_model_collate.cache_clear()
         assert resolve_model_collate("Qwen3VLProcessor") is replacement
 
@@ -235,7 +235,7 @@ def test_gemma3_packed_collate_processes_unpadded_rows_directly():
 def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
     # Stub process_vision_info to return (None, None)
-    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv, **kwargs: (None, None))
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
@@ -248,7 +248,7 @@ def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
 
 def test_qwen2_5_collate_fn_uses_shared_pixel_defaults(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
-    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: ([object()], None))
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv, **kwargs: ([object()], None))
 
     proc = _DummyProcessor()
     examples = [
@@ -263,7 +263,7 @@ def test_qwen2_5_collate_fn_uses_shared_pixel_defaults(monkeypatch):
 
 def test_qwen2_5_collate_fn_pads_mm_token_type_ids_with_sequence(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
-    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv, **kwargs: (None, None))
 
     class _TokenTypeProcessor(_DummyProcessor):
         def __call__(self, *args, **kwargs):
@@ -555,7 +555,7 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
     # Return list of N fake images for first example, None for second
-    def _fake_pvi(conv):
+    def _fake_pvi(conv, **kwargs):
         # Push 2 images for first, no images for second
         text = str(conv)
         if "hi" in text:
@@ -578,10 +578,10 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
 def test_qwen2_5_collate_fn_handles_with_videos(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
-    def _fake_pvi(conv):
+    def _fake_pvi(conv, **kwargs):
         text = str(conv)
         if "watch" in text:
-            return (None, [[object(), object()]])
+            return (None, [([object(), object()], {"fps": 2.0})])
         return (None, None)
 
     monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _fake_pvi)
@@ -609,10 +609,10 @@ def test_qwen2_5_collate_fn_normalizes_video_path_without_mutating_example(monke
             assert conversation[0]["content"][0] == {"type": "video", "video": "/videos/clip.mp4"}
             return super().apply_chat_template(conversation, tokenize=tokenize, **kwargs)
 
-    def _fake_pvi(conversation):
+    def _fake_pvi(conversation, **kwargs):
         seen_conversations.append(conversation)
         assert conversation[0]["content"][0] == {"type": "video", "video": "/videos/clip.mp4"}
-        return (None, [[object()]])
+        return (None, [([object()], {"fps": 2.0})])
 
     monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _fake_pvi)
     example = {
@@ -681,7 +681,7 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
                 out["image_grid_thw"] = torch.tensor([[[1, 2, 2]] * len(images)])
             return out
 
-    def _fake_pvi(conv):
+    def _fake_pvi(conv, **kwargs):
         if "short image" in str(conv):
             return ([object()], None)
         return (None, None)
@@ -711,7 +711,7 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
 
 def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generation_template(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
-    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv, **kwargs: (None, None))
 
     class _ChatMLProcessor:
         chat_template = "<|im_start|>user\n{{ content }}<|im_end|>\n<|im_start|>assistant\n{{ content }}<|im_end|>\n"
@@ -762,7 +762,7 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
 
 def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
-    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv, **kwargs: (None, None))
 
     class _PackableProcessor:
         chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
@@ -853,11 +853,11 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
 def test_qwen2_5_packed_collate_preserves_flat_media_and_video_timing(monkeypatch):
     image_a, image_b, video = object(), object(), object()
 
-    def _process_vision_info(conversation):
+    def _process_vision_info(conversation, **kwargs):
         marker = conversation[0]["content"][0]["text"]
         if marker == "images":
             return [image_a, image_b], None
-        return None, [video]
+        return None, [(video, {"fps": 2.0})]
 
     class _MediaProcessor:
         class _Tokenizer:

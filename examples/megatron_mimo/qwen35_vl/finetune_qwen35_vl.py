@@ -548,25 +548,6 @@ def _image_size_from_part(part: dict[str, Any]) -> tuple[int, int]:
     raise ValueError("Metadata-only Qwen collate needs PIL images or local image paths to infer image_grid_thw.")
 
 
-def _qwen_vision_info_resized_hw(part: dict[str, Any], width: int, height: int) -> tuple[int, int]:
-    from qwen_vl_utils.vision_process import IMAGE_MAX_TOKEN_NUM, IMAGE_MIN_TOKEN_NUM, SPATIAL_MERGE_SIZE, smart_resize
-
-    # qwen_vl_utils.process_vision_info() calls fetch_image() before the HF
-    # processor.  Match that size-only transform without materializing pixels.
-    patch_factor = 14 * int(SPATIAL_MERGE_SIZE)
-    if "resized_height" in part and "resized_width" in part:
-        return smart_resize(int(part["resized_height"]), int(part["resized_width"]), factor=patch_factor)
-    min_pixels = part.get("min_pixels", IMAGE_MIN_TOKEN_NUM * patch_factor**2)
-    max_pixels = part.get("max_pixels", IMAGE_MAX_TOKEN_NUM * patch_factor**2)
-    return smart_resize(
-        height,
-        width,
-        factor=patch_factor,
-        min_pixels=min_pixels,
-        max_pixels=max_pixels,
-    )
-
-
 def _qwen_image_grid_for_part(
     part: dict[str, Any],
     image_processor: Any,
@@ -576,17 +557,24 @@ def _qwen_image_grid_for_part(
 ) -> tuple[int, int, int]:
     from qwen_vl_utils.vision_process import smart_resize
 
+    # qwen3_vl_collate_fn resizes each image one time, in qwen_vl_utils.fetch_image(), at the patch size
+    # of the processor. Match that size-only transform without materializing pixels.
     width, height = _image_size_from_part(part)
-    height, width = _qwen_vision_info_resized_hw(part, width, height)
     patch_size = int(getattr(image_processor, "patch_size", 16))
     merge_size = int(getattr(image_processor, "merge_size", 2))
-    resized_height, resized_width = smart_resize(
-        height,
-        width,
-        factor=patch_size * merge_size,
-        min_pixels=min_pixels,
-        max_pixels=max_pixels,
-    )
+    factor = patch_size * merge_size
+    if "resized_height" in part and "resized_width" in part:
+        resized_height, resized_width = smart_resize(
+            int(part["resized_height"]), int(part["resized_width"]), factor=factor
+        )
+    else:
+        resized_height, resized_width = smart_resize(
+            height,
+            width,
+            factor=factor,
+            min_pixels=part.get("min_pixels", min_pixels),
+            max_pixels=part.get("max_pixels", max_pixels),
+        )
     return 1, resized_height // patch_size, resized_width // patch_size
 
 

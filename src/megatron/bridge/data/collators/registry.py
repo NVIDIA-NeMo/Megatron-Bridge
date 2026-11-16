@@ -30,7 +30,7 @@ class _ModelCollateSpec:
 
 _MODEL_COLLATE_SPECS = {
     "Qwen2_5_VLProcessor": _ModelCollateSpec("megatron.bridge.models.qwen_vl.data.collate_fn", "qwen2_5_collate_fn"),
-    "Qwen3VLProcessor": _ModelCollateSpec("megatron.bridge.models.qwen_vl.data.collate_fn", "qwen2_5_collate_fn"),
+    "Qwen3VLProcessor": _ModelCollateSpec("megatron.bridge.models.qwen_vl.data.collate_fn", "qwen3_vl_collate_fn"),
     "Qwen3OmniMoeProcessor": _ModelCollateSpec(
         "megatron.bridge.models.qwen_omni.data.collate_fn",
         "qwen3_omni_collate_fn",

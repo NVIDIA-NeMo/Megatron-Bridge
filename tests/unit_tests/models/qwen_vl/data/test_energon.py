@@ -323,7 +323,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         )
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(task_encoder_module, "qwen2_5_collate_fn", _fake_qwen_collate)
+            mp.setattr(task_encoder_module, "qwen3_vl_collate_fn", _fake_qwen_collate)
             batch = self.encoder.batch([s1, s2])
 
         self.assertIsInstance(batch, QwenVLTaskBatch)
@@ -646,7 +646,7 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
             "visual_inputs": GenericVisualInputs(),
         }
 
-        with patch.object(task_encoder_module, "qwen2_5_collate_fn", return_value=collated) as collate:
+        with patch.object(task_encoder_module, "qwen3_vl_collate_fn", return_value=collated) as collate:
             enc.batch([sample])
 
         self.assertTrue(collate.call_args.kwargs["require_assistant_matches"])
