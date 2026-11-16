@@ -90,7 +90,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "hydra-core>=1.3.4,<1.4",  # CVE-2026-68508
     "megatron-core[dev,inference,mlm,te]",
-    "qwen-vl-utils",
+    "qwen-vl-utils>=0.0.14",
     "nvidia-resiliency-ext",
     "flash-linear-attention",
     "timm",
