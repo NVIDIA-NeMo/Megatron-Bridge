@@ -29,6 +29,7 @@ from megatron.training.models.gpt import default_layer_spec
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.sarvam.common import get_common_config
@@ -501,6 +502,19 @@ class TestSarvamMoEBuilderConfig:
         # The published checkpoint is float32.
         assert result.params_dtype == torch.float32
         assert result.bf16 is False
+
+    def test_megatron_to_hf_config_exports_integer_router_groups(self):
+        # Import maps n_group = topk_group = 1 to None; export must write 1 back, since the HF gate needs ints.
+        config = _sarvam_30b_config()
+        model_config = SarvamMoEBridge().hf_config_to_model_config(config)
+
+        hf_cfg = SarvamMoEBridge.megatron_to_hf_config(model_config)
+        assert hf_cfg["n_group"] == 1
+        assert hf_cfg["topk_group"] == 1
+
+        exported = conform_config_to_reference(hf_cfg, config.to_dict())
+        assert exported["n_group"] == 1
+        assert exported["topk_group"] == 1
 
     @pytest.mark.parametrize("torch_dtype", ["float32", "bfloat16", "float16"])
     def test_model_config_matches_branch_and_legacy_provider(self, torch_dtype):

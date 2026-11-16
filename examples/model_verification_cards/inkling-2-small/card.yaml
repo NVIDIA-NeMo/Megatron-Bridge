@@ -225,8 +225,9 @@ items:
       commands: null
       last_verified: null
       expected_result: >
-        Not verified: Transformers implements Inkling 2 only from v5.23.0, newer than the version Bridge pins, and the
-        single-process Hugging Face inference verifier cannot hold the 1.2 TB BF16 export on one GB200 node. Recorded
+        Not verified: the single-process Hugging Face inference verifier cannot hold the 1.2 TB BF16 export on one
+        GB200 node, and the export has not yet been loaded with Transformers 5.23, the first release that implements
+        Inkling 2. Recorded
         so far, on older code: the step-100 checkpoint of the 100-step SFT run described under sft, saved at
         TP4/PP4/EP32, exported at TP1/EP16 with --export-weight-dtype bfloat16 (1,514 tensors: 1,370 BF16 and 144
         FP32, with no scale tensors, a consistent hf_quant_config.json, and side files identical to the release).

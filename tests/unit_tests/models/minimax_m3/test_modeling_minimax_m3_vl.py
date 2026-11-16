@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import transformers
+from packaging.version import Version
 
 from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import (
     MiniMaxM3LightningIndexerState,
@@ -198,12 +200,52 @@ def test_vision_model_matches_native_transformers_forward():
 
     pixel_values = torch.randn(24, 3 * 2 * 2 * 2)
     grid_thw = torch.tensor([[1, 2, 4], [2, 4, 2]])
+    lengths = grid_thw.prod(dim=-1).tolist()
 
     with torch.no_grad():
-        expected = native_model(pixel_values, grid_thw).last_hidden_state
         actual = bridge_model(pixel_values, grid_thw)
+        # Each image or video attends only to itself. A single-grid native forward has nothing else to
+        # attend to, so it is the reference on every supported Transformers release.
+        per_grid = torch.cat(
+            [
+                native_model(pixels, grid[None]).last_hidden_state
+                for pixels, grid in zip(pixel_values.split(lengths), grid_thw)
+            ],
+            dim=-2,
+        )
+        torch.testing.assert_close(actual, per_grid, rtol=1e-5, atol=1e-6)
+        if Version(transformers.__version__) >= Version("5.23.0"):
+            # Transformers 5.23 isolates packed grids too (huggingface/transformers#50346).
+            packed = native_model(pixel_values, grid_thw).last_hidden_state
+            torch.testing.assert_close(actual, packed, rtol=1e-5, atol=1e-6)
 
-    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+
+def test_vision_model_keeps_packed_images_and_videos_apart():
+    torch.manual_seed(0)
+    model = MiniMaxM3VisionModel(_vision_config(), spatial_merge_size=2).eval()
+    grid_thw = torch.tensor([[1, 2, 4], [2, 4, 2]])
+    first, second = grid_thw.prod(dim=-1).tolist()
+    pixel_values = torch.randn(first + second, 3 * 2 * 2 * 2, requires_grad=True)
+
+    features = model(pixel_values, grid_thw)
+    features[:, :first].sum().backward()
+    assert torch.count_nonzero(pixel_values.grad[first:]) == 0
+    assert torch.count_nonzero(pixel_values.grad[:first]) > 0
+
+    with torch.no_grad():
+        replaced = torch.cat([pixel_values[:first], torch.randn(second, pixel_values.shape[1])])
+        changed = model(replaced, grid_thw)
+        alone = model(pixel_values[:first], grid_thw[:1])
+    assert torch.equal(changed[:, :first], features[:, :first].detach())
+    assert not torch.allclose(changed[:, first:], features[:, first:].detach())
+    torch.testing.assert_close(alone, features[:, :first].detach(), rtol=1e-5, atol=1e-6)
+
+
+def test_vision_model_rejects_grids_that_do_not_cover_the_patches():
+    model = MiniMaxM3VisionModel(_vision_config(), spatial_merge_size=2)
+
+    with pytest.raises(ValueError, match="describe 8 patches, but pixel_values holds 12"):
+        model(torch.randn(12, 3 * 2 * 2 * 2), torch.tensor([[1, 2, 4]]))
 
 
 def test_patch_embedding_remains_float32():

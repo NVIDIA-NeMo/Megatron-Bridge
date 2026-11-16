@@ -22,6 +22,9 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.data.conversation_processing import (
     infer_assistant_mask_boundary_config,
     normalize_chat_conversation,

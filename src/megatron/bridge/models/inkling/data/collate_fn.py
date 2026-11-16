@@ -68,9 +68,16 @@ def inkling2_collate_fn(
         turns, and ``visual_inputs``.
 
     Raises:
+        TypeError: If ``processor`` is another class, such as Transformers' processor of the same name.
         ValueError: If in-batch packing is requested, or a row sets template arguments the chat template does
             not read.
     """
+    if not isinstance(processor, Inkling2Processor):
+        # The collator registry matches processors by class name, and Transformers 5.23 has its own Inkling2Processor.
+        raise TypeError(
+            f"inkling2_collate_fn needs {Inkling2Processor.__module__}.Inkling2Processor, got "
+            f"{type(processor).__module__}.{type(processor).__qualname__}; set the dataset's hf_processor_class to it."
+        )
     if enable_in_batch_packing:
         raise ValueError("Inkling2 image-text SFT does not support in-batch packing")
     del in_batch_packing_pad_to_multiple_of

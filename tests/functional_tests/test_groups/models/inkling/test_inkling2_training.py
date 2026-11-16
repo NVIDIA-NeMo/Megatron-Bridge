@@ -22,6 +22,9 @@ from pathlib import Path
 
 import pytest
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from tests.functional_tests.test_groups.models.inkling.inkling2_toy_checkpoint import write_inkling2_toy_checkpoint
 
 

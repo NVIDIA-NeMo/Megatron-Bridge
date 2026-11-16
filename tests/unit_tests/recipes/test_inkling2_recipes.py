@@ -29,9 +29,13 @@ from collections.abc import Callable
 import pytest
 import torch
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
 from megatron.bridge.data.sft_processing import ChatSFTPreprocessingConfig
 from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2Config, Inkling2ModelConfig
+from megatron.bridge.models.inkling.data.processor import Inkling2Processor
 from megatron.bridge.models.inkling.data.tokenizer import Inkling2MegatronTokenizer
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.inkling.gb200 import inkling2 as inkling2_recipes
@@ -66,6 +70,8 @@ _SMALL_TEXT_CONFIG = {
     "log_scaling_n_floor": 8192,
     "log_scaling_alpha": 0.1,
     "rms_norm_eps": 1e-6,
+    "q_bias": False,
+    "o_bias": False,
     "pre_norm_pre_affine": False,
     "final_norm_pre_affine": False,
     "use_value_norm_no_gamma": True,
@@ -99,10 +105,17 @@ class _ModelConfigBridge:
         return cls()
 
     def get_model_config(self) -> Inkling2ModelConfig:
-        hf_config = Inkling2Config(
-            text_config=dict(_SMALL_TEXT_CONFIG),
-            vision_config={"hidden_size": 1024, "num_hidden_layers": 23, "native_patch_size": 20},
-            architectures=["Inkling2ForConditionalGeneration"],
+        hf_config = Inkling2Config.from_dict(
+            dict(
+                text_config=dict(_SMALL_TEXT_CONFIG),
+                vision_config={
+                    "hidden_size": 1024,
+                    "num_hidden_layers": 23,
+                    "native_patch_size": 20,
+                    "temporal_patch_size": 2,
+                },
+                architectures=["Inkling2ForConditionalGeneration"],
+            )
         )
         bridge = Inkling2Bridge()
         bridge.hf_config = hf_config
@@ -433,6 +446,9 @@ def test_multimodal_recipe_contract(recipe_name: str) -> None:
     dataset = cfg.dataset
     assert isinstance(dataset, DirectHFSFTDatasetConfig)
     assert dataset.hf_processor_path == inkling2_recipes._MODEL_ID
+    # Bridge's processor, not the one AutoProcessor resolves from Transformers 5.23 on.
+    module_name, _, class_name = dataset.hf_processor_class.rpartition(".")
+    assert getattr(importlib.import_module(module_name), class_name) is Inkling2Processor
     assert dataset.hf_processor_kwargs == {"max_image_tokens": 3072}
     assert dataset.source.dataset_name == "cord_v2"
     assert dataset.source.split == "train"

@@ -27,6 +27,9 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
+
+pytest.importorskip("transformers", minversion="5.23")
+
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig, load_direct_hf_sft_processor
 from megatron.bridge.data.collators.registry import always_use_model_collate, resolve_model_collate
 from megatron.bridge.data.conversation_processing import tokenize_chat_example
@@ -77,6 +80,7 @@ WORDS += ("level", ":", "0", "9", "0.9", "tool_declare", "add", "finish")
 SPECIAL_TOKENS = (*FRAMING, INKLING2_BOS_TOKEN, INKLING2_EOS_TOKEN)
 TOKENS = ("<unk>", "<pad>", *FRAMING, *WORDS, INKLING2_BOS_TOKEN, INKLING2_EOS_TOKEN)
 IMAGE_TOKEN_ID = TOKENS.index(IMAGE_TOKEN)
+BRIDGE_PROCESSOR = f"{Inkling2Processor.__module__}.{Inkling2Processor.__qualname__}"
 MEAN = np.array([0.5, 0.5, 0.5], dtype=np.float32)
 STD = np.array([0.5, 0.5, 0.5], dtype=np.float32)
 # One OpenAI-style tool and one bare function whose description, parameters and type take the template's defaults.
@@ -107,6 +111,17 @@ def checkpoint(tmp_path: Path) -> Path:
     (tmp_path / "config.json").write_text(json.dumps(config))
     (tmp_path / "processor_config.json").write_text(json.dumps(RELEASE_PROCESSOR_CONFIG))
     return tmp_path
+
+
+def _dataset_config(checkpoint: Path, **processor_kwargs) -> DirectHFSFTDatasetConfig:
+    """The image-text recipes' processor settings, on the test checkpoint."""
+    return DirectHFSFTDatasetConfig(
+        seq_length=256,
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
+        hf_processor_path=str(checkpoint),
+        hf_processor_class=BRIDGE_PROCESSOR,
+        hf_processor_kwargs=processor_kwargs or None,
+    )
 
 
 def _image(width: int, height: int) -> Image.Image:
@@ -241,22 +256,19 @@ class TestImageBudget:
         assert encoded.grid_thw.tolist() == [[1, -(-height // 40), -(-width // 40)]]
         assert Inkling2ImageProcessor().encode(_image(400, 300)).num_tokens == 80
 
-    def test_autoprocessor_passes_the_budget_through(self, checkpoint: Path) -> None:
-        processor = AutoProcessor.from_pretrained(checkpoint, max_image_tokens=12)
+    def test_the_dataset_loader_passes_the_budget_through(self, checkpoint: Path) -> None:
+        processor = load_direct_hf_sft_processor(_dataset_config(checkpoint, max_image_tokens=12), None)
         assert processor.image_processor.max_image_tokens == 12
-        assert AutoProcessor.from_pretrained(checkpoint).image_processor.max_image_tokens is None
+        assert load_direct_hf_sft_processor(_dataset_config(checkpoint), None).image_processor.max_image_tokens is None
 
 
 class TestProcessor:
-    def test_autoprocessor_and_the_dataset_loader_resolve_it(self, checkpoint: Path) -> None:
-        processor = AutoProcessor.from_pretrained(checkpoint)
+    def test_the_dataset_loader_resolves_bridges_processor(self, checkpoint: Path) -> None:
+        processor = load_direct_hf_sft_processor(_dataset_config(checkpoint), None)
         assert isinstance(processor, Inkling2Processor)
         assert processor.image_token_id == IMAGE_TOKEN_ID
-
-        config = DirectHFSFTDatasetConfig(
-            seq_length=256, source=HFDatasetSourceConfig(dataset_name="cord_v2"), hf_processor_path=str(checkpoint)
-        )
-        assert isinstance(load_direct_hf_sft_processor(config, None), Inkling2Processor)
+        # Keep HF's native processor registration intact; recipes explicitly select Bridge's processor.
+        assert not isinstance(AutoProcessor.from_pretrained(checkpoint), Inkling2Processor)
         assert always_use_model_collate("Inkling2Processor")
         assert resolve_model_collate("Inkling2Processor") is inkling2_collate_fn
 
@@ -502,6 +514,12 @@ class TestCollator:
         processor = Inkling2Processor.from_pretrained(checkpoint)
         batch = inkling2_collate_fn([{"conversation": _conversation(None)}], processor, sequence_length=32)
         assert batch["visual_inputs"] is None
+
+    def test_another_processor_class_of_the_same_name_is_rejected(self) -> None:
+        # Transformers' processor of the same name reaches this collator through the registry's class-name match.
+        processor = type("Inkling2Processor", (), {})()
+        with pytest.raises(TypeError, match="hf_processor_class"):
+            inkling2_collate_fn([{"conversation": _conversation(None)}], processor, sequence_length=32)
 
     def test_in_batch_packing_is_rejected(self, checkpoint: Path) -> None:
         processor = Inkling2Processor.from_pretrained(checkpoint)

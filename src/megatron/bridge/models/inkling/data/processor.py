@@ -28,8 +28,9 @@ Two inputs go beyond the template: an assistant message may carry its reasoning 
 Bridge's dataset adapters write) or ``reasoning`` instead of ``reasoning_content``, the first one set being used,
 as Transformers does from version 5.22; and an image part carries its pixels in ``image``.
 
-Registering it with ``AutoProcessor`` for :class:`Inkling2Config` lets
-``DirectHFSFTDatasetConfig.hf_processor_path`` load it from a checkpoint directory or the Hub.
+``DirectHFSFTDatasetConfig.hf_processor_class`` names it, and ``hf_processor_path`` the checkpoint directory or Hub
+repository it loads. ``AutoProcessor`` resolves Transformers' processor of the same name; Bridge's image-text
+recipes explicitly select this processor for the model-owned batch format.
 """
 
 from __future__ import annotations
@@ -41,9 +42,9 @@ from typing import Any
 
 import torch
 from PIL import Image
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer, BatchFeature
+from transformers import AutoConfig, AutoTokenizer, BatchFeature
+from transformers.models.inkling2.configuration_inkling2 import Inkling2Config
 
-from megatron.bridge.models.inkling.configuration_inkling2 import Inkling2Config
 from megatron.bridge.models.inkling.data.image_processing import (
     Inkling2EncodedImage,
     Inkling2ImageProcessor,
@@ -164,7 +165,6 @@ class Inkling2Processor:
         """
         tokenizer_kwargs = {key: kwargs[key] for key in _TOKENIZER_KWARGS if key in kwargs}
         config = AutoConfig.from_pretrained(path, **tokenizer_kwargs)
-        # Bridge's configuration class, or Transformers' own where it implements Inkling2.
         if config.model_type != Inkling2Config.model_type or config.vision_config is None:
             raise ValueError(f"{path} is not an Inkling2 checkpoint with an image encoder")
         download_kwargs = {key: value for key, value in tokenizer_kwargs.items() if key != "trust_remote_code"}
@@ -508,9 +508,6 @@ class Inkling2Processor:
             "pixel_values": torch.cat([image.patches for image in images]) if images else None,
             "image_grid_thw": torch.cat([image.grid_thw for image in images]) if images else None,
         }
-
-
-AutoProcessor.register(Inkling2Config, Inkling2Processor, exist_ok=True)
 
 
 __all__ = ["DEFAULT_REASONING_EFFORT", "REASONING_EFFORTS", "Inkling2Processor", "reasoning_effort_level"]
