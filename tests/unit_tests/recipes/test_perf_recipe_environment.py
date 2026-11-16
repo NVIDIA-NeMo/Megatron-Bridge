@@ -24,6 +24,9 @@ import pytest
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
+from megatron.bridge.training import perf_benchmark_overrides
+from megatron.bridge.training.perf_benchmark_overrides import PERF_BENCHMARK_CASES
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
@@ -88,6 +91,8 @@ def _function(path: Path, function_name: str) -> ast.FunctionDef:
 
 def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
     """Read the literal env mapping written in a flat recipe builder."""
+    if function_name in PERF_BENCHMARK_CASES:
+        return perf_benchmark_overrides.build_perf_benchmark_config(function_name).env_vars
     function = _function(path, function_name)
     local_constants = {
         node.targets[0].id: node.value.value
@@ -130,6 +135,11 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
         result[ast.literal_eval(key)] = env_value
     assert common_expansions == 1
     return result
+
+
+@pytest.fixture(autouse=True)
+def _offline_composed_recipes(monkeypatch):
+    patch_recipe_construction_dependencies(monkeypatch)
 
 
 def _explicit_environments():
@@ -183,7 +193,7 @@ def test_benchmark_common_disables_checkpoint_io_and_forces_moe_load_balancing()
     assert cfg.model.moe_router_force_load_balancing is True
 
 
-def test_every_flat_recipe_builder_declares_its_environment_inline():
+def test_every_flat_recipe_builder_declares_its_environment():
     invalid = []
 
     for path in _RECIPE_ROOT.glob("*/*/*.py"):

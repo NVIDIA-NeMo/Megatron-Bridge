@@ -110,6 +110,12 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
 
 def _prepare_perf_recipe(args, cli_overrides: list[str]):
     """Build a flat performance recipe with all user overrides applied."""
+    from perf_benchmark_overrides import prepare_perf_benchmark_config, selected_perf_benchmark_case
+
+    case_name = selected_perf_benchmark_case(args)
+    if case_name is not None:
+        return prepare_perf_benchmark_config(args, cli_overrides, name=case_name)
+
     try:
         recipe = get_perf_recipe_by_name(
             model_recipe_name=args.model_recipe_name,
@@ -161,7 +167,13 @@ def _run_training(args, cli_overrides: list[str]) -> None:
         _dump_env_rank0()
 
     # Preserve BF16 Adam precision-aware behavior from the previous script path.
-    if args.compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
+    from perf_benchmark_overrides import selected_perf_benchmark_case
+
+    if (
+        selected_perf_benchmark_case(args) is None
+        and args.compute_dtype == "bf16"
+        and recipe.optimizer.optimizer == "adam"
+    ):
         recipe.optimizer.use_precision_aware_optimizer = True
 
     if args.dryrun:

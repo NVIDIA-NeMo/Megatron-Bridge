@@ -800,3 +800,32 @@ uv run python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 - `TPOverlapCfg.num_split`
 <!-- - `garbageCollectionCallback.gc_interval_val` -->
 <!-- - `NsysPlugin` -->
+
+## Perf benchmark overrides
+
+The benchmark launcher is being migrated to **library recipe + perf benchmark overrides**. The command shape is unchanged:
+
+```bash
+uv run python scripts/performance/setup_experiment.py \
+  -m qwen -mr qwen3_30b_a3b -g h100 -ng 16 -c bf16 \
+  --task pretrain --max_steps 100 \
+  model.moe_router_force_load_balancing=False \
+  scheduler.lr_decay_iters=1000
+```
+
+The migrated cases start from a library recipe, select a reusable execution configuration, and apply an explicit benchmark policy. Argparse flags apply next; dotted overrides apply last. Invalid topology, batch divisibility or precision/layout combinations raise an error rather than changing the batch size or precision. `--max_steps` changes the run length independently of the LR schedule.
+
+The benchmark policy preserves the previous benchmark defaults: 50 training steps, a 50-step LR decay horizon with 10 warmup steps, no evaluation/checkpoint output, reduced gradient-reduction precision, and disabled loss/gradient checks. MoE cases explicitly select forced load balancing. These are throughput-measurement settings, not convergence defaults. The case table in `megatron.bridge.training.perf_benchmark_overrides` records those selections, logs them at construction, and separates them from library execution helpers. The finalized configuration remains the record of the effective run.
+
+This first migration covers these H100 selections:
+
+| Model/task | GPUs | Precision |
+| --- | --- | --- |
+| Llama 3 8B pretrain | 8, 64 | BF16, FP8 current scaling |
+| Llama 3 8B SFT | 8 | BF16, FP8 current scaling |
+| Qwen3 30B-A3B pretrain | 16 | BF16, FP8 current/delayed scaling |
+| Qwen3.5-VL 35B-A3B pretrain | 16 | BF16 |
+
+Existing `perf_recipes` imports for these selections forward to the new composition. Exact-name loading through `scripts/training/run_recipe.py` also uses it. Other models, allocations, precision modes and PEFT cases retain their existing implementation during migration; `perf_recipes/` has not yet been removed. `--use_recipes` retains its existing library-only behavior.
+
+Library defaults are unchanged. The H100 execution helpers can also be applied directly to a library config without selecting the benchmark's data, batch, optimizer, schedule or check policy. Precision-dependent execution layouts require the corresponding explicit compute precision; the FP8 Llama pretraining layout retains its existing CP1/full-recompute combination. Switching that case to BF16 requires selecting the BF16 layout, not silently lowering precision or shrinking the workload. Config validation does not demonstrate memory fit, convergence or performance on the target hardware.

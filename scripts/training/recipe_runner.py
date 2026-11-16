@@ -223,6 +223,13 @@ def find_library_recipe(recipe_name: str, *, model_family_name: str | None = Non
 
 def find_benchmark_recipe(recipe_name: str) -> Callable | None:
     """Find one flat benchmark recipe by its exported function name."""
+    from functools import partial
+
+    from megatron.bridge.training.perf_benchmark_overrides import PERF_BENCHMARK_CASES, build_perf_benchmark_config
+
+    if recipe_name in PERF_BENCHMARK_CASES:
+        return partial(build_perf_benchmark_config, recipe_name)
+
     try:
         family = benchmark_recipe_family(recipe_name)
     except ValueError:

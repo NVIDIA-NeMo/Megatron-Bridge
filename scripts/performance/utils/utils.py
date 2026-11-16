@@ -510,6 +510,13 @@ def perf_recipe_family_modules() -> tuple[str, ...]:
 
 def find_perf_recipe(recipe_name: str) -> Callable | None:
     """Find a flat perf recipe function by exported function name."""
+    from functools import partial
+
+    from megatron.bridge.training.perf_benchmark_overrides import PERF_BENCHMARK_CASES, build_perf_benchmark_config
+
+    if recipe_name in PERF_BENCHMARK_CASES:
+        return partial(build_perf_benchmark_config, recipe_name)
+
     for module_name in perf_recipe_family_modules():
         recipe_fn = getattr(importlib.import_module(module_name), recipe_name, None)
         if callable(recipe_fn):

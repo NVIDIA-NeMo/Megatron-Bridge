@@ -19,99 +19,23 @@ from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
     _llama_benchmark_common,
     _perf_precision,
-    _with_global_batch_size,
-    llama3_8b_pretrain_config,
-    llama3_8b_sft_config,
     llama3_70b_peft_config,
     llama3_70b_pretrain_config,
     llama3_70b_sft_config,
     userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
     userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192,
 )
+from megatron.bridge.training.perf_benchmark_overrides import build_perf_benchmark_config
 
 
 def llama3_8b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Llama3 8B pretrain: 8× H100, BF16, CP=2."""
-    cfg = llama3_8b_pretrain_config()
-    cfg.mixed_precision = _perf_precision("bf16")
-    cfg.tokenizer.vocab_size = 128256
-    cfg.model.should_pad_vocab = True
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 1
-
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-
-    _llama_benchmark_common(cfg)
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-    }
-    return cfg
+    """Compatibility wrapper for the library recipe plus perf benchmark overrides."""
+    return build_perf_benchmark_config("llama3_8b_pretrain_8gpu_h100_bf16_config")
 
 
 def llama3_8b_pretrain_8gpu_h100_fp8cs_config() -> ConfigContainer:
-    """Llama3 8B pretrain: 8× H100, FP8 current-scaling, recompute."""
-    cfg = llama3_8b_pretrain_config()
-    cfg.mixed_precision = _perf_precision("fp8_cs")
-    cfg.tokenizer.vocab_size = 128256
-    cfg.model.should_pad_vocab = True
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 1
-
-    cfg.model.recompute_granularity = "full"
-    cfg.model.recompute_method = "block"
-    cfg.model.recompute_num_layers = 5
-
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-
-    _llama_benchmark_common(cfg)
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        "NCCL_CTA_POLICY": 1,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Use cuDNN LayerNorm for this measured baseline.
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-    }
-    return cfg
+    """Compatibility wrapper for the library recipe plus perf benchmark overrides."""
+    return build_perf_benchmark_config("llama3_8b_pretrain_8gpu_h100_fp8cs_config")
 
 
 def llama3_70b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
@@ -196,92 +120,13 @@ def llama3_70b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 
 
 def llama3_8b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Llama3 8B SFT: 8× H100, BF16, seq_length=4096."""
-    cfg = llama3_8b_sft_config()
-    cfg.mixed_precision = _perf_precision("bf16")
-    cfg.tokenizer.vocab_size = 128256
-    cfg.model.should_pad_vocab = True
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.model.disable_parameter_transpose_cache = True
-    cfg.ddp.use_distributed_optimizer = True
-    cfg.optimizer.use_distributed_optimizer = True
-
-    cfg.model.seq_length = 4096
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
-
-    _llama_benchmark_common(cfg)
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Use cuDNN LayerNorm for this measured baseline.
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-    }
-    return cfg
+    """Compatibility wrapper for the library recipe plus perf benchmark overrides."""
+    return build_perf_benchmark_config("llama3_8b_sft_8gpu_h100_bf16_config")
 
 
 def llama3_8b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
-    """Llama3 8B SFT: 8× H100, FP8 current-scaling, seq_length=4096."""
-    cfg = llama3_8b_sft_config()
-    cfg.mixed_precision = _perf_precision("fp8_cs")
-    cfg.tokenizer.vocab_size = 128256
-    cfg.model.should_pad_vocab = True
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.model.disable_parameter_transpose_cache = True
-    cfg.ddp.use_distributed_optimizer = True
-    cfg.optimizer.use_distributed_optimizer = True
-
-    cfg.model.seq_length = 4096
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
-
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = ["mlp"]
-
-    _llama_benchmark_common(cfg)
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Use cuDNN LayerNorm for this measured baseline.
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-    }
-    return cfg
+    """Compatibility wrapper for the library recipe plus perf benchmark overrides."""
+    return build_perf_benchmark_config("llama3_8b_sft_8gpu_h100_fp8cs_config")
 
 
 def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
@@ -489,46 +334,10 @@ def llama3_70b_peft_8gpu_h100_fp8cs_config() -> ConfigContainer:
 
 
 def llama3_8b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
-    """Llama3 8B pretrain: 64× H100, BF16, legacy-scaled GBS."""
-    cfg = _with_global_batch_size(llama3_8b_pretrain_8gpu_h100_bf16_config(), 1024)
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-    }
-    return cfg
+    """Compatibility wrapper for the library recipe plus perf benchmark overrides."""
+    return build_perf_benchmark_config("llama3_8b_pretrain_64gpu_h100_bf16_config")
 
 
 def llama3_8b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
-    """Llama3 8B pretrain: 64× H100, FP8 current-scaling, legacy-scaled GBS."""
-    cfg = _with_global_batch_size(llama3_8b_pretrain_8gpu_h100_fp8cs_config(), 1024)
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        "NCCL_CTA_POLICY": 1,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Use cuDNN LayerNorm for this measured baseline.
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-    }
-    return cfg
+    """Compatibility wrapper for the library recipe plus perf benchmark overrides."""
+    return build_perf_benchmark_config("llama3_8b_pretrain_64gpu_h100_fp8cs_config")

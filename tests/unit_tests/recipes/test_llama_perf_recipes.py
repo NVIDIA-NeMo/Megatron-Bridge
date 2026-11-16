@@ -19,6 +19,7 @@ from collections.abc import Callable
 
 import pytest
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
     llama3_8b_pretrain_8gpu_gb200_nvfp4_config,
     llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
@@ -36,6 +37,7 @@ from megatron.bridge.perf_recipes.llama.vrnvl72.llama3 import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
+    benchmark_hf_model_config,
     patch_recipe_construction_dependencies,
     patch_recipe_module_global,
 )
@@ -60,24 +62,15 @@ def _finetune_perf_recipes() -> list[Callable[[], ConfigContainer]]:
     return recipes
 
 
-class _FakeModelCfg:
-    cross_entropy_fusion_impl = "te"
-    context_parallel_size = 1
-    use_te_rng_tracker = False
-
-    def finalize(self) -> None:
-        return None
-
-
 class _FakeBridge:
     @staticmethod
     def from_hf_pretrained(*args, **kwargs) -> "_FakeBridge":
         return _FakeBridge()
 
-    def get_model_config(self) -> _FakeModelCfg:
-        return _FakeModelCfg()
+    def get_model_config(self) -> ModelConfig:
+        return benchmark_hf_model_config("meta-llama/Meta-Llama-3-8B")
 
-    def to_megatron_provider(self, load_weights: bool = False) -> _FakeModelCfg:
+    def to_megatron_provider(self, load_weights: bool = False) -> ModelConfig:
         raise AssertionError("Llama recipes must use get_model_config(), not the legacy provider API")
 
 
