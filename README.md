@@ -11,6 +11,8 @@
 </div>
 
 ## 📣 News
+- [11/13/2026] [**Inkling 2 Small**](https://huggingface.co/thinkingmachines/Inkling-2-Small) from Thinking Machines is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, including the release's quantized experts, image-and-text inference, and GB200 recipes for pretraining, full SFT, 32K long-context SFT with context parallelism, LoRA, and image-text SFT and LoRA. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/inkling/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/inkling-2-small/card.yaml) for verified configurations and current limitations.
+
 - [11/05/2026] [**ERNIE-5.5-Flash-Base**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55/README.md) for sft training details.
 - [10/16/2026] [**Reflection AI Beam-1.0-501B-A23B**](https://huggingface.co/reflection/Beam-1.0-501B-A23B) is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, inference, and BF16 H200 recipes for pretraining, SFT, long-context SFT, and LoRA PEFT. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/beam/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/beam/card.yaml) for verified configurations and current limitations.
 
@@ -243,6 +245,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / GLM-4.7 / GLM-4.7-Flash, GLM-4.5V, GLM-5 / GLM-5.1 / GLM-5.2 / [GLM-5.3](docs/models/glm/glm5-2.md) |
 | [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
 | [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
+| [**Inkling**](docs/models/inkling/inkling2.md) | Inkling 2 Small |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL, Kimi K3 |
 | [**Llama**](docs/models/llama/index.md) | Llama 3 / 3.1 / 3.2 / 3.3 |
 | [**MiniCPM-o**](docs/models/minicpmo/minicpmo-4.5.md) | MiniCPM-o 4.5 (text/image/audio understanding only; no speech generation or SFT/LoRA recipes) |
