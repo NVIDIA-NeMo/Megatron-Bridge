@@ -45,6 +45,12 @@ EXPERT_LOAD_REPORT = "expert_load.json"
 # Values reduced at once by ``tensor_fingerprint``; bounds its float64 working copy to 32 MiB.
 _FINGERPRINT_CHUNK_NUMEL = 1 << 22
 _WRAPPER_PREFIX = re.compile(r"^(module\.)+")
+# Local expert index in a parameter name under an MoE layer's ``experts``: Megatron-Core's ``SequentialMLP`` nests
+# one MLP per expert, its ``TEGroupedMLP`` holds one weight (and bias) tensor per expert in each linear layer.
+_LOCAL_EXPERT_INDEX = (
+    re.compile(r"^local_experts\.(\d+)\."),
+    re.compile(r"^linear_fc[12]\.(?:weight|bias)(\d+)$"),
+)
 
 MasterWeights = Callable[[], dict[str, torch.Tensor]]
 
@@ -243,8 +249,9 @@ class ParameterUpdateCheck(Callback):
     (it received a gradient at least once) and its FP32 master weights changed after the first step. Master weights
     are compared rather than the BF16 model weights, because at small learning rates a value near 1.0 can move less
     than one BF16 step over a short run. A frozen tensor passes when the optimizer does not hold it and its values
-    are bitwise unchanged since the start of training. This callback only records; the CI evaluator applies the
-    case's declared exceptions and frozen set.
+    are bitwise unchanged since the start of training. An expert tensor also records its MoE layer and global expert
+    index, so the CI evaluator can tell an expert that never received tokens from one that received tokens but no
+    gradient. This callback only records; the CI evaluator applies the case's declared exceptions and frozen set.
 
     Args:
         report_path: Where rank 0 writes the JSON report.
@@ -253,6 +260,7 @@ class ParameterUpdateCheck(Callback):
     def __init__(self, report_path: str | os.PathLike[str]) -> None:
         self.report_path = Path(report_path)
         self._entries: list[tuple[str, torch.nn.Parameter]] = []
+        self._experts: dict[int, tuple[str, int]] = {}
         self._accessors: dict[int, MasterWeights] = {}
         self._frozen_start: dict[str, torch.Tensor] = {}
         self._master_start: dict[str, torch.Tensor] = {}
@@ -262,6 +270,7 @@ class ParameterUpdateCheck(Callback):
         """Fingerprint the frozen tensors before the first step."""
         pp_rank, pp_size, ep_rank = _parallel_layout(context.model)
         self._entries = parameter_keys(context.model, pp_rank=pp_rank, pp_size=pp_size, ep_rank=ep_rank)
+        self._experts = expert_identities(context.model, pp_rank=pp_rank, pp_size=pp_size)
         self._accessors = master_weight_accessors(context.optimizer) if context.optimizer is not None else {}
         self._frozen_start = {
             key: tensor_fingerprint(param) for key, param in self._entries if not param.requires_grad
@@ -313,6 +322,9 @@ class ParameterUpdateCheck(Callback):
                     gradient=None if second_moment is None else bool(torch.count_nonzero(second_moment).item()),
                     changed=None if start is None else not torch.equal(start, tensor_fingerprint(states["param"])),
                 )
+            expert = self._experts.get(id(param))
+            if expert is not None:
+                record.update(moe_layer=expert[0], expert=expert[1])
             records[key] = record
 
         gathered = _gather_on_rank_zero(records)
@@ -326,6 +338,13 @@ class ParameterUpdateCheck(Callback):
             "frozen_tensors": len(frozen),
             "trainable_not_in_optimizer": sum(not record["optimizer"] for record in trainable),
             "trainable_without_gradient": sum(record["gradient"] is False for record in trainable),
+            "experts_without_gradient": len(
+                {
+                    (record["moe_layer"], record["expert"])
+                    for record in trainable
+                    if "expert" in record and record["gradient"] is False
+                }
+            ),
             "trainable_unchanged": sum(record["changed"] is False for record in trainable),
             "frozen_changed": sum(bool(record["changed"]) for record in frozen),
             "frozen_in_optimizer": sum(record["optimizer"] for record in frozen),
@@ -389,6 +408,36 @@ def moe_layers(model: Sequence[torch.nn.Module]) -> list[tuple[int, str, torch.n
                 continue
             layers.append((chunk_index, _WRAPPER_PREFIX.sub("", name), module))
     return layers
+
+
+def expert_identities(
+    model: Sequence[torch.nn.Module], *, pp_rank: int = 0, pp_size: int = 1
+) -> dict[int, tuple[str, int]]:
+    """Map each expert parameter this rank holds to its MoE layer and global expert index.
+
+    The MoE layer keys are the ones ``ExpertLoadMonitor`` reports, so a regression check can look up how many tokens
+    the expert received. A parameter that holds several experts at once, such as a single grouped weight, is left
+    out.
+
+    Args:
+        model: Model chunks on this rank.
+        pp_rank: Pipeline-parallel rank.
+        pp_size: Pipeline-parallel size.
+
+    Returns:
+        A mapping from ``id(parameter)`` to ``(MoE layer key, global expert index)``.
+    """
+    identities: dict[int, tuple[str, int]] = {}
+    for chunk_index, name, module in moe_layers(model):
+        layer = _chunk_prefix(chunk_index, len(model), pp_rank, pp_size) + name
+        global_indices = [int(index) for index in module.local_expert_indices]
+        for param_name, param in module.experts.named_parameters():
+            for pattern in _LOCAL_EXPERT_INDEX:
+                match = pattern.search(param_name)
+                if match is not None and int(match.group(1)) < len(global_indices):
+                    identities[id(param)] = (layer, global_indices[int(match.group(1))])
+                    break
+    return identities
 
 
 class ExpertLoadMonitor(Callback):

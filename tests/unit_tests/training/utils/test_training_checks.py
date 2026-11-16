@@ -24,6 +24,7 @@ from megatron.bridge.training.utils import training_checks
 from megatron.bridge.training.utils.training_checks import (
     ExpertLoadMonitor,
     ParameterUpdateCheck,
+    expert_identities,
     expert_load_statistics,
     master_weight_accessors,
     merge_parameter_records,
@@ -218,6 +219,92 @@ class _MoELayer(torch.nn.Module):
         self.experts = _Experts()
         self.local_expert_indices = local_expert_indices
         self.config = SimpleNamespace(num_moe_experts=num_experts)
+
+
+class _GroupedLinear(torch.nn.Module):
+    def __init__(self, num_local_experts):
+        super().__init__()
+        for index in range(num_local_experts):
+            self.register_parameter(f"weight{index}", torch.nn.Parameter(torch.ones(2, 2)))
+
+
+class _GroupedExperts(torch.nn.Module):
+    """Parameters named like Megatron-Core's ``TEGroupedMLP``: one tensor per local expert."""
+
+    def __init__(self, num_local_experts):
+        super().__init__()
+        self.linear_fc1 = _GroupedLinear(num_local_experts)
+        self.linear_fc2 = _GroupedLinear(num_local_experts)
+
+
+class _SequentialExperts(torch.nn.Module):
+    """Parameters named like Megatron-Core's ``SequentialMLP``: one MLP per local expert."""
+
+    def __init__(self, num_local_experts):
+        super().__init__()
+        self.local_experts = torch.nn.ModuleList(
+            torch.nn.ModuleDict({"linear_fc1": torch.nn.Linear(2, 2)}) for _ in range(num_local_experts)
+        )
+
+
+def test_expert_identities_map_expert_tensors_to_their_layer_and_global_index():
+    model = torch.nn.Module()
+    model.grouped = _MoELayer([2, 3])
+    model.grouped.experts = _GroupedExperts(2)
+    model.grouped.router = torch.nn.Linear(2, 4)
+    model.sequential = _MoELayer([0, 1])
+    model.sequential.experts = _SequentialExperts(2)
+    names = {id(param): name for name, param in model.named_parameters()}
+
+    identities = expert_identities([model], pp_rank=1, pp_size=2)
+
+    assert {names[key]: identity for key, identity in identities.items()} == {
+        "grouped.experts.linear_fc1.weight0": ("pp1.grouped", 2),
+        "grouped.experts.linear_fc1.weight1": ("pp1.grouped", 3),
+        "grouped.experts.linear_fc2.weight0": ("pp1.grouped", 2),
+        "grouped.experts.linear_fc2.weight1": ("pp1.grouped", 3),
+        "sequential.experts.local_experts.0.linear_fc1.weight": ("pp1.sequential", 0),
+        "sequential.experts.local_experts.0.linear_fc1.bias": ("pp1.sequential", 0),
+        "sequential.experts.local_experts.1.linear_fc1.weight": ("pp1.sequential", 1),
+        "sequential.experts.local_experts.1.linear_fc1.bias": ("pp1.sequential", 1),
+    }
+
+
+def test_parameter_update_check_records_the_expert_of_each_expert_tensor(tmp_path):
+    model = torch.nn.Module()
+    model.layer = _MoELayer([2, 3])
+    model.layer.experts = _GroupedExperts(2)
+    experts = model.layer.experts
+    for param in experts.parameters():
+        param.allreduce = False
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+    check = ParameterUpdateCheck(tmp_path / "report.json")
+
+    check.on_train_start(_context(model, optimizer))
+    for step in range(2):
+        optimizer.zero_grad()
+        # Global expert 2 (local index 0) computes on tokens; expert 3 gets the zero gradient of Megatron's buffers.
+        (experts.linear_fc1.weight0.sum() + experts.linear_fc2.weight0.sum()).backward()
+        for param in (experts.linear_fc1.weight1, experts.linear_fc2.weight1):
+            param.grad = torch.zeros_like(param)
+        optimizer.step()
+        check.on_train_step_end(_context(model, optimizer, step))
+    check.on_train_end(_context(model, optimizer))
+
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["tensors"]["ep0.layer.experts.linear_fc1.weight0"] == {
+        "trainable": True,
+        "numel": 4,
+        "optimizer": True,
+        "gradient": True,
+        "changed": True,
+        "moe_layer": "layer",
+        "expert": 2,
+    }
+    assert report["tensors"]["ep0.layer.experts.linear_fc2.weight1"]["gradient"] is False
+    assert report["tensors"]["ep0.layer.experts.linear_fc2.weight1"]["expert"] == 3
+    assert report["summary"]["trainable_without_gradient"] == 2
+    assert report["summary"]["experts_without_gradient"] == 1
 
 
 def test_moe_layers_finds_layers_by_their_expert_attributes():

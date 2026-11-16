@@ -318,7 +318,8 @@ write a JSON report on rank 0 into `--training-checks-dir`.
 
 - `--check-parameter-updates` writes `parameter_updates.json` with one entry per parameter tensor. A trainable tensor
   passes when the optimizer holds it, its Adam second moment is nonzero and its FP32 master weights changed after the
-  first step. A frozen tensor passes when the optimizer does not hold it and its values are unchanged.
+  first step. A frozen tensor passes when the optimizer does not hold it and its values are unchanged. Expert tensors
+  also record their MoE layer and global expert index.
 - `--log-expert-load` counts the tokens each expert of every MoE layer receives after dispatch. It logs the worst
   layer's max/mean and min/mean load and the number of experts without tokens each step, and writes the per-layer
   values to `expert_load.json`.
@@ -326,6 +327,11 @@ write a JSON report on rank 0 into `--training-checks-dir`.
 `scripts/performance/utils/evaluate.py` checks both reports (`validate_parameter_updates`,
 `validate_expert_balance`). It also compares a run resumed from a checkpoint with the uninterrupted run's logs
 (`validate_resume_continuity`).
+
+An expert can go without a gradient for a whole run for two reasons: the router sent it no tokens, or every token it
+received is excluded from the loss, which can happen in the last layer of a fine-tuning run. Given the expert-load
+report, the parameter check excuses experts that received no tokens; the expert-balance limits bound how many there
+may be. The other experts without a gradient may number at most `max_experts_without_gradient`, 0 by default.
 
 The evaluator also records the validation LM loss of each evaluation during training. When the golden values include
 it and a tolerance is given, it compares that loss at every evaluation step.

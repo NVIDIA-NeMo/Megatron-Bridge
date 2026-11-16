@@ -20,7 +20,7 @@ import pathlib
 import re
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 try:
@@ -667,11 +667,24 @@ def _check_result(failures: List[str], metrics: Dict[str, Any], name: str, logge
     }
 
 
+def _expert_token_totals(report_path: str) -> Dict[Tuple[str, int], int]:
+    """Read the tokens each expert received in the whole run from an ``ExpertLoadMonitor`` report."""
+    with open(report_path) as handle:
+        report = json.load(handle)
+    return {
+        (layer, expert): int(tokens)
+        for layer, totals in zip(report["layers"], report["total_tokens"])
+        for expert, tokens in enumerate(totals)
+    }
+
+
 def validate_parameter_updates(
     report_path: str,
     *,
     frozen_pattern: Optional[str] = None,
     without_updates_pattern: Optional[str] = None,
+    expert_load_report_path: Optional[str] = None,
+    max_experts_without_gradient: int = 0,
     logger: logging.Logger = logger,
 ) -> Dict[str, Any]:
     """Check a parameter-update report from Bridge's ``ParameterUpdateCheck``.
@@ -681,10 +694,20 @@ def validate_parameter_updates(
     by design). Every frozen tensor must match ``frozen_pattern``, stay outside the optimizer and stay unchanged, and
     no trainable tensor may match ``frozen_pattern``. Patterns are regular expressions searched in the tensor keys.
 
+    Expert tensors that never received a gradient are judged per expert. An expert the expert-load report shows
+    without tokens in the whole run is excused; the expert-balance check limits how many such experts a run may
+    have. The other experts without a gradient, for example last-layer experts that only see loss-masked tokens,
+    may number at most ``max_experts_without_gradient``. Without an expert-load report, every expert without a
+    gradient counts toward that limit.
+
     Args:
         report_path: Path of the JSON report.
         frozen_pattern: Keys of the tensors the case freezes; ``None`` when nothing is frozen.
         without_updates_pattern: Keys of trainable tensors that are expected not to update.
+        expert_load_report_path: Path of ``ExpertLoadMonitor``'s report from the same run; ``None`` when the case
+            does not record expert load.
+        max_experts_without_gradient: Upper limit on experts that never received a gradient although they received
+            tokens, or whose tokens are unknown.
         logger: Logger for the result.
 
     Returns:
@@ -692,10 +715,12 @@ def validate_parameter_updates(
     """
     with open(report_path) as handle:
         tensors = json.load(handle)["tensors"]
+    token_totals = _expert_token_totals(expert_load_report_path) if expert_load_report_path else None
     frozen = re.compile(frozen_pattern) if frozen_pattern else None
     exempt = re.compile(without_updates_pattern) if without_updates_pattern else None
     failures = []
     exempt_but_trained = []
+    experts_without_gradient: Dict[Tuple[str, int], List[str]] = {}
     for key, record in tensors.items():
         declared_frozen = bool(frozen and frozen.search(key))
         if not record["trainable"]:
@@ -721,6 +746,11 @@ def validate_parameter_updates(
             if not problems:
                 exempt_but_trained.append(key)
             continue
+        if record.get("optimizer") and record.get("gradient") is False and "expert" in record:
+            # Judged per expert below. Without a gradient, master weights change only through weight decay, so
+            # unchanged weights are not a separate problem.
+            experts_without_gradient.setdefault((record["moe_layer"], record["expert"]), []).append(key)
+            continue
         failures.extend(f"{key}: {problem}" for problem in problems)
     if not any(record["trainable"] for record in tensors.values()):
         failures.append("the report lists no trainable tensors")
@@ -729,10 +759,28 @@ def validate_parameter_updates(
             f"{len(exempt_but_trained)} tensor(s) declared without updates did update, for example "
             f"{exempt_but_trained[0]}; the declaration may be out of date"
         )
+
+    without_tokens, limited = [], []
+    for expert in sorted(experts_without_gradient):
+        tokens = token_totals.get(expert) if token_totals is not None else None
+        (without_tokens if tokens == 0 else limited).append((expert, tokens))
+    if token_totals is None and experts_without_gradient:
+        logger.info("No expert-load report: experts without tokens cannot be told apart and count toward the limit")
+    if len(limited) > max_experts_without_gradient:
+        examples = ", ".join(
+            f"{layer} expert {index} ({'unknown' if tokens is None else tokens} tokens)"
+            for (layer, index), tokens in limited[:5]
+        )
+        failures.append(
+            f"{len(limited)} expert(s) without a gradient > limit {max_experts_without_gradient} (experts that "
+            f"received no tokens are not counted), for example {examples}"
+        )
     metrics = {
         "trainable_tensors": sum(record["trainable"] for record in tensors.values()),
         "frozen_tensors": sum(not record["trainable"] for record in tensors.values()),
         "declared_without_updates_but_updated": len(exempt_but_trained),
+        "experts_without_gradient_or_tokens": len(without_tokens),
+        "experts_without_gradient_with_tokens": len(limited),
     }
     return _check_result(failures, metrics, "parameter_updates", logger)
 

@@ -90,6 +90,65 @@ def test_parameter_updates_fail_when_the_frozen_set_differs_from_the_declared_on
     assert "frozen, but its values changed" in result["details"]
 
 
+def _expert_record(layer, expert, gradient):
+    return {**_record(gradient=gradient, changed=gradient), "moe_layer": layer, "expert": expert}
+
+
+def _experts_without_gradient_reports(tmp_path):
+    """Layer 0's expert 1 got no tokens; layer 1's experts 2 and 3 got tokens, all without a gradient."""
+    tensors = {"output_layer.weight": _record()}
+    for layer, ep_rank, local, gradient in [(0, 0, 0, True), (0, 0, 1, False), (1, 1, 0, False), (1, 1, 1, False)]:
+        for linear in ("linear_fc1", "linear_fc2"):
+            key = f"ep{ep_rank}.decoder.layers.{layer}.mlp.experts.{linear}.weight{local}"
+            tensors[key] = _expert_record(f"decoder.layers.{layer}.mlp", 2 * ep_rank + local, gradient)
+    load_path = tmp_path / "expert_load.json"
+    load_path.write_text(
+        json.dumps(
+            {
+                "layers": ["decoder.layers.0.mlp", "decoder.layers.1.mlp"],
+                "total_tokens": [[9, 0, 7, 8], [5, 6, 3, 2]],
+            }
+        )
+    )
+    return _parameter_report(tmp_path, tensors), str(load_path)
+
+
+def test_parameter_updates_excuse_experts_without_tokens_and_limit_the_others(tmp_path):
+    report, load = _experts_without_gradient_reports(tmp_path)
+
+    strict = evaluate.validate_parameter_updates(report, expert_load_report_path=load)
+    assert not strict["passed"]
+    assert strict["details"] == (
+        "2 expert(s) without a gradient > limit 0 (experts that received no tokens are not counted), for example "
+        "decoder.layers.1.mlp expert 2 (3 tokens), decoder.layers.1.mlp expert 3 (2 tokens)"
+    )
+    assert strict["metrics"]["experts_without_gradient_or_tokens"] == 1
+    assert strict["metrics"]["experts_without_gradient_with_tokens"] == 2
+
+    capped = evaluate.validate_parameter_updates(report, expert_load_report_path=load, max_experts_without_gradient=2)
+    assert capped["passed"], capped["details"]
+
+
+def test_parameter_updates_count_every_expert_without_gradient_when_tokens_are_unknown(tmp_path):
+    report, _ = _experts_without_gradient_reports(tmp_path)
+
+    result = evaluate.validate_parameter_updates(report, max_experts_without_gradient=2)
+    assert "3 expert(s) without a gradient > limit 2" in result["details"]
+    assert "decoder.layers.0.mlp expert 1 (unknown tokens)" in result["details"]
+    assert evaluate.validate_parameter_updates(report, max_experts_without_gradient=3)["passed"]
+
+
+def test_parameter_updates_still_fail_an_expert_tensor_outside_the_optimizer(tmp_path):
+    record = {
+        **_record(optimizer=False, gradient=None, changed=None),
+        "moe_layer": "decoder.layers.0.mlp",
+        "expert": 0,
+    }
+    report = _parameter_report(tmp_path, {"ep0.decoder.layers.0.mlp.experts.linear_fc1.weight0": record})
+    result = evaluate.validate_parameter_updates(report, max_experts_without_gradient=4)
+    assert "linear_fc1.weight0: not held by the optimizer" in result["details"]
+
+
 def _expert_report(tmp_path, steps, total_tokens=((4, 4, 4, 4),)):
     path = tmp_path / "expert_load.json"
     layers = [f"decoder.layers.{index}.mlp" for index in range(len(steps[0]["max_load"]))]
