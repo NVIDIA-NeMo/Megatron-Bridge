@@ -116,12 +116,18 @@ def load_prompts(
 
 
 def build_tokenizer(hf_model_path: str, trust_remote_code: bool | None) -> HFTokenizerAdapter:
-    """Build the HF-backed tokenizer adapter for MCore text generation."""
+    """Build the HF-backed tokenizer adapter for MCore text generation.
+
+    Text is tokenized with the tokenizer's special tokens, so a ``/v1/completions`` prompt starts
+    with BOS as it does with Hugging Face and vLLM. MCore's other paths decide BOS themselves:
+    ``tokenize_prompt`` and ``/v1/chat/completions`` drop a leading BOS and add one back per
+    ``add_BOS``.
+    """
     tokenizer = AutoTokenizer.from_pretrained(
         hf_model_path,
         trust_remote_code=is_safe_repo(hf_path=hf_model_path, trust_remote_code=trust_remote_code),
     )
-    return HFTokenizerAdapter(tokenizer)
+    return HFTokenizerAdapter(tokenizer, add_special_tokens=True)
 
 
 def _apply_provider_parallelism(

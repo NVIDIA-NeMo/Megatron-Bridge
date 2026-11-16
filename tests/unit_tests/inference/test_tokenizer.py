@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
-from tokenizers import Tokenizer, models
+from tokenizers import Tokenizer, models, pre_tokenizers, processors
 from transformers import PreTrainedTokenizerFast
 
 from megatron.bridge.inference._tokenizer import HFTokenizerAdapter
@@ -138,3 +140,91 @@ def test_openai_streaming_accepts_hf_fast_tokenizer_adapter():
 
     assert detokenizer.text == ""
     assert detokenizer.update([tokenizer.eos_token_id]) == ""
+
+
+def _bos_tokenizer():
+    """A fast tokenizer whose post-processor adds BOS, as Llama's, Gemma's and Mistral's do."""
+    backend = Tokenizer(models.WordLevel(vocab={"[UNK]": 0, "<s>": 1, "</s>": 2, "hello": 3}, unk_token="[UNK]"))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    backend.post_processor = processors.TemplateProcessing(single="<s> $A", special_tokens=[("<s>", 1)])
+    return PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="[UNK]", bos_token="<s>", eos_token="</s>")
+
+
+def test_tokenize_adds_special_tokens_only_when_asked():
+    tokenizer = _bos_tokenizer()
+    assert tokenizer("hello hello").input_ids == [1, 3, 3]
+    assert HFTokenizerAdapter(tokenizer).tokenize("hello hello") == [3, 3]
+    assert HFTokenizerAdapter(tokenizer, add_special_tokens=True).tokenize("hello hello") == [1, 3, 3]
+
+
+def test_build_tokenizer_tokenizes_text_like_hugging_face(monkeypatch):
+    from megatron.bridge.inference import text_generation
+
+    tokenizer = _bos_tokenizer()
+    monkeypatch.setattr(text_generation.AutoTokenizer, "from_pretrained", lambda *args, **kwargs: tokenizer)
+
+    adapter = text_generation.build_tokenizer("org/model", trust_remote_code=False)
+
+    assert adapter.tokenize("hello hello") == tokenizer("hello hello").input_ids
+
+
+class _RecordingClient:
+    """Records the prompt ids an endpoint submits and answers with one token."""
+
+    def __init__(self):
+        self.prompt_tokens = []
+
+    def add_request_with_id(self, prompt_tokens, sampling_params, *, multi_modal_data=None, offload_params=None):
+        self.prompt_tokens.append(list(prompt_tokens))
+        future = asyncio.get_running_loop().create_future()
+        future.set_result(
+            {
+                "uid": "req-1",
+                "status": "COMPLETED",
+                "events": [],
+                "prompt_tokens": list(prompt_tokens),
+                "prompt_length": len(prompt_tokens),
+                "generated_tokens": [3],
+                "generated_log_probs": None,
+                "routing_indices": None,
+                "num_cached_tokens": 0,
+                "sampling_params": {"num_tokens_to_generate": 1},
+            }
+        )
+        return len(self.prompt_tokens), future
+
+    def abort_request(self, request_id):
+        pass
+
+
+def test_openai_completions_prompt_starts_with_bos(monkeypatch):
+    """MCore's /v1/completions submits the adapter's ids as they are, so they need the BOS."""
+    quart = pytest.importorskip("quart")
+    completions = pytest.importorskip(
+        "megatron.core.inference.text_generation_server.dynamic_text_gen_server.endpoints.completions"
+    )
+    from megatron.core.inference.config import MultimodalPromptConfig
+
+    from megatron.bridge.inference import text_generation
+
+    tokenizer = _bos_tokenizer()
+    monkeypatch.setattr(text_generation.AutoTokenizer, "from_pretrained", lambda *args, **kwargs: tokenizer)
+    client = _RecordingClient()
+    app = quart.Quart(__name__)
+    app.config.update(
+        client=client,
+        tokenizer=text_generation.build_tokenizer("org/model", trust_remote_code=False),
+        parsers=[],
+        verbose=False,
+        multimodal_prompt_config=MultimodalPromptConfig(),
+        eval_mode=True,
+    )
+    app.register_blueprint(completions.bp)
+
+    async def post():
+        return await app.test_client().post("/v1/completions", json={"prompt": "hello hello", "max_tokens": 1})
+
+    response = asyncio.run(post())
+
+    assert response.status_code == 200
+    assert client.prompt_tokens == [tokenizer("hello hello").input_ids]
