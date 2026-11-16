@@ -422,6 +422,11 @@ def export_checkpoint(
         "pipeline_dtype": dtype,
         "params_dtype": dtype,
     }
+    # load_megatron_model rebuilds the model from the checkpoint's run config, so the vocabulary
+    # padding this export's tensor-parallel size needs is passed with the other overrides.
+    configured = model_config if _uses_model_builder(bridge) else model_provider
+    if getattr(configured, "should_pad_vocab", False):
+        model_parallel_overrides["should_pad_vocab"] = True
     if isinstance(resolved_pipeline_layout, list):
         model_parallel_overrides["pipeline_model_parallel_layout"] = resolved_pipeline_layout
         # load_megatron_model drops the '|' stage boundaries from the checkpoint's hybrid layer pattern,
