@@ -313,6 +313,8 @@ def llama3_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        # Serialize stream connections for this CP=2 communication layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
     }
     return cfg
 

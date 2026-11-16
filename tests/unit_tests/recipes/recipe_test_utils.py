@@ -23,14 +23,8 @@ import socket
 import sys
 from collections.abc import Callable, Iterator
 from types import ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING
 
 import pytest
-
-
-if TYPE_CHECKING:
-    from megatron.bridge.models.common.base import ModelConfig
-    from megatron.bridge.training.config import ConfigContainer
 
 
 def _iter_recipe_owner_modules(module: ModuleType) -> Iterator[ModuleType]:
@@ -234,56 +228,6 @@ class _OfflineAutoBridge:
     def get_model_config(self) -> _OfflineModelProvider:
         """Return the same mutable stand-in for builder-backed recipe construction."""
         return self.to_megatron_provider()
-
-
-def benchmark_hf_model_config(model_id: str) -> ModelConfig:
-    """Construct strict configs for benchmark composition without network or weights.
-
-    These cases exercise typed overrides and nested transformer storage, which
-    an arbitrary mutable provider stand-in cannot represent.
-    """
-    from transformers import LlamaConfig, Qwen3_5MoeConfig, Qwen3MoeConfig
-
-    from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-
-    if "llama" in model_id.lower():
-        hf_config = LlamaConfig(
-            hidden_size=4096,
-            intermediate_size=14336,
-            num_hidden_layers=32,
-            num_attention_heads=32,
-            num_key_value_heads=8,
-            vocab_size=128256,
-            architectures=["LlamaForCausalLM"],
-        )
-    elif "qwen3.5" in model_id.lower():
-        hf_config = Qwen3_5MoeConfig(
-            text_config={
-                "hidden_size": 2048,
-                "num_hidden_layers": 40,
-                "num_attention_heads": 16,
-                "num_key_value_heads": 2,
-                "num_experts": 256,
-                "moe_intermediate_size": 512,
-            },
-            architectures=["Qwen3_5MoeForConditionalGeneration"],
-        )
-    else:
-        hf_config = Qwen3MoeConfig(
-            hidden_size=2048,
-            intermediate_size=6144,
-            moe_intermediate_size=768,
-            num_hidden_layers=48,
-            num_attention_heads=32,
-            num_key_value_heads=4,
-            head_dim=128,
-            num_experts=128,
-            num_experts_per_tok=8,
-            vocab_size=151936,
-            architectures=["Qwen3MoeForCausalLM"],
-        )
-    hf_config._name_or_path = model_id
-    return AutoBridge.from_hf_config(hf_config).get_model_config()
 
 
 # A small Nemotron-H architecture with Mamba, attention, dense MLP and MoE layers.
@@ -599,33 +543,6 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
             continue
         if hasattr(module, "AutoBridge"):
             monkeypatch.setattr(module, "AutoBridge", _OfflineAutoBridge)
-
-    # Composition needs real dataclass fields for typed overrides. Keep older
-    # provider stand-ins in unrelated recipe tests (including older-core probes).
-    from functools import wraps
-
-    from megatron.bridge.training import perf_benchmark_overrides
-
-    original_builder = perf_benchmark_overrides.build_perf_benchmark_config
-
-    class StrictOfflineBridge(_OfflineAutoBridge):
-        def get_model_config(self) -> ModelConfig:
-            return benchmark_hf_model_config(self._model_id)
-
-    @wraps(original_builder)
-    def build_offline_benchmark(name: str) -> ConfigContainer:
-        case = perf_benchmark_overrides.PERF_BENCHMARK_CASES[name]
-        module_name, attribute = case.library_recipe.rsplit(".", 1)
-        factory = getattr(importlib.import_module(module_name), attribute)
-        with monkeypatch.context() as context:
-            patch_recipe_module_global(context, factory, "AutoBridge", StrictOfflineBridge)
-            return original_builder(name)
-
-    monkeypatch.setattr(perf_benchmark_overrides, "build_perf_benchmark_config", build_offline_benchmark)
-    for module_name, module in tuple(sys.modules.items()):
-        if module is not None and module_name.startswith(recipe_prefixes):
-            if getattr(module, "build_perf_benchmark_config", None) is original_builder:
-                monkeypatch.setattr(module, "build_perf_benchmark_config", build_offline_benchmark)
 
     flux_recipe_module = importlib.import_module("megatron.bridge.recipes.flux.h100.flux")
     monkeypatch.setattr(flux_recipe_module, "PreTrainedFlux", _OfflinePreTrainedFlux)

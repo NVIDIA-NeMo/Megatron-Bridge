@@ -15,6 +15,7 @@
 """Tests for explicit flat performance recipe environment settings."""
 
 import ast
+import importlib
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,8 +25,7 @@ import pytest
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
-from megatron.bridge.training import perf_benchmark_overrides
-from megatron.bridge.training.perf_benchmark_overrides import PERF_BENCHMARK_CASES
+from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -84,15 +84,39 @@ _DEEPSEEK_MLPERF_EXEC_RECIPES = {
 }
 
 
+# These recipes inherit their environment from library recipes or another
+# benchmark variant. Check their constructed environments, not assignment syntax.
+_INHERITED_ENVIRONMENT_RECIPES = {
+    *(
+        f"llama3_8b_{task}_{gpus}gpu_h100_{precision}_config"
+        for task, gpus in (("pretrain", 8), ("pretrain", 64), ("sft", 8))
+        for precision in ("bf16", "fp8cs")
+    ),
+    *(f"qwen3_30b_a3b_pretrain_16gpu_h100_{precision}_config" for precision in ("bf16", "fp8cs", "fp8ds")),
+    "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config",
+}
+
+
+@pytest.fixture(autouse=True)
+def _offline_inherited_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
+    for module in ("llama.h100.llama3", "qwen.h100.qwen3_moe", "qwen_vl.h100.qwen35_vl"):
+        importlib.import_module(f"megatron.bridge.perf_recipes.{module}")
+    patch_recipe_construction_dependencies(monkeypatch)
+
+
 def _function(path: Path, function_name: str) -> ast.FunctionDef:
     tree = ast.parse(path.read_text())
     return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name)
 
 
 def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
-    """Read the literal env mapping written in a flat recipe builder."""
-    if function_name in PERF_BENCHMARK_CASES:
-        return perf_benchmark_overrides.build_perf_benchmark_config(function_name).env_vars
+    """Check the effective mapping, constructing recipes that inherit settings."""
+    if function_name in _INHERITED_ENVIRONMENT_RECIPES:
+        suffix = ".".join(path.relative_to(_RECIPE_ROOT).with_suffix("").parts)
+        factory = getattr(importlib.import_module(f"megatron.bridge.perf_recipes.{suffix}"), function_name)
+        cfg = factory()
+        assert isinstance(cfg, ConfigContainer)
+        return cfg.env_vars
     function = _function(path, function_name)
     local_constants = {
         node.targets[0].id: node.value.value
@@ -135,11 +159,6 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
         result[ast.literal_eval(key)] = env_value
     assert common_expansions == 1
     return result
-
-
-@pytest.fixture(autouse=True)
-def _offline_composed_recipes(monkeypatch):
-    patch_recipe_construction_dependencies(monkeypatch)
 
 
 def _explicit_environments():
@@ -217,7 +236,7 @@ def test_every_flat_recipe_builder_declares_its_environment():
 
 
 def test_explicit_environment_invariants_across_all_flat_recipes():
-    """Keep duplicated inline settings complete without deriving them at runtime."""
+    """Keep effective environments complete for both inherited and inline settings."""
     for path, function_name, environment in _explicit_environments():
         assert environment.keys() >= _INLINE_CORE_ENV_NAMES
 

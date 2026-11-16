@@ -92,9 +92,7 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     return recipe
 
 
-def _set_megatron_fsdp_overrides(
-    recipe: ConfigContainer, use_megatron_fsdp: bool = False, *, preserve_training_policy: bool = False
-) -> ConfigContainer:
+def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: bool = False) -> ConfigContainer:
     """Set the Megatron FSDP overrides."""
     if not use_megatron_fsdp:
         return
@@ -113,8 +111,7 @@ def _set_megatron_fsdp_overrides(
             logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
             recipe.comm_overlap.defer_embedding_wgrad_compute = False
 
-    if not preserve_training_policy:
-        recipe.checkpoint.load = None
+    recipe.checkpoint.load = None
     return recipe
 
 
@@ -122,8 +119,6 @@ def _set_cuda_graph_overrides(
     recipe: ConfigContainer,
     cuda_graph_impl: Optional[str] = None,
     cuda_graph_scope: Optional[str | List[str]] = None,
-    *,
-    preserve_training_policy: bool = False,
 ) -> ConfigContainer:
     """Set the CUDA graph overrides."""
     if isinstance(cuda_graph_scope, str):
@@ -160,7 +155,7 @@ def _set_cuda_graph_overrides(
         )
     validate_cuda_graph_configuration(recipe.model, config_name="model")
 
-    if is_full_iteration_cuda_graph(recipe.model) and not preserve_training_policy:
+    if is_full_iteration_cuda_graph(recipe.model):
         recipe.rerun_state_machine.check_for_nan_in_loss = False
 
     return recipe
@@ -468,19 +463,14 @@ def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: Optional[bool] = No
     return recipe
 
 
-def set_user_overrides(
-    recipe: ConfigContainer, args: argparse.Namespace, *, preserve_training_policy: bool = False
-) -> ConfigContainer:
+def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
-    _set_megatron_fsdp_overrides(
-        recipe, use_megatron_fsdp=args.use_megatron_fsdp, preserve_training_policy=preserve_training_policy
-    )
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp)
     _set_nccl_ub_overrides(recipe, nccl_ub=args.nccl_ub)
     _set_cuda_graph_overrides(
         recipe,
         cuda_graph_impl=args.cuda_graph_impl,
         cuda_graph_scope=args.cuda_graph_scope,
-        preserve_training_policy=preserve_training_policy,
     )
     _set_recompute_overrides(
         recipe,

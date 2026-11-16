@@ -25,12 +25,25 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     qwen35_vl_122b_a10b_pretrain_mock_config,
     qwen35_vl_397b_a17b_pretrain_mock_config,
 )
-from megatron.bridge.training.perf_benchmark_overrides import build_perf_benchmark_config
+from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
+    _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
+    qwen35_vl_35b_a3b_pretrain_config as _library_pretrain_config,
+)
 
 
 def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
-    """Compatibility wrapper for the library recipe plus perf benchmark overrides."""
-    return build_perf_benchmark_config("qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config")
+    """Qwen3.5-VL 35B-A3B pretrain: 16× H100, BF16, PP=2 EP=8."""
+    cfg = _library_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    _qwen35_vl_common(cfg)
+    _benchmark_common(cfg)
+    # Restore the library-owned execution policy after generic benchmark
+    # defaults adjust CUDA graph and HybridEP settings.
+    _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+    # The library execution policy already supplies this complete environment.
+    return cfg
 
 
 def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:

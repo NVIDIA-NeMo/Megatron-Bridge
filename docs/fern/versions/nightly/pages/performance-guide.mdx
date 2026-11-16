@@ -783,21 +783,17 @@ uv run python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 
 ## Perf benchmark overrides
 
-The benchmark launcher is being migrated to **library recipe + perf benchmark overrides**. The command shape is unchanged:
+The refactor toward **library recipe + perf benchmark overrides** starts by moving supported resource settings into the existing library recipes. Existing recipe names, imports, launch commands and override precedence are preserved:
 
 ```bash
 uv run python scripts/performance/setup_experiment.py \
   -m qwen -mr qwen3_30b_a3b -g h100 -ng 16 -c bf16 \
-  --task pretrain --max_steps 100 \
-  model.moe_router_force_load_balancing=False \
-  scheduler.lr_decay_iters=1000
+  --task pretrain --max_steps 100
 ```
 
-The migrated cases start from a library recipe, select a reusable execution configuration, and apply an explicit benchmark policy. Argparse flags apply next; dotted overrides apply last. Invalid topology, batch divisibility or precision/layout combinations raise an error rather than changing the batch size or precision. `--max_steps` changes the run length independently of the LR schedule.
+A setting belongs in the library recipe, the common benchmark overrides, or the per-model benchmark overrides. There is no separate execution configuration or case registry. The existing `_benchmark_common` / `_perf_precision` functions hold shared benchmark selections; model-specific differences remain in the existing performance recipe functions.
 
-The benchmark policy preserves the previous benchmark defaults: 50 training steps, a 50-step LR decay horizon with 10 warmup steps, no evaluation/checkpoint output, reduced gradient-reduction precision, and disabled loss/gradient checks. MoE cases explicitly select forced load balancing. These are throughput-measurement settings, not convergence defaults. The case table in `megatron.bridge.training.perf_benchmark_overrides` records those selections, logs them at construction, and separates them from library execution helpers. The finalized configuration remains the record of the effective run.
-
-This first migration covers these H100 selections:
+This first stage covers ten H100 benchmark variants:
 
 | Model/task | GPUs | Precision |
 | --- | --- | --- |
@@ -806,6 +802,8 @@ This first migration covers these H100 selections:
 | Qwen3 30B-A3B pretrain | 16 | BF16, FP8 current/delayed scaling |
 | Qwen3.5-VL 35B-A3B pretrain | 16 | BF16 |
 
-Existing `perf_recipes` imports for these selections forward to the new composition. Exact-name loading through `scripts/training/run_recipe.py` also uses it. Other models, allocations, precision modes and PEFT cases retain their existing implementation during migration; `perf_recipes/` has not yet been removed. `--use_recipes` retains its existing library-only behavior.
+The Llama BF16 library recipe owns its CP2 stream-connection setting. The Qwen3 16-H100 BF16 library recipe owns its stream capacity and eight-GPU NVLink transport topology. The Qwen3.5-VL library already supplies the benchmark's environment. Benchmark variants inherit these settings instead of copying the complete environment.
 
-Library defaults are unchanged. The H100 execution helpers can also be applied directly to a library config without selecting the benchmark's data, batch, optimizer, schedule or check policy. Precision-dependent execution layouts require the corresponding explicit compute precision; the FP8 Llama pretraining layout retains its existing CP1/full-recompute combination. Switching that case to BF16 requires selecting the BF16 layout, not silently lowering precision or shrinking the workload. Config validation does not demonstrate memory fit, convergence or performance on the target hardware.
+Changes to compute/reduction precision, optimizer policy, routing, RNG, workload, schedule, evaluation and checks remain benchmark selections. Communication-overlap configurations, FP8 recompute choices, additional MoE fusion, LayerNorm SM margins and cuDNN normalization remain explicit per-model benchmark settings pending evidence that they are appropriate library defaults. The existing 50-step benchmark policy is preserved; it is not a convergence recipe.
+
+The performance configurations must remain identical before and after this refactor. Library changes are restricted to convergence-neutral resource settings. Configuration comparisons do not establish hardware memory fit or throughput. Other recipes and the eventual relocation/removal of `perf_recipes/` remain later stages; this change does not add a new launch path.
