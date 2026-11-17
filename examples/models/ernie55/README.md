@@ -7,6 +7,7 @@
 This directory provides a recipe and instructions for supervised fine-tuning (SFT) of an ERNIE 5.5 Hugging Face
 checkpoint with Megatron Bridge, covering data preparation, training, and export to Hugging Face format. The
 recipe runs on 16 nodes with four GB300 GPUs per node.
+A second recipe runs the same fine-tuning on 16 nodes with four GB200 GPUs per node.
 A recipe for H100 runs on 16 nodes with eight GPUs per node.
 
 ## Requirements
@@ -28,16 +29,19 @@ A recipe for H100 runs on 16 nodes with eight GPUs per node.
 
   The recipe builds the model from its `config.json` and starts from its weights.
 * **GPUs**: the full model trains on 16 nodes of 4 GB300 GPUs (see [Hardware](#hardware)).
+  On 16 nodes of 4 GB200 GPUs, use the GB200 recipe (see [GB200](#gb200-the-full-model-on-16-nodes)).
   On H100 it trains on 16 nodes of 8 GPUs (see [H100](#h100-the-full-model-on-16-nodes)).
 
 ## Recipe
 
 The recipe is in `megatron.bridge.recipes.ernie.ernie55` and trains with the ERNIE 5.5 forward step
 (`--step_func ernie55_step`).
+The GB200 recipe is in `megatron.bridge.recipes.ernie.gb200.ernie55` and trains with the same step.
 The H100 recipe is in `megatron.bridge.recipes.ernie.h100.ernie55`.
 
 |Recipe|GPUs|Parallelism|Row length|Global batch|Use it for|
 |:---|:---|:---|:---|:---|:---|
+|`ernie55_sft_64gpu_gb200_bf16_config`|16 x 4|TP1 PP1 CP8 EP64|16384|32|Fine-tuning the full model on GB200 from `$ERNIE55_HF_PATH`|
 |`ernie55_sft_64gpu_gb300_bf16_config`|16 x 4|TP1 PP1 CP64 EP64|262144|2|Fine-tuning the full model from `$ERNIE55_HF_PATH`|
 |`ernie55_sft_128gpu_h100_bf16_config`|16 x 8|TP1 PP8 CP1 EP16|4096|32|Fine-tuning the full model on H100 from `$ERNIE55_HF_PATH`|
 
@@ -50,7 +54,10 @@ The H100 recipe is in `megatron.bridge.recipes.ernie.h100.ernie55`.
 
 ### 1. Prepare the data
 
-`dataset.path` is a JSONL file with one sample per line, in any of three formats (they may be mixed):
+`dataset.path` is a JSONL file with one sample per line, in any of three formats (they may be mixed).
+`dataset.valid_path` and `dataset.test_path` name separate files for the validation and test splits, in the same
+formats; without them the splits read `dataset.path` — the same rows, packed the same way — so a validation loss then
+measures the fit to the training rows rather than generalization.
 
 ```json
 {"messages": [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}, {"role": "assistant", "content": "...", "reasoning_content": "..."}], "tools": [...]}
@@ -84,6 +91,7 @@ match the dataset settings.
 
 The recipe makes each sample its own row and splits samples longer than 262144 tokens. A sample with a token id at
 or above the model's `vocab_size` raises a `ValueError` when training first reads it, not when the dataset is built.
+The GB200 recipe packs samples into 16384-token rows instead, and splits samples longer than a row.
 The H100 recipe packs several samples into a row of at most 4096 tokens and splits longer samples.
 
 ### 2. Train
@@ -126,6 +134,40 @@ python -m torch.distributed.run --nnodes 16 --nproc_per_node 4 --node_rank <0..1
 
 The context-parallel split is Megatron-Core's contiguous partition, the DSv4 layout. Each D layer converts its
 input to the zigzag partition and back. Every rank holds 4096 of a row's 262144 tokens.
+
+#### GB200: the full model on 16 nodes
+
+`ernie55_sft_64gpu_gb200_bf16_config` trains the same model with the same loss, optimizer and schedule on 16 nodes of
+4 GB200 GPUs, at a shape that fits their memory. Select it with `RECIPE` and ask for the time of a full run; the
+rest of the command is unchanged:
+
+```bash
+RECIPE=ernie55_sft_64gpu_gb200_bf16_config \
+ERNIE55_HF_PATH=/path/to/ernie55_hf DATA_PATH=/path/to/train.jsonl \
+CONTAINER_IMAGE=/path/to/image.sqsh MEGATRON_LM_PATH=/path/to/Megatron-LM \
+MEGATRON_BRIDGE_PATH=/path/to/Megatron-Bridge WORKSPACE=/path/to/workspace CONTAINER_MOUNTS=/path:/path \
+    sbatch --account=<account> --partition=<partition> --qos=<qos> --time=14:00:00 \
+    examples/models/ernie55/slurm_train.sh
+```
+
+At the 18.8 s per step of the validation run, the 2065 steps take about 11 hours. The recipe saves once, at the
+end, and the script asks for 4 hours, hence `--time` in the command above.
+
+What differs from the GB300 recipe, and why:
+
+* **CP8 instead of CP64.** With CP64 on 64 GPUs the data-parallel size is 1, so every GPU holds the whole optimizer
+  state of the parameters that expert parallelism does not split. With CP8 the data-parallel size is 8, and the
+  layer-wise distributed optimizer spreads that state over the 8 ranks.
+* **16384-token packed rows.** Every context-parallel rank holds 2048 of a row's tokens. Samples shorter than a row
+  share one (`dataset.pack=true`, the reference's `--packing`); samples longer than 16384 tokens are split. Longer
+  rows have not been validated on GB200.
+* **Global batch 32.** Four micro-batches on each of the 8 data-parallel ranks: 524288 tokens per step, as many as
+  the GB300 recipe's two 262144-token rows, so the schedule (2065 steps, 103 of them warmup) is the GB300 recipe's.
+* **Process group `cpu:gloo,cuda:nccl`.** CUDA tensors still go through NCCL; the object collectives of a distributed
+  checkpoint save go through gloo. On an NCCL-only group on GB200, a save leaves about 24 GiB of point-to-point
+  buffers on rank 0 at 64 ranks, and the next training step runs out of memory there. As a command-line override
+  the value needs two layers of quotes, one for the shell and one for the override parser, which reads a bare comma
+  as a sweep: `'dist.distributed_backend="cpu:gloo,cuda:nccl"'`.
 
 #### H100: the full model on 16 nodes
 
@@ -207,6 +249,16 @@ The recipe uses the reference implementation's SFT settings:
 Logged losses: `lm loss` is the mean over micro-batches of each row's supervised-token mean (the reference's
 `loss`); the MTP loss follows the same convention before the 0.1 scaling; the indexer loss is the sum over D layers
 divided by the number of decoder layers (H and D) plus MTP depths; the z loss is divided by the number of MoE layers.
+
+### PEFT
+
+LoRA works through Megatron-Bridge's PEFT (`peft=LoRA(...)` on the config, a `pretrained_checkpoint` for the base
+weights). With `ernie_mtp_shared_last_layer` the MTP body shares the decoder's last-layer parameters by aliasing, so
+`Ernie55HybridModel.peft_excluded_module_paths()` names both sides of every alias and the PEFT walk leaves them as they
+are: the shared body and the decoder's last ERNIE layer stay frozen (their targets get no adapter), adapters go on every
+other targeted module (`linear_q_down_proj`, `linear_q_up_proj`, `linear_kv_proj`, `linear_proj`, `linear_fc1`,
+`linear_fc2` and so on). Only the pipeline stage that holds the MTP excludes anything; an adapter-only checkpoint holds
+the adapters of the adapted modules.
 
 ## Hardware
 

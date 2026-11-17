@@ -109,7 +109,8 @@ class LlamaBridge(MegatronModelBridge):
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
         """Convert Megatron GPTModelProvider config to HuggingFace Llama config dict.
 
-        Uses the base class implementation, which exports YaRN, then adds llama3 or linear RoPE scaling.
+        Uses the base class implementation, which exports YaRN, then adds llama3 or linear RoPE scaling, or
+        ``{"rope_type": "default"}`` when the model has none.
 
         Args:
             provider: GPTModelProvider with Llama configuration
@@ -131,6 +132,9 @@ class LlamaBridge(MegatronModelBridge):
                 "rope_type": "linear",
                 "factor": provider.seq_len_interpolation_factor,
             }
+        elif "rope_scaling" not in hf_config:
+            # State "no scaling" explicitly, so a config-only export does not keep a reference model's scaling.
+            hf_config["rope_scaling"] = {"rope_type": "default"}
 
         return hf_config
 

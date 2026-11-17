@@ -530,7 +530,10 @@ class AutoBridge(Generic[MegatronModelT]):
 
         from transformers import AutoConfig
 
-        from megatron.bridge.models.conversion.utils import conform_config_to_reference
+        from megatron.bridge.models.conversion.utils import (
+            carry_rope_into_rope_parameters,
+            conform_config_to_reference,
+        )
         from megatron.bridge.training.model_load_save import load_model_config
         from megatron.bridge.training.utils.checkpoint_utils import get_hf_source_from_model_config
         from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
@@ -578,7 +581,9 @@ class AutoBridge(Generic[MegatronModelT]):
         # 2. Translate Megatron config -> HF, conforming to reference config
         bridge = cls.from_hf_config(hf_cfg)
         megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
-        megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
+        megatron_hf_cfg_dict = carry_rope_into_rope_parameters(
+            megatron_hf_cfg_dict, conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
+        )
         megatron_hf_cfg_dict = _drop_readonly_config_properties(megatron_hf_cfg_dict, type(hf_cfg))
         # 3. Build final bridge from the synthesized config
         synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
@@ -1731,9 +1736,14 @@ class AutoBridge(Generic[MegatronModelT]):
                 )
                 if any(not isinstance(key, str) or not key for key in declared_keys):
                     raise ValueError("hf_export_ignored_source_keys must return nonempty tensor names.")
+            plain_export_suffixes = getattr(type(bridge), "PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES", ("_scale_inv",))
+            if not isinstance(plain_export_suffixes, tuple) or any(
+                not isinstance(suffix, str) or not suffix for suffix in plain_export_suffixes
+            ):
+                raise ValueError("PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES must contain nonempty strings.")
             ignored_source_key_suffixes = tuple(
                 dict.fromkeys(
-                    (("_scale_inv",) if weight_dtype is not None else ())
+                    (plain_export_suffixes if weight_dtype is not None else ())
                     + tuple(getattr(type(bridge), "DEQUANTIZED_SOURCE_KEY_SUFFIXES", ()))
                 )
             )

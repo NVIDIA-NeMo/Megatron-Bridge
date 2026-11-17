@@ -31,6 +31,9 @@ Sources:
   ``examples/models/ernie55/convert_sft_jsonl.py`` instead.
 * ``path=None``: synthetic samples with deterministic random tokens. Every row holds documents of
   ``mock_document_lengths`` tokens whose first ``mock_prompt_fraction`` carries no loss.
+* ``valid_path`` / ``test_path``: JSONL files, in the same formats as ``path``, for the validation and test
+  splits. Without them the splits read ``path`` — the same rows, packed the same way — so a validation loss then
+  measures the fit to the training rows, not generalization.
 
 A sample longer than ``seq_length`` is split into ``seq_length`` chunks (``truncation="split"``, every chunk its own
 sample, like the reference's ``--truncation_strategy split``) or cut (``truncation="right"``). ``pack=True`` bins the
@@ -45,7 +48,7 @@ import json
 import math
 import random
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import torch
@@ -267,6 +270,13 @@ class Ernie55SFTDatasetConfig(DatasetProvider):
     path: str | None = None
     """JSONL file of pre-tokenized or text samples (see the module docstring); ``None`` for synthetic documents."""
 
+    valid_path: str | None = None
+    """JSONL file of the validation split, same formats as ``path``; ``None`` reads ``path`` (the training rows
+    themselves, so the validation loss is not held out)."""
+
+    test_path: str | None = None
+    """JSONL file of the test split, same formats as ``path``; ``None`` reads ``path``."""
+
     hf_tokenizer: str | None = None
     """Hugging Face tokenizer (directory or Hub id) that encodes text rows; ERNIE 5.5's own for real runs."""
 
@@ -324,6 +334,8 @@ class Ernie55SFTDatasetConfig(DatasetProvider):
             raise ValueError("seq_length and pad_to_multiple_of must be positive.")
         if self.hf_tokenizer is not None and self.path is None:
             raise ValueError("dataset.hf_tokenizer encodes the text rows of dataset.path; set dataset.path too.")
+        if self.path is None and (self.valid_path is not None or self.test_path is not None):
+            raise ValueError("dataset.valid_path and dataset.test_path go with a training file; set dataset.path too.")
         if self.path is None:
             lengths = self.mock_document_lengths
             if not lengths or any(length < 1 for length in lengths):
@@ -347,13 +359,19 @@ class Ernie55SFTDatasetConfig(DatasetProvider):
         """
         train = Ernie55SFTDataset(self, num_items=context.train_samples, seed_offset=0)
         valid = (
-            Ernie55SFTDataset(self, num_items=context.valid_samples, seed_offset=10**7)
+            Ernie55SFTDataset(self._split(self.valid_path), num_items=context.valid_samples, seed_offset=10**7)
             if context.valid_samples
             else None
         )
         test = (
-            Ernie55SFTDataset(self, num_items=context.test_samples, seed_offset=2 * 10**7)
+            Ernie55SFTDataset(self._split(self.test_path), num_items=context.test_samples, seed_offset=2 * 10**7)
             if context.test_samples
             else None
         )
         return train, valid, test
+
+    def _split(self, path: str | None) -> "Ernie55SFTDatasetConfig":
+        """This configuration reading ``path`` instead of the training file (``None`` keeps the training file)."""
+        if path is None:
+            return self
+        return replace(self, path=path, valid_path=None, test_path=None)

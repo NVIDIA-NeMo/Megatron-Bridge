@@ -2498,6 +2498,7 @@ def _load_model_weights_from_checkpoint(
     # synchronization below so cached allocations cannot starve NCCL or the
     # conversion collectives that follow.
     del state_dict
+    del load_result
     del sharded_state_dict
     gc.collect()
     if torch.cuda.is_available():

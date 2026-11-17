@@ -138,6 +138,9 @@ def nemotron_35_super_vl_sft_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 64
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # NCCL EP is dropless: it rejects the H100 stack's expert-capacity drop and pad.
+    cfg.model.moe_expert_capacity_factor = None
+    cfg.model.moe_pad_expert_input_to_capacity = False
     # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
     # which NCCL EP's faster dispatch exposes as a CPU stall.
     cfg.model.moe_use_grouped_tensor = True
