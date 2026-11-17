@@ -1461,6 +1461,49 @@ class TestFusedPathWiring:
             (deterministic_args,) = [args for name, args in calls if name == "_deterministic_sparse_bwd_kwargs"]
             assert deterministic_args["requested"] is False
 
+    @pytest.mark.parametrize("native_sink_grad", [False, True], ids=["sink-grad-fallback", "native-sink-grad"])
+    @pytest.mark.parametrize(
+        ("overrides", "graph_workspace"),
+        [
+            (dict(deterministic_mode=True, cuda_graph_impl="transformer_engine", ernie_graph_d_layers=True), True),
+            (dict(deterministic_mode=True, cuda_graph_impl="none", ernie_graph_d_layers=False), False),
+            (dict(deterministic_mode=False, cuda_graph_impl="transformer_engine", ernie_graph_d_layers=True), False),
+        ],
+        ids=["deterministic-d-graphs", "deterministic-eager", "d-graphs"],
+    )
+    def test_deterministic_workspace_mode_on_both_sink_gradient_paths(
+        self, pg_collection, monkeypatch, native_sink_grad, overrides, graph_workspace
+    ):
+        """Both sink-gradient paths request the deterministic sparse-backward workspace in the same mode.
+
+        Megatron-Core keeps one deterministic workspace per device and rejects callers that mix CUDA-graph and
+        non-graph mode; its DSv4 (H) layers request graph mode whenever graphs are on. Graphed D layers in
+        deterministic mode request it too, through ``csa_sparse_attn`` (native sink gradient) or Megatron-Core's
+        ``_deterministic_sparse_bwd_kwargs`` (the analytic fallback, ``ernie_native_sink_grad=False``).
+        """
+        if "cuda_graph" not in inspect.signature(fused_sparse_attention.csa_sparse_attn).parameters:
+            pytest.skip("this Megatron-Core build has no CUDA-graph mode for the deterministic sparse backward")
+        monkeypatch.setattr(latent_mqa_core, "_check_fused_geometry", lambda config: None)
+        config = _with_cudnn_backend(_config(ernie_native_sink_grad=native_sink_grad))
+        for name, value in overrides.items():
+            if not hasattr(config, name):
+                raise ValueError(f"{type(config).__name__} has no field {name!r}")
+            # Set after finalize: the core reads them when it is built (deterministic mode and graphs need CUDA).
+            setattr(config, name, value)
+        core = _build_core(config, pg_collection, seed=121)
+        calls = _install_fused_stand_ins(monkeypatch)
+        _run_and_backward(core, _core_batch(seed=122, doc_lens=[1, 2, 15, 3, 20]), grad_seed=123)
+
+        deterministic = overrides["deterministic_mode"]
+        if native_sink_grad:
+            (attn_args,) = [arguments for name, arguments in calls if name == "csa_sparse_attn"]
+            assert attn_args["deterministic"] is deterministic
+            assert attn_args["cuda_graph"] is graph_workspace
+        else:
+            (deterministic_args,) = [args for name, args in calls if name == "_deterministic_sparse_bwd_kwargs"]
+            assert deterministic_args["requested"] is deterministic
+            assert deterministic_args["cuda_graph"] is graph_workspace
+
     @pytest.mark.parametrize("per_token", [False, True], ids=["per-row-loss", "per-token-loss"])
     def test_batched_loss_hook_runs_per_sample(self, pg_collection, monkeypatch, per_token):
         """SBHD ``b = 3``: one ``b = 1`` loss-hook call per sample, combined like the batched loss.

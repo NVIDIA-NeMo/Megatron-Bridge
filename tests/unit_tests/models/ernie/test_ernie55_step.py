@@ -135,6 +135,22 @@ class TestBatchContract:
         with pytest.raises(ValueError, match="pad_token_id"):
             get_batch(iter([batch]), config, cp_group=_FakeGroup(2), device="cpu")
 
+    @pytest.mark.parametrize("switch", [False, True])
+    def test_cp_batch_prebuilds_the_inverse_key_permutation_with_the_switch(self, pg_collection, switch):
+        # pg_collection initializes torch.distributed, so the batch builder reads the fake group's size.
+        from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel
+
+        if context_parallel.load_cp_layout_api() is None:
+            pytest.skip("Megatron-Core main has no zigzag CP helpers")
+        tokens = torch.arange(1, 9).view(1, 8)
+        config = SimpleNamespace(cp_partition_mode="contiguous", ernie_cp_key_gather_inverse_grad=switch)
+        batch = get_batch(
+            iter([dict(tokens=tokens, labels=tokens + 1)]), config, cp_group=_FakeGroup(2, 1), device="cpu"
+        )
+        _, geometry = getattr(batch.packed_seq_params, context_parallel._GEOMETRY_CACHE_ATTR)
+        # ernie_cp_key_gather_inverse_grad: the D layers' key-gather backward reads the prebuilt inverse.
+        assert (geometry.key_reorder_inverse is not None) is switch
+
     def test_cp1_batch(self):
         collated = collate_ernie55_rows(
             [[([5, 6, 7], [6, 7, IGNORE_LABEL]), ([8, 9], [9, IGNORE_LABEL])]], pad_token_id=0

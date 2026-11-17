@@ -42,7 +42,12 @@ This module holds what both need:
 * :func:`zigzag_cp_geometry` returns the global packed position of every local zigzag row and the
   permutation that puts the rank-ordered gathered keys into global order (and, on request, its
   inverse), built from host lists by Megatron-Core's ``dsa_layout`` helpers and cached on the
-  micro-batch's ``PackedSeqParams`` (one entry, for the micro-batch's current boundaries).
+  micro-batch's ``PackedSeqParams`` (one entry, for the micro-batch's current boundaries). The batch
+  builder prebuilds it (:func:`prebuild_zigzag_cp_geometry`), so no layer copies it to the device in its
+  forward; a D-layer CUDA graph shares the one it was captured with (:func:`share_zigzag_cp_geometry`).
+  Building it copies host lists to the device, which a CUDA graph capture does not allow, and an inverse
+  added inside a capture would cache tensors of the graph's memory pool on the micro-batch, so a missing
+  geometry, or a missing inverse that is asked for, raises under a capture.
 * :func:`gather_cp_rows` all-gathers a per-row tensor over the CP group and reorders it. Behind
   ``ernie_cp_key_gather_inverse_grad`` (off by default) its backward gathers the gradient by the
   inverse permutation instead of autograd's ``index_select`` backward (a zero fill and an
@@ -80,7 +85,7 @@ from megatron.core.transformer.experimental_attention_variant import dsa_layout
 from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
 
-from megatron.bridge.models.ernie.modeling_ernie55 import mtp_loss
+from megatron.bridge.models.ernie.modeling_ernie55 import mtp_loss, ops
 
 
 __all__ = [
@@ -89,7 +94,9 @@ __all__ = [
     "check_thd_cp_metadata",
     "gather_cp_rows",
     "load_cp_layout_api",
+    "prebuild_zigzag_cp_geometry",
     "require_cp_layout_api",
+    "share_zigzag_cp_geometry",
     "validate_ernie55_context_parallel_config",
     "zigzag_cp_geometry",
 ]
@@ -355,58 +362,44 @@ class ZigzagCpGeometry:
     key_reorder_inverse: Tensor | None = None
 
 
-def zigzag_cp_geometry(
+def _cached_zigzag_cp_geometry(
     packed_seq_params: PackedSeqParams,
+    host_cu: list[int],
     *,
-    cp_group: torch.distributed.ProcessGroup,
+    cp_size: int,
+    cp_rank: int,
     local_rows: int,
-    device: torch.device,
+    device: torch.device | str | int,
     what: str,
     with_inverse: bool = False,
 ) -> ZigzagCpGeometry:
-    """Return the zigzag geometry of this rank's rows, built on the host and cached on the micro-batch.
+    """The geometry cached on ``packed_seq_params`` for these boundaries, else a new one, cached there.
 
-    The micro-batch's ``cp_partition_mode`` must be ``"zigzag"``. Positions and the key permutation
-    come from Megatron-Core's ``build_packed_allgather_cp_query_positions_and_key_reorder_from_host``
-    (the layout Megatron-Core's DSA uses), so no device kernel or device-to-host copy runs; the
-    result is cached on ``packed_seq_params``, so every D layer of the micro-batch (and its
-    recomputation) reuses it. The cache holds one entry: a ``PackedSeqParams`` reused for a
-    micro-batch with other boundaries replaces it instead of accumulating device tensors.
-
-    ``with_inverse`` adds ``key_reorder_inverse`` for :func:`gather_cp_rows` with ``inverse_grad``:
-    two small device kernels (an arange and a scatter), without a synchronization, and 8 bytes per
-    gathered row. A cached entry without the inverse gets it added (the positions and the key
-    permutation are kept); one with it is returned as is either way.
-
-    Args:
-        packed_seq_params: The micro-batch's packed metadata.
-        cp_group: Context-parallel group (size > 1).
-        local_rows: Number of packed rows this rank holds.
-        device: Device of the returned tensors.
-        what: Subject of the error messages.
-        with_inverse: Also build the inverse key permutation.
-
-    Returns:
-        The geometry of this rank's rows.
+    With ``with_inverse`` the geometry carries ``key_reorder_inverse``: a cached entry without it gets it added (its
+    positions and key permutation are kept), and a new entry is built with it.
     """
-    cp_size, cp_rank = cp_group.size(), cp_group.rank()
-    host_cu = check_thd_cp_metadata(
-        packed_seq_params,
-        cp_size=cp_size,
-        local_rows=local_rows,
-        expected_mode="zigzag",
-        need_route=False,
-        what=what,
-    )
     device = torch.device(device)
     key = (cp_size, cp_rank, local_rows, str(device), tuple(host_cu))
     cached = getattr(packed_seq_params, _GEOMETRY_CACHE_ATTR, None)
     if cached is not None and cached[0] == key:
         geometry = cached[1]
         if with_inverse and geometry.key_reorder_inverse is None:
+            if ops.stream_is_capturing():
+                raise RuntimeError(
+                    f"{what}: the micro-batch's zigzag CP geometry has no inverse key permutation, and adding one "
+                    "inside a CUDA graph capture would cache tensors of the graph's memory pool on the micro-batch. "
+                    "Prebuild the geometry with it (prebuild_zigzag_cp_geometry(..., with_inverse=True))."
+                )
             geometry = dataclasses.replace(geometry, key_reorder_inverse=_inverse_permutation(geometry.key_reorder))
             setattr(packed_seq_params, _GEOMETRY_CACHE_ATTR, (key, geometry))
         return geometry
+    if ops.stream_is_capturing():
+        raise RuntimeError(
+            f"{what}: the micro-batch has no zigzag CP geometry for its boundaries, and building one copies host "
+            "lists to the device, which a CUDA graph capture does not allow. Build the batch with "
+            "build_ernie55_thd_cp_batch (it prebuilds the geometry); an ERNIE 5.5 D-layer graph shares the "
+            "geometry it was captured with."
+        )
     positions, key_reorder = dsa_layout.build_packed_allgather_cp_query_positions_and_key_reorder_from_host(
         host_cu,
         host_cu,
@@ -425,6 +418,145 @@ def zigzag_cp_geometry(
     # One entry: every D layer of a micro-batch asks with the same key.
     setattr(packed_seq_params, _GEOMETRY_CACHE_ATTR, (key, geometry))
     return geometry
+
+
+def zigzag_cp_geometry(
+    packed_seq_params: PackedSeqParams,
+    *,
+    cp_group: torch.distributed.ProcessGroup,
+    local_rows: int,
+    device: torch.device,
+    what: str,
+    with_inverse: bool = False,
+) -> ZigzagCpGeometry:
+    """Return the zigzag geometry of this rank's rows, built on the host and cached on the micro-batch.
+
+    The micro-batch's ``cp_partition_mode`` must be ``"zigzag"``. Positions and the key permutation
+    come from Megatron-Core's ``build_packed_allgather_cp_query_positions_and_key_reorder_from_host``
+    (the layout Megatron-Core's DSA uses), so no device kernel or device-to-host copy runs; the
+    result is cached on ``packed_seq_params``, so every D layer of the micro-batch (and its
+    recomputation) reuses it. The cache holds one entry: a ``PackedSeqParams`` reused for a
+    micro-batch with other boundaries replaces it instead of accumulating device tensors.
+    :func:`~megatron.bridge.models.ernie.ernie55_context_parallel.build_ernie55_thd_cp_batch` prebuilds the entry
+    (:func:`prebuild_zigzag_cp_geometry`), so the first D layer only looks it up.
+
+    ``with_inverse`` adds ``key_reorder_inverse`` for :func:`gather_cp_rows` with ``inverse_grad``:
+    two small device kernels (an arange and a scatter), without a synchronization, and 8 bytes per
+    gathered row. A cached entry without the inverse gets it added (the positions and the key
+    permutation are kept); one with it is returned as is either way.
+
+    Args:
+        packed_seq_params: The micro-batch's packed metadata.
+        cp_group: Context-parallel group (size > 1).
+        local_rows: Number of packed rows this rank holds.
+        device: Device of the returned tensors.
+        what: Subject of the error messages.
+        with_inverse: Also build the inverse key permutation.
+
+    Returns:
+        The geometry of this rank's rows.
+
+    Raises:
+        RuntimeError: If the current CUDA stream is capturing a graph and no geometry is cached for these boundaries
+            (building it copies to the device) or, with ``with_inverse``, the cached one has no inverse.
+    """
+    cp_size, cp_rank = cp_group.size(), cp_group.rank()
+    host_cu = check_thd_cp_metadata(
+        packed_seq_params,
+        cp_size=cp_size,
+        local_rows=local_rows,
+        expected_mode="zigzag",
+        need_route=False,
+        what=what,
+    )
+    return _cached_zigzag_cp_geometry(
+        packed_seq_params,
+        host_cu,
+        cp_size=cp_size,
+        cp_rank=cp_rank,
+        local_rows=local_rows,
+        device=device,
+        what=what,
+        with_inverse=with_inverse,
+    )
+
+
+def prebuild_zigzag_cp_geometry(
+    packed_seq_params: PackedSeqParams,
+    *,
+    cp_group: torch.distributed.ProcessGroup,
+    local_rows: int,
+    device: torch.device | str | int,
+    what: str = "build_ernie55_thd_cp_batch",
+    with_inverse: bool = False,
+) -> ZigzagCpGeometry:
+    """Build this rank's zigzag geometry for a micro-batch when it is built, and cache it where the D layers look.
+
+    The same geometry :func:`zigzag_cp_geometry` builds on its first call, cached under the same key, but in any
+    partition mode (the batch is in the stack's partition when it is built), so the D layers' forward copies nothing
+    to the device. The micro-batch must satisfy the module docstring's requirements; the conversion route is not
+    needed.
+
+    Args:
+        packed_seq_params: The micro-batch's packed metadata with its prebuilt host ``cu_seqlens``.
+        cp_group: Context-parallel group (size > 1).
+        local_rows: Number of packed rows this rank holds.
+        device: Device of the geometry's tensors (the D layers' activations).
+        what: Subject of the error messages.
+        with_inverse: Also build the inverse key permutation, which the D layers' key-gather backward reads with
+            ``ernie_cp_key_gather_inverse_grad`` (:func:`gather_cp_rows` with ``inverse_grad``).
+
+    Returns:
+        The geometry of this rank's rows.
+    """
+    cp_size, cp_rank = cp_group.size(), cp_group.rank()
+    host_cu = check_thd_cp_metadata(
+        packed_seq_params,
+        cp_size=cp_size,
+        local_rows=local_rows,
+        expected_mode=None,
+        need_route=False,
+        what=what,
+    )
+    return _cached_zigzag_cp_geometry(
+        packed_seq_params,
+        host_cu,
+        cp_size=cp_size,
+        cp_rank=cp_rank,
+        local_rows=local_rows,
+        device=device,
+        what=what,
+        with_inverse=with_inverse,
+    )
+
+
+def share_zigzag_cp_geometry(source: PackedSeqParams, target: PackedSeqParams) -> ZigzagCpGeometry:
+    """Cache ``source``'s zigzag geometry on ``target``, the metadata of a pack with the same boundaries.
+
+    No device work: ``target`` reuses ``source``'s tensors. An ERNIE 5.5 D-layer CUDA graph shares the geometry it
+    pins with the metadata it rebuilds from its static inputs for every warmup and capture call.
+
+    Args:
+        source: Metadata with a cached geometry (:func:`prebuild_zigzag_cp_geometry`).
+        target: Metadata whose host ``cu_seqlens`` (``thd_cp_host_cu_seqlens_q``) equal the geometry's.
+
+    Returns:
+        The shared geometry.
+
+    Raises:
+        ValueError: If ``source`` has no geometry or ``target`` has other host boundaries.
+    """
+    cached = getattr(source, _GEOMETRY_CACHE_ATTR, None)
+    if cached is None:
+        raise ValueError("The source metadata has no zigzag CP geometry to share.")
+    boundaries = tuple(int(value) for value in getattr(target, "thd_cp_host_cu_seqlens_q", None) or ())
+    if boundaries != cached[0][-1]:
+        raise ValueError(
+            f"A zigzag CP geometry of the boundaries {list(cached[0][-1])} cannot serve a pack with the boundaries "
+            f"{list(boundaries)}."
+        )
+    setattr(target, _GEOMETRY_CACHE_ATTR, cached)
+    return cached[1]
 
 
 def _inverse_permutation(order: Tensor) -> Tensor:

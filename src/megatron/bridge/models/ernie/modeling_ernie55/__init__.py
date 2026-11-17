@@ -27,8 +27,9 @@
   (``hybrid_stack``). ``norm`` also holds the reference implementation's RMSNorm arithmetic,
   behind ``ernie_reference_rmsnorm``. Behind ``ernie_fused_mhc`` (off by default), the hyper-connections run
   fused fp32 Triton kernels instead (``fused_mhc``).
-* Transformer Engine CUDA graphs of the H attention layers with fp32 streams: their static inputs and replay checks,
-  and the capture helper that graphs only them (``cuda_graph``).
+* Transformer Engine CUDA graphs of the H attention layers with fp32 streams, and opt-in of the D layers with the
+  host plan of one fixed composition: their static inputs and replay checks, and the capture helper that graphs only
+  them (``cuda_graph``).
 * Multimax output head with its own gradient-norm group (``output_layer``).
 * The reference implementation's Triton kernels for SiTU-GLU, multimax and the context-parallel
   local RoPE (``fused_ops``), dispatched behind ``ernie_fused_ops`` (``fused_dispatch``).
@@ -43,9 +44,12 @@ none of them.
 
 from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import validate_ernie55_context_parallel_config
 from megatron.bridge.models.ernie.modeling_ernie55.cuda_graph import (
+    Ernie55DHyperConnectionHybridLayer,
     Ernie55HCAHyperConnectionHybridLayer,
+    Ernie55MTPDHyperConnectionHybridLayer,
     Ernie55TECudaGraphHelper,
     use_ernie55_attention_cuda_graphs,
+    use_ernie55_d_layer_cuda_graphs,
     validate_ernie55_cuda_graph_config,
 )
 from megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch import install_ernie55_fused_ops
@@ -131,6 +135,7 @@ __all__ = [
     "PER_ROW_MTP_LOSS_SUPPORTED",
     "REFERENCE_FALLBACK_MAX_TOKENS",
     "Ernie55BatchedMuon",
+    "Ernie55DHyperConnectionHybridLayer",
     "Ernie55GroupedMLP",
     "Ernie55HCACoreAttention",
     "Ernie55HCAHyperConnectionHybridLayer",
@@ -143,6 +148,7 @@ __all__ = [
     "Ernie55LatentMQACoreSubmodules",
     "Ernie55LatentMQASelfAttention",
     "Ernie55LatentProjection",
+    "Ernie55MTPDHyperConnectionHybridLayer",
     "Ernie55MoELayer",
     "Ernie55RMSNorm",
     "Ernie55RMSNormSelector",
@@ -167,6 +173,7 @@ __all__ = [
     "share_mtp_body_with_last_layer",
     "tag_ernie55_muon_params",
     "use_ernie55_attention_cuda_graphs",
+    "use_ernie55_d_layer_cuda_graphs",
     "use_ernie55_fused_situ_prob",
     "use_ernie55_hyper_connections",
     "validate_ernie55_config",

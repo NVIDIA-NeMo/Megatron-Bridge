@@ -734,6 +734,7 @@ class TestCaptureMemoryLog:
         def run(callables: list) -> str:
             helper = Ernie55TECudaGraphHelper.__new__(Ernie55TECudaGraphHelper)
             helper.flattened_callables = callables
+            helper.model = []  # Megatron-Core's constructor sets it; no DDP chunk here (D10 tests the re-learn)
             with caplog.at_level("INFO", logger=_LOGGER):
                 helper.create_cudagraphs()
             assert calls == [helper], "Megatron-Core's capture did not run exactly once"

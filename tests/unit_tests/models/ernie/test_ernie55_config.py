@@ -88,6 +88,8 @@ ERNIE_FIELDS = {
     "ernie_fused_mhc": False,
     "ernie_muon_ns_batch_size": 1,
     "ernie_cp_key_gather_inverse_grad": False,
+    "ernie_graph_d_layers": False,
+    "ernie_graph_mtp_layers": False,
 }
 
 

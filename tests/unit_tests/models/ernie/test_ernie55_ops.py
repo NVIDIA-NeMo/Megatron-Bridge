@@ -771,8 +771,12 @@ class TestSinkGradFallback:
     """
 
     @pytest.mark.parametrize("layout", ["compact", "blocks"])
-    @pytest.mark.parametrize("deterministic", [False, True])
-    def test_fallback_gradients_match_autograd(self, monkeypatch, deterministic, layout):
+    @pytest.mark.parametrize(
+        ("deterministic", "cuda_graph"),
+        [(False, False), (True, False), (True, True)],
+        ids=["atomic", "deterministic", "deterministic-graph-workspace"],
+    )
+    def test_fallback_gradients_match_autograd(self, monkeypatch, deterministic, cuda_graph, layout):
         from megatron.core.transformer.experimental_attention_variant.csa_utils import fused_sparse_attention
 
         from megatron.bridge.models.ernie.modeling_ernie55 import latent_mqa_core
@@ -817,7 +821,11 @@ class TestSinkGradFallback:
         d_out = torch.randn(rows, heads, latent, dtype=torch.float64, generator=generator)
 
         leaves = [tensor.clone().requires_grad_(True) for tensor in (query, kv, sink)]
-        out = latent_mqa_core._FlashMLASinkGradFallback.apply(*leaves, flat, topk_length, scale, latent, deterministic)
+        # Graphed D layers in deterministic mode pass cuda_graph=True; it defaults to False.
+        graph_args = (True,) if cuda_graph else ()
+        out = latent_mqa_core._FlashMLASinkGradFallback.apply(
+            *leaves, flat, topk_length, scale, latent, deterministic, *graph_args
+        )
         out.backward(d_out)
 
         expected_leaves = [tensor.clone().requires_grad_(True) for tensor in (query, kv, sink)]
@@ -845,4 +853,7 @@ class TestSinkGradFallback:
         assert torch.equal(kwargs["topk_length"], topk_length) and kwargs["softmax_scale"] == scale
         if real_deterministic_kwargs is not None:
             ((call,),) = [deterministic_calls]
-            assert call == {"requested": deterministic}
+            # The workspace mode of graphed D layers, as the native path passes it through csa_sparse_attn.
+            assert call == (
+                {"requested": deterministic, "cuda_graph": True} if cuda_graph else {"requested": deterministic}
+            )

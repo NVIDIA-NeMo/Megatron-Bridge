@@ -28,12 +28,16 @@ the computation Megatron-Core lacks:
 * The sigmoid output gate ``out * sigmoid(gate_logits)``.
 * The analytic gradient of a softmax sink that only enters the denominator.
 * The FlashMLA key list of the reference implementation without its all-invalid key blocks.
+* The host values of a pack's document boundaries, noted by the batch builder, and whether the current CUDA stream
+  is capturing a graph (where reading them from the device is not allowed).
 
 All index tensors use ``-1`` for an invalid slot and int32 storage, the convention of
 the Megatron-Core sparse-attention kernels.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import torch
 import torch.nn.functional as F
@@ -51,12 +55,24 @@ __all__ = [
     "ernie55_window_indices",
     "lse_with_sink",
     "mask_topk_beyond_end",
+    "noted_pack_boundaries",
     "pack_end",
     "pad_topk",
+    "record_pack_boundaries",
     "record_pack_end",
     "sigmoid_output_gate",
+    "stream_is_capturing",
     "vha_postmix",
 ]
+
+
+def stream_is_capturing() -> bool:
+    """Whether the current CUDA stream is capturing a CUDA graph; ``False`` without CUDA.
+
+    Host-to-device and device-to-host copies cannot be captured, so the D layer's host-planned metadata must exist
+    before a capture: every fallback that would build or read it on the device raises under a capture instead.
+    """
+    return torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()
 
 
 def _row_positions(num_rows: int, positions: Tensor | None, device: torch.device | str) -> Tensor:
@@ -114,6 +130,8 @@ def ernie55_document_starts(
 
 # Attribute under which a micro-batch's PackedSeqParams holds its boundary tensor and that tensor's last entry.
 _PACK_END_ATTR = "_ernie55_pack_end"
+# Attribute under which it holds its boundary tensor and the host values of all of that tensor's boundaries.
+_PACK_BOUNDARIES_ATTR = "_ernie55_pack_boundaries"
 
 
 def record_pack_end(packed_seq_params: PackedSeqParams, end: int) -> None:
@@ -130,21 +148,66 @@ def record_pack_end(packed_seq_params: PackedSeqParams, end: int) -> None:
     setattr(packed_seq_params, _PACK_END_ATTR, (cu_seqlens, int(end)))
 
 
+def record_pack_boundaries(packed_seq_params: PackedSeqParams, boundaries: Sequence[int]) -> None:
+    """Note on ``packed_seq_params`` the host values of all its (padded) document boundaries, and so its last one.
+
+    The batch builder knows them when it builds the ``cu_seqlens``. :func:`noted_pack_boundaries` returns them, and
+    :func:`pack_end` their last entry, while the metadata still holds the same boundary tensor. A D-layer CUDA graph
+    compares them with the boundaries it was captured for, on the host
+    (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`).
+
+    Args:
+        packed_seq_params: Packed THD metadata.
+        boundaries: The values of its padded ``cu_seqlens``, ``0`` first.
+    """
+    boundaries = tuple(int(value) for value in boundaries)
+    if not boundaries:
+        raise ValueError("A pack has at least one boundary.")
+    cu_seqlens, _ = get_packed_qk_cu_seqlens(packed_seq_params)
+    setattr(packed_seq_params, _PACK_BOUNDARIES_ATTR, (cu_seqlens, boundaries))
+    setattr(packed_seq_params, _PACK_END_ATTR, (cu_seqlens, boundaries[-1]))
+
+
+def noted_pack_boundaries(packed_seq_params: PackedSeqParams) -> tuple[int, ...] | None:
+    """The host boundaries :func:`record_pack_boundaries` noted for the current boundary tensor, else ``None``.
+
+    Never reads the device.
+
+    Args:
+        packed_seq_params: Packed THD metadata.
+    """
+    cu_seqlens, _ = get_packed_qk_cu_seqlens(packed_seq_params)
+    noted = getattr(packed_seq_params, _PACK_BOUNDARIES_ATTR, None)
+    if noted is None or noted[0] is not cu_seqlens:
+        return None
+    return noted[1]
+
+
 def pack_end(packed_seq_params: PackedSeqParams) -> int:
     """The last boundary of a pack's (padded) ``cu_seqlens`` on the host.
 
-    It is the value :func:`record_pack_end` noted for the current boundary tensor; otherwise it is read from the
-    device (one synchronization) and noted the same way, so each micro-batch reads it at most once.
+    It is the value :func:`record_pack_end` (or :func:`record_pack_boundaries`) noted for the current boundary
+    tensor; otherwise it is read from the device (one synchronization) and noted the same way, so each micro-batch
+    reads it at most once. Under a CUDA graph capture that read is not allowed, so a missing note raises instead.
 
     Args:
         packed_seq_params: Packed THD metadata.
 
     Returns:
         ``cu_seqlens[-1]`` as a Python int.
+
+    Raises:
+        RuntimeError: If the value was not noted and the current CUDA stream is capturing a graph.
     """
     cu_seqlens, _ = get_packed_qk_cu_seqlens(packed_seq_params)
     noted = getattr(packed_seq_params, _PACK_END_ATTR, None)
     if noted is None or noted[0] is not cu_seqlens:
+        if stream_is_capturing():
+            raise RuntimeError(
+                "The pack's last boundary was not noted on the host, and reading cu_seqlens[-1] from the device is "
+                "not allowed inside a CUDA graph capture. Note it when the batch is built (record_pack_boundaries); "
+                "an ERNIE 5.5 D-layer graph notes the boundaries it is captured for."
+            )
         noted = (cu_seqlens, int(cu_seqlens[-1]))
         setattr(packed_seq_params, _PACK_END_ATTR, noted)
     return noted[1]

@@ -173,8 +173,9 @@ def get_batch(
     Args:
         data_iterator: Yields batches in the contract of :func:`ernie55_documents_from_batch`, optionally with an
             int ``pad_token_id`` (needed only when a document must be padded to a multiple of ``2 * CP``).
-        config: Model (transformer) config (``cp_partition_mode``, and ``csa_compress_ratios`` with
-            ``csa_window_size`` for the fewest rows a CP rank may hold).
+        config: Model (transformer) config (``cp_partition_mode``, ``csa_compress_ratios`` with
+            ``csa_window_size`` for the fewest rows a CP rank may hold, and
+            ``ernie_cp_key_gather_inverse_grad``, with which the batch prebuilds the inverse key permutation).
         cp_group: Context-parallel group, or ``None``.
         device: Device of the returned tensors.
 
@@ -214,6 +215,7 @@ def get_batch(
         cp_partition_mode=cp_partition_mode,
         min_local_rows=min_local_rows,
         device=device,
+        with_key_reorder_inverse=bool(getattr(config, "ernie_cp_key_gather_inverse_grad", False)),
     )
 
 

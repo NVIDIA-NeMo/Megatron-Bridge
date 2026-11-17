@@ -106,10 +106,11 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_hca_config`; and, when MoE
     is configured, with :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_moe_config`.
 
-    CUDA graphs are Megatron-Core's per-layer Transformer Engine graphs of the H attention layers' mHC wrappers only
+    CUDA graphs are Megatron-Core's per-layer Transformer Engine graphs of the H attention layers' mHC wrappers
     (``cuda_graph_impl="transformer_engine"``, ``cuda_graph_modules=["attn"]``, with hyper-connections, an H layer in
     the decoder, ``use_te_rng_tracker``, ``max_seqlen_per_dp_cp_rank`` and ``thd_max_packed_sequences``; see
-    :mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`). The training loop captures them with
+    :mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`), plus, opt-in, of the D layers
+    (:attr:`ernie_graph_d_layers`, :attr:`ernie_graph_mtp_layers`). The training loop captures them with
     :attr:`te_cuda_graph_helper`.
     """
 
@@ -118,7 +119,34 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     )
     """Dotted path of the Transformer Engine CUDA graph helper that Bridge's training loop builds for models with
     this config (``cuda_graph_impl="transformer_engine"``) instead of Megatron-Core's ``TECudaGraphHelper``: it
-    graphs the H attention layers only. A class attribute, not a config field."""
+    graphs the H attention layers, and the D layers with :attr:`ernie_graph_d_layers` and
+    :attr:`ernie_graph_mtp_layers`. A class attribute, not a config field."""
+
+    ernie_graph_d_layers: bool = False
+    """With the H-layer Transformer Engine CUDA graphs (``cuda_graph_impl="transformer_engine"``,
+    ``cuda_graph_modules=["attn"]``), also graph the decoder's D attention layers
+    (:class:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.Ernie55DHyperConnectionHybridLayer`). A D layer
+    plans its context-parallel routes, zigzag geometry and kernel lengths on the host, so its graph assumes one fixed
+    sequence composition, one document over the whole row (``thd_max_packed_sequences=1``, the SFT recipe's rows): it
+    pins the plan of that composition and replays only micro-batches of it. With H layers in the decoder (every ERNIE
+    5.5 stack) every micro-batch must have that composition: the H graphs reject a row of another document count or a
+    longer ``max_seqlen`` with ``ValueError``, so such a micro-batch fails instead of running the D layers eagerly.
+    There the D layers fall back to eager execution only for a micro-batch the H graphs accept whose host plan still
+    differs (metadata without the batch builder's host notes); in a decoder of D layers alone, for a micro-batch of any
+    other composition. The first fallback of a process logs a warning. Same kernels and communication as eager
+    execution, so no math change. Costs graph memory (a few GiB per rank). The D layers offload
+    nothing, but with the H layers' ``core_attn``/``attn_proj`` offloading a graphed D layer's shorter backward leaves
+    less time to hide the reload of the H layer before it, so exposed reload waits can grow unless that reload starts
+    earlier. Off by default; no recipe sets it. There is no Hugging Face key; on the command line,
+    ``model.ernie_graph_d_layers=true``."""
+
+    ernie_graph_mtp_layers: bool = False
+    """Also graph the D attention layer of every MTP depth
+    (:class:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.Ernie55MTPDHyperConnectionHybridLayer`), like
+    the decoder's (:attr:`ernie_graph_d_layers`, which it needs). With SD-MTP the MTP depth's D layer shares the
+    decoder's last D layer's parameters; graphed next to each other, their gradient contributions add up as in eager
+    execution. SD-MTP is supported with one MTP depth. Off by default; no recipe sets it. On the command line,
+    ``model.ernie_graph_mtp_layers=true``."""
 
     ernie_mtp_shared_last_layer: bool = False
     """SD-MTP (Hugging Face ``mtp_shared_last_layer``): every MTP depth's inner layers share the
@@ -264,7 +292,9 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     the same operation and the gradient values are the same (``torch.equal``), but not always the same bits:
     ``index_add_`` adds onto ``+0.0`` and turns a ``-0.0`` gradient element into ``+0.0``, while the gather keeps
     ``-0.0`` (and in fp32 on CUDA, whose float atomics flush subnormals to zero, it also keeps subnormal elements).
-    The inverse permutation costs 8 bytes per gathered row and micro-batch (2 MiB at 262144 rows). Off by default:
+    The inverse permutation costs 8 bytes per gathered row and micro-batch (2 MiB at 262144 rows); the batch builder
+    prebuilds it with the zigzag geometry, and a D-layer CUDA graph (:attr:`ernie_graph_d_layers`) pins it with
+    the geometry of its captured composition. Off by default:
     the ``index_select`` backward, bitwise unchanged. No effect at ``context_parallel_size=1``. There is no Hugging
     Face key; on the command line, ``model.ernie_cp_key_gather_inverse_grad=true``."""
 
@@ -292,11 +322,12 @@ class Ernie55TransformerConfig(MLATransformerConfig):
 
         Raises:
             ValueError: If ``ernie_fused_ops``, ``ernie_fused_situ_prob``, ``ernie_fused_mhc``,
-                ``ernie_cp_key_gather_inverse_grad``, ``ernie_reference_rmsnorm`` or ``ernie_vha_batched_mix`` is not
-                a bool, if ``ernie_vha_batched_mix`` is set without ``ernie_vha_bf16_mix``, if
-                ``ernie_muon_ns_batch_size`` is not an int of at least 1, if ``ernie_per_row_loss`` is combined with
-                ``calculate_per_token_loss`` or (with MTP) ``mtp_loss_early_backward`` or an MTP loss other than cross
-                entropy, or if a layer envelope is violated.
+                ``ernie_cp_key_gather_inverse_grad``, ``ernie_reference_rmsnorm``, ``ernie_vha_batched_mix``,
+                ``ernie_graph_d_layers`` or ``ernie_graph_mtp_layers`` is not a bool, if ``ernie_vha_batched_mix`` is
+                set without ``ernie_vha_bf16_mix``, if ``ernie_muon_ns_batch_size`` is not an int of at least 1, if
+                ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
+                ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer envelope is
+                violated.
             RuntimeError: If Megatron-Core lacks a piece the configured context parallelism needs (see
                 :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_context_parallel_config`).
         """
@@ -320,6 +351,9 @@ class Ernie55TransformerConfig(MLATransformerConfig):
                 "ernie_vha_batched_mix=True applies the bf16 VHA head mix as a batched GEMM; it needs "
                 "ernie_vha_bf16_mix=True."
             )
+        for name in ("ernie_graph_d_layers", "ernie_graph_mtp_layers"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}.")
         batch = self.ernie_muon_ns_batch_size
         if isinstance(batch, bool) or not isinstance(batch, int) or batch < 1:
             raise ValueError(f"ernie_muon_ns_batch_size must be an int of at least 1, got {batch!r}.")

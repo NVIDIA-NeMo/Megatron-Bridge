@@ -29,8 +29,9 @@ The D layer reuses AbsorbedMLA's forward unchanged (projections, K absorption, R
   forward converts its input rows to zigzag with Megatron-Core dev's module-local converter, runs
   AbsorbedMLA's forward unchanged and converts the output back (see :meth:`forward` and
   :mod:`~megatron.bridge.models.ernie.modeling_ernie55.context_parallel`), and
-* always runs eagerly: with CUDA graphs only the H layers are graphed
-  (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`), and the forward raises inside a capture.
+* runs eagerly unless its CUDA graphs are switched on (``ernie_graph_d_layers``, ``ernie_graph_mtp_layers``): then
+  its graph wrapper captures it with the host plan of one fixed composition
+  (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`); any other capture makes the forward raise.
 
 Because the rewrite lives in the attention module, it also reaches the nested MTP stack,
 which reuses the decoder's ``dsa_layer`` spec.
@@ -49,8 +50,11 @@ from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_pg_size
 
-from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel
-from megatron.bridge.models.ernie.modeling_ernie55.cuda_graph import validate_ernie55_cuda_graph_config
+from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel, ops
+from megatron.bridge.models.ernie.modeling_ernie55.cuda_graph import (
+    check_ernie55_d_layer_capture,
+    validate_ernie55_cuda_graph_config,
+)
 from megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_core import (
     Ernie55LatentMQACoreAttention,
     indexer_loss_layer_number,
@@ -150,8 +154,10 @@ def validate_ernie55_config(config: TransformerConfig) -> None:
       activations), no FP8/FP4, no ``quant_recipe`` and no Kitchen quantization.
     * CUDA graphs only in the ERNIE 5.5 envelope
       (:func:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.validate_ernie55_cuda_graph_config`:
-      Transformer Engine graphs of the H attention layers). D layers always run eagerly: their CP conversion plans
-      its routes on the host, and :meth:`Ernie55LatentMQASelfAttention.forward` raises inside a CUDA graph capture.
+      Transformer Engine graphs of the H attention layers, and of the D layers with ``ernie_graph_d_layers`` and
+      ``ernie_graph_mtp_layers``). Without their switch, D layers run eagerly: their CP conversion plans its routes
+      on the host, and :meth:`Ernie55LatentMQASelfAttention.forward` raises inside a CUDA graph capture; with it,
+      only their graph wrapper's captures, which pin the host plan, are accepted.
     * No delayed weight-gradient computation, and no selective recompute of ``core_attn`` or
       ``mla_up_proj`` (full recompute is fine).
     * Per-token top-k every layer and the ERNIE indexer settings.
@@ -357,27 +363,23 @@ class Ernie55LatentMQASelfAttention(AbsorbedMLASelfAttention):
         The conversions are differentiable all-to-alls; their backward runs the reverse exchange.
         A zigzag stack (``cp_partition_mode="zigzag"``, a D-only ``"dsa"`` stack) needs no conversion.
 
-        D layers always run eagerly. With CUDA graphs configured (``cuda_graph_impl`` other than ``"none"``), the
-        forward first raises if the current stream is capturing a graph: a captured D layer would replay the host
-        routes and split sizes of the capture micro-batch.
+        With CUDA graphs configured (``cuda_graph_impl`` other than ``"none"``), the forward first checks whether
+        the current stream is capturing a graph, and raises unless the capture is the D layer's graph wrapper's
+        (its switch on and the host plan on ``packed_seq_params``,
+        :func:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.check_ernie55_d_layer_capture`): any
+        other captured D layer would replay the host routes and split sizes of the capture micro-batch.
 
         Returns:
             ``(output, bias)`` like AbsorbedMLA; ``output`` is in the stack partition.
 
         Raises:
             NotImplementedError: For SBHD input at CP > 1.
-            RuntimeError: At CP > 1 without Megatron-Core's CP partition converter, or inside a CUDA graph capture.
+            RuntimeError: At CP > 1 without Megatron-Core's CP partition converter, or inside a CUDA graph capture
+                that is not the D layer's graph wrapper's.
             ValueError: If the micro-batch's packed metadata violates the CP requirements.
         """
-        if (
-            getattr(self.config, "cuda_graph_impl", "none") not in (None, "none")
-            and torch.cuda.is_available()
-            and torch.cuda.is_current_stream_capturing()
-        ):
-            raise RuntimeError(
-                "ERNIE 5.5 D layers run eagerly, but a CUDA graph capture reached one: its context-parallel "
-                "conversion plans its routes on the host. Graph only the H layers (Ernie55TECudaGraphHelper)."
-            )
+        if getattr(self.config, "cuda_graph_impl", "none") not in (None, "none") and ops.stream_is_capturing():
+            check_ernie55_d_layer_capture(self.config, packed_seq_params, is_mtp_layer=bool(self.is_mtp_layer))
         forward_kwargs = dict(
             key_value_states=key_value_states,
             inference_context=inference_context,

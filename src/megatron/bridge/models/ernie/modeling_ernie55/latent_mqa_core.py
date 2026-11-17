@@ -416,7 +416,9 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
     With Megatron-Core dev, a deterministic backward is requested through Megatron-Core's
     ``_deterministic_sparse_bwd_kwargs`` (``deterministic_mode`` or
     ``torch.use_deterministic_algorithms``); it raises at the first backward when the GPU, the
-    cuDNN frontend (>= 1.28) or the head count cannot provide one.
+    cuDNN frontend (>= 1.28) or the head count cannot provide one. ``cuda_graph`` requests its
+    workspace in CUDA-graph mode, as the native path does through ``csa_sparse_attn``: Megatron-Core
+    keeps one deterministic workspace per device and rejects callers that mix the two modes.
     """
 
     @staticmethod
@@ -430,6 +432,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
         softmax_scale: float,
         d_v: int,
         deterministic: bool,
+        cuda_graph: bool = False,
     ) -> Tensor:
         """Run FlashMLA with the sink in the denominator; save tensors for backward."""
         pad = -topk_idxs.size(-1) % _DSA_FLASH_MLA_TOPK_ALIGNMENT
@@ -445,6 +448,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
         ctx.save_for_backward(q, kv, attn_sink, backward_idxs, topk_length, out, lse)
         ctx.softmax_scale = softmax_scale
         ctx.deterministic = deterministic
+        ctx.cuda_graph = cuda_graph
         return out
 
     @staticmethod
@@ -457,7 +461,9 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
         backward_kwargs = {}
         deterministic_kwargs = getattr(fused_sparse_attention, "_deterministic_sparse_bwd_kwargs", None)
         if deterministic_kwargs is not None:
-            # Returns {} unless determinism was requested here or through torch's global switch.
+            # Returns {} unless determinism was requested here or through torch's global switch. Only passed when
+            # set, so the call is unchanged without it.
+            graph_kwargs = {"cuda_graph": True} if ctx.cuda_graph else {}
             backward_kwargs = deterministic_kwargs(
                 q,
                 kv,
@@ -468,6 +474,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
                 topk_length,
                 ctx.softmax_scale,
                 requested=ctx.deterministic,
+                **graph_kwargs,
             )
         grad_q, grad_kv, _ = fused_sparse_attention._csa_sparse_attention_backward(
             q,
@@ -482,7 +489,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
             **backward_kwargs,
         )
         grad_sink = attention_sink_grad(attn_sink=attn_sink, lse=lse, out=out, d_out=grad_out).to(attn_sink.dtype)
-        return grad_q, grad_kv, grad_sink, None, None, None, None, None
+        return grad_q, grad_kv, grad_sink, None, None, None, None, None, None
 
 
 @dataclass
@@ -629,8 +636,20 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         self._csa_sparse_attn_kwargs = {}
         if self.use_fused:
             _check_fused_geometry(config)
-            if "deterministic" in inspect.signature(fused_sparse_attention.csa_sparse_attn).parameters:
+            sparse_attn_parameters = inspect.signature(fused_sparse_attention.csa_sparse_attn).parameters
+            if "deterministic" in sparse_attn_parameters:
                 self._csa_sparse_attn_kwargs["deterministic"] = self.deterministic
+            if (
+                self.deterministic
+                and "cuda_graph" in sparse_attn_parameters
+                and getattr(config, "cuda_graph_impl", "none") == "transformer_engine"
+                and getattr(config, "ernie_graph_d_layers", False)
+            ):
+                # Graphed D layers: the deterministic backward's workspace must be graph-owned, as Megatron-Core's
+                # DSv4 layers mark theirs under CUDA graphs (every MTP depth's D layer too, eager or not: Megatron-Core
+                # rejects a device mixing graph-owned and eager deterministic workspaces). The analytic sink-gradient
+                # fallback (ernie_native_sink_grad=False) requests its workspace with the same flag.
+                self._csa_sparse_attn_kwargs["cuda_graph"] = True
             if self.deterministic and not hasattr(fused_sparse_attention, "_deterministic_sparse_bwd_kwargs"):
                 _warn_once(
                     "deterministic",
@@ -1282,6 +1301,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
             self.softmax_scale,
             self.kv_lora_rank,
             self.deterministic,
+            self._csa_sparse_attn_kwargs.get("cuda_graph", False),
         )
         return out.reshape(seqlen, batch, num_heads, self.kv_lora_rank)
 
