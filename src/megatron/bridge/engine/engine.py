@@ -73,9 +73,8 @@ from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe, is_multimodal
 from megatron.bridge.engine.recipes.registry import apply_recipe_overrides, resolve_recipe
 from megatron.bridge.engine.router_replay import RouterReplayState
-from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only
+from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only, uses_mrope
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
-from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import RerunStateMachineConfig
 from megatron.bridge.training.initialize import init_rerun_state, torch_dist_init
@@ -507,6 +506,7 @@ class TrainingEngine:
                 self._model,
                 microbatches,
                 pg_collection=self._runtime.pg_collection,
+                mrope=uses_mrope(self._recipe.model),
                 mtp_target_scope=self._recipe.mtp_target_scope,
                 output_head=self._output_head,
                 router_replay=self._router_replay,
@@ -552,6 +552,7 @@ class TrainingEngine:
             microbatches,
             loss_method,
             pg_collection=self._runtime.pg_collection,
+            mrope=uses_mrope(self._recipe.model),
             mtp_target_scope=self._recipe.mtp_target_scope,
             output_head=self._output_head,
             router_replay=self._router_replay,
@@ -1134,16 +1135,12 @@ def _release_ddp_autograd_refs(chunk: MegatronModule) -> None:
 
 
 def _build_frozen_model(recipe: TrainingRecipe, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
-    """Build a model without DDP or gradient buffers and freeze its parameters."""
-    provider = recipe.model
-    if not isinstance(provider, ModelProviderMixin):
-        raise NotImplementedError("trainable=False currently requires a ModelProviderMixin model config.")
-    model = provider.provide_distributed_model(
-        ddp_config=None,
-        wrap_with_ddp=False,
-        data_parallel_random_init=recipe.rng.data_parallel_random_init,
-        pg_collection=pg_collection,
-    )
+    """Build the model as a trainable engine does, minus DDP and gradient buffers, and freeze its parameters.
+
+    Bridge's ``_build_distributed_model`` runs the config's pre-wrap hooks and the GTP setup, and keeps
+    router expert biases and FP32-marked parameters in FP32 through the mixed-precision wrapper.
+    """
+    model = _build_distributed_model(recipe, pg_collection, wrap_with_ddp=False)
     for chunk in model:
         for parameter in chunk.parameters():
             parameter.requires_grad_(False)

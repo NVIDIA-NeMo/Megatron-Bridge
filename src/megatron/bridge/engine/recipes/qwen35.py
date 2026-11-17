@@ -25,11 +25,11 @@ from __future__ import annotations
 from copy import deepcopy
 
 import torch
+from megatron.training.models.base import ModelConfig
 from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.engine.recipes.base import BRIDGE_LORA_TARGET_MODULES, TrainingRecipe
-from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import DistributedDataParallelConfig, OptimizerConfig, RNGConfig
 from megatron.bridge.training.mixed_precision import bf16_mixed
@@ -69,7 +69,7 @@ def qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(
         text_config.tie_word_embeddings = hf_config.tie_word_embeddings
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
 
-    model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    model = AutoBridge.from_hf_config(text_config).get_model_config()
     # MTP depth (mtp_num_hidden_layers) and its 0.1 loss weight come from the HF config via the bridge.
     _apply_35b_a3b_execution_settings(model, seq_length=seq_length, mtp_detach_heads=mtp_detach_heads)
     return _rl_recipe(
@@ -116,7 +116,7 @@ def qwen35_vl_35b_a3b_rl_16gpu_gb200_bf16(
     if seq_length > hf_config.text_config.max_position_embeddings:
         raise ValueError("seq_length exceeds the text model's max_position_embeddings.")
 
-    model = AutoBridge.from_hf_pretrained(hf_path, revision=hf_revision).to_megatron_provider(load_weights=False)
+    model = AutoBridge.from_hf_pretrained(hf_path, revision=hf_revision).get_model_config()
     model.mtp_num_layers = 1
     _apply_35b_a3b_execution_settings(model, seq_length=seq_length, mtp_detach_heads=mtp_detach_heads)
     model.tensor_model_parallel_size = 1
@@ -157,7 +157,7 @@ _35B_A3B_ENV_VARS = {
 }
 
 
-def _apply_35b_a3b_execution_settings(model: ModelProviderMixin, *, seq_length: int, mtp_detach_heads: bool) -> None:
+def _apply_35b_a3b_execution_settings(model: ModelConfig, *, seq_length: int, mtp_detach_heads: bool) -> None:
     """Set the TP1/CP8/EP16 long-context execution settings shared by the 35B-A3B recipes."""
     model.gdn_kernel_backend = "transformer_engine"
     model.gdn_pre_gated_delta_rule_fusion = True
@@ -180,7 +180,7 @@ def _apply_35b_a3b_execution_settings(model: ModelProviderMixin, *, seq_length: 
 
 
 def _rl_recipe(
-    model: ModelProviderMixin,
+    model: ModelConfig,
     *,
     env_vars: dict[str, str | int | float | bool],
     pad_to_max_length: bool,

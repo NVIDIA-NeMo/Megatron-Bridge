@@ -44,9 +44,14 @@ def apply_adam_params(optimizer: Any, params: AdamParams) -> None:
 
 
 def scale_gradients(model: list[MegatronModule], factor: float) -> None:
-    """Scale every DDP gradient buffer (dense and expert) in place."""
+    """Scale every DDP gradient buffer (dense and expert) in place.
+
+    Megatron Core takes the factor as a tensor (its gradient buffers read ``is_cuda`` and ``ndim`` from
+    it); a 0-dim FP32 tensor on the gradients' device keeps the factor's precision in the multiply.
+    """
     for chunk in model:
-        chunk.scale_gradients(factor)
+        device = next(chunk.parameters()).device
+        chunk.scale_gradients(torch.tensor(factor, dtype=torch.float32, device=device))
 
 
 def finalize_and_step(

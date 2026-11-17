@@ -436,7 +436,7 @@ def _scoring_engine(monkeypatch, peft) -> tuple[TrainingEngine, list[bool]]:
     engine._model = []
     engine._moe_metrics_tracker = MoEMetricsTracker()
     engine._router_replay = RouterReplayState([])
-    engine._recipe = SimpleNamespace(mtp_target_scope="primary")
+    engine._recipe = SimpleNamespace(model=SimpleNamespace(), mtp_target_scope="primary")
     engine._runtime = SimpleNamespace(topology=Topology(1, 1, 1, None, 1, 1, None, False), pg_collection=None)
     engine.preprocess = lambda data, training: ["mb"]
     engine.check_microbatches = lambda microbatches: None

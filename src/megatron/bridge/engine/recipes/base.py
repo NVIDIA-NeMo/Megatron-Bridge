@@ -26,6 +26,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal
 
+from megatron.training.models.base import ModelConfig
+
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import _enable_safe_hybridep_dispatch
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -54,8 +56,9 @@ class TrainingRecipe:
     """Validated model and execution configuration for one supported model on one hardware target.
 
     Attributes:
-        model: Model provider; it is also the model's ``TransformerConfig`` (parallel sizes, MoE, MTP,
-            recompute, fused kernels, ``seq_length`` and ``vocab_size``).
+        model: Builder-backed model config (``AutoBridge.get_model_config()``) or, for families still on
+            the provider path, a model provider. Either exposes the ``TransformerConfig`` fields
+            (parallel sizes, MoE, MTP, recompute, fused kernels) and ``seq_length`` and ``vocab_size``.
         optimizer: Optimizer type and defaults (lr, betas, eps, weight decay, clipping, distributed
             optimizer). Per-step values are overridden through ``AdamParams`` at ``optim_step``.
         ddp: Gradient-buffer, sharding and overlap settings.
@@ -90,7 +93,7 @@ class TrainingRecipe:
             linears worth adapting (Qwen3.5 adds its GatedDeltaNet ``in_proj`` and ``out_proj``).
     """
 
-    model: ModelProviderMixin
+    model: ModelConfig | ModelProviderMixin
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig
     mixed_precision: MixedPrecisionConfig | str
@@ -146,7 +149,7 @@ def data_parallel_size(recipe: TrainingRecipe) -> int:
 
 
 def is_multimodal(recipe: TrainingRecipe) -> bool:
-    """Whether the recipe builds a multimodal model (its provider carries a vision config)."""
+    """Whether the recipe builds a multimodal model (its model config carries a vision config)."""
     return getattr(recipe.model, "vision_config", None) is not None
 
 

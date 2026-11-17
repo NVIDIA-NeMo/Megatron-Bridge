@@ -15,13 +15,14 @@ from megatron.bridge.engine.losses import (
     target_logprobs,
     value_loss,
 )
-from megatron.bridge.engine.optim import apply_adam_params
+from megatron.bridge.engine.optim import apply_adam_params, scale_gradients
 from megatron.bridge.engine.schedule import (
     call_model,
     model_loss_mask,
     scored_tensor,
     split_loss_return,
     to_model_output,
+    uses_mrope,
 )
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
 
@@ -369,8 +370,9 @@ def test_model_loss_mask_follows_mtp_target_scope_and_never_includes_padding():
 class _RecordingModel:
     pre_process = True
 
-    def __init__(self, position_embedding_type: str):
-        self.config = SimpleNamespace(position_embedding_type=position_embedding_type, sequence_parallel=False)
+    def __init__(self):
+        # Like a builder-built model: its config is the nested TransformerConfig, without position_embedding_type.
+        self.config = SimpleNamespace(sequence_parallel=False)
         self.kwargs = None
 
     def __call__(self, **kwargs):
@@ -378,10 +380,45 @@ class _RecordingModel:
         return torch.zeros(1, 4)
 
 
-@pytest.mark.parametrize("embedding, shape", [("rope", (1, 4)), ("mrope", (3, 1, 4))])
-def test_call_model_hands_mrope_models_three_position_rows(embedding, shape):
-    model = _RecordingModel(embedding)
-    call_model(model, _rl_batch(), None, mtp_target_scope="primary")
+@pytest.mark.parametrize("mrope, shape", [(False, (1, 4)), (True, (3, 1, 4))])
+def test_call_model_hands_mrope_models_three_position_rows(mrope, shape):
+    model = _RecordingModel()
+    call_model(model, _rl_batch(), None, mtp_target_scope="primary", mrope=mrope)
     position_ids = model.kwargs["position_ids"]
     assert position_ids.shape == shape
     assert (position_ids == torch.arange(4)).all()
+
+
+@pytest.mark.parametrize(
+    "model_config, expected",
+    [
+        (SimpleNamespace(position_embedding_type="mrope"), True),
+        (SimpleNamespace(position_embedding_type="rope"), False),
+        (SimpleNamespace(), False),
+    ],
+)
+def test_uses_mrope_reads_the_position_embedding_type(model_config, expected):
+    assert uses_mrope(model_config) is expected
+
+
+class _ScaledChunk(torch.nn.Module):
+    """Holds a parameter and records the factor its DDP-style ``scale_gradients`` receives."""
+
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.zeros(2))
+        self.factors = []
+
+    def scale_gradients(self, scaling_factor):
+        # Megatron Core's gradient buffers read these attributes from the factor.
+        assert scaling_factor.ndim == 0 and scaling_factor.is_cuda == self.weight.is_cuda
+        self.factors.append(scaling_factor)
+
+
+def test_scale_gradients_passes_a_float32_tensor_on_the_gradients_device():
+    chunks = [_ScaledChunk(), _ScaledChunk()]
+    scale_gradients(chunks, 1 / 3)
+    for chunk in chunks:
+        (factor,) = chunk.factors
+        assert factor.dtype == torch.float32 and factor.device == chunk.weight.device
+        assert factor.item() == pytest.approx(1 / 3)
