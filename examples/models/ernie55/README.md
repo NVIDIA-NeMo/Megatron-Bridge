@@ -46,7 +46,10 @@ The recipe is in `megatron.bridge.recipes.ernie.ernie55` and trains with the ERN
 
 ### 1. Prepare the data
 
-`dataset.path` is a JSONL file with one sample per line, in any of three formats (they may be mixed):
+`dataset.path` is a JSONL file with one sample per line, in any of three formats (they may be mixed).
+`dataset.valid_path` and `dataset.test_path` name separate files for the validation and test splits, in the same
+formats; without them the splits read `dataset.path` — the same rows, packed the same way — so a validation loss then
+measures the fit to the training rows rather than generalization.
 
 ```json
 {"messages": [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}, {"role": "assistant", "content": "...", "reasoning_content": "..."}], "tools": [...]}
