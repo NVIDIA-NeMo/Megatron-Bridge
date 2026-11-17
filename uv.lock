@@ -1220,95 +1220,6 @@ wheels = [
 ]
 
 [[package]]
-name = "flashinfer-jit-cache"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-dependencies = [
-    { name = "flashinfer-jit-cache-sm100a", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm103a", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm110a", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm120f", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm121a", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm80", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm89", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm90a", marker = "sys_platform == 'linux'" },
-]
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:8449156043036d240f3581c25e6883810f7ea6d656f56e78183b39eee9066877" },
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:5a0a92ce56e11c19cec31948a4828b245314377eb587fe17307730b096225500" },
-]
-
-[[package]]
-name = "flashinfer-jit-cache-sm100a"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm100a-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:ed6c128c4033de6fb6edbd1743a008ee70d9a3d4c8d1b60b45d821bd7e4143a2" },
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm100a-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:2d118fdb9a4a403ae22c08192830885eb27aba6d363ffa9c88758c7a51d1c126" },
-]
-
-[[package]]
-name = "flashinfer-jit-cache-sm103a"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm103a-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:8883759aaf289b8d494f714bb28766c9bef2e84fe6115d439d10e2417a8c7ae3" },
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm103a-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c9c8430cd8c49d80edc44af820d4817c1c1b99cbe738c40034b41a44403ec5c7" },
-]
-
-[[package]]
-name = "flashinfer-jit-cache-sm110a"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm110a-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:ff08fecf03bec168d37c8518c679e2332ba77d79824e806cc3cdd67c4f6b7a75" },
-]
-
-[[package]]
-name = "flashinfer-jit-cache-sm120f"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm120f-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:1d3582708053a70b383c6d4df842a18c86f19518e230eaff6c1f689ce279dda5" },
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm120f-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:ab05a6e987bf79e18594d43ccc89ccdc8dbeacb3241c031ede8bc054a2baa9a7" },
-]
-
-[[package]]
-name = "flashinfer-jit-cache-sm121a"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm121a-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:bcbd9b7d51cefcaaac9629cec260d37e253f6a8493876d045b6869ddf42b49c7" },
-]
-
-[[package]]
-name = "flashinfer-jit-cache-sm80"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm80-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:f84fd89aac415b9cf79494e5606a307ecff2e421bcff132b62c6dba88f447a3b" },
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm80-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:b5076a39be7b63d15df44ecdfb9ce5be7206d39629b6d317b06d6e314f0b4cd6" },
-]
-
-[[package]]
-name = "flashinfer-jit-cache-sm89"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm89-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:18fa31a010e3942a00ed4b6ffb4def344b5e10fc1ff9f56a538ce646bc316a7c" },
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm89-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:61ae80c3a78f20ebd8ef350bfe16bde947242bb9ac93f1cafb63e26c04c009dc" },
-]
-
-[[package]]
-name = "flashinfer-jit-cache-sm90a"
-version = "0.7.2.post1+cu130"
-source = { registry = "https://flashinfer.ai/whl/cu130" }
-wheels = [
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm90a-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:3bd375e978255d3215ee69da3434ca4b9dcce7a2d655c5d3445cd048fcc62096" },
-    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.7.2.post1/flashinfer_jit_cache_sm90a-0.7.2.post1+cu130-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:52e5cc064b52290dad2f8889ee0eb5cd59621dfac8351841e4b3987d42d034a3" },
-]
-
-[[package]]
 name = "flashinfer-python"
 version = "0.7.2.post1"
 source = { registry = "https://flashinfer.ai/whl/" }
@@ -1835,8 +1746,8 @@ name = "imageio"
 version = "2.38.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
+    { name = "numpy", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "pillow", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f1/be/027f866037034c8ccc1791a3df6d630d2e454233f7ba09fbff76ce5aed81/imageio-2.38.2.tar.gz", hash = "sha256:62e338ea5c19a5547521b3b590a8a9ed1177e5d6c3fd1df076029053eacc73ca", size = 404125, upload-time = "2026-11-16T08:43:45.488Z" }
 wheels = [
@@ -2496,11 +2407,12 @@ dev = [
     { name = "flashinfer-python" },
     { name = "hypercorn" },
     { name = "megatron-energon", extra = ["av-decode"] },
-    { name = "multi-storage-client", marker = "sys_platform != 'win32'" },
+    { name = "multi-storage-client" },
     { name = "nemo-lens" },
     { name = "nvidia-cudnn-frontend" },
     { name = "nvidia-modelopt" },
     { name = "nvidia-resiliency-ext" },
+    { name = "nvtx" },
     { name = "onnxscript" },
     { name = "openai", extra = ["aiohttp"] },
     { name = "opentelemetry-api" },
@@ -2513,22 +2425,6 @@ dev = [
     { name = "zstandard" },
 ]
 inference = [
-    { name = "flashinfer-jit-cache", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm100a", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm103a", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm110a", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm120f", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm121a", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm80", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm89", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-jit-cache-sm90a", marker = "sys_platform == 'linux'" },
-    { name = "flashinfer-python" },
-    { name = "gigatoken" },
-    { name = "hypercorn" },
-    { name = "msgpack" },
-    { name = "orjson" },
-    { name = "pyzmq" },
-    { name = "quart" },
     { name = "torch-memory-saver" },
 ]
 mlm = [
@@ -2556,48 +2452,32 @@ requires-dist = [
     { name = "emerging-optimizers", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=v0.3.0" },
     { name = "fast-hadamard-transform", marker = "extra == 'dev'", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=f134af63deb2df17e1171a9ec1ea4a7d8604d5ca" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = "~=0.50" },
-    { name = "flash-linear-attention", marker = "extra == 'ssm'", specifier = "==0.5.1" },
-    { name = "flashinfer-jit-cache", marker = "sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-jit-cache-sm100a", marker = "sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-jit-cache-sm103a", marker = "sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-jit-cache-sm110a", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-jit-cache-sm120f", marker = "sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-jit-cache-sm121a", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-jit-cache-sm80", marker = "sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-jit-cache-sm89", marker = "sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-jit-cache-sm90a", marker = "sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1", index = "https://flashinfer.ai/whl/cu130" },
-    { name = "flashinfer-python", marker = "sys_platform == 'linux' and extra == 'inference'", specifier = "==0.7.2.post1" },
+    { name = "flash-linear-attention", extras = ["tilelang"], marker = "extra == 'ssm'", specifier = "==0.5.1" },
     { name = "flashinfer-python", marker = "extra == 'dev'", specifier = ">=0.7.2,<0.8.0" },
-    { name = "flashinfer-python", marker = "extra == 'inference'", specifier = ">=0.7.2,<0.8.0" },
     { name = "flask-restful", marker = "extra == 'mlm'" },
     { name = "flask-restful", marker = "extra == 'training'" },
-    { name = "gigatoken", marker = "extra == 'inference'", specifier = "==0.11.0" },
     { name = "gigatoken", marker = "extra == 'mlm'", specifier = ">=0.11.0" },
     { name = "gigatoken", marker = "extra == 'training'", specifier = ">=0.11.0" },
     { name = "hypercorn", marker = "extra == 'dev'" },
-    { name = "hypercorn", marker = "extra == 'inference'" },
     { name = "mamba-ssm", marker = "extra == 'ssm'", git = "https://github.com/state-spaces/mamba.git?rev=0048fbf2e7b2f214dcbe703ea3dec2b9647595e1" },
     { name = "megatron-energon", extras = ["av-decode"], marker = "extra == 'dev'", specifier = "~=7.0" },
-    { name = "msgpack", marker = "extra == 'inference'" },
-    { name = "multi-storage-client", marker = "sys_platform != 'win32' and extra == 'dev'", specifier = "~=1.1" },
+    { name = "multi-storage-client", marker = "extra == 'dev'", specifier = "~=0.50" },
     { name = "nemo-lens", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=b85578fc2b736a1804705e537001b5f45e9c715d" },
     { name = "nemo-lens", extras = ["sdk"], marker = "extra == 'otel'", git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=b85578fc2b736a1804705e537001b5f45e9c715d" },
     { name = "numpy" },
     { name = "nvidia-cudnn-frontend", extras = ["cutedsl"], marker = "extra == 'dev'", specifier = "==1.32.0" },
     { name = "nvidia-modelopt", extras = ["torch"], marker = "sys_platform != 'darwin' and extra == 'dev'", specifier = ">=0.47" },
     { name = "nvidia-resiliency-ext", marker = "extra == 'dev'", specifier = "==0.7.0" },
+    { name = "nvtx", marker = "extra == 'dev'", specifier = "~=0.2" },
     { name = "omegaconf", marker = "extra == 'mlm'" },
     { name = "omegaconf", marker = "extra == 'training'" },
     { name = "onnxscript", marker = "extra == 'dev'" },
     { name = "openai", extras = ["aiohttp"], marker = "extra == 'dev'" },
     { name = "opentelemetry-api", marker = "extra == 'dev'", specifier = ">=1.33.1,<2" },
     { name = "orjson", marker = "extra == 'dev'" },
-    { name = "orjson", marker = "extra == 'inference'" },
     { name = "packaging", specifier = ">=24.2" },
-    { name = "pillow", marker = "extra == 'dev'", specifier = ">=13.0.0" },
-    { name = "pyzmq", marker = "extra == 'inference'" },
+    { name = "pillow", marker = "extra == 'dev'" },
     { name = "quart", marker = "extra == 'dev'" },
-    { name = "quart", marker = "extra == 'inference'" },
     { name = "sentencepiece", marker = "extra == 'mlm'" },
     { name = "sentencepiece", marker = "extra == 'training'" },
     { name = "tensorstore", marker = "extra == 'dev'", specifier = "~=0.1,!=0.1.46,!=0.1.72" },
@@ -2856,7 +2736,7 @@ wheels = [
 
 [[package]]
 name = "multi-storage-client"
-version = "1.5.0"
+version = "0.51.0"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
     { name = "filelock" },
@@ -2866,7 +2746,6 @@ dependencies = [
     { name = "opentelemetry-api" },
     { name = "prettytable" },
     { name = "psutil" },
-    { name = "pyroute2", marker = "sys_platform == 'linux'" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
     { name = "tqdm" },
@@ -2875,9 +2754,9 @@ dependencies = [
     { name = "xattr" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-1.5.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:61a2712e0ea8bf1fcf17c9e213909527a9004957ca9c8e094c09a47fc070b897" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-1.5.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0801abcae2fd89ce5b56000062f3fe990c03838bbb09971886d0107af868d323" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-1.5.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4cdcd3e8b23b5a9b26ff557ef627f1783df70bb700b83941ff53ca2ced1dc212" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.51.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:a4b50338b7dbedffa65c3e99efa3503d945ce5e9ef3d8b5b57e383c59606b12f" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.51.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c3d69d06f44744469e0dc0327ecf94ce01cf166c62857157ab6f9eb1738addad" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.51.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1282ed2fe187529a75b05b14986f10ae065864ec1236f5fc6e7d92f78e371857" },
 ]
 
 [[package]]
@@ -3153,8 +3032,8 @@ name = "nvidia-cutlass-dsl"
 version = "4.9.0.dev1"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "nvidia-cutlass-dsl-libs-base", marker = "sys_platform != 'linux'" },
-    { name = "nvidia-cutlass-dsl-libs-cu12", marker = "(platform_machine != 'ARM64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-cutlass-dsl-libs-base", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "nvidia-cutlass-dsl-libs-cu12", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl/nvidia_cutlass_dsl-4.9.0.dev1-py3-none-any.whl", hash = "sha256:9e179b4e1430759bf3932bab4642d8c7f6ba496bc3bab871eea6cfc5c25dd6e3" },
@@ -3162,7 +3041,7 @@ wheels = [
 
 [package.optional-dependencies]
 cu13 = [
-    { name = "nvidia-cutlass-dsl-libs-cu13", marker = "sys_platform != 'linux'" },
+    { name = "nvidia-cutlass-dsl-libs-cu13", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
 ]
 
 [[package]]
@@ -3170,10 +3049,10 @@ name = "nvidia-cutlass-dsl-libs-base"
 version = "4.9.0.dev1"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform != 'linux'" },
-    { name = "nvidia-cutlass-dsl-libs-core", marker = "sys_platform != 'linux'" },
-    { name = "packaging", marker = "sys_platform != 'linux'" },
-    { name = "typing-extensions", marker = "sys_platform != 'linux'" },
+    { name = "cuda-bindings", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "nvidia-cutlass-dsl-libs-core", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "packaging", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-base/nvidia_cutlass_dsl_libs_base-4.9.0.dev1-py3-none-any.whl", hash = "sha256:64ffa8f1f4e715b4539d0a1ce209a0083b915af188a54c98c4164086b8222320" },
@@ -3184,9 +3063,9 @@ name = "nvidia-cutlass-dsl-libs-core"
 version = "4.9.0.dev1"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform != 'linux'" },
-    { name = "packaging", marker = "sys_platform != 'linux'" },
-    { name = "typing-extensions", marker = "sys_platform != 'linux'" },
+    { name = "cuda-bindings", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "packaging", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-core/nvidia_cutlass_dsl_libs_core-4.9.0.dev1-py3-none-any.whl", hash = "sha256:b1015f0373e57ff60dc6cc2215aaf0af1991b39b568e4db02dcec017ae73c4be" },
@@ -3197,10 +3076,10 @@ name = "nvidia-cutlass-dsl-libs-cu12"
 version = "4.9.0.dev1"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform != 'linux'" },
-    { name = "nvidia-cutlass-dsl-libs-base", marker = "sys_platform != 'linux'" },
-    { name = "packaging", marker = "sys_platform != 'linux'" },
-    { name = "typing-extensions", marker = "sys_platform != 'linux'" },
+    { name = "cuda-bindings", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "nvidia-cutlass-dsl-libs-base", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "packaging", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
 ]
 
 [[package]]
@@ -3208,10 +3087,10 @@ name = "nvidia-cutlass-dsl-libs-cu13"
 version = "4.9.0.dev1"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform != 'linux'" },
-    { name = "nvidia-cutlass-dsl-libs-base", marker = "sys_platform != 'linux'" },
-    { name = "packaging", marker = "sys_platform != 'linux'" },
-    { name = "typing-extensions", marker = "sys_platform != 'linux'" },
+    { name = "cuda-bindings", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "nvidia-cutlass-dsl-libs-base", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "packaging", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
 ]
 
 [[package]]
@@ -3293,6 +3172,18 @@ dependencies = [
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvidia-sphinx-theme/nvidia_sphinx_theme-0.0.9.post1-py3-none-any.whl", hash = "sha256:21ca60206dff2f380d7783d64bbaf71a5b9cacae53c7d0686f089c16b5a3d45a" },
+]
+
+[[package]]
+name = "nvtx"
+version = "0.2.17"
+source = { registry = "https://pypi.nvidia.com/" }
+sdist = { url = "https://pypi.nvidia.com/nvtx/nvtx-0.2.17.tar.gz", hash = "sha256:b8509031d0a92ae17a6d1038348fe2274dbfea14c7083eb8d139dd6905228633" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvtx/nvtx-0.2.17-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:35f32fb053dbc58e575860eb918fe961be86b488d53dbd2e4e74e821cc7f91f3" },
+    { url = "https://pypi.nvidia.com/nvtx/nvtx-0.2.17-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0e0cb246479351c333a55edcab10c2b452a018c8ee022d640741154c85121166" },
+    { url = "https://pypi.nvidia.com/nvtx/nvtx-0.2.17-cp312-cp312-win_amd64.whl", hash = "sha256:eb1294f3b06635c1909d46b303c1a1155a103ecd53a0a74e9404b5571ca7216b" },
+    { url = "https://pypi.nvidia.com/nvtx/nvtx-0.2.17-cp312-cp312-win_arm64.whl", hash = "sha256:de7ae9972d7640bae9b203e1df36c76bf890287fd7eee69ef96e8b6e109b4881" },
 ]
 
 [[package]]
@@ -4089,15 +3980,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pyroute2"
-version = "0.9.7"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1b/2a/d295013eb67b5bb3a0ebff7c6ae3f635a8f55929b3f5367889ddadd7f4dd/pyroute2-0.9.7.tar.gz", hash = "sha256:a678b098478c46ec51d6bf9a03c3cd2ac0172dffa590e9e8c1eeab633d0c17c6", size = 493409, upload-time = "2026-10-23T15:27:48.964Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/4e/d9ce0ff4b50da558a075a647ccb39074b7943cff26e8450a35a32c6e2948/pyroute2-0.9.7-py3-none-any.whl", hash = "sha256:01a2a3afe565a6acb0a0d5d8ac86c9682b6564407e3d9589070191ae94b737e8", size = 491864, upload-time = "2026-10-23T15:27:43.335Z" },
-]
-
-[[package]]
 name = "pytest"
 version = "9.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4244,34 +4126,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/74/93/7baea19427dcfbe1e5a372d81473250b379f04b1bd3c4c5ff825e2327202/pyyaml-6.0.3-cp312-cp312-win32.whl", hash = "sha256:96b533f0e99f6579b3d4d4995707cf36df9100d67e0c8303a0c55b27b5f99bc5", size = 137658, upload-time = "2025-09-25T21:32:20.209Z" },
     { url = "https://files.pythonhosted.org/packages/86/bf/899e81e4cce32febab4fb42bb97dcdf66bc135272882d1987881a4b519e9/pyyaml-6.0.3-cp312-cp312-win_amd64.whl", hash = "sha256:5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b", size = 154003, upload-time = "2025-09-25T21:32:21.167Z" },
     { url = "https://files.pythonhosted.org/packages/1a/08/67bd04656199bbb51dbed1439b7f27601dfb576fb864099c7ef0c3e55531/pyyaml-6.0.3-cp312-cp312-win_arm64.whl", hash = "sha256:64386e5e707d03a7e172c0701abfb7e10f0fb753ee1d773128192742712a98fd", size = 140344, upload-time = "2025-09-25T21:32:22.617Z" },
-]
-
-[[package]]
-name = "pyzmq"
-version = "27.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cffi", marker = "implementation_name == 'pypy'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/e1/ea46ab0d707219c098065a37d2add5b53d3b124241aa19429bcd0863e5b4/pyzmq-27.3.0.tar.gz", hash = "sha256:bbedb3d1d99babc625f1dd9d7438acefd442b36b75073fd6bc1ef7c0a4b96d56", size = 293249, upload-time = "2026-11-04T00:31:33.068Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/9e/6663ccc8c1af4e7db85de65921560a8058ad4ad4c40ebc49af4b1164f01a/pyzmq-27.3.0-cp312-abi3-macosx_10_15_universal2.whl", hash = "sha256:15155fd8f308d3bd47f67a8f6cc809f9db90abbf63c514c384a17622e2cf080f", size = 1232964, upload-time = "2026-11-04T00:29:09.922Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/90/4fc65d7a48077f535705ac957c29a3c07fa54a1f8d2595ca2f5f1489b21c/pyzmq-27.3.0-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ad8b828407caee77ff3ab0bdb2984ee8d48922328b226e8fda7c84a71a55dbb4", size = 770405, upload-time = "2026-11-04T00:29:11.487Z" },
-    { url = "https://files.pythonhosted.org/packages/2c/62/e4721d8b8b9de685323717489a408521067a786cabc2b73ccd91aa9b9077/pyzmq-27.3.0-cp312-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:858fe25231e0fd8612da142efde019faa5ef63fa150a821a27870e791b38c798", size = 855178, upload-time = "2026-11-04T00:29:13.042Z" },
-    { url = "https://files.pythonhosted.org/packages/39/5f/8190ff273beb195d9c9b62a36d0d87bad79019e76ff4407cabe463bc650d/pyzmq-27.3.0-cp312-abi3-manylinux_2_28_i686.whl", hash = "sha256:8b174298b57d5c2397c74fbefd656101d477357035916881970ed5f53b7b904c", size = 919158, upload-time = "2026-11-04T00:29:14.854Z" },
-    { url = "https://files.pythonhosted.org/packages/8f/66/ab116baad852235c82be3d8d83af7098a7165c48995a03f2b6e8d50297dc/pyzmq-27.3.0-cp312-abi3-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:cffd75359342ef88c86c287c99b16b2b100795dab467fd5398bcedd87d49bce7", size = 813613, upload-time = "2026-11-04T00:29:17.239Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/55/5075ef84055eca159435e65f8d67591bfe06c562cf310792cd50a6aeb0c9/pyzmq-27.3.0-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:220095b4c11b0542ae5c0d67411331d3819753ee9ec0468e63a4ca6fd4ccf50f", size = 1762126, upload-time = "2026-11-04T00:29:18.994Z" },
-    { url = "https://files.pythonhosted.org/packages/28/6f/e75d5e5aeda920dbcaaedcc413605379287b817578d00e47bfa89a8ea671/pyzmq-27.3.0-cp312-abi3-musllinux_1_2_i686.whl", hash = "sha256:e9e12fe784529e12177937aee8c714b7aed8913a2429ee2567400c904d4d55b5", size = 2067522, upload-time = "2026-11-04T00:29:20.762Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/b4/0d91b1e5ea8d659c1014ef39acfda279f4768fc4043120e98b764a59f1c9/pyzmq-27.3.0-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:d317685b83663fbd03ca8b5c34add7463e9bed094e3e1a69d2a895130b64ffaf", size = 1893864, upload-time = "2026-11-04T00:29:22.451Z" },
-    { url = "https://files.pythonhosted.org/packages/2a/23/ed213d9dc6e48913a1f77090d1aed85bc4b1e5567ef74a86fd8fd473f423/pyzmq-27.3.0-cp312-abi3-win32.whl", hash = "sha256:07dd778d7cf242a1e131bfad6244f64df59441dda7ea639d037d0fdb22112b6c", size = 567172, upload-time = "2026-11-04T00:29:24.09Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/6d/23a02024011a494fb52bcfb179f10a3b230cff7b6fe0d5b8a3c775ce3b82/pyzmq-27.3.0-cp312-abi3-win_amd64.whl", hash = "sha256:3ea8e8fa5c097e68fef91d70b150fda96f307758103868018fc4deeb9c214122", size = 642389, upload-time = "2026-11-04T00:29:25.739Z" },
-    { url = "https://files.pythonhosted.org/packages/e2/1b/410fc7ec4fc114b46da17ed0df3b88606f0624fbe172e184658d361b1dc1/pyzmq-27.3.0-cp312-abi3-win_arm64.whl", hash = "sha256:2187a5ca80691a5edb30690f02d9fb714e2c32d3dfdeb652e159ff5da2dd4283", size = 570810, upload-time = "2026-11-04T00:29:27.709Z" },
-    { url = "https://files.pythonhosted.org/packages/53/53/6ea90b8bb4c77bcc4babd15ef6a63ed243cfd47920cb270da5f29438d11f/pyzmq-27.3.0-pp312-pypy312_pp80-macosx_10_15_x86_64.whl", hash = "sha256:cff2031014f79b213818b6773253cbf330119c93de33ee1a635596f407da5c35", size = 689536, upload-time = "2026-11-04T00:31:12.423Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/9e/699898cdd86e4cd4bc20547b9f1bce24c58900f51e6a9d5fad03c2890407/pyzmq-27.3.0-pp312-pypy312_pp80-macosx_11_0_arm64.whl", hash = "sha256:18da98ce26045ef503b42a3f98fc2a2af0cdb2af87dc0594852fa5cea3795427", size = 632027, upload-time = "2026-11-04T00:31:14.338Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/59/5d6ccce5456cafbdf84c98141d3ddf6c073716eb7b958254349e047fad84/pyzmq-27.3.0-pp312-pypy312_pp80-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:13c7336a4112d3e09c5d78d17e17af1cd01da858ec1c5e3755b2d06339aa7d4f", size = 684300, upload-time = "2026-11-04T00:31:15.891Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/37/c4cf124d820495c5549b3f606b1292949c9e2053467309a7e1baaf0c3784/pyzmq-27.3.0-pp312-pypy312_pp80-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:51e1358fabf41920d69cab170495b6e263680797ac5b80ace1b5cf1eb2d89642", size = 761485, upload-time = "2026-11-04T00:31:17.817Z" },
-    { url = "https://files.pythonhosted.org/packages/a7/cf/caa0bd5f7a1b139b9240faf3b34586867656f682774364101572e8e84f80/pyzmq-27.3.0-pp312-pypy312_pp80-manylinux_2_28_i686.whl", hash = "sha256:cdb5efd4c23465573e928fb8429e40996ac0e1a4809365efe19e2753112b6ee1", size = 821382, upload-time = "2026-11-04T00:31:19.451Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/34/81fa1d9701024eb4f48949ba5f93da3a063ab997e0e0c9787ff37f11ecda/pyzmq-27.3.0-pp312-pypy312_pp80-win_amd64.whl", hash = "sha256:1b7ab96158dd50d7e6e430e6e4f744aaccee1df2e9d167ace9e7d2f3e3051712", size = 564187, upload-time = "2026-11-04T00:31:21.486Z" },
 ]
 
 [[package]]
@@ -5102,15 +4956,14 @@ name = "torch"
 version = "2.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform == 'linux'" },
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools" },
-    { name = "sympy" },
+    { name = "filelock", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "fsspec", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "jinja2", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "networkx", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "setuptools", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "sympy", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
 ]
 
 [[package]]
@@ -5138,8 +4991,8 @@ name = "torchvision"
 version = "0.29.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "sys_platform != 'linux'" },
-    { name = "pillow", marker = "sys_platform != 'linux'" },
+    { name = "numpy", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "pillow", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'" },
     { name = "torch", marker = "sys_platform == 'never'" },
 ]
 
