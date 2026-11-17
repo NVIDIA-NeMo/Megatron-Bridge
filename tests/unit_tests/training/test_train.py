@@ -15,9 +15,10 @@
 """Tests for train module utility functions."""
 
 import signal
+import sys
 import time
 import weakref
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -25,6 +26,7 @@ import torch
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
+from megatron.bridge.training import train as train_module
 from megatron.bridge.training.config import DistributedInitConfig, GPTDatasetConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import (
@@ -36,6 +38,7 @@ from megatron.bridge.training.train import (
     _maybe_register_fsdp_buffers,
     _release_cuda_graph_references,
     _should_skip_and_handle_iteration,
+    _te_cuda_graph_helper_class,
     checkpoint_and_decide_exit,
     force_param_sync,
     maybe_check_weight_hash_across_dp_replicas,
@@ -1943,3 +1946,33 @@ def test_train_step_seeds_global_batch_packing_flops_once_per_dp_group(
     expected_totals = (100, 1000) if dp_rank == 0 else (0, 0)
     assert (global_state._flops_seqlen_sum, global_state._flops_seqlen_sq_sum) == expected_totals
     assert global_state._flops_requires_global_reduce is True
+
+
+class TestTECudaGraphHelperClass:
+    """A model config class can name the Transformer Engine CUDA graph helper the training loop builds."""
+
+    def test_config_without_the_attribute_gets_megatron_cores_helper(self):
+        assert _te_cuda_graph_helper_class(SimpleNamespace(cuda_graph_impl="transformer_engine")) is (
+            train_module.TECudaGraphHelper
+        )
+        # Only the class is read, so a Mock config (any attribute exists) still gets the default.
+        assert _te_cuda_graph_helper_class(Mock()) is train_module.TECudaGraphHelper
+
+    def test_config_class_names_a_helper_subclass(self, monkeypatch):
+        module_name = "megatron.bridge.test_only_te_cuda_graph_helper"
+        module = ModuleType(module_name)
+        helper = type("CustomHelper", (train_module.TECudaGraphHelper,), {"__module__": module_name})
+        module.CustomHelper = helper
+        monkeypatch.setitem(sys.modules, module_name, module)
+
+        class Config:
+            te_cuda_graph_helper = f"{module_name}.CustomHelper"
+
+        assert _te_cuda_graph_helper_class(Config()) is helper
+
+    def test_a_target_that_is_not_a_class_raises(self):
+        class Config:
+            te_cuda_graph_helper = "megatron.bridge.training.train.train"
+
+        with pytest.raises(TypeError, match="is not a class"):
+            _te_cuda_graph_helper_class(Config())

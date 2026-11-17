@@ -105,7 +105,20 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     DSv4 hybrid attention variant that H layers need, also with
     :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_hca_config`; and, when MoE
     is configured, with :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_moe_config`.
+
+    CUDA graphs are Megatron-Core's per-layer Transformer Engine graphs of the H attention layers' mHC wrappers only
+    (``cuda_graph_impl="transformer_engine"``, ``cuda_graph_modules=["attn"]``, with hyper-connections, an H layer in
+    the decoder, ``use_te_rng_tracker``, ``max_seqlen_per_dp_cp_rank`` and ``thd_max_packed_sequences``; see
+    :mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`). The training loop captures them with
+    :attr:`te_cuda_graph_helper`.
     """
+
+    te_cuda_graph_helper: ClassVar[str] = (
+        "megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.Ernie55TECudaGraphHelper"
+    )
+    """Dotted path of the Transformer Engine CUDA graph helper that Bridge's training loop builds for models with
+    this config (``cuda_graph_impl="transformer_engine"``) instead of Megatron-Core's ``TECudaGraphHelper``: it
+    graphs the H attention layers only. A class attribute, not a config field."""
 
     ernie_mtp_shared_last_layer: bool = False
     """SD-MTP (Hugging Face ``mtp_shared_last_layer``): every MTP depth's inner layers share the

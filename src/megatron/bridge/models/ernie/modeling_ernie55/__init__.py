@@ -26,6 +26,8 @@
   (``hybrid_stack``). ``norm`` also holds the reference implementation's RMSNorm arithmetic,
   behind ``ernie_reference_rmsnorm``. Behind ``ernie_fused_mhc`` (off by default), the hyper-connections run
   fused fp32 Triton kernels instead (``fused_mhc``).
+* Transformer Engine CUDA graphs of the H attention layers with fp32 streams: their static inputs and replay checks,
+  and the capture helper that graphs only them (``cuda_graph``).
 * Multimax output head with its own gradient-norm group (``output_layer``).
 * The reference implementation's Triton kernels for SiTU-GLU, multimax and the context-parallel
   local RoPE (``fused_ops``), dispatched behind ``ernie_fused_ops`` (``fused_dispatch``).
@@ -38,6 +40,12 @@ FlashMLA and the cuDNN DSA kernels are imported lazily by Megatron-Core, and Tri
 """
 
 from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import validate_ernie55_context_parallel_config
+from megatron.bridge.models.ernie.modeling_ernie55.cuda_graph import (
+    Ernie55HCAHyperConnectionHybridLayer,
+    Ernie55TECudaGraphHelper,
+    use_ernie55_attention_cuda_graphs,
+    validate_ernie55_cuda_graph_config,
+)
 from megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch import install_ernie55_fused_ops
 from megatron.bridge.models.ernie.modeling_ernie55.hca_attention import (
     ERNIE55_ATTN_SINK_INIT_STD,
@@ -114,6 +122,7 @@ __all__ = [
     "PER_ROW_MTP_LOSS_SUPPORTED",
     "REFERENCE_FALLBACK_MAX_TOKENS",
     "Ernie55HCACoreAttention",
+    "Ernie55HCAHyperConnectionHybridLayer",
     "Ernie55HCASelfAttention",
     "Ernie55HCASelfAttentionSubmodules",
     "Ernie55HybridModel",
@@ -127,6 +136,7 @@ __all__ = [
     "Ernie55RMSNorm",
     "Ernie55RMSNormSelector",
     "Ernie55SplitFeatureRouter",
+    "Ernie55TECudaGraphHelper",
     "check_ernie55_attention_layers",
     "check_ernie55_mtp_aliases",
     "downcasting_norm",
@@ -144,9 +154,11 @@ __all__ = [
     "rotary_embedding_references",
     "share_mtp_body_with_last_layer",
     "tag_ernie55_muon_params",
+    "use_ernie55_attention_cuda_graphs",
     "use_ernie55_hyper_connections",
     "validate_ernie55_config",
     "validate_ernie55_context_parallel_config",
+    "validate_ernie55_cuda_graph_config",
     "validate_ernie55_hca_config",
     "validate_ernie55_mhc_config",
     "validate_ernie55_moe_config",

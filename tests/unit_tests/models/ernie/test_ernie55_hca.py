@@ -1077,6 +1077,29 @@ class TestGuards:
         with pytest.raises(ValueError, match=re.escape(f"ERNIE 5.5 D layer: {message}")):
             validate_ernie55_config(_violating_config(overrides))
 
+    def test_transformer_engine_attention_graphs_pass_both_validators(self):
+        """The one supported CUDA-graph setting: Transformer Engine graphs of the H attention layers.
+
+        The full envelope is tested in ``test_ernie55_cuda_graph.py``; here, both validators accept it on a real H
+        config, and the legacy flag and the other implementations keep failing as above.
+        """
+        config = _violating_config(
+            {
+                "cuda_graph_impl": "transformer_engine",
+                "cuda_graph_modules": ["attn"],
+                "enable_mhc_connections": True,
+                "use_te_rng_tracker": True,
+                "max_seqlen_per_dp_cp_rank": 512,
+                "thd_max_packed_sequences": 1,
+            }
+        )
+        validate_ernie55_hca_config(config)
+        validate_ernie55_config(config)
+        # Only the H layers' mHC wrappers are graphed: without hyper-connections there is nothing to capture.
+        _set_config_field(config, "enable_mhc_connections", False)
+        with pytest.raises(ValueError, match="ERNIE 5.5 H layer: CUDA graphs need enable_mhc_connections=True"):
+            validate_ernie55_hca_config(config)
+
     def test_finalize_checks_the_h_envelope_with_dsv4_hybrid_only(self):
         with pytest.raises(ValueError, match="ERNIE 5.5 H layer: rotary_percent"):
             _config(rotary_percent=0.5)

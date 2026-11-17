@@ -225,6 +225,16 @@ class TestDLayerConfig:
         assert vars(ernie55_d_layer_config(d)) == vars(d)
 
 
+# Transformer Engine graphs of the H layers, with BASE turned into an mHC H + D stack (only its D layer is validated
+# here; a D-only stack has nothing to graph).
+_H_LAYER_GRAPHS = dict(
+    experimental_attention_variant="dsv4_hybrid",
+    csa_compress_ratios=[128, 0],
+    enable_mhc_connections=True,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_modules=["attn"],
+)
+
 GUARD_CASES = [
     ({"multi_latent_attention": False}, "multi_latent_attention"),
     ({"tensor_model_parallel_size": 2}, "tensor_model_parallel_size"),
@@ -239,7 +249,13 @@ GUARD_CASES = [
     ({"use_kitchen_attention": True}, "Kitchen"),
     ({"delay_wgrad_compute": True}, "delay_wgrad_compute"),
     ({"cuda_graph_impl": "local"}, "CUDA graphs"),
+    ({"cuda_graph_impl": "full_iteration"}, "CUDA graphs"),
     ({"cuda_graph_impl": "transformer_engine"}, "CUDA graphs"),
+    (
+        {"cuda_graph_impl": "transformer_engine", "cuda_graph_modules": ["attn"]},
+        "CUDA graphs need experimental_attention_variant='dsv4_hybrid'",
+    ),
+    (_H_LAYER_GRAPHS, "CUDA graphs need use_te_rng_tracker"),
     ({"enable_cuda_graph": True}, "CUDA graphs"),
     ({"recompute_granularity": "selective", "recompute_modules": ["core_attn"]}, "core_attn"),
     ({"recompute_granularity": "selective", "recompute_modules": ["mla_up_proj"]}, "mla_up_proj"),
@@ -296,6 +312,13 @@ class TestValidation:
             {"attention_latent_norm_epsilon": BASE["layernorm_epsilon"]},
             {"dsa_indexer_k_norm_epsilon": BASE["layernorm_epsilon"]},
             {"cuda_graph_impl": "none"},
+            # Transformer Engine graphs of the H attention layers; D layers stay eager.
+            {
+                **_H_LAYER_GRAPHS,
+                "use_te_rng_tracker": True,
+                "max_seqlen_per_dp_cp_rank": 64,
+                "thd_max_packed_sequences": 1,
+            },
             {"ernie_d_q_lora_rank": 24},
             {"params_dtype": torch.bfloat16, "bf16": True},
         ],
