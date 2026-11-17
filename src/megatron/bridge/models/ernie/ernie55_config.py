@@ -233,6 +233,18 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     :func:`~megatron.bridge.models.ernie.modeling_ernie55.muon.install_ernie55_batched_muon`), without tensor, expert
     tensor or GTP sharding. There is no Hugging Face key; on the command line, ``model.ernie_muon_ns_batch_size=32``."""
 
+    ernie_cp_key_gather_inverse_grad: bool = False
+    """At ``context_parallel_size > 1``, compute the backward of the D layers' two key gathers (the latent key and the
+    indexer key, :func:`~megatron.bridge.models.ernie.modeling_ernie55.context_parallel.gather_cp_rows`) as one gather
+    of the gradient by the inverse of the key permutation, instead of autograd's ``index_select`` backward: a zero fill
+    and an ``index_add_``, on CUDA one atomic add per element. The permutation moves every row once, so the forward is
+    the same operation and the gradient values are the same (``torch.equal``), but not always the same bits:
+    ``index_add_`` adds onto ``+0.0`` and turns a ``-0.0`` gradient element into ``+0.0``, while the gather keeps
+    ``-0.0`` (and in fp32 on CUDA, whose float atomics flush subnormals to zero, it also keeps subnormal elements).
+    The inverse permutation costs 8 bytes per gathered row and micro-batch (2 MiB at 262144 rows). Off by default:
+    the ``index_select`` backward, bitwise unchanged. No effect at ``context_parallel_size=1``. There is no Hugging
+    Face key; on the command line, ``model.ernie_cp_key_gather_inverse_grad=true``."""
+
     ernie_reference_rmsnorm: bool = False
     """Build every RMSNorm of the model with the reference implementation's eager arithmetic
     (:class:`~megatron.bridge.models.ernie.modeling_ernie55.norm.Ernie55RMSNorm`) instead of Transformer Engine's
@@ -256,9 +268,9 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         envelope is checked only when ``num_moe_experts`` is set.
 
         Raises:
-            ValueError: If ``ernie_fused_ops``, ``ernie_fused_mhc`` or ``ernie_reference_rmsnorm`` is not a bool, if
-                ``ernie_muon_ns_batch_size`` is not an int of at least 1, if
-                ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
+            ValueError: If ``ernie_fused_ops``, ``ernie_fused_mhc``, ``ernie_cp_key_gather_inverse_grad`` or
+                ``ernie_reference_rmsnorm`` is not a bool, if ``ernie_muon_ns_batch_size`` is not an int of at
+                least 1, if ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
                 ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer envelope is
                 violated.
             RuntimeError: If Megatron-Core lacks a piece the configured context parallelism needs (see
@@ -269,6 +281,10 @@ class Ernie55TransformerConfig(MLATransformerConfig):
             raise ValueError(f"ernie_fused_ops must be a bool, got {self.ernie_fused_ops!r}.")
         if not isinstance(self.ernie_fused_mhc, bool):
             raise ValueError(f"ernie_fused_mhc must be a bool, got {self.ernie_fused_mhc!r}.")
+        if not isinstance(self.ernie_cp_key_gather_inverse_grad, bool):
+            raise ValueError(
+                f"ernie_cp_key_gather_inverse_grad must be a bool, got {self.ernie_cp_key_gather_inverse_grad!r}."
+            )
         if not isinstance(self.ernie_reference_rmsnorm, bool):
             raise ValueError(f"ernie_reference_rmsnorm must be a bool, got {self.ernie_reference_rmsnorm!r}.")
         batch = self.ernie_muon_ns_batch_size

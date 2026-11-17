@@ -253,3 +253,14 @@ def test_serialization_round_trip():
     assert isinstance(restored, Ernie55ModelConfig)
     assert restored.as_dict() == config.as_dict()
     assert restored.get_builder_cls().__name__ == "Ernie55ModelBuilder"
+
+
+@needs_hook
+def test_cp_key_gather_flag_reaches_the_transformer_config():
+    """``model.ernie_cp_key_gather_inverse_grad`` (a flat override) lands on the transformer config and round-trips."""
+    assert _config().transformer.ernie_cp_key_gather_inverse_grad is False
+    config = _config(ernie_cp_key_gather_inverse_grad=True)
+    config.finalize()
+    assert config.transformer.ernie_cp_key_gather_inverse_grad is True
+    restored = Ernie55ModelConfig.from_dict(config.as_dict())
+    assert restored.transformer.ernie_cp_key_gather_inverse_grad is True

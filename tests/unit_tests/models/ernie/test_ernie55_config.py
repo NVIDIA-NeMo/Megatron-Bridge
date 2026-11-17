@@ -85,6 +85,7 @@ ERNIE_FIELDS = {
     "ernie_fused_ops": True,
     "ernie_fused_mhc": False,
     "ernie_muon_ns_batch_size": 1,
+    "ernie_cp_key_gather_inverse_grad": False,
 }
 
 
@@ -144,6 +145,11 @@ class TestErnie55TransformerConfig:
     def test_finalize_accepts_a_muon_batch_size(self):
         assert _config(ernie_muon_ns_batch_size=32).ernie_muon_ns_batch_size == 32
 
+    @pytest.mark.parametrize("value", ["true", 1, None])
+    def test_finalize_rejects_a_cp_key_gather_flag_that_is_not_a_bool(self, value):
+        with pytest.raises(ValueError, match="ernie_cp_key_gather_inverse_grad must be a bool"):
+            _config(ernie_cp_key_gather_inverse_grad=value)
+
     def test_ernie_fields_survive_per_layer_copies(self):
         config = _config(
             ernie_vha_rank=16,
@@ -151,6 +157,7 @@ class TestErnie55TransformerConfig:
             ernie_output_gate_fp32=True,
             ernie_fused_ops=False,
             ernie_fused_mhc=True,
+            ernie_cp_key_gather_inverse_grad=True,
         )
         layer_config = DSALayerConfig.from_config(config)
         assert type(layer_config) is DSALayerConfig
@@ -160,6 +167,8 @@ class TestErnie55TransformerConfig:
         assert layer_config.ernie_fused_ops is False
         # The hyper-connection modules read ernie_fused_mhc from the config they are built with.
         assert layer_config.ernie_fused_mhc is True
+        # The D-layer core reads the key-gather flag from its per-layer config.
+        assert layer_config.ernie_cp_key_gather_inverse_grad is True
         validate_ernie55_config(layer_config)
 
 

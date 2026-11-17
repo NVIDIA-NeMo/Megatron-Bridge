@@ -52,6 +52,16 @@ deterministic backward) is gated at 3 times its noise instead.
 * ``test_d_layer_cp4_packed_scoring_speedup``: forward plus backward of the D layer at CP = 4 on the
   32K pack with ``PACKED_THD_GENERAL`` against the same layer forced onto ``UNFUSED_BOUNDS``;
   logs both times and requires a speedup.
+* ``test_d_layer_cp4_key_gather_backward``: ``ernie_cp_key_gather_inverse_grad`` on the D layer's two
+  key gathers (``gather_cp_rows``, latent key and indexer key) at CP = 4 on the 32K single-document
+  pack and the padded 8K pack. On the gradient each gather receives in the layer's backward with the
+  flag on, the inverse-permutation gather equals autograd's ``index_select`` backward (``index_add_``
+  into zeros) with ``torch.equal``, and their bits differ only where the gradient is ``-0.0``; the
+  gather's input gradient is the NCCL reduce-scatter of that gather bit for bit. The whole layer then
+  runs twice with the flag on and twice off (alternating): output and every gradient must be
+  ``torch.equal`` between the two where the repeats of one are, and otherwise within 3 times the
+  repeats' relative L2 difference. The four runs sit in one ``cudaProfilerStart``/``Stop`` range with
+  NVTX ranges per run, for nsys.
 * ``test_h_layer_cp4_matches_cp1``: the H layer (Megatron-Core's contiguous DSv4 CP with the ERNIE
   gate, VHA and plain RoPE) on an 8K pack whose rank boundaries cut compression blocks: output and
   gradients within the gates. ``[eager]`` rotates the context-parallel rows with Megatron-Core's
@@ -888,6 +898,152 @@ def test_d_layer_cp4_packed_scoring_speedup(cp4, monkeypatch):
     if speedup <= 1.0:
         failures.append(f"PACKED_THD_GENERAL {packed_ms:.1f} ms is not faster than UNFUSED_BOUNDS {unfused_ms:.1f} ms")
     _assert_all_ranks(failures, "D layer CP4 scoring speedup")
+
+
+_BIT_VIEWS = {torch.bfloat16: torch.int16, torch.float16: torch.int16, torch.float32: torch.int32}
+
+
+def _bits(tensor: torch.Tensor) -> torch.Tensor:
+    return tensor.detach().contiguous().view(_BIT_VIEWS[tensor.dtype])
+
+
+@pytest.mark.parametrize("layout", ["single-document-32k", "padded-multi-document-8k"])
+def test_d_layer_cp4_key_gather_backward(cp4, monkeypatch, layout):
+    """``ernie_cp_key_gather_inverse_grad`` gives ``index_select``'s gradient values, in a real CP = 4 D layer.
+
+    Part 1 turns the flag on and records, in one forward and backward of the layer, the gradient each
+    key gather receives and the gradient of its input, and checks on those real gradients that the
+    inverse-permutation gather equals ``index_add_`` into zeros (``torch.equal``; bits differ only at
+    ``-0.0``) and that the input gradient is the reduce-scatter of that gather bit for bit. Part 2 runs
+    the layer twice with the flag on and twice off, alternating: where the repeats of one setting are
+    bitwise equal, the two settings must be too; elsewhere (atomics in the fused DSA backward) their
+    relative L2 difference must stay within 3 times the repeats'. Part 2 is one
+    ``cudaProfilerStart``/``Stop`` range with an NVTX range per run
+    (``cpgather/<layout>/<inverse_permutation|index_select>/<repeat>``) for nsys.
+    """
+    import torch.distributed as dist
+
+    from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel
+
+    doc_lens, padded_lens = _D_LAYOUTS[layout]
+    total = sum(padded_lens or doc_lens)
+    cp_module, _ = _twins("dsa_layer", cp4, seed=4242)
+    core = cp_module.core_attention
+    hidden, grad_output = _inputs(cp_module.config.hidden_size, total, seed=43)
+    rows = _rank_rows(total, cp4.rank)
+    original_gather = context_parallel.gather_cp_rows
+    original_backward = context_parallel._PermuteRows.__dict__["backward"].__func__
+    records, backward_rows = [], []
+
+    def store(record: dict, key: str):
+        def hook(grad: torch.Tensor) -> None:
+            record[key] = grad.detach().clone()
+
+        return hook
+
+    def recording_gather(local, *, geometry, cp_group, inverse_grad=False):
+        output = original_gather(local, geometry=geometry, cp_group=cp_group, inverse_grad=inverse_grad)
+        record = {"geometry": geometry, "group": cp_group, "inverse_grad": inverse_grad}
+        if local.requires_grad and output.requires_grad:
+            local.register_hook(store(record, "input_grad"))
+            output.register_hook(store(record, "output_grad"))
+        records.append(record)
+        return output
+
+    def counting_backward(ctx, grad):
+        backward_rows.append(grad.size(0))
+        return original_backward(ctx, grad)
+
+    # The default config leaves the flag off; the core reads it into this attribute.
+    failures = [] if core.cp_key_gather_inverse_grad is False else ["the default config turns the flag on"]
+    monkeypatch.setattr(core, "cp_key_gather_inverse_grad", True)
+    monkeypatch.setattr(context_parallel._PermuteRows, "backward", staticmethod(counting_backward))
+    monkeypatch.setattr(context_parallel, "gather_cp_rows", recording_gather)
+    params = _packed_seq_params(doc_lens, padded_lens=padded_lens, prebuild_group=cp4.cp.cp)
+    _run(cp_module, hidden[rows], grad_output[rows], params, scale=float(CP))
+    monkeypatch.setattr(context_parallel, "gather_cp_rows", original_gather)
+
+    # Part 1: the two gathers on the gradients of the real backward.
+    complete = len(records) == 2 and all(
+        "output_grad" in r and "input_grad" in r and r["inverse_grad"] for r in records
+    )
+    if not complete or backward_rows != [total, total]:
+        failures.append(
+            f"{len(records)} key gathers ({sum('output_grad' in r for r in records)} with gradients, "
+            f"{sum(bool(r['inverse_grad']) for r in records)} with inverse_grad) and inverse-permutation backward "
+            f"calls on {backward_rows} rows; expected 2 and [{total}, {total}]"
+        )
+    every_rank_complete = torch.tensor([int(complete)], device=_device())
+    dist.all_reduce(every_rank_complete, op=dist.ReduceOp.MIN, group=cp4.cp.cp)
+    negative_zeros = []
+    for index, record in enumerate(records if every_rank_complete.item() else []):
+        geometry, grad = record["geometry"], record["output_grad"]
+        inverse_gather = grad.index_select(0, geometry.key_reorder_inverse)
+        index_add = torch.zeros_like(grad).index_add_(0, geometry.key_reorder, grad)
+        negative_zero = (inverse_gather == 0) & torch.signbit(inverse_gather)
+        negative_zeros.append(int(negative_zero.sum()))
+        if not torch.equal(inverse_gather, index_add):
+            mismatched = int((inverse_gather != index_add).sum())
+            failures.append(f"gather {index} ({tuple(grad.shape)}): {mismatched} values differ from index_add_")
+        elif not torch.equal(_bits(inverse_gather) != _bits(index_add), negative_zero):
+            failures.append(f"gather {index}: bits differ from index_add_ elsewhere than at -0.0")
+        reduced = torch.empty_like(record["input_grad"])
+        dist.reduce_scatter_tensor(reduced, inverse_gather.contiguous(), group=record["group"])
+        if not torch.equal(_bits(reduced), _bits(record["input_grad"])):
+            failures.append(
+                f"gather {index}: the input gradient is not the reduce-scatter of the inverse-permutation gather "
+                f"(relative L2 {_rel_err(record['input_grad'].float(), reduced.float()):.3e}; NCCL reduce-scatter "
+                "is deterministic for identical calls)"
+            )
+
+    # Part 2: the whole layer with the flag on and off, alternating, under one profiler range.
+    settings = {"inverse_permutation": True, "index_select": False}
+    runs = {name: [] for name in settings}
+    backward_rows.clear()
+    torch.cuda.synchronize()
+    torch.cuda.profiler.start()
+    try:
+        for repeat in range(2):
+            for name, flag in settings.items():
+                monkeypatch.setattr(core, "cp_key_gather_inverse_grad", flag)
+                run_params = _packed_seq_params(doc_lens, padded_lens=padded_lens, prebuild_group=cp4.cp.cp)
+                torch.cuda.nvtx.range_push(f"cpgather/{layout}/{name}/{repeat}")
+                runs[name].append(_run(cp_module, hidden[rows], grad_output[rows], run_params, scale=float(CP)))
+                torch.cuda.synchronize()
+                torch.cuda.nvtx.range_pop()
+    finally:
+        torch.cuda.profiler.stop()
+    if backward_rows != [total, total] * 2:
+        failures.append(f"part 2 ran the inverse-permutation backward on {backward_rows} rows")
+    (new, new_repeat), (old, old_repeat) = runs["inverse_permutation"], runs["index_select"]
+    pairs = {"output": (new.output, new_repeat.output, old.output, old_repeat.output)}
+    pairs.update(
+        {
+            name: (new.grads[name], new_repeat.grads[name], old.grads[name], old_repeat.grads[name])
+            for name in new.grads
+        }
+    )
+    margins, bitwise = [], 0
+    for name, (first, second, reference, reference_repeat) in pairs.items():
+        gap = _rel_err(first, reference)
+        if torch.equal(first, second) and torch.equal(reference, reference_repeat):
+            bitwise += 1
+            if not torch.equal(first, reference):
+                failures.append(f"{name}: deterministic, but the gathers differ (relative L2 {gap:.3e})")
+            margins.append(f"{name} bitwise={torch.equal(first, reference)}")
+            continue
+        noise = max(_rel_err(second, first), _rel_err(reference_repeat, reference))
+        if not torch.isfinite(first).all() or gap > 3.0 * noise:
+            failures.append(f"{name}: relative L2 {gap:.3e} between the gathers, repeats {noise:.3e}")
+        margins.append(f"{name} gather_gap={gap:.3e} repeat_noise={noise:.3e}")
+    _report(
+        f"D {layout} key gather backward",
+        gathers_checked=len(negative_zeros),
+        negative_zero_gradient_elements=str(negative_zeros),
+        deterministic_tensors=f"{bitwise}/{len(pairs)}",
+    )
+    _report(f"D {layout} key gather backward margins", margins="; ".join(margins))
+    _assert_all_ranks(failures, f"D layer CP4 key gather backward ({layout})")
 
 
 # ---------------------------------------------------------------------------------------------

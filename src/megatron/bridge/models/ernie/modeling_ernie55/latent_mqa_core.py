@@ -51,7 +51,9 @@ the indexer's RoPE already applied at the rows' true document positions. The cor
 * takes the global packed position of every local row from the zigzag geometry (built on the host
   from the micro-batch's prebuilt ``cu_seqlens``, cached per micro-batch);
 * all-gathers the 576-wide latent key and the indexer key over the CP group and puts them in
-  global packed order (the backward reduce-scatters the key gradients to their owners);
+  global packed order (the backward reduce-scatters the key gradients to their owners; with
+  ``ernie_cp_key_gather_inverse_grad`` it first puts them back in rank order with one gather by the
+  inverse permutation instead of ``index_select``'s zero fill and ``index_add_``);
 * evaluates the document bounds ``[d(t), t - W]``, the window and the placeholder candidate (see
   :func:`~megatron.bridge.models.ernie.modeling_ernie55.ops.ernie55_kernel_selection_ends`) in global
   coordinates, so the indices address the gathered keys;
@@ -620,6 +622,8 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         # Megatron-Core's pre-scaled weights.
         self._hooks_take_score_scale = getattr(config, "dsa_kernel_backend", None) == "cudnn"
         self.native_sink_grad = bool(getattr(config, "ernie_native_sink_grad", True))
+        # At CP > 1: the key gathers' backward gathers by the inverse permutation (off: index_select's backward).
+        self.cp_key_gather_inverse_grad = bool(getattr(config, "ernie_cp_key_gather_inverse_grad", False))
         self.deterministic = bool(getattr(config, "deterministic_mode", False))
         self._csa_sparse_attn_kwargs = {}
         if self.use_fused:
@@ -767,9 +771,12 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
                 local_rows=seqlen,
                 device=query.device,
                 what="ERNIE 5.5 D-layer core attention",
+                with_inverse=self.cp_key_gather_inverse_grad,
             )
             # Every local row attends to keys anywhere before it in its document.
-            key_mqa = context_parallel.gather_cp_rows(key_mqa, geometry=geometry, cp_group=cp_group)
+            key_mqa = context_parallel.gather_cp_rows(
+                key_mqa, geometry=geometry, cp_group=cp_group, inverse_grad=self.cp_key_gather_inverse_grad
+            )
             key_heads = key_mqa.unsqueeze(2)
         positions = geometry.query_positions if geometry is not None else None
 
@@ -781,7 +788,9 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         use_indexer_loss = self.training and torch.is_grad_enabled() and self.loss_coeff > 0
         q_indexer, k_indexer, w_indexer = self.indexer.forward_before_topk(x.detach(), qr.detach(), packed_seq_params)
         if geometry is not None:
-            k_indexer = context_parallel.gather_cp_rows(k_indexer, geometry=geometry, cp_group=cp_group)
+            k_indexer = context_parallel.gather_cp_rows(
+                k_indexer, geometry=geometry, cp_group=cp_group, inverse_grad=self.cp_key_gather_inverse_grad
+            )
         topk, indexer_loss = self._select_topk(
             q_indexer,
             k_indexer,
