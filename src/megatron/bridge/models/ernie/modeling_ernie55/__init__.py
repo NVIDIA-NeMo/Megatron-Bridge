@@ -91,7 +91,12 @@ from megatron.bridge.models.ernie.modeling_ernie55.mtp import (
     validate_ernie55_mtp_sharing,
 )
 from megatron.bridge.models.ernie.modeling_ernie55.mtp_loss import PER_ROW_MTP_LOSS_SUPPORTED, ernie55_process_mtp_loss
-from megatron.bridge.models.ernie.modeling_ernie55.muon import ernie55_muon_split_sizes, tag_ernie55_muon_params
+from megatron.bridge.models.ernie.modeling_ernie55.muon import (
+    Ernie55BatchedMuon,
+    ernie55_muon_split_sizes,
+    install_ernie55_batched_muon,
+    tag_ernie55_muon_params,
+)
 from megatron.bridge.models.ernie.modeling_ernie55.norm import (
     Ernie55RMSNorm,
     Ernie55RMSNormSelector,
@@ -121,6 +126,7 @@ __all__ = [
     "MULTIMAX_PARAMETER_NAMES",
     "PER_ROW_MTP_LOSS_SUPPORTED",
     "REFERENCE_FALLBACK_MAX_TOKENS",
+    "Ernie55BatchedMuon",
     "Ernie55HCACoreAttention",
     "Ernie55HCAHyperConnectionHybridLayer",
     "Ernie55HCASelfAttention",
@@ -148,6 +154,7 @@ __all__ = [
     "ernie55_rmsnorm",
     "ernie55_rmsnorm_spec",
     "indexer_loss_layer_number",
+    "install_ernie55_batched_muon",
     "install_ernie55_fused_ops",
     "install_ernie55_multimax",
     "is_downcasting_norm",

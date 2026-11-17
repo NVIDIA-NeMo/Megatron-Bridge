@@ -220,6 +220,19 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     default; no recipe turns it on. There is no Hugging Face key; on the command line,
     ``model.ernie_fused_mhc=true``."""
 
+    ernie_muon_ns_batch_size: int = 1
+    """Batch Muon's Newton-Schulz over up to this many same-shape matrices
+    (:class:`~megatron.bridge.models.ernie.modeling_ernie55.muon.Ernie55BatchedMuon`). Muon orthogonalizes every
+    row block (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.muon`) and every other matrix on its own, so a rank
+    runs about a thousand small Newton-Schulz iterations per step, mostly its local experts' 2048 x 2048 blocks, and
+    the step is bound by kernel launches. With ``N > 1`` the blocks of one shape are stacked ``N`` at a time into one
+    batched Newton-Schulz. Each block keeps its own normalization, iteration and Muon scale; only the GEMM kernels
+    change (batched instead of one per matrix), so updates match the unbatched ones to floating-point summation order,
+    not bitwise. ``1`` (the default) keeps Megatron-Core's ``TensorParallelMuon`` unchanged. Takes effect for the Muon
+    optimizer built after the model (the model installs it, see
+    :func:`~megatron.bridge.models.ernie.modeling_ernie55.muon.install_ernie55_batched_muon`), without tensor, expert
+    tensor or GTP sharding. There is no Hugging Face key; on the command line, ``model.ernie_muon_ns_batch_size=32``."""
+
     ernie_reference_rmsnorm: bool = False
     """Build every RMSNorm of the model with the reference implementation's eager arithmetic
     (:class:`~megatron.bridge.models.ernie.modeling_ernie55.norm.Ernie55RMSNorm`) instead of Transformer Engine's
@@ -244,6 +257,7 @@ class Ernie55TransformerConfig(MLATransformerConfig):
 
         Raises:
             ValueError: If ``ernie_fused_ops``, ``ernie_fused_mhc`` or ``ernie_reference_rmsnorm`` is not a bool, if
+                ``ernie_muon_ns_batch_size`` is not an int of at least 1, if
                 ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
                 ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer envelope is
                 violated.
@@ -257,6 +271,9 @@ class Ernie55TransformerConfig(MLATransformerConfig):
             raise ValueError(f"ernie_fused_mhc must be a bool, got {self.ernie_fused_mhc!r}.")
         if not isinstance(self.ernie_reference_rmsnorm, bool):
             raise ValueError(f"ernie_reference_rmsnorm must be a bool, got {self.ernie_reference_rmsnorm!r}.")
+        batch = self.ernie_muon_ns_batch_size
+        if isinstance(batch, bool) or not isinstance(batch, int) or batch < 1:
+            raise ValueError(f"ernie_muon_ns_batch_size must be an int of at least 1, got {batch!r}.")
         if self.ernie_per_row_loss and self.calculate_per_token_loss:
             raise ValueError(
                 "ernie_per_row_loss=True needs calculate_per_token_loss=False: the per-row loss returns one token per "

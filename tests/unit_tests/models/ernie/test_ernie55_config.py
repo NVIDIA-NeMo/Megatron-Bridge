@@ -84,6 +84,7 @@ ERNIE_FIELDS = {
     "ernie_per_row_loss": False,
     "ernie_fused_ops": True,
     "ernie_fused_mhc": False,
+    "ernie_muon_ns_batch_size": 1,
 }
 
 
@@ -134,6 +135,14 @@ class TestErnie55TransformerConfig:
     def test_finalize_rejects_a_fused_flag_that_is_not_a_bool(self, flag, value):
         with pytest.raises(ValueError, match=f"{flag} must be a bool"):
             _config(**{flag: value})
+
+    @pytest.mark.parametrize("value", [0, -2, True, 2.0, "4", None])
+    def test_finalize_rejects_a_muon_batch_size_that_is_not_a_positive_int(self, value):
+        with pytest.raises(ValueError, match="ernie_muon_ns_batch_size must be an int of at least 1"):
+            _config(ernie_muon_ns_batch_size=value)
+
+    def test_finalize_accepts_a_muon_batch_size(self):
+        assert _config(ernie_muon_ns_batch_size=32).ernie_muon_ns_batch_size == 32
 
     def test_ernie_fields_survive_per_layer_copies(self):
         config = _config(
