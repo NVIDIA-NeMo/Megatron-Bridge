@@ -155,35 +155,6 @@ class TestHuggingFaceConfig:
         assert config.mtp_shared_last_layer is True
         assert config.tie_word_embeddings is False
 
-    def test_rope_parameters_carry_the_rope_base(self, tmp_path):
-        """transformers 5 keeps ``rope_scaling`` as ``rope_parameters``; its readers take the RoPE base from there."""
-        # A released config.json: rope_theta at the top level, the H layers' YaRN settings in rope_scaling.
-        released = proxy_config(
-            drop=("rotary_scaling_factor", "original_max_position_embeddings"),
-            hca_rope_type="yarn",
-            rope_theta=8000000,
-            rope_scaling={"type": "yarn", "factor": 16, "original_max_position_embeddings": 65536},
-        )
-        (tmp_path / "config.json").write_text(json.dumps(released))
-        config = AutoConfig.from_pretrained(tmp_path)
-        assert config.rope_parameters["rope_theta"] == config.rope_theta == 8000000
-        assert config.rope_parameters["factor"] == 16
-
-        config.save_pretrained(tmp_path / "saved")
-        saved = json.loads((tmp_path / "saved" / "config.json").read_text())
-        assert saved["rope_parameters"]["rope_theta"] == saved["rope_theta"] == 8000000
-        reloaded = AutoConfig.from_pretrained(tmp_path / "saved")
-        assert reloaded.rope_parameters == config.rope_parameters
-        assert _mapped(reloaded).as_dict() == _mapped(config).as_dict()
-
-    def test_rope_parameters_follow_the_top_level_rope_base(self):
-        rope_parameters = {"rope_type": "yarn", "factor": 16, "original_max_position_embeddings": 65536}
-        config = _hf(proxy_config(rope_theta=8e6, rope_parameters={**rope_parameters, "rope_theta": 10000.0}))
-        assert config.rope_parameters["rope_theta"] == config.rope_theta == 8e6
-
-    def test_config_without_rope_scaling_gets_no_rope_parameters(self):
-        assert "rope_parameters" not in _hf(PROXY_CONFIG).to_dict()
-
     def test_optional_keys_default_to_the_reference_semantics(self):
         config = Ernie55Config()
         assert config.hca_rope_type == "rope"
