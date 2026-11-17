@@ -49,9 +49,12 @@ def _apply_deepseek_v4_b200_overrides(cfg: ConfigContainer) -> None:
 
 
 def deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× B200, MXFP8."""
+    """DeepSeek V4 Flash pretrain: 128× B200, MXFP8, HybridEP dispatcher."""
     cfg = deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config()
     _apply_deepseek_v4_b200_overrides(cfg)
+    # Preserve this recipe's HybridEP settings independently of the B300 backend.
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
