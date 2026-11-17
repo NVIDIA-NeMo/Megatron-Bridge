@@ -611,8 +611,21 @@ def _freeze_base_model_for_mtp(model: list[MegatronModule]) -> list[MegatronModu
     return model
 
 
-def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
-    """Build distributed model from either ModelConfig or ModelProviderMixin."""
+def _build_distributed_model(
+    cfg: ConfigContainer, pg_collection: ProcessGroupCollection, *, wrap_with_ddp: bool = True
+) -> list[MegatronModule]:
+    """Build distributed model from either ModelConfig or ModelProviderMixin.
+
+    Args:
+        cfg: Configuration with the model, DDP, optimizer, distributed and RNG settings.
+        pg_collection: Model communication process groups.
+        wrap_with_ddp: Wrap the model chunks in DDP or FSDP. ``False`` builds them without the wrapper or
+            gradient buffers, for a model that only runs forward; the DDP, FSDP and optimizer layout
+            settings are then not used.
+
+    Returns:
+        The model chunks.
+    """
     model_config = cfg.model
     if not isinstance(model_config, ModelConfig):
         model_config.finalize()
@@ -626,29 +639,31 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
         _register_setup_pre_wrap_hook(
             model_config, _freeze_base_model_for_mtp, setup_hook_name="freeze_base_model_for_mtp"
         )
+    if wrap_with_ddp:
+        wrap_kwargs = dict(
+            ddp_config=cfg.ddp,
+            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
+            use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
+            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
+        )
+    else:
+        # The FSDP flags only defer device placement to the wrapper, so an unwrapped model must not set them.
+        wrap_kwargs = dict(ddp_config=None, wrap_with_ddp=False)
     if isinstance(model_config, ModelConfig):
         # PEFT loads base weights in a pre-wrap hook; the helper keeps FP32 router tensors through the cast.
         model = build_distributed_models(
             model_config,
             pg_collection,
-            ddp_config=cfg.ddp,
-            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
-            use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
-            use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
-            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
-            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
+            **wrap_kwargs,
         )
     else:
         model = model_config.provide_distributed_model(
-            ddp_config=cfg.ddp,
-            use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
-            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
-            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
-            use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
-            use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
+            **wrap_kwargs,
         )
     classify_gtp_remat_chains(model, model_config)
     return model

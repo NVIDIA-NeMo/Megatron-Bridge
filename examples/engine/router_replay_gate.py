@@ -46,7 +46,7 @@ from vllm_rollout import VllmRollout
 import megatron.bridge.engine.recipes as recipes
 from megatron.bridge.engine import AdamParams, Datum, TrainingEngine
 from megatron.bridge.engine.batching import all_gather_dp, unpack_sequences, unshard_from_cp
-from megatron.bridge.engine.schedule import run_forward_only
+from megatron.bridge.engine.schedule import run_forward_only, uses_mrope
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -105,6 +105,7 @@ def record_native_routing(
                 policy.model,
                 [replace(microbatches[0], routed_experts=None)],
                 pg_collection=policy.process_groups,
+                mrope=uses_mrope(policy.recipe.model),
                 mtp_target_scope=policy.recipe.mtp_target_scope,
             )
         recorded = torch.stack([router.recorded_topk_idx for router in state.routers], dim=1)  # [T_local, L, K]

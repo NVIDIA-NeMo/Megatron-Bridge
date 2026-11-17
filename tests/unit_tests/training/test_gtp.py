@@ -308,9 +308,12 @@ def test_gtp_uses_full_data_distribution_groups(mock_get_data_parallel_group):
 
 @pytest.mark.parametrize("fp32_accumulation", [False, True])
 @pytest.mark.parametrize("nccl_ub", [False, True])
+@pytest.mark.parametrize("wrap_with_ddp", [True, False])
 @patch("megatron.bridge.training.setup.classify_gtp_remat_chains")
 @patch("megatron.bridge.training.setup.configure_gtp_remat")
-def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classify, fp32_accumulation, nccl_ub):
+def test_distributed_model_build_obeys_gtp_lifecycle(
+    mock_configure, mock_classify, wrap_with_ddp, fp32_accumulation, nccl_ub
+):
     from megatron.bridge.training.config import DistributedInitConfig
     from megatron.bridge.training.setup import _build_distributed_model
 
@@ -339,9 +342,10 @@ def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classi
     )
 
     pg_collection = MagicMock()
-    result = _build_distributed_model(cfg, pg_collection)
+    result = _build_distributed_model(cfg, pg_collection, wrap_with_ddp=wrap_with_ddp)
 
     assert result is model
+    assert model_config.provide_distributed_model.call_args.kwargs.get("wrap_with_ddp", True) is wrap_with_ddp
     mock_configure.assert_called_once_with(
         model_config,
         reduce_scatter_with_fp32_accumulation=fp32_accumulation,

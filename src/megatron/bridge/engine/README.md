@@ -146,7 +146,7 @@ recipe.router_replay = True
 policy = TrainingEngine.from_recipe(recipe, checkpoint_path=initial_checkpoint)
 ```
 
-Both paths use the same engine initialization and runtime checks. **The model argument selects the configuration; `checkpoint_path` supplies pretrained weights.** Omitting the checkpoint uses the provider's initialization.
+Both paths use the same engine initialization and runtime checks. **The model argument selects the configuration; `checkpoint_path` supplies pretrained weights.** Omitting the checkpoint uses the model config's initialization.
 
 ### Data contract
 

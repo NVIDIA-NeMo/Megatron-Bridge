@@ -13,8 +13,6 @@ models, several engines sharing one runtime.
 - **Registry coverage.** `recipes/registry.py` holds one entry: Qwen3.5-35B-A3B on GB300 up to 131072
   tokens (TP1 CP8 EP16, 16 GPUs minimum). Other models, other GPU families (GB200, H100), and smaller
   context buckets with less context parallelism (fewer GPUs) need entries and a gate run each.
-- **Frozen engines need a provider config.** `trainable=False` requires the recipe's model to be a
-  `ModelProviderMixin` (`engine.py`, `_build_frozen_model`).
 - **Megatron FSDP v2** (`TODO(mfsdp-v2)`, `recipes/base.py`): FSDP wrappers are rejected; the engine must
   zero and scale gradients through the optimizer and run the cross-replica reduction on demand.
 
