@@ -79,12 +79,15 @@ _DEEPSEEK_MLPERF_EXEC_RECIPES = {
     "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
     "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
 }
-# TE has no deterministic fused SwiGLU dprob kernel for these VRNVL72 DeepSeek-V3 recipes.
+# These VRNVL72 DeepSeek recipes need dprob kernels that do not support deterministic execution.
 _DEEPSEEK_VRNVL72_NONDETERMINISTIC_RECIPES = {
+    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config",
     "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
     "deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config",
     "deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config",
     "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config",
+    "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config",
 }
 
 
@@ -254,7 +257,7 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
                 # MLPerf allows nondeterministic Transformer Engine kernels.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
             elif function_name in _DEEPSEEK_VRNVL72_NONDETERMINISTIC_RECIPES:
-                # The fused SwiGLU dprob uses atomic reductions.
+                # These recipes require nondeterministic dprob kernels.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
             elif path.parent.name == "gb300" and path.stem == "deepseek_v3":
                 # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale
