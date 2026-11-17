@@ -46,6 +46,10 @@ class DataloaderConfig:
     persistent_workers: bool = True
     """Whether dataloader workers persist between iterations."""
 
+    prefetch_factor: int | None = None
+    """Number of batches each dataloader worker loads in advance. ``None`` keeps PyTorch's default
+    (2). Ignored when ``num_workers`` is 0."""
+
     trust_remote_code: bool | None = None
     """Whether remote code is trusted for a configured Hugging Face path."""
 
