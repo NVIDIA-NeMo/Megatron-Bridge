@@ -204,8 +204,9 @@ def test_deepseek_v4_flash_128gpu_b200_fp8mx_config() -> None:
     assert cfg.model.pipeline_model_parallel_layout is not None
     assert cfg.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == 1
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.batch_p2p_sync is False
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is False
@@ -218,7 +219,6 @@ def test_deepseek_v4_flash_128gpu_b200_fp8mx_config() -> None:
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert "NCCL_EP_HT_EM_PULL_PUSH" not in cfg.env_vars
 
 
 def test_deepseek_v4_flash_128gpu_b200_fp8mx_ncclep_config() -> None:
