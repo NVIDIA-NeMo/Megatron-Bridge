@@ -175,3 +175,30 @@ def isolate_fused_dispatch(monkeypatch) -> types.ModuleType:
     monkeypatch.setattr(fused_dispatch, "_STATE", fused_dispatch._DispatchState())
     monkeypatch.setattr(fused_dispatch, "FUSED_OP_CALLS", collections.Counter())
     return fused_dispatch
+
+
+def record_batched_vha_mixes(monkeypatch) -> list[tuple[int, ...]]:
+    """Record every call of the batched VHA head mix; returns the list of the mixed rows' ``[tokens, H, D]`` shapes.
+
+    ``ernie_vha_batched_mix`` reaches ``ops._TokenBatchedHeadMix`` only through ``vha_postmix(..., batched_mix=True)``,
+    so a D or H core that took the flag from its config records one call per forward, and none with the flag off;
+    the outputs alone cannot tell, since ``torch.matmul`` computes the same mix. The recorder wraps the Function's
+    ``apply`` in Python, so it also sees the forwards run while a CUDA graph is captured (not its replays).
+
+    Args:
+        monkeypatch: The test's ``monkeypatch`` fixture, which restores ``apply`` afterwards.
+
+    Returns:
+        The list the recorder appends to; clear it to count a later phase on its own.
+    """
+    from megatron.bridge.models.ernie.modeling_ernie55 import ops
+
+    calls: list[tuple[int, ...]] = []
+    apply = ops._TokenBatchedHeadMix.apply
+
+    def recording_apply(mix, rows):
+        calls.append(tuple(rows.shape))
+        return apply(mix, rows)
+
+    monkeypatch.setattr(ops._TokenBatchedHeadMix, "apply", recording_apply)
+    return calls

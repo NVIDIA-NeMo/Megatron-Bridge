@@ -81,8 +81,8 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     (``num_attention_heads``, ``q_lora_rank``, ``v_head_dim``, ``qk_pos_emb_head_dim``,
     ``output_projection_groups``, ``output_projection_lora_rank``), ``csa_window_size`` and
     ``csa_compress_rotary_base`` (Hugging Face ``compress_rope_theta``, their RoPE base), plus
-    :attr:`ernie_hca_rope_type` and the shared ERNIE fields ``ernie_vha_rank``, ``ernie_vha_bf16_mix`` and
-    ``ernie_output_gate_fp32``.
+    :attr:`ernie_hca_rope_type` and the shared ERNIE fields ``ernie_vha_rank``, ``ernie_vha_bf16_mix``,
+    ``ernie_vha_batched_mix`` and ``ernie_output_gate_fp32``.
 
     The MoE layers use Megatron-Core's MoE fields: ``num_moe_experts``, ``moe_router_topk``,
     ``moe_ffn_hidden_size``, ``moe_shared_expert_intermediate_size``,
@@ -146,6 +146,17 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     """Form ``I + V U^T`` and apply it with GEMMs in the activation dtype (bf16 in training), the
     reference implementation's default contract, in D and H layers. False accumulates the mix in fp32
     and rounds once."""
+
+    ernie_vha_batched_mix: bool = False
+    """Apply the bf16 VHA head mix (``ernie_vha_bf16_mix``) of the D and H layers as one strided-batched GEMM over the
+    tokens with an explicit backward (:func:`~megatron.bridge.models.ernie.modeling_ernie55.ops.vha_postmix`).
+    ``torch.matmul`` instead folds the tokens into one GEMM over the head-last transpose of the attention output and
+    copies the activation through that layout: twice in the forward and twice in the backward of an H layer (inside the
+    H-layer CUDA graphs too), once each way in a D layer, whose head-major V-up result folds without a copy. The output
+    and the gradient of the attention output take the same products and are expected to be bitwise equal; the gradient
+    of the mix, and so of the VHA factors, is summed over the tokens in another order (in fp32, rounded once), so it
+    matches to floating-point summation order, not bitwise. Needs ``ernie_vha_bf16_mix``. Off by default; no recipe
+    turns it on. There is no Hugging Face key; on the command line, ``model.ernie_vha_batched_mix=true``."""
 
     ernie_output_gate_fp32: bool = False
     """Run the output gate's sigmoid and product in fp32 and round once, in D and H layers (Hugging
@@ -268,9 +279,10 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         envelope is checked only when ``num_moe_experts`` is set.
 
         Raises:
-            ValueError: If ``ernie_fused_ops``, ``ernie_fused_mhc``, ``ernie_cp_key_gather_inverse_grad`` or
-                ``ernie_reference_rmsnorm`` is not a bool, if ``ernie_muon_ns_batch_size`` is not an int of at
-                least 1, if ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
+            ValueError: If ``ernie_fused_ops``, ``ernie_fused_mhc``, ``ernie_cp_key_gather_inverse_grad``,
+                ``ernie_reference_rmsnorm`` or ``ernie_vha_batched_mix`` is not a bool, if ``ernie_vha_batched_mix``
+                is set without ``ernie_vha_bf16_mix``, if ``ernie_muon_ns_batch_size`` is not an int of at least 1,
+                if ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
                 ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer envelope is
                 violated.
             RuntimeError: If Megatron-Core lacks a piece the configured context parallelism needs (see
@@ -287,6 +299,13 @@ class Ernie55TransformerConfig(MLATransformerConfig):
             )
         if not isinstance(self.ernie_reference_rmsnorm, bool):
             raise ValueError(f"ernie_reference_rmsnorm must be a bool, got {self.ernie_reference_rmsnorm!r}.")
+        if not isinstance(self.ernie_vha_batched_mix, bool):
+            raise ValueError(f"ernie_vha_batched_mix must be a bool, got {self.ernie_vha_batched_mix!r}.")
+        if self.ernie_vha_batched_mix and not self.ernie_vha_bf16_mix:
+            raise ValueError(
+                "ernie_vha_batched_mix=True applies the bf16 VHA head mix as a batched GEMM; it needs "
+                "ernie_vha_bf16_mix=True."
+            )
         batch = self.ernie_muon_ns_batch_size
         if isinstance(batch, bool) or not isinstance(batch, int) or batch < 1:
             raise ValueError(f"ernie_muon_ns_batch_size must be an int of at least 1, got {batch!r}.")

@@ -276,7 +276,8 @@ class Ernie55HCACoreAttention(CompressedSparseAttention):
     * ``attn_sink`` seeding: the all-zero sink is drawn from ``N(0, 0.1)`` at construction when
       ``perform_initialization`` is set (never in ``forward``).
     * ``forward`` returns ``vha_postmix(core_output)``, computed out of place
-      (``ernie_vha_bf16_mix`` selects the bf16 or the fp32 contract).
+      (``ernie_vha_bf16_mix`` selects the bf16 or the fp32 contract; ``ernie_vha_batched_mix`` applies the bf16
+      mix as one batched GEMM over the tokens, without the layout copies of ``torch.matmul``).
 
     The constructor forwards every argument to ``CompressedSparseAttention`` unchanged. Megatron-Core's
     ``Attention.__init__`` first builds a throwaway core without ``compress_ratio`` (a window-only layer) before
@@ -295,6 +296,7 @@ class Ernie55HCACoreAttention(CompressedSparseAttention):
         if not isinstance(vha_rank, int) or isinstance(vha_rank, bool) or vha_rank <= 0:
             raise ValueError(f"ERNIE 5.5 H layers need a positive integer ernie_vha_rank, got {vha_rank!r}.")
         self.vha_bf16_mix = bool(getattr(config, "ernie_vha_bf16_mix", True))
+        self.vha_batched_mix = bool(getattr(config, "ernie_vha_batched_mix", False))
 
         device = _param_device(config)
         num_heads = config.num_attention_heads
@@ -322,6 +324,7 @@ class Ernie55HCACoreAttention(CompressedSparseAttention):
             u=self.vha_postmix_u,
             v=self.vha_postmix_v,
             bf16_mix=self.vha_bf16_mix,
+            batched_mix=self.vha_batched_mix,
         )
         return mixed.reshape(output.shape)
 

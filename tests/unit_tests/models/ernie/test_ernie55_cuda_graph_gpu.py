@@ -45,6 +45,14 @@ in both, and the graph is replayed (not run eagerly) exactly once per graph run.
   match eager execution, so the graph reads the rows and their boundaries on the device and bakes none of them in.
 * ``test_graph_rejects_rows_it_cannot_replay`` (G3): the one-document graph rejects a two-document row with a
   ``ValueError`` before anything runs, and still replays rows of its shape afterwards.
+* ``test_batched_vha_graph_matches_eager`` (G5): with ``ernie_vha_batched_mix`` (the VHA head mix as one batched GEMM
+  over the tokens). Every forward of the H core (eager, and the capture's) calls the batched mix once, and none does
+  with the flag cleared. Eagerly, the layer output is bitwise the one with ``torch.matmul``'s mix (when two eager runs
+  with ``torch.matmul`` agree bitwise, i.e. the forward is deterministic), and every gradient passes the gates above
+  against it (the mix gradient sums in another order); the graph captured with it matches eager execution on two rows.
+  At CP = 4 one more row runs through the eager batched mix, the eager ``torch.matmul`` mix and the graph inside the
+  file's only ``cudaProfilerStart``/``Stop`` range, with NVTX ranges ``vha/G5/cp4/<batched|matmul>/<eager|graph>``: the
+  capture range of an nsys run of this file (``--capture-range=cudaProfilerApi``).
 * ``test_graph_outlives_the_shared_rope_cache`` (G4): after capture, Megatron-Core's shared RoPE cache is cleared (what
   the eager D and MTP layers' lookups do by eviction in training, and eval CP rebinding at once), the allocator's cache
   is emptied and NaN tensors of the table's size are allocated; the RoPE table the graph reads is still alive and the
@@ -87,6 +95,8 @@ _WARMUP_ITERS = 2
 _MIN_COSINE = 0.9999
 _MAX_REL_ERR = 1e-2
 _NOISE_MULTIPLE = 3.0
+_PROFILED_CP = 4
+"""CP size at which G5 runs one row through each VHA mix inside a ``cudaProfilerStart``/``Stop`` range (for nsys)."""
 
 _COMMON_CONFIG = dict(
     num_layers=2,
@@ -277,8 +287,11 @@ def _fresh_dsa_state():
 # ---------------------------------------------------------------------------------------------
 
 
-def _build(setup: _Setup, *, documents: int, seed: int = _SEED):
-    """A one-H-layer ERNIE 5.5 model with H-layer graphs; returns its decoder's H wrapper (weights equal over CP)."""
+def _build(setup: _Setup, *, documents: int, seed: int = _SEED, **overrides):
+    """A one-H-layer ERNIE 5.5 model with H-layer graphs; returns its decoder's H wrapper (weights equal over CP).
+
+    ``overrides`` are further config fields (e.g. ``ernie_vha_batched_mix``).
+    """
     import torch.distributed as dist
     import torch.nn.functional as F
     from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
@@ -292,6 +305,7 @@ def _build(setup: _Setup, *, documents: int, seed: int = _SEED):
 
     values = {**_COMMON_CONFIG, **_H_GEOMETRY, **_D_GEOMETRY}
     values.update(context_parallel_size=setup.cp, thd_max_packed_sequences=documents, activation_func=F.silu)
+    values.update(overrides)
     config = Ernie55TransformerConfig(**values)
     config.finalize()
     torch.manual_seed(seed)
@@ -619,6 +633,101 @@ def test_graph_rejects_rows_it_cannot_replay(cp_setup):
     finally:
         _release(wrapper, captured)
     _assert_all_ranks(failures, f"G3 rejected rows at CP = {cp_setup.cp}")
+
+
+def _profile_vha_mixes(setup: _Setup, wrapper, core, params) -> None:
+    """One row through the eager batched mix, the eager ``torch.matmul`` mix and the captured batched graph, in one
+    ``cudaProfilerStart``/``Stop`` range with NVTX ranges ``vha/G5/cp<CP>/<batched|matmul>/<eager|graph>``.
+
+    The capture range of an nsys run of this file (``--capture-range=cudaProfilerApi``; no other test opens one):
+    the copy kernels of ``torch.matmul``'s mix next to the batched GEMMs, eagerly and inside the H-layer graph.
+    Nothing is compared here; without a profiler attached the range calls do nothing.
+    """
+    hidden, grad_output = _row(setup, wrapper, seed=54)
+    torch.cuda.synchronize()
+    torch.cuda.profiler.start()
+    try:
+        for name, batched_mix, mode in (
+            ("batched", True, "eager"),
+            ("matmul", False, "eager"),
+            ("batched", True, "graph"),
+        ):
+            core.vha_batched_mix = batched_mix
+            with _eager(wrapper) if mode == "eager" else contextlib.nullcontext():
+                with torch.cuda.nvtx.range(f"vha/G5/cp{setup.cp}/{name}/{mode}"):
+                    _run(wrapper, hidden, grad_output, params)
+                    torch.cuda.synchronize()
+    finally:
+        core.vha_batched_mix = True
+        torch.cuda.profiler.stop()
+
+
+def test_batched_vha_graph_matches_eager(cp_setup, monkeypatch):
+    """G5: ``ernie_vha_batched_mix``: every core forward takes the batched mix (none with the flag cleared), the eager
+    forward is bitwise the ``torch.matmul`` mix's, gradients pass the gates, and the graph captured with it matches
+    eager execution. At CP = 4 one row through each mix runs in the file's nsys capture range."""
+    from tests.unit_tests.models.ernie.ernie55_test_utils import record_batched_vha_mixes
+
+    _, wrapper = _build(cp_setup, documents=1, ernie_vha_batched_mix=True)
+    core = wrapper.inner_layer.self_attention.core_attention
+    params = _packed_seq_params(cp_setup, _documents(cp_setup, ()))
+    hidden, grad_output = _row(cp_setup, wrapper, seed=51)
+    label = f"G5 CP{cp_setup.cp}"
+    failures = [] if core.vha_batched_mix is True else [f"{label}: the H core did not take ernie_vha_batched_mix"]
+    # Both mixes compute the same output, so the comparisons below cannot show which one ran: count the batched mix's
+    # calls against the core's forwards in each phase (the capture's warmup and capture forwards included).
+    mixes, forwards = record_batched_vha_mixes(monkeypatch), []
+    hook = core.register_forward_hook(lambda module, args, output: forwards.append(1))
+    head_shape = (core.vha_postmix_u.size(0), wrapper.config.v_head_dim)
+
+    def check_mixes(phase: str, *, batched: bool) -> None:
+        """One batched mix of ``[t, H, D]`` rows per core forward since the last check, or none."""
+        expected = len(forwards) if batched else 0
+        if not forwards or len(mixes) != expected or any(shape[1:] != head_shape for shape in mixes):
+            failures.append(
+                f"{label} {phase}: batched VHA mixes of rows {mixes} in {len(forwards)} core forwards, expected "
+                f"{expected} of rows [t, {head_shape[0]}, {head_shape[1]}]"
+            )
+        mixes.clear()
+        forwards.clear()
+
+    try:
+        batched = _run(wrapper, hidden, grad_output, params)
+        check_mixes("eager run", batched=True)
+        core.vha_batched_mix = False
+        try:
+            matmul = _run(wrapper, hidden, grad_output, params)
+            rerun = _run(wrapper, hidden, grad_output, params)
+        finally:
+            core.vha_batched_mix = True
+        check_mixes("eager runs with the flag cleared", batched=False)
+        if torch.equal(matmul.tensors["output"], rerun.tensors["output"]):
+            differing = int((batched.tensors["output"] != matmul.tensors["output"]).sum().item())
+            _report(f"{label} batched vs matmul VHA forward", differing_entries=differing)
+            if differing:
+                failures.append(f"{label}: {differing} output entries differ from the torch.matmul mix")
+        else:
+            _report(f"{label} batched vs matmul VHA forward", note="eager forward not bitwise run to run; gates only")
+        failures += [
+            f"{label} batched vs matmul VHA: {problem}"
+            for problem in _compare(batched, matmul, _noise(matmul, rerun), f"{label} batched vs matmul VHA (eager)")
+        ]
+        captured = _capture(cp_setup, wrapper)
+        try:
+            check_mixes("capture", batched=True)
+            for seed in (52, 53):
+                problems = _graph_against_eager(
+                    cp_setup, wrapper, captured, params, seed=seed, label=f"{label} batched VHA graph, row {seed}"
+                )
+                failures += [f"{label} row {seed}: {problem}" for problem in problems]
+            check_mixes("eager runs of the graph rows", batched=True)
+            if cp_setup.cp == _PROFILED_CP:
+                _profile_vha_mixes(cp_setup, wrapper, core, params)
+        finally:
+            _release(wrapper, captured)
+    finally:
+        hook.remove()
+    _assert_all_ranks(failures, f"G5 batched VHA at CP = {cp_setup.cp}")
 
 
 def test_graph_outlives_the_shared_rope_cache(cp_setup):

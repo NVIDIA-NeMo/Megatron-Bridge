@@ -598,6 +598,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         self.index_topk = config.dsa_indexer_topk
         self.loss_coeff = config.dsa_indexer_loss_coeff or 0.0
         self.vha_bf16_mix = bool(getattr(config, "ernie_vha_bf16_mix", True))
+        self.vha_batched_mix = bool(getattr(config, "ernie_vha_batched_mix", False))
         self.output_gate_fp32 = bool(getattr(config, "ernie_output_gate_fp32", False))
         if softmax_scale is None:
             softmax_scale = 1.0 / math.sqrt(k_channels if k_channels is not None else config.kv_channels)
@@ -809,7 +810,13 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
             query, key_mqa, torch.cat((topk, window), dim=-1), block_layout=geometry is None
         )
         projected = torch.einsum("sbhc,hdc->sbhd", latent_out, up_v_weight.to(latent_out.dtype))
-        projected = vha_postmix(projected, u=self.vha_postmix_u, v=self.vha_postmix_v, bf16_mix=self.vha_bf16_mix)
+        projected = vha_postmix(
+            projected,
+            u=self.vha_postmix_u,
+            v=self.vha_postmix_v,
+            bf16_mix=self.vha_bf16_mix,
+            batched_mix=self.vha_batched_mix,
+        )
         projected = projected.reshape(seqlen, batch, num_heads * self.v_head_dim)
         gate_logits, _ = self.linear_output_gate(qr)
         output = sigmoid_output_gate(projected, gate_logits=gate_logits, fp32=self.output_gate_fp32)

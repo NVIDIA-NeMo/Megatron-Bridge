@@ -77,7 +77,7 @@ from megatron.bridge.models.ernie.modeling_ernie55 import (
     latent_mqa_core,
     ops,
 )
-from tests.unit_tests.models.ernie.ernie55_test_utils import cpu_current_device
+from tests.unit_tests.models.ernie.ernie55_test_utils import cpu_current_device, record_batched_vha_mixes
 
 
 pytestmark = pytest.mark.unit
@@ -832,12 +832,17 @@ class TestCoreDenseRegime:
         ],
         ids=["thd-tail-rows", "thd-padded", "sbhd-b2"],
     )
-    def test_forward_loss_and_gradients_match_oracle(self, pg_collection, monkeypatch, layout):
-        core = _build_core(_config(), pg_collection, seed=1)
+    @pytest.mark.parametrize("vha_batched_mix", [False, True], ids=["matmul-vha", "batched-vha"])
+    def test_forward_loss_and_gradients_match_oracle(self, pg_collection, monkeypatch, layout, vha_batched_mix):
+        core = _build_core(_config(ernie_vha_batched_mix=vha_batched_mix), pg_collection, seed=1)
+        assert core.vha_batched_mix is vha_batched_mix
         batch = _core_batch(seed=2, **layout)
         index_lists = _capture_index_lists(monkeypatch, core)
 
+        batched_mixes = record_batched_vha_mixes(monkeypatch)
         output = _run_core(core, batch)
+        # Both mixes match the oracle, so only this tells which one the core's one forward ran.
+        assert batched_mixes == ([(output.size(0) * output.size(1), HEADS, V_HEAD)] if vha_batched_mix else [])
         oracle = _oracle_core(core, batch)
 
         # S(t) is every causal key of the row's document: the indexer cannot matter here.
@@ -859,12 +864,17 @@ class TestCoreDenseRegime:
         # x only feeds the indexer, which sees it detached.
         assert batch.x.grad is None
 
-    def test_bf16_forward_matches_oracle(self, pg_collection):
+    @pytest.mark.parametrize("vha_batched_mix", [False, True], ids=["matmul-vha", "batched-vha"])
+    def test_bf16_forward_matches_oracle(self, pg_collection, monkeypatch, vha_batched_mix):
         """The bf16 contracts (bf16 VHA mix and gate) stay within bf16 accuracy of the fp64 math."""
-        core = _build_core(_config(params_dtype=torch.bfloat16), pg_collection, seed=4)
+        core = _build_core(
+            _config(params_dtype=torch.bfloat16, ernie_vha_batched_mix=vha_batched_mix), pg_collection, seed=4
+        )
         batch = _core_batch(seed=5, doc_lens=[4, 9, 2], dtype=torch.bfloat16)
+        batched_mixes = record_batched_vha_mixes(monkeypatch)
         output = _run_core(core, batch)
         assert output.dtype == torch.bfloat16
+        assert batched_mixes == ([(output.size(0) * output.size(1), HEADS, V_HEAD)] if vha_batched_mix else [])
         oracle = _oracle_core(core, batch)
         _assert_close(output, oracle.output, 3e-2, "bf16 output")
         output.float().sum().backward()

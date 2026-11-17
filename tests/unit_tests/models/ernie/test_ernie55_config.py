@@ -72,6 +72,7 @@ BASE = dict(
 ERNIE_FIELDS = {
     "ernie_vha_rank": None,
     "ernie_vha_bf16_mix": True,
+    "ernie_vha_batched_mix": False,
     "ernie_output_gate_fp32": False,
     "ernie_native_sink_grad": True,
     "ernie_d_num_attention_heads": None,
@@ -150,6 +151,16 @@ class TestErnie55TransformerConfig:
         with pytest.raises(ValueError, match="ernie_cp_key_gather_inverse_grad must be a bool"):
             _config(ernie_cp_key_gather_inverse_grad=value)
 
+    @pytest.mark.parametrize("value", ["true", 1, None])
+    def test_finalize_rejects_a_batched_vha_flag_that_is_not_a_bool(self, value):
+        with pytest.raises(ValueError, match="ernie_vha_batched_mix must be a bool"):
+            _config(ernie_vha_batched_mix=value)
+
+    def test_batched_vha_mix_needs_the_bf16_contract(self):
+        with pytest.raises(ValueError, match="needs ernie_vha_bf16_mix=True"):
+            _config(ernie_vha_batched_mix=True, ernie_vha_bf16_mix=False)
+        assert _config(ernie_vha_batched_mix=True).ernie_vha_batched_mix is True
+
     def test_ernie_fields_survive_per_layer_copies(self):
         config = _config(
             ernie_vha_rank=16,
@@ -158,11 +169,14 @@ class TestErnie55TransformerConfig:
             ernie_fused_ops=False,
             ernie_fused_mhc=True,
             ernie_cp_key_gather_inverse_grad=True,
+            ernie_vha_batched_mix=True,
         )
         layer_config = DSALayerConfig.from_config(config)
         assert type(layer_config) is DSALayerConfig
         assert (layer_config.ernie_vha_rank, layer_config.ernie_d_rotary_base) == (16, 8e6)
         assert layer_config.ernie_output_gate_fp32 is True
+        # The D and H cores read the VHA switches from the config they are built with.
+        assert layer_config.ernie_vha_batched_mix is True
         # The RoPE dispatcher reads the flag from the per-layer config it is handed.
         assert layer_config.ernie_fused_ops is False
         # The hyper-connection modules read ernie_fused_mhc from the config they are built with.

@@ -23,7 +23,8 @@ the computation Megatron-Core lacks:
   ``[max(d(t), t - W + 1), t]``. The two sets are disjoint and their union is every
   causal key of the document. Under context parallelism ``t`` and ``d(t)`` are global
   packed positions (the helpers take the local rows' ``positions``).
-* The VHA post-mix ``out'_k = sum_h (I + V U^T)[k, h] out_h`` on the head axis.
+* The VHA post-mix ``out'_k = sum_h (I + V U^T)[k, h] out_h`` on the head axis, optionally as one
+  strided-batched GEMM over the tokens with an explicit backward (``batched_mix``).
 * The sigmoid output gate ``out * sigmoid(gate_logits)``.
 * The analytic gradient of a softmax sink that only enters the denominator.
 * The FlashMLA key list of the reference implementation without its all-invalid key blocks.
@@ -270,7 +271,66 @@ def pad_topk(topk: Tensor, width: int) -> Tensor:
     return topk.to(torch.int32)
 
 
-def vha_postmix(out: Tensor, *, u: Tensor, v: Tensor, bf16_mix: bool) -> Tensor:
+def _sum_of_token_products(grad: Tensor, rows: Tensor) -> Tensor:
+    """``sum_n grad[n] @ rows[n]^T`` over the tokens ``n``, accumulated in fp32 (or the inputs' dtype if wider).
+
+    One strided-batched GEMM writes every token's ``[H, H]`` product in that precision, and one reduction sums
+    them, so the result is rounded once more, by the caller, like the single GEMM it replaces. On CUDA a 16-bit
+    input goes to cuBLAS as is (``out_dtype``); elsewhere, and when autograd records this backward (double
+    backward), the inputs are widened first.
+    """
+    accumulate = torch.promote_types(grad.dtype, torch.float32)
+    native = grad.is_cuda and grad.dtype in (torch.float16, torch.bfloat16) and rows.dtype == grad.dtype
+    if native and not torch.is_grad_enabled():
+        products = torch.bmm(grad, rows.transpose(1, 2), out_dtype=accumulate)
+    else:
+        products = torch.bmm(grad.to(accumulate), rows.to(accumulate).transpose(1, 2))
+    return products.sum(dim=0)
+
+
+class _TokenBatchedHeadMix(torch.autograd.Function):
+    """``out'[n] = M @ out[n]`` for every token ``n``, as one strided-batched GEMM with a stride-0 ``M``.
+
+    ``torch.matmul(M, out)`` with an ``M`` that requires gradients folds the tokens into one GEMM over the head-last
+    transpose of ``out`` and copies the result back out of that layout; its backward copies the incoming gradient
+    into the layout once more. A contiguous ``out`` (the H core output) is also copied into the layout, and the
+    gradient handed back for it is a transposed view that the H core's reshape copies: two activation-sized copies
+    each way in an H layer, one each way in a D layer, whose head-major V-up result folds as a view. Here the
+    forward reads ``out`` in place, ``dout[n] = M^T @ dout'[n]`` is the same batched GEMM, and ``dM`` is one
+    reduction over the tokens (:func:`_sum_of_token_products`).
+
+    The forward and ``dout`` take the same ``H`` products per entry as the folded GEMM, accumulated in the GEMM's
+    dtype. ``dM`` sums its ``tokens * D`` products per entry in a different order, so it matches the folded GEMM to
+    floating-point summation order, not bitwise.
+    """
+
+    @staticmethod
+    def forward(ctx, mix: Tensor, rows: Tensor) -> Tensor:
+        """``mix`` ``[H, H]``, ``rows`` ``[tokens, H, D]`` in the same dtype; returns contiguous ``[tokens, H, D]``.
+
+        Saves only what the backward reads: ``rows`` for ``dM`` and ``mix`` for ``dout``. So with frozen VHA factors
+        (``mix`` needs no gradient) the activation is not kept for the backward, as with ``torch.matmul``.
+        """
+        ctx.save_for_backward(mix if ctx.needs_input_grad[1] else None, rows if ctx.needs_input_grad[0] else None)
+        return torch.bmm(mix.expand(rows.size(0), -1, -1), rows)
+
+    @staticmethod
+    def backward(ctx, grad: Tensor) -> tuple[Tensor | None, Tensor | None]:
+        """Gradients of ``mix`` (one reduction over the tokens) and ``rows`` (the transposed batched GEMM).
+
+        Each reads only the tensor the forward saved for it (``mix`` is None without ``dout``, ``rows`` without
+        ``dM``); ``mix`` and ``rows`` share one dtype.
+        """
+        mix, rows = ctx.saved_tensors
+        grad_mix = grad_rows = None
+        if ctx.needs_input_grad[0]:
+            grad_mix = _sum_of_token_products(grad, rows).to(rows.dtype)
+        if ctx.needs_input_grad[1]:
+            grad_rows = torch.bmm(mix.t().expand(grad.size(0), -1, -1), grad)
+        return grad_mix, grad_rows
+
+
+def vha_postmix(out: Tensor, *, u: Tensor, v: Tensor, bf16_mix: bool, batched_mix: bool) -> Tensor:
     """Mix attention heads with the low-rank-plus-identity matrix ``M = I + V U^T``.
 
     ``out'[..., k, :] = sum_h M[k, h] * out[..., h, :]``, so ``V`` indexes the output head
@@ -285,16 +345,30 @@ def vha_postmix(out: Tensor, *, u: Tensor, v: Tensor, bf16_mix: bool) -> Tensor:
             bf16 contract of the reference implementation. When False, ``M - I = V U^T``
             is formed and the mix is accumulated in fp32 (or ``out.dtype`` if wider), and
             the result is rounded to ``out.dtype`` once.
+        batched_mix: Apply the bf16 contract's ``M`` as one strided-batched GEMM over the tokens, with an explicit
+            backward (:class:`_TokenBatchedHeadMix`), instead of ``torch.matmul``, whose fold copies the result (and
+            a contiguous ``out``) through their head-last transposes. The output and the gradient of ``out`` take the
+            same products and are expected to be bitwise equal; the gradient of ``M`` (so of ``U`` and ``V``) is
+            summed over the tokens in another order. Needs ``bf16_mix``.
 
     Returns:
         Tensor with the shape and dtype of ``out``.
+
+    Raises:
+        ValueError: If ``u`` and ``v`` are not ``[H, R]``, or if ``batched_mix`` is set without ``bf16_mix``.
     """
     num_heads = out.size(-2)
     if u.shape != v.shape or u.ndim != 2 or u.size(0) != num_heads:
         raise ValueError(f"Expected u and v of shape [{num_heads}, R], got {tuple(u.shape)} and {tuple(v.shape)}.")
+    if batched_mix and not bf16_mix:
+        raise ValueError("batched_mix applies the bf16 contract's mix; it needs bf16_mix=True.")
     if bf16_mix:
         identity = torch.eye(num_heads, dtype=out.dtype, device=out.device)
         mix = torch.addmm(identity, v.to(out.dtype), u.to(out.dtype).t())
+        if batched_mix:
+            # A view for the core outputs (contiguous in H, a head-major einsum result in D): no copy.
+            rows = out.reshape(-1, num_heads, out.size(-1))
+            return _TokenBatchedHeadMix.apply(mix, rows).view(out.shape)
         return torch.matmul(mix, out)
     compute_dtype = torch.promote_types(out.dtype, torch.float32)
     delta = v.to(compute_dtype) @ u.to(compute_dtype).t()

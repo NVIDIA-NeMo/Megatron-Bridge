@@ -311,63 +311,289 @@ def _vha_fp64(out, u, v):
     return torch.einsum("kh,...hd->...kd", mix, out.double())
 
 
+# (bf16_mix, batched_mix): the bf16 contract through torch.matmul and as a batched GEMM, and the fp32 contract.
+_VHA_CONTRACTS = [
+    pytest.param(True, False, id="bf16-mix"),
+    pytest.param(True, True, id="bf16-batched-mix"),
+    pytest.param(False, False, id="fp32-mix"),
+]
+
+
 class TestVHAPostmix:
-    @pytest.mark.parametrize("bf16_mix", [True, False])
-    def test_identity_when_v_is_zero(self, bf16_mix):
+    @pytest.mark.parametrize(("bf16_mix", "batched_mix"), _VHA_CONTRACTS)
+    def test_identity_when_v_is_zero(self, bf16_mix, batched_mix):
         out = torch.randn(5, 2, 4, 3)
         u = torch.randn(4, 2)
-        assert torch.equal(ops.vha_postmix(out, u=u, v=torch.zeros(4, 2), bf16_mix=bf16_mix), out)
+        mixed = ops.vha_postmix(out, u=u, v=torch.zeros(4, 2), bf16_mix=bf16_mix, batched_mix=batched_mix)
+        assert torch.equal(mixed, out)
 
-    @pytest.mark.parametrize("bf16_mix", [True, False])
-    def test_orientation(self, bf16_mix):
+    @pytest.mark.parametrize(("bf16_mix", "batched_mix"), _VHA_CONTRACTS)
+    def test_orientation(self, bf16_mix, batched_mix):
         # R = 1, U = e_0, V = e_1: M = I + e_1 e_0^T, so out'_1 = out_1 + out_0 and the rest is unchanged.
         out = torch.randn(3, 1, 4, 5, dtype=torch.float64)
         u = torch.zeros(4, 1, dtype=torch.float64)
         v = torch.zeros(4, 1, dtype=torch.float64)
         u[0, 0] = 1.0
         v[1, 0] = 1.0
-        mixed = ops.vha_postmix(out, u=u, v=v, bf16_mix=bf16_mix)
+        mixed = ops.vha_postmix(out, u=u, v=v, bf16_mix=bf16_mix, batched_mix=batched_mix)
         assert torch.equal(mixed[..., 1, :], out[..., 1, :] + out[..., 0, :])
         for head in (0, 2, 3):
             assert torch.equal(mixed[..., head, :], out[..., head, :])
 
-    @pytest.mark.parametrize("bf16_mix", [True, False])
-    def test_matches_fp64_formula(self, bf16_mix):
+    @pytest.mark.parametrize(("bf16_mix", "batched_mix"), _VHA_CONTRACTS)
+    def test_matches_fp64_formula(self, bf16_mix, batched_mix):
         torch.manual_seed(0)
         out = torch.randn(6, 2, 8, 5, dtype=torch.float64)
         u, v = torch.randn(8, 3, dtype=torch.float64), torch.randn(8, 3, dtype=torch.float64)
-        torch.testing.assert_close(ops.vha_postmix(out, u=u, v=v, bf16_mix=bf16_mix), _vha_fp64(out, u, v))
+        mixed = ops.vha_postmix(out, u=u, v=v, bf16_mix=bf16_mix, batched_mix=batched_mix)
+        torch.testing.assert_close(mixed, _vha_fp64(out, u, v))
 
     def test_bf16_contracts_agree_within_bf16(self):
         torch.manual_seed(1)
         out = torch.randn(16, 1, 8, 32).to(torch.bfloat16)
         u, v = 0.3 * torch.randn(8, 4), 0.3 * torch.randn(8, 4)
-        bf16_mix = ops.vha_postmix(out, u=u, v=v, bf16_mix=True)
-        fp32_mix = ops.vha_postmix(out, u=u, v=v, bf16_mix=False)
-        assert bf16_mix.dtype == fp32_mix.dtype == torch.bfloat16
+        bf16_mix = ops.vha_postmix(out, u=u, v=v, bf16_mix=True, batched_mix=False)
+        batched_mix = ops.vha_postmix(out, u=u, v=v, bf16_mix=True, batched_mix=True)
+        fp32_mix = ops.vha_postmix(out, u=u, v=v, bf16_mix=False, batched_mix=False)
+        assert bf16_mix.dtype == batched_mix.dtype == fp32_mix.dtype == torch.bfloat16
         reference = _vha_fp64(out, u, v)
         scale = reference.abs().max().item()
         assert (fp32_mix.double() - reference).abs().max().item() <= 2**-8 * scale
         assert (bf16_mix.double() - reference).abs().max().item() <= 2**-6 * scale
+        assert (batched_mix.double() - reference).abs().max().item() <= 2**-6 * scale
 
     def test_fp32_mix_rounds_once(self):
         torch.manual_seed(2)
         out = torch.randn(4, 1, 8, 16).to(torch.bfloat16)
         u, v = torch.randn(8, 2), torch.randn(8, 2)
         expected = (out.float() + torch.einsum("kh,...hd->...kd", v @ u.t(), out.float())).to(torch.bfloat16)
-        assert torch.equal(ops.vha_postmix(out, u=u, v=v, bf16_mix=False), expected)
+        assert torch.equal(ops.vha_postmix(out, u=u, v=v, bf16_mix=False, batched_mix=False), expected)
 
-    @pytest.mark.parametrize("bf16_mix", [True, False])
-    def test_gradcheck(self, bf16_mix):
+    @pytest.mark.parametrize(("bf16_mix", "batched_mix"), _VHA_CONTRACTS)
+    def test_gradcheck(self, bf16_mix, batched_mix):
         torch.manual_seed(3)
         out = torch.randn(3, 1, 4, 2, dtype=torch.float64, requires_grad=True)
         u = torch.randn(4, 2, dtype=torch.float64, requires_grad=True)
         v = torch.randn(4, 2, dtype=torch.float64, requires_grad=True)
-        assert torch.autograd.gradcheck(lambda o, a, b: ops.vha_postmix(o, u=a, v=b, bf16_mix=bf16_mix), (out, u, v))
+        assert torch.autograd.gradcheck(
+            lambda o, a, b: ops.vha_postmix(o, u=a, v=b, bf16_mix=bf16_mix, batched_mix=batched_mix), (out, u, v)
+        )
 
     def test_shape_validation(self):
         with pytest.raises(ValueError, match="Expected u and v"):
-            ops.vha_postmix(torch.randn(2, 4, 3), u=torch.randn(3, 2), v=torch.randn(3, 2), bf16_mix=True)
+            ops.vha_postmix(
+                torch.randn(2, 4, 3), u=torch.randn(3, 2), v=torch.randn(3, 2), bf16_mix=True, batched_mix=False
+            )
+
+    def test_batched_mix_needs_the_bf16_contract(self):
+        with pytest.raises(ValueError, match="bf16_mix=True"):
+            ops.vha_postmix(
+                torch.randn(2, 3, 4), u=torch.randn(3, 2), v=torch.randn(3, 2), bf16_mix=False, batched_mix=True
+            )
+
+
+def _vha_inputs(shape, *, layout, dtype, generator, exact):
+    """``out`` of ``shape`` ``[s, b, H, D]`` (contiguous, or the head-major view the D layer's V-up einsum returns),
+    ``U``, ``V`` (fp32) and an output gradient.
+
+    ``exact`` draws small integers: then every product and every partial sum of the mix, of both input gradients and
+    of the mix gradient is an integer below 2^24, exact in fp32, so any summation order reaches the same fp32 value
+    and the same rounding, and the batched GEMM must reproduce ``torch.matmul`` bitwise whatever the CPU GEMM kernels
+    do. Random values check the summation order itself only on the GPU (``test_ernie55_vha_gpu.py``).
+    """
+    s, b, heads, dim = shape
+
+    def draw(size, low, high):
+        if exact:
+            return torch.randint(low, high + 1, size, generator=generator).to(dtype)
+        return torch.randn(size, generator=generator).to(dtype)
+
+    if layout == "head-major":
+        out = draw((heads, s, b, dim), -3, 3).permute(1, 2, 0, 3)
+    else:
+        out = draw(shape, -3, 3)
+    if exact:
+        # Rank 2, entries in {-1, 0, 1}: M = I + V U^T has integer entries in [-1, 3].
+        u = torch.randint(-1, 2, (heads, 2), generator=generator).float()
+        v = torch.randint(-1, 2, (heads, 2), generator=generator).float()
+    else:
+        u = 0.3 * torch.randn(heads, 16, generator=generator)
+        v = 0.3 * torch.randn(heads, 16, generator=generator)
+    grad = draw(shape, -2, 2)
+    return out, u, v, grad
+
+
+def _vha_run(out, u, v, grad, *, batched_mix):
+    """Output and the gradients of ``out``, ``U`` and ``V`` (``autograd.grad``: no gradient accumulation copies)."""
+    out = out.detach().requires_grad_(True)
+    u = u.detach().requires_grad_(True)
+    v = v.detach().requires_grad_(True)
+    mixed = ops.vha_postmix(out, u=u, v=v, bf16_mix=True, batched_mix=batched_mix)
+    d_out, d_u, d_v = torch.autograd.grad(mixed, (out, u, v), grad)
+    return mixed.detach(), d_out, d_u, d_v
+
+
+_VHA_SHAPES = [(37, 1, 8, 24), (16, 3, 16, 40), (1, 1, 64, 512), (128, 1, 64, 256)]
+
+
+class TestVHABatchedMix:
+    """``batched_mix=True`` against ``torch.matmul`` (the bf16 contract without it)."""
+
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32], ids=["bf16", "fp32"])
+    @pytest.mark.parametrize("layout", ["contiguous", "head-major"])
+    @pytest.mark.parametrize("shape", _VHA_SHAPES, ids=lambda shape: "x".join(map(str, shape)))
+    def test_bitwise_where_the_arithmetic_is_exact(self, shape, layout, dtype):
+        """Exact inputs: forward and all three gradients are bitwise those of ``torch.matmul``, in both layouts."""
+        generator = torch.Generator().manual_seed(sum(shape))
+        inputs = _vha_inputs(shape, layout=layout, dtype=dtype, generator=generator, exact=True)
+        matmul = _vha_run(*inputs, batched_mix=False)
+        batched = _vha_run(*inputs, batched_mix=True)
+        for name, expected, actual in zip(("output", "d_out", "d_u", "d_v"), matmul, batched):
+            assert actual.dtype == expected.dtype and actual.shape == expected.shape, name
+            assert torch.equal(actual, expected), name
+        assert matmul[2].abs().sum() > 0 and matmul[3].abs().sum() > 0, "the mix gradient must not vanish"
+        assert batched[0].is_contiguous()
+
+    @pytest.mark.parametrize("layout", ["contiguous", "head-major"])
+    def test_close_to_matmul_and_fp64_with_random_values(self, layout):
+        """Random bf16 values: within bf16 rounding of ``torch.matmul`` and of the fp64 math, every gradient too."""
+        generator = torch.Generator().manual_seed(5)
+        out, u, v, grad = _vha_inputs(
+            (96, 2, 16, 48), layout=layout, dtype=torch.bfloat16, generator=generator, exact=False
+        )
+        matmul = _vha_run(out, u, v, grad, batched_mix=False)
+        batched = _vha_run(out, u, v, grad, batched_mix=True)
+        for name, expected, actual in zip(("output", "d_out", "d_u", "d_v"), matmul, batched):
+            scale = expected.abs().max().item()
+            assert (actual.double() - expected.double()).abs().max().item() <= 2**-7 * scale, name
+
+        reference_out = out.double().requires_grad_(True)
+        reference_u = u.double().requires_grad_(True)
+        reference_v = v.double().requires_grad_(True)
+        reference = _vha_fp64(reference_out, reference_u, reference_v)
+        expected = (
+            reference,
+            *torch.autograd.grad(reference, (reference_out, reference_u, reference_v), grad.double()),
+        )
+        for name, oracle, actual in zip(("output", "d_out", "d_u", "d_v"), expected, batched):
+            scale = oracle.abs().max().item()
+            assert (actual.double() - oracle).abs().max().item() <= 2**-5 * scale, name
+
+    @pytest.mark.parametrize("layout", ["contiguous", "head-major"])
+    def test_mix_gradient_is_one_fp32_sum_rounded_once(self, layout):
+        """``dM`` is one fp32 sum of the ``tokens * D`` products per entry, rounded to the activation dtype once.
+
+        The summation order is free, the precision is not. The fp32 sum (``_sum_of_token_products``, here its CPU
+        path: inputs widened to fp32) is within 1e-5 of the largest entry of the fp64 sum of the same bf16 products
+        (measured: 2e-7), and the bf16 ``dM`` of the batched mix equals that fp64 sum rounded once in at least 99% of
+        the entries (measured: all but at most one of 4096; an fp32 sum misrounds only entries within its error of a
+        rounding boundary). Rounding each token's product to bf16 first misses both by far (3e-3 of the largest
+        entry; 58% of the entries rounded right), yet passes the comparisons with ``torch.matmul`` above.
+        """
+        generator = torch.Generator().manual_seed(11)
+        tokens, heads, dim = 256, 64, 128
+        out, _, _, grad = _vha_inputs(
+            (tokens, 1, heads, dim), layout=layout, dtype=torch.bfloat16, generator=generator, exact=False
+        )
+        rows, grad_rows = out.reshape(-1, heads, dim), grad.reshape(-1, heads, dim)
+        exact = torch.einsum("nkd,nhd->kh", grad_rows.double(), rows.double())
+        scale = exact.abs().max().item()
+
+        summed = ops._sum_of_token_products(grad_rows, rows)
+        assert summed.dtype == torch.float32
+        assert (summed.double() - exact).abs().max().item() <= 1e-5 * scale
+
+        mix = torch.eye(heads, dtype=torch.bfloat16).requires_grad_(True)
+        (grad_mix,) = torch.autograd.grad(ops._TokenBatchedHeadMix.apply(mix, rows), (mix,), grad_rows)
+        assert grad_mix.dtype == torch.bfloat16
+        correctly_rounded = (grad_mix == exact.to(torch.bfloat16)).double().mean().item()
+        assert correctly_rounded >= 0.99, f"dM is the fp64 sum rounded once in {100 * correctly_rounded:.2f}%"
+
+    @pytest.mark.parametrize("layout", ["contiguous", "head-major"])
+    def test_backward_is_the_derivative(self, layout):
+        """The explicit backward against finite differences, to first and second order (fp64)."""
+        generator = torch.Generator().manual_seed(7)
+        out, u, v, _ = _vha_inputs((4, 2, 3, 5), layout=layout, dtype=torch.float64, generator=generator, exact=False)
+        inputs = (out.detach().requires_grad_(True), u.double().requires_grad_(True), v.double().requires_grad_(True))
+
+        def mix(o, a, b):
+            return ops.vha_postmix(o, u=a, v=b, bf16_mix=True, batched_mix=True)
+
+        assert torch.autograd.gradcheck(mix, inputs)
+        assert torch.autograd.gradgradcheck(mix, inputs)
+
+    @pytest.mark.parametrize("layout", ["contiguous", "head-major"])
+    def test_reads_the_input_in_place(self, layout):
+        """No activation-sized copy: the forward and backward run no copy of ``out``, its gradient or the result.
+
+        fp32 activations, so the CPU widening of a 16-bit input for the fp32 mix-gradient sum (CUDA has
+        ``bmm(out_dtype=...)`` instead) does not count; the GPU test covers bf16.
+        """
+        generator = torch.Generator().manual_seed(9)
+        out, u, v, grad = _vha_inputs(
+            (64, 2, 8, 48), layout=layout, dtype=torch.float32, generator=generator, exact=False
+        )
+
+        def copies(batched_mix):
+            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU], record_shapes=True) as prof:
+                _vha_run(out, u, v, grad, batched_mix=batched_mix)
+            return [
+                (event.name, event.input_shapes)
+                for event in prof.events()
+                if event.name in ("aten::copy_", "aten::clone", "aten::contiguous", "aten::_to_copy")
+                and any(math.prod(shape) >= out.numel() for shape in event.input_shapes if shape)
+            ]
+
+        assert copies(batched_mix=True) == []
+        assert copies(batched_mix=False), "torch.matmul copied nothing: the profiler check would be vacuous"
+
+    @pytest.mark.parametrize("layout", ["contiguous", "head-major"])
+    @pytest.mark.parametrize(
+        ("out_needs_grad", "factors_need_grad"),
+        [(True, True), (True, False), (False, True)],
+        ids=["training", "frozen-vha-factors", "input-without-grad"],
+    )
+    def test_saves_only_what_the_backward_reads(self, layout, out_needs_grad, factors_need_grad):
+        """Backward keeps ``out`` itself, never a copy, and only when the mix needs a gradient (``dM`` reads it):
+        with frozen VHA factors no activation-sized tensor is kept, as with ``torch.matmul``, which keeps a
+        transposed copy of a contiguous ``out`` (a view of the head-major one) when it does keep one. The gradients
+        of whatever needs them are still bitwise ``torch.matmul``'s (exact inputs)."""
+        generator = torch.Generator().manual_seed(10)
+        out, u, v, grad = _vha_inputs(
+            (64, 2, 8, 48), layout=layout, dtype=torch.bfloat16, generator=generator, exact=True
+        )
+        source = out.detach().requires_grad_(out_needs_grad)
+        u, v = u.requires_grad_(factors_need_grad), v.requires_grad_(factors_need_grad)
+        inputs = [tensor for tensor in (source, u, v) if tensor.requires_grad]
+
+        def run(batched_mix):
+            """Storage pointers of the activation-sized tensors kept for the backward, and the input gradients."""
+            kept = []
+
+            def pack(tensor):
+                if tensor.numel() >= out.numel():
+                    kept.append(tensor.untyped_storage().data_ptr())
+                return tensor
+
+            with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
+                mixed = ops.vha_postmix(source, u=u, v=v, bf16_mix=True, batched_mix=batched_mix)
+            return kept, torch.autograd.grad(mixed, inputs, grad)
+
+        (batched, batched_grads), (matmul, matmul_grads) = run(batched_mix=True), run(batched_mix=False)
+        assert batched == ([source.untyped_storage().data_ptr()] if factors_need_grad else [])
+        assert len(batched) <= len(matmul)
+        for actual, expected in zip(batched_grads, matmul_grads, strict=True):
+            assert torch.equal(actual, expected)
+
+    def test_empty_rows(self):
+        out = torch.zeros(0, 1, 4, 6, dtype=torch.bfloat16, requires_grad=True)
+        u = torch.randn(4, 2, requires_grad=True)
+        v = torch.randn(4, 2, requires_grad=True)
+        mixed = ops.vha_postmix(out, u=u, v=v, bf16_mix=True, batched_mix=True)
+        assert mixed.shape == out.shape and mixed.dtype == torch.bfloat16
+        mixed.sum().backward()
+        assert out.grad.shape == out.shape
+        assert not u.grad.any() and not v.grad.any()
 
 
 class TestSigmoidOutputGate:
