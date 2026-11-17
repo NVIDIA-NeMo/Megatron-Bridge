@@ -269,6 +269,11 @@ docker build \
 
 ## Supporting files
 
+FW-final removes only Ray's optional `jars/ray_dist.jar` archive and clears the uv
+cache. Other files in `jars/` remain. Python Ray workloads remain supported; Java
+workers and Python-to-Java cross-language calls are unsupported in this image.
+A later Ray reinstall restores the archive and requires rerunning the removal.
+
 | File | Description |
 |---|---|
 | `common/fw_pyproject.toml` | uv project config for the NeMo-FW virtual environment (copied into the fw-final container as `pyproject.toml`) |

@@ -164,6 +164,9 @@ RUN GO_GIT_VERSION=5.19.2 && \
         -o "${WANDB_CORE_BIN}" ./cmd/wandb-core/ && \
     rm -rf /tmp/wandb-src /tmp/go /tmp/gopath
 
+# Remove Ray's optional Java archive; Python workloads do not require it.
+RUN rm -f /opt/venv/lib/python3.12/site-packages/ray/jars/ray_dist.jar
+
 ##############################################################################
 ##
 ## Finalize FW container
