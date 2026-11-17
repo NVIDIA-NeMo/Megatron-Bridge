@@ -253,7 +253,6 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-    cfg.model.cuda_graph_scope = ["attn"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -316,7 +315,8 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
     MXFP8 backward combine requires Megatron Core support for quantized communication with
     1F1B EP overlap and paged stashing. Forward dispatch retains the shared base's dtype unless
-    explicitly overridden. Megatron Bridge does not expose MLPerf's DataLoader prefetch factor.
+    explicitly overridden. Dataloader workers prefetch 32 batches each, as MLPerf does, so the
+    microbatches of a whole step are loaded before the full-iteration CUDA graph replays.
     """
     cfg = _build_deepseek_v3_gb300_fp8mx()
 
@@ -356,6 +356,10 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     cfg.train.check_optimizer_step_success = False
     # The attention backend builds the causal mask, so the dataloader skips building one.
     cfg.dataset.create_attention_mask = False
+    # The full-iteration CUDA graph replays only after every microbatch of the step is loaded.
+    # PyTorch's default of 2 batches per worker leaves most of a step to load on demand before
+    # the replay; 32 per worker (MLPerf's DATA_PREFETCH_FACTOR) buffers more than a whole step.
+    cfg.dataset.prefetch_factor = 32
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -527,6 +531,7 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Allow cuDNN attention kernels without deterministic dprob support on Rubin.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
         "NVTE_USE_FAST_MATH": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
@@ -604,8 +609,8 @@ def deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
         # Use cuDNN LayerNorm in both 4-GPU proxies.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the 256-GPU parent recipes.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Allow cuDNN attention kernels without deterministic dprob support on Rubin.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg
 
@@ -645,8 +650,8 @@ def deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
         # Use cuDNN LayerNorm in both 4-GPU proxies.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the 256-GPU parent recipes.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Allow cuDNN attention kernels without deterministic dprob support on Rubin.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
         # Run attention in MXFP8 E4M3, as the MXFP8 proxy does natively.

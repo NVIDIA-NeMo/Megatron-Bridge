@@ -33,7 +33,6 @@ def qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -150,8 +149,6 @@ def qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-
-    cfg.train.micro_batch_size = 4
 
     from megatron.core.transformer.enums import AttnBackend
 
