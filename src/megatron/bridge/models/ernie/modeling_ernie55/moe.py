@@ -107,6 +107,28 @@ closure inside ``TEGroupedMLP._unfused_forward``, so :class:`Ernie55GroupedMLP` 
 copy is tied to Megatron-Core's source by a fingerprint (:data:`TE_GROUPED_MLP_FORWARD_FINGERPRINTS`), and converting
 the experts under an unknown version raises instead of running a stale copy.
 
+Forced-balance benchmark routing (``ernie_router_force_balance``, off by default; BENCHMARK ONLY: it changes the
+training math, and every rank logs a warning). Megatron-Core's MoE benchmarks force a balanced load with
+``moe_router_force_load_balancing``, which replaces the router logits with random ones. That knob stays rejected here:
+the split-feature scores are the gate values, and standard-normal gates could be negative, with a normalization sum
+near zero. The flag replaces only the selection of step 2: ``I = top_k(r)`` with ``r = apply_random_logits(s)``,
+Megatron-Core's ``RandomSTE`` and the knob's own draw, a fresh standard-normal ``[tokens, experts]`` tensor from the
+expert-parallel RNG tracker on every call (seeded per expert-parallel rank). Every token gets ``k`` distinct experts
+drawn uniformly, so an expert's load over ``N`` tokens is Binomial(``N``, ``k / E``). Neither the scores nor the expert
+bias select. Everything else is unchanged: the gate values are still the unbiased ``s[I]``, normalized and scaled
+(finite and non-negative), so ``W``, ``W_1`` and ``rho`` get their usual gradients; the z-loss is taken on ``s``; the
+forced routing map is counted and ``finalize_model_grads`` updates the bias with the usual collective, so the bias
+random-walks by ``moe_router_bias_update_rate`` per step without selecting anything.
+
+``RandomSTE`` caches nothing. A recompute (``"moe"`` in ``recompute_modules``, or full recompute; both through
+Megatron-Core's ``precision_aware_checkpoint``) replays the forward's experts only because the checkpoint restores the
+RNG tracker's expert-parallel state before the replay. In BF16 that is ``tensor_parallel.checkpoint``, which snapshots
+every tracker state. The states of a graph-safe tracker (Transformer Engine's, or Megatron-Core's with CUDA-graph RNG)
+are generator objects that advance in place, so only a copy of their contents can be restored: Megatron-Core dev takes
+one since dev 2f2f8ebae (#5841); main does not. In FP8 and FP4 it is Transformer Engine's checkpoint,
+which keeps live handles. :func:`validate_ernie55_moe_config` rejects the flag where a replay would draw from an
+advanced state.
+
 Known differences from the reference implementation (not bugs):
 
 * Expert token counts are exact int64 in Megatron-Core. The reference implementation registers an fp32
@@ -137,10 +159,12 @@ from collections.abc import Callable
 
 import torch
 import torch.nn.functional as F
+from megatron.core.tensor_parallel import random as tensor_parallel_random
 from megatron.core.transformer.module import MegatronModule, mark_keep_in_fp32
 from megatron.core.transformer.moe import experts as mcore_experts
 from megatron.core.transformer.moe.experts import TEGroupedMLP
 from megatron.core.transformer.moe.moe_layer import MoELayer
+from megatron.core.transformer.moe.moe_utils import apply_random_logits
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
@@ -170,6 +194,38 @@ def _as_list(value: object) -> list:
     return list(value) if isinstance(value, (list, tuple)) else [value]
 
 
+def _recompute_replays_router(config: TransformerConfig) -> bool:
+    """Whether activation recompute runs the MoE router again in the backward (MoE or full recompute)."""
+    granularity = config.recompute_granularity
+    return granularity == "full" or (granularity == "selective" and "moe" in (config.recompute_modules or ()))
+
+
+def _graph_safe_rng_tracker(config: TransformerConfig) -> bool:
+    """Whether training builds a graph-safe RNG tracker, whose states are generator objects that advance in place.
+
+    Bridge's ``initialize`` builds Transformer Engine's tracker for ``rng.te_rng_tracker``, which its config keeps
+    equal to ``use_te_rng_tracker``, and Megatron-Core's with CUDA-graph RNG for any ``cuda_graph_impl`` other than
+    ``"none"``.
+    """
+    return bool(getattr(config, "use_te_rng_tracker", False)) or getattr(config, "cuda_graph_impl", None) not in (
+        None,
+        "none",
+    )
+
+
+def _checkpoint_rewinds_graph_safe_rng() -> bool:
+    """Whether Megatron-Core's ``tensor_parallel.checkpoint`` rewinds a graph-safe RNG tracker before the recompute.
+
+    Since dev 2f2f8ebae (#5841), ``_get_all_rng_states`` copies the contents of graph-safe states (``clone_state``) and
+    tags the snapshot, and ``_set_all_rng_states`` takes the tag (``kind``). Before, main included, the snapshot keeps
+    the generator handles, which the forward has advanced by the time the recompute restores them.
+    """
+    try:
+        return "kind" in inspect.signature(tensor_parallel_random._set_all_rng_states).parameters
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def validate_ernie55_moe_config(config: TransformerConfig) -> None:
     """Raise ``ValueError`` if ``config`` is outside the supported ERNIE 5.5 MLP and MoE envelope.
 
@@ -187,7 +243,11 @@ def validate_ernie55_moe_config(config: TransformerConfig) -> None:
       ``moe_router_topk_scaling_factor`` (or ``None`` for 1.0) and a boolean
       ``ernie_norm_topk_prob``. The benchmark knobs ``moe_router_force_load_balancing`` and
       ``moe_router_force_biased`` are rejected: they replace the scores with random logits before
-      routing, and this router uses the scores directly as gate values.
+      routing, and this router uses the scores directly as gate values. ``ernie_router_force_balance``
+      (a bool) is the supported way to force balanced routing. With it, a recompute that replays the
+      router (MoE or full) under a graph-safe RNG tracker (``use_te_rng_tracker`` or CUDA graphs) needs
+      BF16 and a Megatron-Core whose checkpoint rewinds that tracker (dev 2f2f8ebae, #5841), or the
+      replay would select other experts than the forward.
     * Dropless experts (``moe_expert_capacity_factor=None``) without biases, an ungated shared
       expert, and no fused RMSNorm-linear latent up-projection.
     * With ``ernie_fused_situ_prob``: ``ernie_fused_ops=True``, SiTU-GLU (``activation_func_tanh_clamp_scale``
@@ -244,8 +304,29 @@ def validate_ernie55_moe_config(config: TransformerConfig) -> None:
     require(
         not config.moe_router_force_load_balancing and config.moe_router_force_biased is None,
         "moe_router_force_load_balancing and moe_router_force_biased are not supported; they replace the "
-        "split-feature scores, which are the gate values, with random logits.",
+        "split-feature scores, which are the gate values, with random logits. For a benchmark with balanced expert "
+        "load, set ernie_router_force_balance=True, which takes only the expert selection from random logits.",
     )
+    force_balance = getattr(config, "ernie_router_force_balance", False)
+    require(isinstance(force_balance, bool), f"ernie_router_force_balance must be a bool, got {force_balance!r}.")
+    if force_balance and _recompute_replays_router(config) and _graph_safe_rng_tracker(config):
+        # RandomSTE draws anew on every call: the recompute selects the forward's experts only if its checkpoint
+        # rewinds the expert-parallel RNG state, which a graph-safe tracker advances in place.
+        require(
+            not (config.fp8 or config.fp4),
+            "ernie_router_force_balance=True with the MoE or full recompute and a graph-safe RNG tracker "
+            "(use_te_rng_tracker or CUDA graphs) needs BF16: in FP8/FP4 the recompute runs Transformer Engine's "
+            "checkpoint, which restores live handles of the tracker states, so the replayed router would draw new "
+            "random logits and select other experts than the forward. Use BF16, or turn off the MoE/full recompute.",
+        )
+        require(
+            _checkpoint_rewinds_graph_safe_rng(),
+            "ernie_router_force_balance=True with the MoE or full recompute and a graph-safe RNG tracker "
+            "(use_te_rng_tracker or CUDA graphs) needs a Megatron-Core whose checkpoint rewinds that tracker: this "
+            "one restores live handles of the tracker states, so the replayed router would draw new random logits "
+            "and select other experts than the forward. Use Megatron-Core dev 2f2f8ebae (#5841) or later, or turn "
+            "off the MoE/full recompute or the graph-safe tracker.",
+        )
     require(
         config.moe_router_dtype in (None, "fp32"),
         f"the router always computes in fp32; moe_router_dtype must be None or 'fp32', got {config.moe_router_dtype!r}.",
@@ -311,12 +392,31 @@ class Ernie55SplitFeatureRouter(TopKRouter):
     scores, and its ``router_scores`` observation (the configured score function applied to those
     values) is not meaningful for this router.
 
+    With ``ernie_router_force_balance`` (``force_balance``; benchmark only) ``routing`` selects
+    ``top_k`` of Megatron-Core's random logits (``apply_random_logits``, its ``RandomSTE``) instead of
+    ``scores + expert_bias``; the gates are still the gathered scores, and the forced selection is
+    counted for the bias update. A recompute replays the same draw because its checkpoint restores
+    the RNG tracker (see the module docstring). Every rank logs a warning once when such a router is
+    built.
+
     Positional and keyword arguments after ``config`` are passed through unchanged to ``TopKRouter``.
     """
 
     def __init__(self, config: TransformerConfig, *args, **kwargs) -> None:
         validate_ernie55_moe_config(config)
         super().__init__(config, *args, **kwargs)
+        self.force_balance = getattr(config, "ernie_router_force_balance", False)
+        if self.force_balance:
+            fused_dispatch.log_once(
+                "router_force_balance",
+                "ERNIE 5.5 MoE (rank %d): ernie_router_force_balance=True, BENCHMARK ONLY. Every MoE router selects "
+                "its top-k experts from Megatron-Core's random logits (RandomSTE) instead of the split-feature scores "
+                "plus the expert bias. This forces a balanced expert load and CHANGES THE TRAINING MATH. Do not use "
+                "this run for convergence, parity or checkpoints.",
+                torch.distributed.get_rank() if torch.distributed.is_initialized() else 0,
+                level=logging.WARNING,
+                all_ranks=True,
+            )
         num_experts, hidden_size = config.num_moe_experts, config.hidden_size
         # Allocated like Megatron-Core's ``weight``: fp32, on its device (CPU until the model moves).
         self.weight_1 = torch.nn.Parameter(
@@ -391,6 +491,9 @@ class Ernie55SplitFeatureRouter(TopKRouter):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Select experts on the biased scores and weight them with the unbiased ones.
 
+        With ``force_balance`` (benchmark only), the experts are the top-k of Megatron-Core's random logits instead;
+        the weights are the unbiased scores of those experts, normalized and scaled the same way.
+
         Args:
             logits: Scores from :meth:`gating`, ``[..., num_experts]``.
             padding_mask: Optional ``True``-is-padding mask over the tokens; padding is excluded from
@@ -407,8 +510,13 @@ class Ernie55SplitFeatureRouter(TopKRouter):
         if padding_mask is not None:
             padding_mask = padding_mask.reshape(-1)
         scores = self.apply_z_loss(scores, padding_mask=padding_mask)
-        # noaux_tc: the expert bias selects the experts but never enters the gate values.
-        top_indices = torch.topk(scores + self.expert_bias, k=self.topk, dim=-1).indices
+        if self.force_balance:
+            # Benchmark only: moe_router_force_load_balancing's RandomSTE draw (expert-parallel RNG state) selects;
+            # the scores and the bias do not. Detached: the draw only selects, the gates below stay the scores.
+            top_indices = torch.topk(apply_random_logits(scores.detach()), k=self.topk, dim=-1).indices
+        else:
+            # noaux_tc: the expert bias selects the experts but never enters the gate values.
+            top_indices = torch.topk(scores + self.expert_bias, k=self.topk, dim=-1).indices
         probs = scores.gather(-1, top_indices)
         if self.config.ernie_norm_topk_prob and self.topk > 1:
             probs = probs / (probs.sum(dim=-1, keepdim=True) + _TOPK_NORM_EPS)

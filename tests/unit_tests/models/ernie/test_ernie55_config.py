@@ -90,6 +90,7 @@ ERNIE_FIELDS = {
     "ernie_cp_key_gather_inverse_grad": False,
     "ernie_graph_d_layers": False,
     "ernie_graph_mtp_layers": False,
+    "ernie_router_force_balance": False,
 }
 
 

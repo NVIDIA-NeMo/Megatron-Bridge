@@ -160,6 +160,23 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     """Divide the top-k gate values by their sum (plus 1e-20) when ``moe_router_topk > 1``, before the
     per-expert scale (Hugging Face ``norm_topk_prob``)."""
 
+    ernie_router_force_balance: bool = False
+    """BENCHMARK ONLY; changes the training math. Force a balanced expert load the way Megatron-Core's
+    ``moe_router_force_load_balancing`` benchmark mode does. Every MoE router selects its top-k experts
+    from Megatron-Core's random logits (``apply_random_logits``, its ``RandomSTE``: a fresh draw from the
+    expert-parallel RNG state on every call) instead of the split-feature scores plus the expert bias. Each token
+    goes to ``moe_router_topk`` distinct experts drawn uniformly, so an expert's load over ``N`` tokens is binomial
+    with mean ``N * moe_router_topk / num_moe_experts``. The gate values stay the unbiased scores of the drawn
+    experts, normalized and scaled as usual: they are finite, and the router parameters still get gradients. The
+    expert bias still counts tokens and updates, but never selects. Megatron-Core's activation checkpoint restores the
+    RNG state before a recompute, so the MoE or full recompute replays the same selection;
+    :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_moe_config` rejects that recompute with a
+    graph-safe RNG tracker (``use_te_rng_tracker`` or CUDA graphs) where the checkpoint cannot rewind it: in FP8/FP4
+    (Transformer Engine's checkpoint) and on a Megatron-Core before dev 2f2f8ebae (#5841), main included. Every rank
+    logs a warning once. Megatron-Core's ``moe_router_force_load_balancing`` stays rejected: it would also make the
+    random logits the gate values. Off by default; no recipe sets it. There is no Hugging Face key; on the command
+    line, ``model.ernie_router_force_balance=true``."""
+
     ernie_vha_rank: int | None = None
     """Rank ``R`` of the VHA head post-mix ``I + V U^T`` (``U``, ``V`` are ``[heads, R]``) of both the
     D and the H layers. Required when either is built; ERNIE 5.5 uses 16. Hugging Face ``vha_rank``
@@ -323,11 +340,11 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         Raises:
             ValueError: If ``ernie_fused_ops``, ``ernie_fused_situ_prob``, ``ernie_fused_mhc``,
                 ``ernie_cp_key_gather_inverse_grad``, ``ernie_reference_rmsnorm``, ``ernie_vha_batched_mix``,
-                ``ernie_graph_d_layers`` or ``ernie_graph_mtp_layers`` is not a bool, if ``ernie_vha_batched_mix`` is
-                set without ``ernie_vha_bf16_mix``, if ``ernie_muon_ns_batch_size`` is not an int of at least 1, if
-                ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
-                ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer envelope is
-                violated.
+                ``ernie_graph_d_layers``, ``ernie_graph_mtp_layers`` or ``ernie_router_force_balance`` is not a bool,
+                if ``ernie_vha_batched_mix`` is set without ``ernie_vha_bf16_mix``, if ``ernie_muon_ns_batch_size`` is
+                not an int of at least 1, if ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss``
+                or (with MTP) ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer
+                envelope is violated.
             RuntimeError: If Megatron-Core lacks a piece the configured context parallelism needs (see
                 :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_context_parallel_config`).
         """
@@ -351,7 +368,7 @@ class Ernie55TransformerConfig(MLATransformerConfig):
                 "ernie_vha_batched_mix=True applies the bf16 VHA head mix as a batched GEMM; it needs "
                 "ernie_vha_bf16_mix=True."
             )
-        for name in ("ernie_graph_d_layers", "ernie_graph_mtp_layers"):
+        for name in ("ernie_graph_d_layers", "ernie_graph_mtp_layers", "ernie_router_force_balance"):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}.")
         batch = self.ernie_muon_ns_batch_size

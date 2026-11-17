@@ -19,7 +19,9 @@
   VHA head mix, plain RoPE or YaRN and sink seeding (``hca_attention``).
 * MoE layer: Megatron-Core's ``MoELayer`` with the split-feature router and fp32 latent projections
   (``moe``). Behind ``ernie_fused_situ_prob`` (off by default), the routed experts run SiTU-GLU and the
-  routing-probability multiply as one Triton kernel per direction (``fused_situ_prob``).
+  routing-probability multiply as one Triton kernel per direction (``fused_situ_prob``). Behind
+  ``ernie_router_force_balance`` (off by default, benchmark only), the routers select uniformly random experts
+  (``moe``).
 * Context parallelism: D layers run zigzag inside the contiguous DSv4 stack
   (``context_parallel``).
 * Hyper-connections with fp32 decoder streams: the eager fp32 mapping and mixing
