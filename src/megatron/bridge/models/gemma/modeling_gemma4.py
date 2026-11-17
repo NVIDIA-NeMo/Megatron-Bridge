@@ -201,6 +201,10 @@ class Gemma4MoERouter(nn.Module):
         self.scale = nn.Parameter(torch.ones(hidden_size))
         self.proj = nn.Linear(hidden_size, num_experts, bias=False)
         self.per_expert_scale = nn.Parameter(torch.ones(num_experts))
+        # Replicated on every TP rank and applied to the sequence-parallel shard of the hidden states.
+        _mark_sequence_parallel_parameter(self.scale, config)
+        _mark_sequence_parallel_parameter(self.proj.weight, config)
+        _mark_sequence_parallel_parameter(self.per_expert_scale, config)
 
     def forward(self, hidden_states: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         h = self.norm(hidden_states)
@@ -230,6 +234,9 @@ class Gemma4MoEExperts(nn.Module):
         self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, moe_intermediate_size))
         nn.init.normal_(self.gate_up_proj, std=0.02)
         nn.init.normal_(self.down_proj, std=0.02)
+        # Every TP rank runs all experts on its own sequence-parallel shard of the tokens.
+        _mark_sequence_parallel_parameter(self.gate_up_proj, config)
+        _mark_sequence_parallel_parameter(self.down_proj, config)
 
     def forward(
         self,
@@ -656,6 +663,10 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
         if _ple_dim > 0:
             self.per_layer_input_gate = nn.Linear(config.hidden_size, _ple_dim, bias=False, dtype=params_dtype)
             self.per_layer_projection = nn.Linear(_ple_dim, config.hidden_size, bias=False, dtype=params_dtype)
+            # Each TP rank holds a full copy of both projections, but under sequence parallelism it applies
+            # them only to its own sequence shard, so their gradients must be summed across TP.
+            _mark_sequence_parallel_parameter(self.per_layer_input_gate.weight, config)
+            _mark_sequence_parallel_parameter(self.per_layer_projection.weight, config)
             self.post_per_layer_input_norm = submodules.post_per_layer_input_norm(
                 config=self.config,
                 hidden_size=self.config.hidden_size,
