@@ -186,8 +186,8 @@ def deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # The fused SwiGLU dprob uses atomic reductions; TE has no deterministic kernel for it here.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg
 
@@ -238,8 +238,8 @@ def deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # The fused SwiGLU dprob uses atomic reductions; TE has no deterministic kernel for it here.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
@@ -487,8 +487,8 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # The fused SwiGLU dprob uses atomic reductions; TE has no deterministic kernel for it here.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
@@ -527,7 +527,7 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
         "NVTE_USE_FAST_MATH": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
