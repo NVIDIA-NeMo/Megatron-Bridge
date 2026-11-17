@@ -29,6 +29,12 @@ from .gb200.qwen35 import (
     qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config,
 )
 
+# Qwen3.5 GB300 models
+from .gb300.qwen35 import (
+    qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_dynamic_cp_config,
+    qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_offline_dynamic_cp_config,
+)
+
 # Qwen2 models
 from .qwen2 import (
     qwen2_1p5b_peft_config,
@@ -189,4 +195,6 @@ __all__ = [
     "qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config",
     "qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_bf16_config",
     "qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config",
+    "qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_dynamic_cp_config",
+    "qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_offline_dynamic_cp_config",
 ]

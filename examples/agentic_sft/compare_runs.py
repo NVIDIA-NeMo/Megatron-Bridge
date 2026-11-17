@@ -16,23 +16,31 @@
 """Compare the steady-state throughput of two training logs, for example static versus dynamic context parallelism.
 
 The script reads Bridge's per-iteration log lines, drops the warmup iterations (which include one-time compilation),
-and reports seconds per step. For runs of the ``qwen35_text_35b_a3b_4gpu_gb200_fp8mx_*dynamic_cp_config`` recipes it
-also reports runtime tokens per second: the ``MockGPTSFTDatasetConfig`` lengths are deterministic, and samples (or,
-with offline packing, packed rows) are consumed in order, so iteration ``i`` processes items
+and reports seconds per step. Given the tokens of every item a run reads, it also reports runtime tokens per second:
+samples (or, with offline packing, packed rows) are consumed in order, so iteration ``i`` processes items
 ``(i - 1) * global_batch_size`` to ``i * global_batch_size - 1``. The gain is then the ratio of tokens per second, so
 runs that process different work per step, such as online and offline packing, can be compared. Without token counts,
 both runs must have consumed the same data in the same order and the gain is the ratio of step times.
 
-Example::
+The token counts come from ``item_tokens.py`` for a recipe on real data (``--item-tokens``), or from the
+deterministic lengths of ``MockGPTSFTDatasetConfig`` for the
+``qwen35_text_35b_a3b_4gpu_gb200_fp8mx_*dynamic_cp_config`` recipes (``--mock-seq-length``).
+
+Examples::
 
     python examples/agentic_sft/compare_runs.py --baseline online.log --candidate offline.log --warmup 10 \\
         --mock-seq-length 65536 --train-iters 200 --baseline-global-batch-size 32 \\
         --candidate-global-batch-size 8 --candidate-packed-sequence-size 65536
+
+    python examples/agentic_sft/compare_runs.py --baseline online.log --candidate offline.log --warmup 10 \\
+        --baseline-item-tokens online_items.json --baseline-global-batch-size 16 \\
+        --candidate-item-tokens offline_items.json --candidate-global-batch-size 8
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import statistics
@@ -70,7 +78,16 @@ def parse_log(text: str) -> dict[int, dict[str, float]]:
 
 
 def tokens_per_step(lengths: list[int], global_batch_size: int, iterations: list[int]) -> dict[int, int]:
-    """Runtime tokens consumed by each iteration, with rows taken in file order."""
+    """Runtime tokens consumed by each iteration, with rows taken in file order.
+
+    Raises:
+        ValueError: If ``lengths`` does not cover the last iteration.
+    """
+    if iterations and max(iterations) * global_batch_size > len(lengths):
+        raise ValueError(
+            f"Iteration {max(iterations)} at global batch {global_batch_size} reads "
+            f"{max(iterations) * global_batch_size} items; only {len(lengths)} token counts are given."
+        )
     return {
         iteration: sum(lengths[(iteration - 1) * global_batch_size : iteration * global_batch_size])
         for iteration in iterations
@@ -139,6 +156,11 @@ def mock_item_lengths(
     return [int(sum(lengths[sample] for sample in row)) for row in rows]
 
 
+def read_item_tokens(path: Path) -> list[int]:
+    """Return the runtime tokens of every item in a file written by ``item_tokens.py``."""
+    return [sum(item) if isinstance(item, list) else int(item) for item in json.loads(path.read_text())]
+
+
 def main(argv: list[str] | None = None) -> None:
     """Print the comparison table."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -161,8 +183,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Global batch size of both runs; with --mock-seq-length, unless set per run.",
     )
     parser.add_argument("--packed-pad-to-multiple-of", type=int, default=8, help="Offline packing alignment.")
+    parser.add_argument(
+        "--item-tokens", type=Path, help="item_tokens.py output for both runs' data, unless set per run."
+    )
     for run in ("baseline", "candidate"):
         parser.add_argument(f"--{run}-global-batch-size", type=int, help=f"Global batch size of the {run} run.")
+        parser.add_argument(f"--{run}-item-tokens", type=Path, help=f"item_tokens.py output for the {run} run's data.")
         parser.add_argument(
             f"--{run}-packed-sequence-size", type=int, help=f"Offline packed row size of the {run} run, if packed."
         )
@@ -170,13 +196,24 @@ def main(argv: list[str] | None = None) -> None:
     batch_sizes = {
         run: getattr(args, f"{run}_global_batch_size") or args.global_batch_size for run in ("baseline", "candidate")
     }
+    item_token_files = {run: getattr(args, f"{run}_item_tokens") or args.item_tokens for run in ("baseline", "candidate")}
+    has_item_tokens = None not in item_token_files.values()
+    if any(item_token_files.values()) and not has_item_tokens:
+        parser.error("give token counts for both runs: --item-tokens, or both per-run options")
+    if has_item_tokens and args.mock_seq_length is not None:
+        parser.error("--item-tokens and --mock-seq-length are mutually exclusive")
+    if has_item_tokens and None in batch_sizes.values():
+        parser.error("--item-tokens needs a global batch size for each run")
     if args.mock_seq_length is not None and (args.train_iters is None or None in batch_sizes.values()):
         parser.error("--mock-seq-length needs --train-iters and a global batch size for each run")
 
     runs = {"baseline": parse_log(args.baseline.read_text()), "candidate": parse_log(args.candidate.read_text())}
     common = sorted(set(runs["baseline"]) & set(runs["candidate"]))
     tokens: dict[str, dict[int, int] | None] = {"baseline": None, "candidate": None}
-    if args.mock_seq_length is not None:
+    if has_item_tokens:
+        for run, batch_size in batch_sizes.items():
+            tokens[run] = tokens_per_step(read_item_tokens(item_token_files[run]), batch_size, common)
+    elif args.mock_seq_length is not None:
         for run, batch_size in batch_sizes.items():
             lengths = mock_item_lengths(
                 args.mock_seq_length,

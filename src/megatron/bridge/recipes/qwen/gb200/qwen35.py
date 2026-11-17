@@ -39,6 +39,7 @@ _QWEN35_9B_BASE = "Qwen/Qwen3.5-9B-Base"
 _QWEN35_9B_BASE_REVISION = "68c46c4b3498877f3ef123c856ecfde50c39f404"  # pragma: allowlist secret
 _QWEN35_35B_A3B_BASE = "Qwen/Qwen3.5-35B-A3B-Base"
 _QWEN35_35B_A3B_BASE_REVISION = "0f0813072d2358973511097385626f21fcb6d422"  # pragma: allowlist secret
+_QWEN35_35B_A3B = "Qwen/Qwen3.5-35B-A3B"
 _QWEN35_35B_A3B_INSTRUCT_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"  # pragma: allowlist secret
 _CODERFORGE_REVISION = "060fca96cf723b2ebab3181e9e59fafd273df3cb"  # pragma: allowlist secret
 
@@ -472,32 +473,41 @@ def qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config() -> ConfigContain
     return cfg
 
 
-def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config() -> ConfigContainer:
-    """Return a full Qwen3.5-35B-A3B SFT config for four GB200 GPUs with dynamic CP on mock variable-length data.
+def qwen35_text_35b_a3b_fp8mx_dynamic_cp_common(
+    *,
+    seq_length: int,
+    context_parallel_size: int,
+    expert_model_parallel_size: int,
+) -> ConfigContainer:
+    """Return the full-model Qwen3.5-35B-A3B MXFP8 dynamic-CP configuration, without data or batch size.
 
-    Trains all 40 decoder layers plus one MTP layer with TP1, PP1, base CP4, EP4 and ETP1 at a 64K context, micro
-    batch 1, global batch 32, per-token loss, MXFP8 compute, FP32 Adam state offloaded to the host, HybridEP and
-    uniform full recompute. Global-batch packing runs every packed bin on a CP1, CP2 or CP4 group sized for its
-    longest sequence (``default_dynamic_cp``); override ``model.dynamic_context_parallel=false`` for the static-CP4
-    baseline on the same packing path.
+    Trains all 40 decoder layers plus one MTP layer with TP1, PP1 and ETP1, micro batch 1, per-token loss, MXFP8
+    compute, FP32 Adam state offloaded to the host, HybridEP and uniform full recompute. A sequence of at most
+    ``seq_length // context_parallel_size`` tokens fits one GPU, and global-batch packing runs every packed bin on a
+    context-parallel group sized for its longest sequence. Callers set ``cfg.dataset``, ``cfg.tokenizer`` and
+    ``cfg.train.global_batch_size``.
 
-    The data is :class:`MockGPTSFTDatasetConfig`: random token IDs whose lengths need CP1, CP2 or CP4 capacity in a
-    50/30/20 sample split, uniform within each bucket, with the last 20% of each sample supervised. The model is
-    initialized from scratch; nothing is saved unless ``checkpoint.save`` is set.
+    Args:
+        seq_length: Longest training sequence, in tokens.
+        context_parallel_size: Base CP size; ``seq_length`` must be a multiple of it.
+        expert_model_parallel_size: EP size. HybridEP treats that many ranks as one NVLink domain.
 
-    Requires Megatron-Core with dynamic context parallelism through hybrid (Gated DeltaNet) layers,
-    https://github.com/NVIDIA/Megatron-LM/pull/7048, and a large host-memory allocation for the CPU optimizer.
+    Returns:
+        The configuration with the model, parallelism, optimizer, precision and environment set.
+
+    Raises:
+        ValueError: If ``seq_length`` is not a positive multiple of ``context_parallel_size``.
     """
+    if seq_length <= 0 or seq_length % context_parallel_size:
+        raise ValueError("seq_length must be a positive multiple of context_parallel_size.")
     cfg = _sft_common()
 
-    hf_config = AutoConfig.from_pretrained("Qwen/Qwen3.5-35B-A3B", revision=_QWEN35_35B_A3B_INSTRUCT_REVISION)
+    hf_config = AutoConfig.from_pretrained(_QWEN35_35B_A3B, revision=_QWEN35_35B_A3B_INSTRUCT_REVISION)
     text_config = deepcopy(hf_config.text_config)
     text_config.tie_word_embeddings = hf_config.tie_word_embeddings
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
     cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
 
-    seq_length = 65536
-    context_parallel_size = 4
     cfg.model.seq_length = seq_length
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -505,37 +515,20 @@ def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.context_parallel_size = context_parallel_size
-    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_model_parallel_size = expert_model_parallel_size
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.mtp_num_layers = 1
     cfg.model.mtp_loss_scaling_factor = 0.1
     cfg.model.calculate_per_token_loss = True
 
-    # Global-batch packing with dynamic CP over the four-rank pool; a sample of at most
+    # Global-batch packing with dynamic CP over the DP x CP pool; a sample of at most
     # max_seqlen_per_dp_cp_rank tokens fits one GPU.
     cfg.model.dynamic_context_parallel = True
     cfg.model.min_dynamic_context_parallel_size = 1
     cfg.model.max_seqlen_per_dp_cp_rank = seq_length // context_parallel_size
 
-    # Random token IDs, so no tokenizer is read; the null tokenizer only reports the vocabulary size.
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.tokenizer_model = None
-    cfg.tokenizer.vocab_size = cfg.model.vocab_size
-    cfg.dataset = MockGPTSFTDatasetConfig(
-        seq_length=seq_length,
-        vocab_size=cfg.model.vocab_size,
-        length_bucket_fractions=(0.5, 0.3, 0.2),
-        completion_fraction=0.2,
-        random_seed=1234,
-        # 256-wide attention heads run on FlashAttention, which needs bins without padding between sequences.
-        fold_alignment_padding=True,
-        dataloader_type="single",
-        num_workers=2,
-    )
-
     cfg.train.micro_batch_size = 1
-    cfg.train.global_batch_size = 32
     cfg.train.train_iters = 100
     # Leave device memory for NCCL communicators created after the first step's allocations.
     cfg.train.cuda_memory_fraction = 0.9
@@ -601,13 +594,53 @@ def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config() -> ConfigContainer:
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL": 1,
         "USE_MNNVL": 1,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": expert_model_parallel_size,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         # Host threads for the CPU optimizer. Recipe env vars never override the launcher's: torchrun sets
         # OMP_NUM_THREADS=1, so export OMP_NUM_THREADS before torchrun for this value to apply.
         "OMP_NUM_THREADS": 12,
         "OPENBLAS_NUM_THREADS": 1,
     }
+    return cfg
+
+
+def qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config() -> ConfigContainer:
+    """Return a full Qwen3.5-35B-A3B SFT config for four GB200 GPUs with dynamic CP on mock variable-length data.
+
+    Trains all 40 decoder layers plus one MTP layer with TP1, PP1, base CP4, EP4 and ETP1 at a 64K context, micro
+    batch 1, global batch 32, per-token loss, MXFP8 compute, FP32 Adam state offloaded to the host, HybridEP and
+    uniform full recompute. Global-batch packing runs every packed bin on a CP1, CP2 or CP4 group sized for its
+    longest sequence (``default_dynamic_cp``); override ``model.dynamic_context_parallel=false`` for the static-CP4
+    baseline on the same packing path.
+
+    The data is :class:`MockGPTSFTDatasetConfig`: random token IDs whose lengths need CP1, CP2 or CP4 capacity in a
+    50/30/20 sample split, uniform within each bucket, with the last 20% of each sample supervised. The model is
+    initialized from scratch; nothing is saved unless ``checkpoint.save`` is set.
+
+    Requires Megatron-Core with dynamic context parallelism through hybrid (Gated DeltaNet) layers,
+    https://github.com/NVIDIA/Megatron-LM/pull/7048, and a large host-memory allocation for the CPU optimizer.
+    """
+    seq_length = 65536
+    cfg = qwen35_text_35b_a3b_fp8mx_dynamic_cp_common(
+        seq_length=seq_length, context_parallel_size=4, expert_model_parallel_size=4
+    )
+
+    # Random token IDs, so no tokenizer is read; the null tokenizer only reports the vocabulary size.
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.tokenizer_model = None
+    cfg.tokenizer.vocab_size = cfg.model.vocab_size
+    cfg.dataset = MockGPTSFTDatasetConfig(
+        seq_length=seq_length,
+        vocab_size=cfg.model.vocab_size,
+        length_bucket_fractions=(0.5, 0.3, 0.2),
+        completion_fraction=0.2,
+        random_seed=1234,
+        # 256-wide attention heads run on FlashAttention, which needs bins without padding between sequences.
+        fold_alignment_padding=True,
+        dataloader_type="single",
+        num_workers=2,
+    )
+    cfg.train.global_batch_size = 32
     return cfg
 
 
