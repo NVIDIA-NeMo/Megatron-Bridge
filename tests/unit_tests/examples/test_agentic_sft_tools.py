@@ -143,6 +143,4 @@ def test_item_tokens_need_both_runs_and_exclude_mock_lengths(tmp_path: Path):
     with pytest.raises(SystemExit):
         _COMPARE["main"]([*common, "--item-tokens", str(items)])
     with pytest.raises(SystemExit):
-        _COMPARE["main"](
-            [*common, "--item-tokens", str(items), "--global-batch-size", "1", "--mock-seq-length", "64"]
-        )
+        _COMPARE["main"]([*common, "--item-tokens", str(items), "--global-batch-size", "1", "--mock-seq-length", "64"])

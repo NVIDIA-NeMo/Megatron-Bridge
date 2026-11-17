@@ -196,7 +196,9 @@ def main(argv: list[str] | None = None) -> None:
     batch_sizes = {
         run: getattr(args, f"{run}_global_batch_size") or args.global_batch_size for run in ("baseline", "candidate")
     }
-    item_token_files = {run: getattr(args, f"{run}_item_tokens") or args.item_tokens for run in ("baseline", "candidate")}
+    item_token_files = {
+        run: getattr(args, f"{run}_item_tokens") or args.item_tokens for run in ("baseline", "candidate")
+    }
     has_item_tokens = None not in item_token_files.values()
     if any(item_token_files.values()) and not has_item_tokens:
         parser.error("give token counts for both runs: --item-tokens, or both per-run options")
