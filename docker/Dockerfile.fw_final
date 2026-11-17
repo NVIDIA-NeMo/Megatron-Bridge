@@ -168,9 +168,6 @@ RUN GO_GIT_VERSION=5.19.2 && \
 # Removing the directory also prevents Ray from advertising Java worker support.
 RUN rm -rf /opt/venv/lib/python3.12/site-packages/ray/jars
 
-RUN --mount=type=bind,source=docker/common/check_vllm.py,target=/tmp/check_vllm.py \
-    /usr/bin/python3 /tmp/check_vllm.py
-
 ##############################################################################
 ##
 ## Finalize FW container

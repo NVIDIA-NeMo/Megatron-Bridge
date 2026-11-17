@@ -159,7 +159,7 @@ docker buildx build \
   --build-arg FW_BASE_FINAL=trtllm_install \
   --build-arg NEMO_FW_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.02-py3 \
   --build-arg TRT_LLM_COMMIT=v1.3.0rc4 \
-  --build-arg VLLM_VERSION=v0.30.0 \
+  --build-arg VLLM_VERSION=v0.14.1 \
   -t fw-base:latest \
   .
 ```
@@ -219,7 +219,7 @@ docker build \
 | `FW_DEP_BUILDER` | Stage used as the `fw_dep_builder` base. `trtllm_builder` to include TRT-LLM, `base` to skip it |
 | `FW_BASE_FINAL` | Output stage. `trtllm_install` (with TRT-LLM) or `fw_toolkit_builder` (without) |
 | `UV_VERSION` | uv version to install |
-| `VLLM_VERSION` | vLLM git tag to build (default: `v0.30.0`); installed vLLM must be >=0.30.0, including when inherited from the base image |
+| `VLLM_VERSION` | vLLM git tag to build |
 | `VLLM_WHEEL_SRC` | Stage supplying the vLLM wheel. `vllm_wheel_build` (default) builds it from source; `vllm_wheel_none` skips both the build and the install |
 | `TRT_LLM_COMMIT` | TensorRT-LLM git commit or tag |
 | `TRT_LLM_VERSION` | TensorRT-LLM version string embedded as an image environment variable |
