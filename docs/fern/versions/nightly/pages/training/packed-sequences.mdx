@@ -257,6 +257,26 @@ shifts labels, builds the loss mask, and pads each sequence to the alignment
 multiple. Use a `single` or `cyclic` dataloader. Dataset configs declare the
 capability through `yields_unpacked_samples`, which validation checks.
 
+### Offline Packed Rows
+
+Offline packing and global-batch packing combine. With both
+`enable_offline_packing` and `enable_global_batch_packing` set on a
+`GPTSFTDatasetConfig`, each offline packed row (Parquet or `.npy`) yields one
+unpacked sample per sequence it holds, and the scheduler re-bins the sequences
+of the whole global batch. The global batch then counts packed rows, so offline
+packing decides which sequences share a step: a step carries a nearly constant
+number of tokens instead of a fixed number of samples of varying total length.
+
+- Each sequence keeps its own next-token labels and loss mask.
+- Its offline alignment padding is replaced by the global-batch alignment
+  multiple, so rows prepared with any `pad_seq_to_mult` work.
+- `pad_cu_seqlens` is not supported: it serves CUDA graphs, which global-batch
+  packing does not run with.
+- The bin capacity must also cover `packed_sequence_size`.
+
+The same applies under dynamic context parallelism; see
+[Dynamic Context Parallelism](dynamic-context-parallel.md).
+
 ### Configuration
 
 ```python
@@ -281,7 +301,8 @@ also requires:
 - an explicit `model.max_seqlen_per_dp_cp_rank` whose product with
   `context_parallel_size` covers the longest sample;
 - no virtual pipeline parallelism, Mamba hybrid models, or Megatron FSDP;
-- no other packing path on the same dataset;
+- no in-batch or Energon packing on the same dataset (offline packing combines with it; see
+  [Offline Packed Rows](#offline-packed-rows));
 - a dataset config that declares `yields_unpacked_samples`.
 
 Validation also checks that the pinned Megatron-Core registers the requested
