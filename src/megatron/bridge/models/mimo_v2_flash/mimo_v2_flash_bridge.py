@@ -174,6 +174,9 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         provider.moe_router_enable_expert_bias = True
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True
+        # HF computes router logits as F.linear(x.float(), weight.float()); BF16 logits
+        # can flip expert selection once the correction bias is added.
+        provider.moe_router_dtype = "fp32"
         provider.moe_token_dispatcher_type = "alltoall"
 
         # Attention value scale
