@@ -173,6 +173,29 @@ class TestCreatePgCollectionFunction:
         call_kwargs = mock_hyper_grid.call_args[1]
         assert call_kwargs["shape"][3] == 2  # PP size
 
+    @patch("megatron.bridge.training.initialize.HyperCommGrid")
+    @patch("torch.distributed.get_world_size", return_value=8)
+    @patch("torch.distributed.new_subgroups_by_enumeration")
+    def test_create_pg_collection_sets_dp_cp_gtp_remat(
+        self, mock_subgroups, mock_world_size, mock_hyper_grid, mock_model_config
+    ):
+        """dp_cp_gtp_remat is the dp_cp group, distinct from the dp group."""
+        from megatron.bridge.training.initialize import _create_pg_collection
+
+        mock_model_config.context_parallel_size = 2
+        groups = {}
+        mock_grid_instance = MagicMock()
+        mock_grid_instance.create_pg.side_effect = lambda dims: groups.setdefault(tuple(dims), MagicMock())
+        mock_grid_instance._gen_rank_enum.return_value = [[0], [1], [2], [3], [4], [5], [6], [7]]
+        mock_hyper_grid.return_value = mock_grid_instance
+        mock_subgroups.return_value = (MagicMock(), [])
+
+        result = _create_pg_collection(mock_model_config, num_distributed_optimizer_instances=1)
+
+        assert result.dp_cp_gtp_remat is groups[("dp", "cp")]
+        assert result.dp_cp_gtp_remat is result.dp_cp
+        assert result.dp_cp_gtp_remat is not result.dp
+
 
 class TestCreateDistTrainPgsFunction:
     """Tests for the _create_dist_train_pgs function."""
