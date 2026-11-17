@@ -48,7 +48,8 @@ What is covered:
 * ``test_full_recompute_replays_mappings_and_routing_bitwise``: with full recompute, the first
   forward runs under ``torch.no_grad()`` and the backward replays it with gradients. Hooks record the
   ERNIE mHC mappings of every hyper-connection module and the routing of every router in both passes;
-  they must be bitwise equal. ``test_megatron_core_mhc_recompute_replay`` measures the same for
+  they must be bitwise equal, with the eager and with the fused (``ernie_fused_mhc``) mHC operations.
+  ``test_megatron_core_mhc_recompute_replay`` measures the same for
   Megatron-Core's own (compiled) mHC arithmetic and reports an expected failure when it differs,
   which is why ERNIE 5.5 runs the eager arithmetic.
 * ``test_torch_dist_checkpoint_round_trip``: a ``torch_dist`` checkpoint of the model and the
@@ -64,6 +65,7 @@ Run on one GPU; ``-rA`` lists skip reasons and the ``log_cli`` options print the
 
 from __future__ import annotations
 
+import collections
 import functools
 import importlib
 import itertools
@@ -864,18 +866,35 @@ def _replay_mismatches(records: dict) -> tuple[int, list[str]]:
     return len(records), mismatches
 
 
+@pytest.mark.parametrize("fused_mhc", [False, True], ids=["eager-mhc", "fused-mhc"])
 @pytest.mark.parametrize("backend", ["none", "cudnn"])
-def test_full_recompute_replays_mappings_and_routing_bitwise(distributed, monkeypatch, backend):
-    from megatron.bridge.models.ernie.modeling_ernie55 import Ernie55HyperConnectionModule
+def test_full_recompute_replays_mappings_and_routing_bitwise(distributed, monkeypatch, backend, fused_mhc):
+    """The replay reproduces the first pass bitwise, with the eager and with the fused (``ernie_fused_mhc``) mHC."""
+    from megatron.bridge.models.ernie.modeling_ernie55 import Ernie55HyperConnectionModule, fused_dispatch
 
     _require_backend(backend)
-    model = _build_model(_recompute_config(backend), seed=21).train()
+    if fused_mhc and not fused_dispatch.triton_available():
+        _skip("ernie_fused_mhc needs Triton")
+    calls = collections.Counter(fused_dispatch.FUSED_OP_CALLS)
+    model = _build_model(_recompute_config(backend, ernie_fused_mhc=fused_mhc), seed=21).train()
     records = _record_replay(monkeypatch, model, _batch(), mhc_class=Ernie55HyperConnectionModule)
     kinds = [kind for kind, _ in records]
     # Six hyper-connection modules (four decoder layers, two MTP layers) and two routers (decoder and MTP).
     assert kinds.count("mhc") == 6 and kinds.count("router") == 2, kinds
+    # Every module's mappings ran fused (first pass and replay) when the flag is on, and never when it is off.
+    mapping_launches = (
+        fused_dispatch.FUSED_OP_CALLS["mhc_mappings@hyper_connection"] - calls["mhc_mappings@hyper_connection"]
+    )
+    assert mapping_launches == (12 if fused_mhc else 0), mapping_launches
+    # The aggregate and the residual update ran fused too: an eager fallback inside the real stack (a layer
+    # output with a bias, an unsupported stream dtype, non-fp32 mappings) replays bitwise as well and would
+    # otherwise only show as a warning.
+    for op in ("mhc_aggregate", "mhc_post_bda"):
+        key = f"{op}@hyper_connection"
+        launches = fused_dispatch.FUSED_OP_CALLS[key] - calls[key]
+        assert launches == (12 if fused_mhc else 0), (op, launches)
     count, mismatches = _replay_mismatches(records)
-    _report(f"recompute_replay[{backend}]", modules=count, mismatches=len(mismatches))
+    _report(f"recompute_replay[{backend},fused_mhc={fused_mhc}]", modules=count, mismatches=len(mismatches))
     assert not mismatches, mismatches
 
 

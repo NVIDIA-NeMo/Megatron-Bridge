@@ -24,7 +24,8 @@
 * Hyper-connections with fp32 decoder streams: the eager fp32 mapping and mixing
   (``hyper_connection``), downcasting pre-norms (``norm``) and the fp32 decoder stack
   (``hybrid_stack``). ``norm`` also holds the reference implementation's RMSNorm arithmetic,
-  behind ``ernie_reference_rmsnorm``.
+  behind ``ernie_reference_rmsnorm``. Behind ``ernie_fused_mhc`` (off by default), the hyper-connections run
+  fused fp32 Triton kernels instead (``fused_mhc``).
 * Multimax output head with its own gradient-norm group (``output_layer``).
 * The reference implementation's Triton kernels for SiTU-GLU, multimax and the context-parallel
   local RoPE (``fused_ops``), dispatched behind ``ernie_fused_ops`` (``fused_dispatch``).
@@ -33,7 +34,7 @@
 * The model, which applies all of the above after Megatron-Core builds it (``model``).
 
 FlashMLA and the cuDNN DSA kernels are imported lazily by Megatron-Core, and Triton by
-``fused_ops`` on its first kernel launch, so importing this package needs none of them.
+``fused_ops`` and ``fused_mhc`` on their first kernel launch, so importing this package needs none of them.
 """
 
 from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import validate_ernie55_context_parallel_config

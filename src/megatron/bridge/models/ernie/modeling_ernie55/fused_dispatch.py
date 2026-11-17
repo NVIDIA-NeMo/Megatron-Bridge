@@ -57,6 +57,11 @@ The reference's column-sliced remote top-k rewrites the Python top-k loop of its
 D-layer core. Bridge's D layers have no such loop: Megatron-Core's cuDNN DSA plans select their top-k, and at
 context_parallel_size > 1 the ``PACKED_THD_GENERAL`` plan already scores only each document's causal columns.
 
+The fused fp32 hyper-connection kernels (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_mhc`) have their
+own flag, ``ernie_fused_mhc`` (default ``False``), which the hyper-connection modules read from their config
+(:class:`~megatron.bridge.models.ernie.modeling_ernie55.hyper_connection.Ernie55HyperConnectionModule`); they
+count and log their launches here as well.
+
 Proof of use: every fused launch counts in :data:`FUSED_OP_CALLS` under ``"<op>@<site>"``, and the first launch at
 each site logs one INFO line on global rank 0.
 """
@@ -89,13 +94,17 @@ __all__ = [
     "fused_situ_glu",
     "fused_thd_cp_local_rope",
     "install_ernie55_fused_ops",
+    "log_once",
+    "record_fused_launch",
     "thd_cp_rope_layout_fits",
     "triton_available",
 ]
 
 FUSED_OP_CALLS: collections.Counter[str] = collections.Counter()
 """Fused forward launches per ``"<op>@<site>"``: ``situ_glu@<Megatron-Core module>`` (see :data:`SITU_GLU_SITES`),
-``multimax@output_layer``, and ``thd_cp_local_rope@forward`` / ``thd_cp_local_rope@inverse``."""
+``multimax@output_layer``, ``thd_cp_local_rope@forward`` / ``thd_cp_local_rope@inverse``, and, with
+``ernie_fused_mhc``, ``mhc_mappings@hyper_connection``, ``mhc_aggregate@hyper_connection`` and
+``mhc_post_bda@hyper_connection``."""
 
 SITU_GLU_SITES = (
     "megatron.core.transformer.mlp",
@@ -194,12 +203,43 @@ def thd_cp_rope_layout_fits(x: Tensor, rotary_pos_emb: Tensor, nope_dim: int, po
     )
 
 
-def _log_once(key: str, message: str, *args: object, level: int = logging.INFO) -> None:
-    """Log ``message`` once per process and ``key``, on global rank 0."""
+def _log_once(key: str, message: str, *args: object, level: int = logging.INFO, all_ranks: bool = False) -> None:
+    """Log ``message`` once per process and ``key``: on global rank 0, or on every rank with ``all_ranks``."""
     if key in _STATE.logged:
         return
     _STATE.logged.add(key)
-    log_single_rank(logger, level, message, *args)
+    if all_ranks:
+        logger.log(level, message, *args)
+    else:
+        log_single_rank(logger, level, message, *args)
+
+
+def log_once(key: str, message: str, *args: object, level: int = logging.INFO, all_ranks: bool = False) -> None:
+    """Log ``message`` (``%``-formatted with ``args``) once per process and ``key``.
+
+    By default only global rank 0 logs. ``all_ranks=True`` logs on every rank that reaches the call, for
+    per-rank conditions (such as a fused-kernel fallback on a pipeline stage rank 0 does not hold) that rank 0
+    cannot report.
+
+    Args:
+        key: Deduplication key.
+        message: Log message.
+        *args: Arguments of ``message``.
+        level: Logging level.
+        all_ranks: Log on every rank instead of global rank 0 only.
+    """
+    _log_once(key, message, *args, level=level, all_ranks=all_ranks)
+
+
+def record_fused_launch(op: str, site: str, tensor: Tensor) -> None:
+    """Count a fused launch in :data:`FUSED_OP_CALLS` under ``"<op>@<site>"`` and log the first one at the site.
+
+    Args:
+        op: Operation name.
+        site: Call-site label.
+        tensor: The launch's main input (its shape and dtype are logged).
+    """
+    _record(op, site, tensor)
 
 
 def _record(op: str, site: str, tensor: Tensor) -> None:

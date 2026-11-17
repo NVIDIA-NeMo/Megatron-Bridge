@@ -83,6 +83,7 @@ ERNIE_FIELDS = {
     "ernie_d_rotary_base": None,
     "ernie_per_row_loss": False,
     "ernie_fused_ops": True,
+    "ernie_fused_mhc": False,
 }
 
 
@@ -129,13 +130,18 @@ class TestErnie55TransformerConfig:
             _config(ernie_vha_rank=None)
 
     @pytest.mark.parametrize("value", ["false", 0, None])
-    def test_finalize_rejects_a_fused_ops_flag_that_is_not_a_bool(self, value):
-        with pytest.raises(ValueError, match="ernie_fused_ops must be a bool"):
-            _config(ernie_fused_ops=value)
+    @pytest.mark.parametrize("flag", ["ernie_fused_ops", "ernie_fused_mhc"])
+    def test_finalize_rejects_a_fused_flag_that_is_not_a_bool(self, flag, value):
+        with pytest.raises(ValueError, match=f"{flag} must be a bool"):
+            _config(**{flag: value})
 
     def test_ernie_fields_survive_per_layer_copies(self):
         config = _config(
-            ernie_vha_rank=16, ernie_d_rotary_base=8e6, ernie_output_gate_fp32=True, ernie_fused_ops=False
+            ernie_vha_rank=16,
+            ernie_d_rotary_base=8e6,
+            ernie_output_gate_fp32=True,
+            ernie_fused_ops=False,
+            ernie_fused_mhc=True,
         )
         layer_config = DSALayerConfig.from_config(config)
         assert type(layer_config) is DSALayerConfig
@@ -143,6 +149,8 @@ class TestErnie55TransformerConfig:
         assert layer_config.ernie_output_gate_fp32 is True
         # The RoPE dispatcher reads the flag from the per-layer config it is handed.
         assert layer_config.ernie_fused_ops is False
+        # The hyper-connection modules read ernie_fused_mhc from the config they are built with.
+        assert layer_config.ernie_fused_mhc is True
         validate_ernie55_config(layer_config)
 
 

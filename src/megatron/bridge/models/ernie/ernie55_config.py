@@ -196,6 +196,17 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     :mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch`. The reference has no switch and always
     runs them on CUDA. There is no Hugging Face key; on the command line, ``model.ernie_fused_ops=false``."""
 
+    ernie_fused_mhc: bool = False
+    """Run the hyper-connections (mHC) through Bridge's fused fp32 Triton kernels
+    (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_mhc`) instead of the eager fp32 operations:
+    the mapping epilogue (norm, sigmoids, Sinkhorn), the stream aggregate and the residual update each become one
+    kernel per direction, and the projection stays a cuBLAS GEMM. The fp32 contract is unchanged, but the
+    kernels sum in their own order, so results match the eager path to fp32 rounding, not bitwise; they are
+    deterministic and replay bitwise under full recompute. CUDA tensors the kernels do not take, and every CPU
+    tensor, run the eager operations. This is not Megatron-Core's ``use_fused_mhc``, which stays rejected. Off by
+    default; no recipe turns it on. There is no Hugging Face key; on the command line,
+    ``model.ernie_fused_mhc=true``."""
+
     ernie_reference_rmsnorm: bool = False
     """Build every RMSNorm of the model with the reference implementation's eager arithmetic
     (:class:`~megatron.bridge.models.ernie.modeling_ernie55.norm.Ernie55RMSNorm`) instead of Transformer Engine's
@@ -219,7 +230,7 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         envelope is checked only when ``num_moe_experts`` is set.
 
         Raises:
-            ValueError: If ``ernie_fused_ops`` or ``ernie_reference_rmsnorm`` is not a bool, if
+            ValueError: If ``ernie_fused_ops``, ``ernie_fused_mhc`` or ``ernie_reference_rmsnorm`` is not a bool, if
                 ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
                 ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer envelope is
                 violated.
@@ -229,6 +240,8 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         super().finalize()
         if not isinstance(self.ernie_fused_ops, bool):
             raise ValueError(f"ernie_fused_ops must be a bool, got {self.ernie_fused_ops!r}.")
+        if not isinstance(self.ernie_fused_mhc, bool):
+            raise ValueError(f"ernie_fused_mhc must be a bool, got {self.ernie_fused_mhc!r}.")
         if not isinstance(self.ernie_reference_rmsnorm, bool):
             raise ValueError(f"ernie_reference_rmsnorm must be a bool, got {self.ernie_reference_rmsnorm!r}.")
         if self.ernie_per_row_loss and self.calculate_per_token_loss:
