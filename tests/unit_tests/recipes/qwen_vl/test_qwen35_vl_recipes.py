@@ -644,6 +644,56 @@ def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_no_phantom_gdn_kern
     assert not hasattr(cfg.model, "gdn_kernel_backend")
 
 
+class _FakeModelCfgWithGraphPairs(_FakeModelCfg):
+    """Model config from a Megatron-Core that declares cuda_graph_pair_hybrid_layers."""
+
+    # Megatron-Core's default; a class attribute, as on the real dataclass.
+    cuda_graph_pair_hybrid_layers = False
+
+
+class _FakeAutoBridgeWithGraphPairs(_FakeAutoBridge):
+    """AutoBridge yielding a provider that declares cuda_graph_pair_hybrid_layers."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, *, revision: str | None = None):
+        return _FakeAutoBridgeWithGraphPairs()
+
+    def get_model_config(self):
+        return _FakeModelCfgWithGraphPairs()
+
+
+# The library recipes that use the GB300 execution policies, with attention, MoE router and preprocess graphs.
+_QWEN35_VL_GB300_LIBRARY_GRAPH_RECIPES = (
+    _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config,
+    _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config,
+    _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config,
+)
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN35_VL_GB300_LIBRARY_GRAPH_RECIPES)
+def test_qwen35_vl_gb300_library_recipes_pair_hybrid_graphs(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """With Megatron-Core's cuda_graph_pair_hybrid_layers the GB300 recipes capture each Hybrid block once."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridgeWithGraphPairs)
+
+    cfg = recipe_func()
+
+    assert cfg.model.cuda_graph_pair_hybrid_layers is True
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN35_VL_GB300_LIBRARY_GRAPH_RECIPES)
+def test_qwen35_vl_gb300_library_recipes_no_phantom_graph_pairs(
+    recipe_func: Callable, monkeypatch: pytest.MonkeyPatch
+):
+    """On a Megatron-Core without cuda_graph_pair_hybrid_layers the recipes must not invent the attribute."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = recipe_func()
+
+    assert not hasattr(cfg.model, "cuda_graph_pair_hybrid_layers")
+
+
 def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPatch):
     """The 16-H100 library pretrain recipe should own the measured execution policy."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)

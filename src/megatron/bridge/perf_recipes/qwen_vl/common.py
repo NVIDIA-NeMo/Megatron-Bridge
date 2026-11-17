@@ -31,7 +31,11 @@ from megatron.bridge.recipes.qwen_vl.qwen35_vl import (
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, set_cuda_graph_modules
+from megatron.bridge.utils.cuda_graph import (
+    clear_cuda_graph_modules,
+    enable_hybrid_cuda_graph_pairs,
+    set_cuda_graph_modules,
+)
 
 
 def _use_model_vocab_null_tokenizer(cfg: ConfigContainer) -> None:
@@ -74,10 +78,11 @@ def _qwen35_vl_common(cfg: ConfigContainer) -> None:
 def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     """VLM post-overrides that must run after ``_benchmark_common``.
 
-    Qwen3.5/Qwen3.6-VL disable RoPE fusion and CUDA graphs for variable-length
-    VLM inputs; these override the perf defaults that ``_benchmark_common`` sets.
+    Qwen3.5/Qwen3.6-VL disable CUDA graphs for variable-length VLM inputs; this
+    overrides the perf default that ``_benchmark_common`` sets. RoPE fusion keeps
+    its perf default: the language model's MRoPE and the vision encoder's 2D RoPE
+    run through Transformer Engine's fused kernel.
     """
-    cfg.model.apply_rope_fusion = False
     cfg.model.cuda_graph_impl = "none"
     clear_cuda_graph_modules(cfg.model)
     cfg.optimizer.overlap_param_gather = False
@@ -103,6 +108,10 @@ def _enable_partial_cuda_graphs(cfg: ConfigContainer) -> None:
     """
     cfg.model.cuda_graph_impl = "transformer_engine"
     set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
+    # Once Megatron-Core supports it: one graph per HF block (attention or GDN, then its MoE router) instead of one
+    # per Hybrid position, and graphs for the MTP layers, which per-position graphs leave eager. Bitwise identical to
+    # per-position graphs with an eager MTP.
+    enable_hybrid_cuda_graph_pairs(cfg.model)
     # The RNG trackers must be re-enabled here, not left to an earlier caller.
     # ``_benchmark_common`` derives them from whatever ``cuda_graph_impl`` held at
     # ITS call time (_common.py:88-92: ``cfg.rng.te_rng_tracker =
@@ -156,8 +165,9 @@ def _qwen35_vl_post_clear_scope(cfg: ConfigContainer) -> None:
 def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults that must override generic benchmark defaults."""
     _use_model_vocab_null_tokenizer(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    # _benchmark_common sets apply_rope_fusion=True. Qwen3-VL supports it (its per-token MRoPE runs through
+    # Transformer Engine's fused kernel), but these recipes have not been measured with it, so they keep
+    # the unfused RoPE they were tuned with.
     cfg.model.apply_rope_fusion = False
 
     # Keep flat recipes aligned with the legacy Qwen3-VL performance path:

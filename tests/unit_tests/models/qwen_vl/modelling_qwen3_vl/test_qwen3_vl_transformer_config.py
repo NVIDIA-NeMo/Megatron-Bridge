@@ -356,3 +356,14 @@ def test_disabled_vision_recompute_allows_graphs_with_full_decoder_recompute():
     assert config.recompute_granularity is None
     assert config.recompute_modules == []
     assert config.cuda_graph_impl == "local_transformer_engine"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [({"apply_rope_fusion": True}, True), ({"apply_rope_fusion": False}, False), ({}, False)],
+)
+def test_vision_rope_fusion_follows_language_config(overrides, expected):
+    cfg = get_vision_model_config(_hf_config(), _megatron_base(**overrides))
+    assert cfg.apply_rope_fusion is expected
+    # The encoder keeps its FP32 rotary setting, which the fused kernel satisfies by computing in FP32.
+    assert cfg.apply_rotary_pos_emb_in_fp32 is True
