@@ -29,18 +29,19 @@ from dataclasses import dataclass
 import pytest
 from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
-from megatron.bridge.perf_recipes.gpt_oss import (
-    gpt_oss_20b_pretrain_8gpu_gb200_fp8mx_config,
-    gpt_oss_20b_pretrain_8gpu_gb200_nvfp4_config,
-    gpt_oss_20b_pretrain_8gpu_gb300_fp8mx_config,
-    gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config,
-    gpt_oss_20b_pretrain_72gpu_gb200_fp8mx_config,
-    gpt_oss_20b_pretrain_72gpu_gb200_nvfp4_config,
-    gpt_oss_20b_pretrain_72gpu_gb300_fp8mx_config,
-    gpt_oss_20b_pretrain_72gpu_gb300_nvfp4_config,
-    gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config,
-    gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_config,
-)
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+gpt_oss_20b_pretrain_8gpu_gb200_fp8mx_config = benchmark_factory("gpt_oss_20b_pretrain_8gpu_gb200_fp8mx_config")
+gpt_oss_20b_pretrain_8gpu_gb200_nvfp4_config = benchmark_factory("gpt_oss_20b_pretrain_8gpu_gb200_nvfp4_config")
+gpt_oss_20b_pretrain_8gpu_gb300_fp8mx_config = benchmark_factory("gpt_oss_20b_pretrain_8gpu_gb300_fp8mx_config")
+gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config = benchmark_factory("gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config")
+gpt_oss_20b_pretrain_72gpu_gb200_fp8mx_config = benchmark_factory("gpt_oss_20b_pretrain_72gpu_gb200_fp8mx_config")
+gpt_oss_20b_pretrain_72gpu_gb200_nvfp4_config = benchmark_factory("gpt_oss_20b_pretrain_72gpu_gb200_nvfp4_config")
+gpt_oss_20b_pretrain_72gpu_gb300_fp8mx_config = benchmark_factory("gpt_oss_20b_pretrain_72gpu_gb300_fp8mx_config")
+gpt_oss_20b_pretrain_72gpu_gb300_nvfp4_config = benchmark_factory("gpt_oss_20b_pretrain_72gpu_gb300_nvfp4_config")
+gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config = benchmark_factory("gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config")
+gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_config = benchmark_factory("gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_config")
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
     discover_recipe_factories,
@@ -51,7 +52,7 @@ from tests.unit_tests.recipes.recipe_test_utils import (
 pytestmark = pytest.mark.unit
 
 _TE_GRAPH_SCOPE = ["attn", "moe_router", "moe_preprocess"]
-_GPT_OSS_PACKAGE = importlib.import_module("megatron.bridge.perf_recipes.gpt_oss")
+_GPT_OSS_PACKAGE = importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.gpt_oss")
 _GPT_OSS_20B_RECIPES = tuple(
     factory for factory in discover_recipe_factories(_GPT_OSS_PACKAGE) if "_20b_" in factory.__name__
 )

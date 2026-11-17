@@ -29,12 +29,12 @@ import pytest
 
 from megatron.bridge import recipes
 from megatron.bridge.models.nemotron_omni.nemotron_omni_config import NemotronOmniModelConfig
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes import nemotronh_multimodal
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer, apply_environment_variables
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import bf16_mixed, get_mixed_precision_config
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -74,7 +74,7 @@ _MEASURED_ENV_VARS = {"NCCL_EP_HT_EM_PULL_PUSH": 1, "NVTE_CUTEDSL_FUSED_GROUPED_
 # that every NCCL EP recipe sets explicitly, and ``fp8_param`` follows ``fp8_param_gather``.
 _CHANGED_MODEL_FIELDS = {*_MEASURED_MODEL_OVERRIDES, "moe_use_grouped_tensor"}
 _CHANGED_PRECISION_FIELDS = {*_MEASURED_PRECISION_OVERRIDES, "fp8_param"}
-# The four HybridEP names are dropped because nothing reads them on the NCCL EP backend (perf_recipes/environment.py);
+# The four HybridEP names are dropped because nothing reads them on the NCCL EP backend (perf_benchmark_overrides/environment.py);
 # a recipe that keeps them must remove HYBRID_EP_ENV_NAMES here and the isdisjoint assertion further down.
 _CHANGED_ENV_VARS = {*_MEASURED_ENV_VARS, *HYBRID_EP_ENV_NAMES}
 

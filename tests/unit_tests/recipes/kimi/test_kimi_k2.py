@@ -25,7 +25,7 @@ from megatron.bridge.recipes.kimi.kimi_k2 import (
 )
 from megatron.bridge.training.config import ConfigContainer, _validate_and_sync_distributed_optimizer_settings
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory, patch_recipe_module_global
 
 
 class _FakeKimiK2Provider:
@@ -84,11 +84,7 @@ def test_kimi_resolved_overlap_preserves_legacy_execution(monkeypatch, hardware,
             num_layers=64, hidden_size=128, num_attention_heads=4, vocab_size=163840, apply_rope_fusion=False
         ),
     )
-    factory = (
-        kimi_k2_pretrain_config
-        if hardware is None
-        else getattr(importlib.import_module(f"megatron.bridge.perf_recipes.kimi.{hardware}.kimi_k2"), factory_name)
-    )
+    factory = kimi_k2_pretrain_config if hardware is None else benchmark_factory(factory_name)
     cfg = factory()
     assert cfg.ddp.bucket_size is None
     assert cfg.ddp.overlap_grad_reduce is True

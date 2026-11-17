@@ -315,7 +315,7 @@ cfg.env_vars.update(
 )
 ```
 
-Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for model recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.perf_recipes` without preventing cluster-specific overrides.
+Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for model recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.training.perf_benchmark_overrides` without preventing cluster-specific overrides.
 
 When launching through `scripts/performance/setup_experiment.py`, the rank-local `bootstrap.py` resolves the selected recipe defaults inside the worker container, exports them, and then replaces itself with a clean interpreter running `run_script.py` or `run_recipe.py`. This keeps recipe imports off dependency-light launcher nodes, lets each training entrypoint run only once, and ensures training-framework imports observe recipe-owned process settings. Explicit `--env`, `--custom_env_vars`, shell, and container values take precedence.
 

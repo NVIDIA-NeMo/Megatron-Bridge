@@ -33,7 +33,6 @@ from typing import cast
 from recipe_metadata import (
     BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS,
     LIBRARY_RECIPE_PRECEDENCE_COLLISIONS,
-    benchmark_recipe_family,
     resolved_benchmark_recipe_metadata,
 )
 
@@ -223,13 +222,9 @@ def find_library_recipe(recipe_name: str, *, model_family_name: str | None = Non
 
 def find_benchmark_recipe(recipe_name: str) -> Callable | None:
     """Find one flat benchmark recipe by its exported function name."""
-    try:
-        family = benchmark_recipe_family(recipe_name)
-    except ValueError:
-        return None
-    module_name = f"megatron.bridge.perf_recipes.{family}"
-    recipe_fn = getattr(importlib.import_module(module_name), recipe_name, None)
-    return cast(Callable, recipe_fn) if callable(recipe_fn) else None
+    from megatron.bridge.training.perf_benchmark_overrides import get_perf_benchmark_recipe
+
+    return get_perf_benchmark_recipe(recipe_name)
 
 
 def load_recipe(
@@ -243,7 +238,7 @@ def load_recipe(
         # The resolved name replaces a deprecated hardware name in the requested one.
         recipe_name = benchmark_metadata.recipe_name
         config_builder = find_benchmark_recipe(recipe_name)
-        package_name = "megatron.bridge.perf_recipes"
+        package_name = "megatron.bridge.training.perf_benchmark_overrides"
         recipe_kind = "benchmark"
         if recipe_name in BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS:
             logger.warning(
@@ -265,7 +260,7 @@ def load_recipe(
     if config_builder is None:
         if recipe_kind == "library":
             raise AttributeError(
-                f"Recipe '{recipe_name}' not found in megatron.bridge.recipes or megatron.bridge.perf_recipes."
+                f"Recipe '{recipe_name}' not found in megatron.bridge.recipes or megatron.bridge.training.perf_benchmark_overrides."
             )
         raise AttributeError(f"Recipe '{recipe_name}' is indexed but not callable in {package_name}.")
     logger.info("Loading %s recipe '%s' from %s", recipe_kind, recipe_name, package_name)

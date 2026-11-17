@@ -390,7 +390,7 @@ def test_ultra_weak_scaling_resolves_hsdp_before_user_overrides(monkeypatch, gpu
     )
 
     # Exercise the actual HSDP helper without importing GPU-only recipe dependencies.
-    path = utils._PERF_RECIPES_ROOT / "nemotronh" / "common.py"
+    path = utils._PERF_RECIPES_ROOT / "nemotronh.py"
     tree = ast.parse(path.read_text())
     helper = next(
         node
@@ -622,15 +622,21 @@ def test_flat_hydra_ep_override_updates_hybridep_topology_environment(monkeypatc
     override_utils._apply_flat_cli_environment_compatibility = lambda config, *_args, **_kwargs: config
     override_utils.apply_one_gpu_per_rank_device_mapping = lambda config: config
     monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
-    environment_module = types.ModuleType("megatron.bridge.perf_recipes.environment")
+    environment_module = types.ModuleType("megatron.bridge.training.perf_benchmark_overrides.environment")
     environment_module.HYBRID_EP_ENV_NAMES = {
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
         "NVLINK_DOMAIN_SIZE",
         "USE_MNNVL",
     }
-    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes", types.ModuleType("megatron.bridge.perf_recipes"))
-    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes.environment", environment_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "megatron.bridge.training.perf_benchmark_overrides",
+        types.ModuleType("megatron.bridge.training.perf_benchmark_overrides"),
+    )
+    monkeypatch.setitem(
+        sys.modules, "megatron.bridge.training.perf_benchmark_overrides.environment", environment_module
+    )
 
     result = run_script._apply_perf_recipe_overrides(
         recipe,
@@ -1589,3 +1595,23 @@ def test_bootstrap_exports_model_recipe_environment_before_exec(monkeypatch):
     assert calls[0] == ("environment", effective_recipe)
     assert calls[1][0] == "exec"
     assert calls[1][2][1].endswith("run_recipe.py")
+
+
+def test_exact_alias_does_not_change_default_benchmark_allocation() -> None:
+    from utils import utils
+
+    alias = "llama31_405b_pretrain_256gpu_b200_bf16_config"
+    # The exported alias is selectable explicitly, but legacy discovery used the
+    # underlying 128-GPU variant for this workload's default allocation.
+    assert callable(utils.find_perf_recipe(alias))
+    assert alias not in utils.flat_perf_recipe_names()
+    assert (
+        utils._first_matching_perf_recipe_name(
+            model_recipe_name="llama31_405b",
+            task="pretrain",
+            gpu="b200",
+            precision="bf16",
+            config_variant=None,
+        )
+        == "llama31_405b_pretrain_128gpu_b200_bf16_config"
+    )

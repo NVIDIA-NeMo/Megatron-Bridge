@@ -34,7 +34,7 @@ from tests.unit_tests.recipes.recipe_test_utils import (
 
 pytestmark = pytest.mark.unit
 
-_PERF_RECIPES_PACKAGE = importlib.import_module("megatron.bridge.perf_recipes")
+_PERF_RECIPES_PACKAGE = importlib.import_module("megatron.bridge.training.perf_benchmark_overrides")
 _PERF_RECIPE_FACTORIES = discover_recipe_factories(_PERF_RECIPES_PACKAGE)
 _PERF_RECIPE_FAMILY_PACKAGES = tuple(
     importlib.import_module(module_info.name)
@@ -42,7 +42,7 @@ _PERF_RECIPE_FAMILY_PACKAGES = tuple(
         _PERF_RECIPES_PACKAGE.__path__,
         prefix=f"{_PERF_RECIPES_PACKAGE.__name__}.",
     )
-    if module_info.ispkg
+    if not module_info.name.rsplit(".", 1)[-1].startswith("_") and module_info.name.rsplit(".", 1)[-1] != "environment"
 )
 _PERF_RECIPE_FAMILY_PACKAGES_BY_NAME = {package.__name__: package for package in _PERF_RECIPE_FAMILY_PACKAGES}
 
@@ -58,9 +58,9 @@ def test_all_perf_recipe_factories_are_exported() -> None:
     exported = set().union(*(exported_recipe_factory_keys(package) for package in _PERF_RECIPE_FAMILY_PACKAGES))
     assert exported == canonical
     for factory in _PERF_RECIPE_FACTORIES:
-        family_name = factory.__module__.split(".", maxsplit=4)[3]
+        family_name = factory.__module__.rsplit(".", 1)[1]
         family_package = _PERF_RECIPE_FAMILY_PACKAGES_BY_NAME[f"{_PERF_RECIPES_PACKAGE.__name__}.{family_name}"]
-        assert getattr(family_package, factory.__name__) is factory
+        assert factory.__name__ in family_package.LIBRARY_RECIPES
 
 
 @pytest.mark.parametrize("recipe_factory", _PERF_RECIPE_FACTORIES, ids=recipe_factory_id)

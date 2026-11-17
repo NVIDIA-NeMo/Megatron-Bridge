@@ -11,21 +11,33 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import importlib
 
 import pytest
 import torch
 
 import megatron.bridge.recipes as recipes
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
-from megatron.bridge.perf_recipes.nemotronh import (
-    nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config,
-    nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_deterministic_config,
-    nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config,
-    nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config,
-    nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config,
-    nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config,
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config = benchmark_factory(
+    "nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config"
+)
+nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_deterministic_config = benchmark_factory(
+    "nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_deterministic_config"
+)
+nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config = benchmark_factory(
+    "nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config"
+)
+nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config = benchmark_factory(
+    "nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config"
+)
+nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config = benchmark_factory(
+    "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"
+)
+nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config = benchmark_factory(
+    "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config"
 )
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config,

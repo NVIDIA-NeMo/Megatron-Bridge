@@ -18,20 +18,39 @@ from collections.abc import Callable
 
 import pytest
 
-from megatron.bridge.perf_recipes.deepseek import (
-    deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config,
-    deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config,
-    deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config,
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config = benchmark_factory(
+    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config"
 )
-from megatron.bridge.perf_recipes.nemotronh import (
-    nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config,
-    nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config,
-    nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,
-    nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
-    nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config,
-    nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config,
+deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config = benchmark_factory(
+    "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config"
 )
-from megatron.bridge.perf_recipes.qwen import qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config
+deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config = benchmark_factory(
+    "deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config"
+)
+nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config = benchmark_factory(
+    "nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config"
+)
+nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config = benchmark_factory(
+    "nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config"
+)
+nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config = benchmark_factory(
+    "nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config"
+)
+nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config = benchmark_factory(
+    "nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config"
+)
+nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config = benchmark_factory(
+    "nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config"
+)
+nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config = benchmark_factory(
+    "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config"
+)
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 

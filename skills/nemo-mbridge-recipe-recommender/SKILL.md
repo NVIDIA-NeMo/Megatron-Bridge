@@ -24,7 +24,7 @@ index details:
 
 1. **Library recipes** under `src/megatron/bridge/recipes/` are for functional
    training and use `scripts/training/run_recipe.py`.
-2. **Benchmark recipes** under `src/megatron/bridge/perf_recipes/` are for
+2. **Performance benchmark overrides** under `src/megatron/bridge/training/perf_benchmark_overrides/` are for
    upper-bound throughput benchmarks. They own their canonical benchmark data
    and settings and should not be presented as production training recipes.
 3. For a first-time Bridge smoke test, recommend `llama3_8b_pretrain_config`
@@ -50,7 +50,7 @@ intended workload and GPU allocation. For BF16, aim for roughly **200
 TFLOP/s/GPU on H100** and **400 TFLOP/s/GPU on GB200**. These are approximate
 readiness targets, not exact pass/fail cutoffs. This requirement excludes SFT,
 PEFT, and long-context SFT; it assesses the base pretraining library recipe,
-not a `perf_recipes` benchmark or its result. For other precisions or hardware
+not a performance benchmark or its result. For other precisions or hardware
 such as B200/GB300, establish a workload-matched measured target rather than
 silently reusing the BF16 H100/GB200 numbers.
 
@@ -93,7 +93,7 @@ knobs.
 
 Treat mock data, forced balancing, disabled correctness checks, and timing-only
 schedules as benchmark-only shortcuts. They may be appropriate in
-`perf_recipes`, but their losses and checkpoints are not convergence evidence.
+performance benchmark overrides, but their losses and checkpoints are not convergence evidence.
 
 For comparable model-verification recipes, choose a cohort-wide convergence
 contract before tuning performance. Keep the same bounded data selection,
@@ -172,24 +172,20 @@ anything beyond throughput benchmarking.
 
 ## Benchmark Recipe Layout
 
-Benchmark recipes use the same **Python function** format as library recipes,
-but live in a dedicated namespace for throughput benchmarking:
+Performance benchmarks compose an existing library configuration with common and
+model-specific overrides:
 
-- Benchmark recipes live in `src/megatron/bridge/perf_recipes/<family>/<hardware>/<model>.py`
-- Each benchmark recipe is a **self-contained Python function** (e.g. `llama3_8b_pretrain_8gpu_h100_bf16_config()`)
-- Recipe names encode model, task, GPU count, hardware, precision, and optional variant
-- `scripts/performance/utils/utils.py` derives compatibility `WorkloadBaseConfig` views from the flat recipe itself
-- Shared helpers: `_benchmark_common()` (50 iters, timing, TE RNG), `_perf_precision()` (bf16 / fp8_cs / fp8_mx / nvfp4)
+- Model-specific overrides live in `src/megatron/bridge/training/perf_benchmark_overrides/<family>.py`.
+- Existing names select a library constructor and its overrides, for example
+  `build_perf_benchmark_config("llama3_8b_pretrain_8gpu_h100_bf16_config")`.
+- Selector names encode model, task, GPU count, hardware, precision, and optional variant.
+- `scripts/performance/utils/utils.py` derives compatibility `WorkloadBaseConfig` views from the composed config.
+- Shared helpers remain `_benchmark_common()` (50 iters, timing, TE RNG) and `_perf_precision()`.
 
-**Why Python, not YAML?** Previous YAML-based approaches had problems:
-recipe logic was split across multiple indirection layers, configs were not
-self-contained, and the two-level pipeline made maintenance and debugging
-difficult. Python functions are explicit, greppable, and composable.
-
-The training launcher discovers library and benchmark recipes from the
-complete exported function name. Five legacy duplicate names select the
-benchmark definition; use the corresponding generic alias for those functional
-workloads. New recipe names should be unique across both packages.
+The training launcher accepts the existing library function names and exact
+benchmark selectors. Five legacy duplicate names select the benchmark definition;
+use the corresponding generic library alias for those training workloads. New
+names should be unique across library recipes and benchmark selectors.
 
 ---
 
@@ -197,7 +193,7 @@ workloads. New recipe names should be unique across both packages.
 
 The full per-family recipe tables — every shipped **library** recipe
 (`src/megatron/bridge/recipes/`) and **benchmark** recipe
-(`src/megatron/bridge/perf_recipes/`), with parallelism degrees, minimum GPU
+(`src/megatron/bridge/training/perf_benchmark_overrides/`), with parallelism degrees, minimum GPU
 counts, and hardware coverage — are kept in a dedicated reference file so this
 skill stays concise:
 
@@ -234,7 +230,7 @@ User wants to train a model
 │   └─ 128+ GPUs → 405B+, large MoE (DeepSeek V3, Kimi K2)
 │
 ├─ Want throughput benchmarks?
-│   ├─ Yes → Use benchmark recipes (src/megatron/bridge/perf_recipes/)
+│   ├─ Yes → Use benchmark recipes (src/megatron/bridge/training/perf_benchmark_overrides/)
 │   │   ├─ Exact exported recipe → scripts/training/train.sh --recipe <exact function name>
 │   │   └─ Selector/specialized workflow → scripts/performance/setup_experiment.py
 │   └─ No → Use library recipes (scripts/training/run_recipe.py)
@@ -392,7 +388,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Common recipe helpers | `src/megatron/bridge/recipes/common.py` |
 | Training entry point | `scripts/training/run_recipe.py` |
 | Training Slurm launcher | `scripts/training/train.sh` |
-| Benchmark recipes root | `src/megatron/bridge/perf_recipes/` |
+| Benchmark recipes root | `src/megatron/bridge/training/perf_benchmark_overrides/` |
 | Benchmark compatibility launcher | `scripts/performance/setup_experiment.py` |
 | Benchmark recipe helpers | `scripts/performance/utils/utils.py` |
 | Benchmark overrides | `scripts/performance/utils/overrides.py` |

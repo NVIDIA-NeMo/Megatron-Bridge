@@ -780,3 +780,29 @@ uv run python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 - `TPOverlapCfg.num_split`
 {/* - `garbageCollectionCallback.gc_interval_val` */}
 {/* - `NsysPlugin` */}
+
+## Perf benchmark overrides
+
+Library recipes provide the training configuration. Performance benchmarks apply general and model-specific overrides to those recipes. The overrides live in `src/megatron/bridge/training/perf_benchmark_overrides/`: `_common.py` contains shared benchmark policy, and each model family has one module with its library selection and overrides.
+
+Existing launch commands and exact benchmark names work as before:
+
+```bash
+uv run python scripts/performance/setup_experiment.py \
+  -m qwen -mr qwen3_30b_a3b -g h100 -ng 16 -c bf16 \
+  --task pretrain --max_steps 100
+```
+
+Python callers construct the same benchmark config explicitly:
+
+```python
+from megatron.bridge.training.perf_benchmark_overrides import build_perf_benchmark_config
+
+cfg = build_perf_benchmark_config("llama3_8b_pretrain_8gpu_h100_bf16_config")
+```
+
+This replaces imports of individual factory functions from `megatron.bridge.perf_recipes`. All 470 benchmark variants and six exported aliases remain selectable. Library recipe imports, performance selectors, allocation defaults, config variants, and CLI override precedence are preserved. Allocation-aware Nemotron Ultra benchmarks also retain the optional `num_gpus` argument. GLM-5.1/5.2 currently have no model-specific library recipe; their overrides start from the existing shared SFT configuration and select the model through AutoBridge.
+
+A knob belongs in the library recipe, common benchmark overrides, or model-specific benchmark overrides. Supported resource settings can be shared through library recipes. Changes to precision, optimizer state, routing, RNG, workload, schedules, evaluation, or numerical checks remain explicit benchmark choices. Overlap, fusion and recompute choices whose convergence effects are uncertain remain model-specific overrides until validated.
+
+The common benchmark policy usually selects 50 steps and disables checkpointing, evaluation and numerical checks. Exceptions, including the Llama 2 LoRA workload, retain their original policy. Override order is preserved where graph, RNG, precision or communication settings depend on earlier selections. Benchmark configs therefore retain their previous behavior; their loss and throughput are not evidence of convergence for ordinary training.

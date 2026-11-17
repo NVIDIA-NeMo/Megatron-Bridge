@@ -11,29 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import importlib
 import importlib.util
-import pkgutil
 from collections.abc import Callable
 
 import pytest
 
-from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
-    llama3_8b_pretrain_8gpu_gb200_nvfp4_config,
-    llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
-)
-from megatron.bridge.perf_recipes.llama.gb300.llama3 import (
-    llama3_8b_pretrain_8gpu_gb300_fp8mx_config,
-    llama3_8b_pretrain_8gpu_gb300_nvfp4_config,
-)
-from megatron.bridge.perf_recipes.llama.h100.llama3 import (
-    llama3_70b_pretrain_64gpu_h100_fp8cs_config,
-)
-from megatron.bridge.perf_recipes.llama.vrnvl72.llama3 import (
-    llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
-    llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
-)
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+llama3_8b_pretrain_8gpu_gb200_nvfp4_config = benchmark_factory("llama3_8b_pretrain_8gpu_gb200_nvfp4_config")
+llama3_70b_pretrain_64gpu_gb200_nvfp4_config = benchmark_factory("llama3_70b_pretrain_64gpu_gb200_nvfp4_config")
+llama3_8b_pretrain_8gpu_gb300_fp8mx_config = benchmark_factory("llama3_8b_pretrain_8gpu_gb300_fp8mx_config")
+llama3_8b_pretrain_8gpu_gb300_nvfp4_config = benchmark_factory("llama3_8b_pretrain_8gpu_gb300_nvfp4_config")
+llama3_70b_pretrain_64gpu_h100_fp8cs_config = benchmark_factory("llama3_70b_pretrain_64gpu_h100_fp8cs_config")
+llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config = benchmark_factory("llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config")
+llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config = benchmark_factory("llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config")
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
     patch_recipe_construction_dependencies,
@@ -42,22 +35,9 @@ from tests.unit_tests.recipes.recipe_test_utils import (
 
 
 def _finetune_perf_recipes() -> list[Callable[[], ConfigContainer]]:
-    recipes = []
-    llama_package = importlib.import_module("megatron.bridge.perf_recipes.llama")
-    for module_info in pkgutil.iter_modules(llama_package.__path__):
-        module_name = f"{llama_package.__name__}.{module_info.name}.llama3"
-        if not module_info.ispkg or importlib.util.find_spec(module_name) is None:
-            continue
-        module = importlib.import_module(module_name)
-        recipes.extend(
-            recipe
-            for name in dir(module)
-            if ("_sft_" in name or "_lora_" in name)
-            and name.endswith("_config")
-            and callable(recipe := getattr(module, name))
-            and recipe.__module__ == module_name
-        )
-    return recipes
+    from megatron.bridge.training.perf_benchmark_overrides import benchmark_names
+
+    return [benchmark_factory(name) for name in benchmark_names("llama") if "_sft_" in name or "_lora_" in name]
 
 
 class _FakeModelCfg:

@@ -20,10 +20,10 @@ from collections.abc import Callable
 import pytest
 from transformers import Qwen3NextConfig
 
-from megatron.bridge import perf_recipes
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.recipes.qwen.h100 import qwen3_next
+from megatron.bridge.training import perf_benchmark_overrides as perf_recipes
 from tests.unit_tests.recipes.recipe_test_utils import (
     discover_recipe_factories,
     patch_recipe_construction_dependencies,

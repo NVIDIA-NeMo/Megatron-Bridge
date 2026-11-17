@@ -220,6 +220,11 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        # Stream capacity and the eight-GPU NVLink domains used by this H100 layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
     }
     return cfg
 

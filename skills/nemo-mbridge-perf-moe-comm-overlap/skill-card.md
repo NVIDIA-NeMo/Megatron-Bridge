@@ -27,7 +27,7 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Communication Overlap Documentation](docs/training/communication-overlap.md) <br>
 - [Qwen3 30B-A3B Model Verification Card](examples/model_verification_cards/qwen3-30b-a3b/card.yaml) <br>
-- [Qwen3 MoE H100 Performance Recipe](src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py) <br>
+- [Qwen3 MoE H100 Performance Recipe](src/megatron/bridge/training/perf_benchmark_overrides/qwen.py) <br>
 - [Parallelisms Documentation](docs/parallelisms.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
 

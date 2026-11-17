@@ -125,7 +125,9 @@ def test_load_recipe_reports_both_packages_when_missing(
     monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: None)
     monkeypatch.setattr(recipe_runner, "find_library_recipe", lambda _name: None)
 
-    with pytest.raises(AttributeError, match=r"megatron\.bridge\.recipes or megatron\.bridge\.perf_recipes"):
+    with pytest.raises(
+        AttributeError, match=r"megatron\.bridge\.recipes or megatron\.bridge\.training\.perf_benchmark_overrides"
+    ):
         recipe_runner.load_recipe("missing_recipe_config")
 
 
@@ -178,30 +180,29 @@ def test_finetuning_collision_selects_benchmark(
     library_finder.assert_not_called()
 
 
-def test_find_benchmark_recipe_imports_exporting_family_lazily(
+def test_find_benchmark_recipe_defers_family_import_until_construction(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config_builder = Mock(name="benchmark_recipe")
-    family = SimpleNamespace(target_benchmark_recipe_config=config_builder)
-    imported_modules: list[str] = []
+    from megatron.bridge.training import perf_benchmark_overrides
 
-    def import_module(module_name: str) -> SimpleNamespace:
-        imported_modules.append(module_name)
-        return family
+    recipe_name = "llama3_8b_pretrain_8gpu_h100_bf16_config"
+    # Warm the source-only selector lookup before guarding imports.
+    assert recipe_name in perf_benchmark_overrides.benchmark_names()
+    import_module = Mock(side_effect=AssertionError("must not import a model family during lookup"))
+    monkeypatch.setattr(perf_benchmark_overrides.importlib, "import_module", import_module)
 
-    monkeypatch.setattr(recipe_runner, "benchmark_recipe_family", lambda _name: "qwen")
-    monkeypatch.setattr(recipe_runner.importlib, "import_module", import_module)
-
-    assert recipe_runner.find_benchmark_recipe("target_benchmark_recipe_config") is config_builder
-    assert imported_modules == ["megatron.bridge.perf_recipes.qwen"]
+    assert callable(recipe_runner.find_benchmark_recipe(recipe_name))
+    import_module.assert_not_called()
 
 
 def test_find_benchmark_recipe_does_not_import_unregistered_family(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from megatron.bridge.training import perf_benchmark_overrides
+
+    perf_benchmark_overrides.benchmark_names()
     import_module = Mock()
-    monkeypatch.setattr(recipe_runner, "benchmark_recipe_family", Mock(side_effect=ValueError("unknown family")))
-    monkeypatch.setattr(recipe_runner.importlib, "import_module", import_module)
+    monkeypatch.setattr(perf_benchmark_overrides.importlib, "import_module", import_module)
 
     assert recipe_runner.find_benchmark_recipe("unknown_recipe_config") is None
     import_module.assert_not_called()

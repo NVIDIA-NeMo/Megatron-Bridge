@@ -1,3 +1,6 @@
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,13 +20,13 @@ import importlib
 
 import pytest
 
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
 pytestmark = pytest.mark.unit
 
-# (module under megatron.bridge.perf_recipes, recipe factory, expected moe_use_grouped_tensor).
+# (module under megatron.bridge.training.perf_benchmark_overrides, recipe factory, expected moe_use_grouped_tensor).
 # B300 runs TE CUDA graphs and keeps grouped tensors; the eager B200 recipe was slower with them.
 _GPT_OSS_NVL8_NCCLEP_RECIPES = (
     ("gpt_oss.b200.gpt_oss", "gpt_oss_120b_pretrain_64gpu_b200_bf16_config", False),
@@ -33,7 +36,9 @@ _GPT_OSS_NVL8_NCCLEP_RECIPES = (
 # Import at collection time: the offline-construction fixture patches ``AutoBridge`` in every recipe module
 # that is already loaded, so a lazy import inside a test would escape the patch.
 _RECIPE_MODULES = {
-    module_name: importlib.import_module(f"megatron.bridge.perf_recipes.{module_name}")
+    module_name: importlib.import_module(
+        f"megatron.bridge.training.perf_benchmark_overrides.{module_name.split(chr(46))[0]}"
+    )
     for module_name, _, _ in _GPT_OSS_NVL8_NCCLEP_RECIPES
 }
 
@@ -47,7 +52,7 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     ("module_name", "factory_name", "grouped_tensor"), _GPT_OSS_NVL8_NCCLEP_RECIPES, ids=lambda value: str(value)
 )
 def test_gpt_oss_nvl8_bf16_recipes_use_nccl_ep(module_name: str, factory_name: str, grouped_tensor: bool) -> None:
-    cfg = getattr(_RECIPE_MODULES[module_name], factory_name)()
+    cfg = benchmark_factory(factory_name)()
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"

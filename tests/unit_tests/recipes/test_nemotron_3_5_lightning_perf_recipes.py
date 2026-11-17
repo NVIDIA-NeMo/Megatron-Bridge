@@ -21,40 +21,87 @@ from inspect import signature
 import pytest
 import torch
 
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
-from megatron.bridge.perf_recipes.nemotronh import (
-    nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config,
-    nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config,
-    nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config,
-    nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
-    nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config,
-    nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config,
-    nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config,
-    nemotron_3_nano_pretrain_8gpu_b200_bf16_config,
-    nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config,
-    nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config,
-    nemotron_3_nano_pretrain_8gpu_b300_bf16_config,
-    nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config,
-    nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config,
-    nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
-    nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
-    nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
-    nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
-    nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config,
-    nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
-    nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
-    nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"
+)
+nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config"
+)
+nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config"
+)
+nemotron_3_nano_pretrain_8gpu_b200_bf16_config = benchmark_factory("nemotron_3_nano_pretrain_8gpu_b200_bf16_config")
+nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config = benchmark_factory("nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config")
+nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config = benchmark_factory("nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config")
+nemotron_3_nano_pretrain_8gpu_b300_bf16_config = benchmark_factory("nemotron_3_nano_pretrain_8gpu_b300_bf16_config")
+nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config = benchmark_factory("nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config")
+nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config = benchmark_factory("nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config")
+nemotron_3_nano_pretrain_8gpu_gb200_bf16_config = benchmark_factory("nemotron_3_nano_pretrain_8gpu_gb200_bf16_config")
+nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config = benchmark_factory(
+    "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config"
+)
+nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config = benchmark_factory(
+    "nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config"
+)
+nemotron_3_nano_pretrain_8gpu_gb300_bf16_config = benchmark_factory("nemotron_3_nano_pretrain_8gpu_gb300_bf16_config")
+nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config = benchmark_factory(
+    "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config"
+)
+nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config = benchmark_factory(
+    "nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config"
+)
+nemotron_3_nano_pretrain_16gpu_h100_bf16_config = benchmark_factory("nemotron_3_nano_pretrain_16gpu_h100_bf16_config")
+nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config = benchmark_factory(
+    "nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config"
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
@@ -200,93 +247,117 @@ _NEMOTRON_3_5_BASE_RECIPE_PAIRS = (
     ),
 )
 _NEMOTRON_NANO_PERF_FACTORIES = (
-    ("megatron.bridge.perf_recipes.nemotronh.h100.nemotronh", "nemotron_3_nano_pretrain_16gpu_h100_bf16_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.h100.nemotronh", "nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_bf16_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.b300.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_bf16_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.b300.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.b300.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config"),
-    ("megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config"),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_16gpu_h100_bf16_config"),
     (
-        "megatron.bridge.perf_recipes.nemotronh.h100.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
+        "nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config",
+    ),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_bf16_config"),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config"),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config"),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_bf16_config"),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config"),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config"),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config"),
+    (
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
+        "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config",
+    ),
+    (
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
+        "nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config",
+    ),
+    ("megatron.bridge.training.perf_benchmark_overrides.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config"),
+    (
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
+        "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config",
+    ),
+    (
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
+        "nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config",
+    ),
+    (
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
+        "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config",
+    ),
+    (
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
+        "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config",
+    ),
+    (
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
+        "nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config",
+    ),
+    (
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.h100.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.b200.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.b200.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.b200.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.b300.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.b300.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.b300.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config",
     ),
     (
-        "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+        "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config",
     ),
 )
@@ -299,8 +370,8 @@ _NEMOTRON_NANO_PERF_FACTORIES = (
 )
 def test_nemotron_nano_perf_recipe_model_finalizes(module_name: str, factory_name: str) -> None:
     """Nano perf recipes use one non-conflicting CUDA graph configuration API."""
-    module = importlib.import_module(module_name)
-    cfg = getattr(module, factory_name)()
+    importlib.import_module(module_name)
+    cfg = benchmark_factory(factory_name)()
 
     cfg.model.finalize()
 

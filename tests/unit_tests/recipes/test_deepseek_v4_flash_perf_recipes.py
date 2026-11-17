@@ -19,14 +19,25 @@ from dataclasses import fields
 import pytest
 import torch
 
-from megatron.bridge.perf_recipes.deepseek import (
-    deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_config,
-    deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
-    deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
-    deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
-    deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config,
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_config = benchmark_factory(
+    "deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_config"
 )
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
+deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config = benchmark_factory(
+    "deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config"
+)
+deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config = benchmark_factory(
+    "deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config"
+)
+deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config = benchmark_factory(
+    "deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config"
+)
+deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config = benchmark_factory(
+    "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config"
+)
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 

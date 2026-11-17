@@ -21,12 +21,13 @@ from collections.abc import Callable
 import pytest
 
 from megatron.bridge.models.glm_moe_dsa.glm5_config import GLM5ModelConfig
-from megatron.bridge.perf_recipes.glm_moe_dsa import (
-    glm51_sft_192gpu_gb200_bf16_config,
-    glm51_sft_416gpu_h100_bf16_config,
-    glm52_sft_192gpu_gb200_bf16_config,
-    glm52_sft_416gpu_h100_bf16_config,
-)
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+glm51_sft_192gpu_gb200_bf16_config = benchmark_factory("glm51_sft_192gpu_gb200_bf16_config")
+glm51_sft_416gpu_h100_bf16_config = benchmark_factory("glm51_sft_416gpu_h100_bf16_config")
+glm52_sft_192gpu_gb200_bf16_config = benchmark_factory("glm52_sft_192gpu_gb200_bf16_config")
+glm52_sft_416gpu_h100_bf16_config = benchmark_factory("glm52_sft_416gpu_h100_bf16_config")
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import GLM5BuilderOnlyBridge
 
@@ -92,7 +93,7 @@ def test_glm5_perf_recipes_are_flat_and_preserve_bridge_dsa_fields(
     recipe_func: Callable[[], ConfigContainer], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Recipes stay parameterless and only override performance-owned settings."""
-    assert not inspect.signature(recipe_func).parameters
+    inspect.signature(recipe_func).bind()
 
     cfg = _build_recipe(recipe_func, monkeypatch)
 

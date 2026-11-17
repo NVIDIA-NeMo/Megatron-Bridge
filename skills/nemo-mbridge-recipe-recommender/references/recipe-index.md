@@ -139,7 +139,7 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 ## Benchmark Recipe Index
 
-Benchmark recipe source lives under `src/megatron/bridge/perf_recipes/`. The
+Benchmark recipe source lives under `src/megatron/bridge/training/perf_benchmark_overrides/`. The
 compatibility launcher in `scripts/performance/` resolves those flat recipe
 names and derives compatibility workload views from the selected flat recipe
 when legacy helper paths still need them.

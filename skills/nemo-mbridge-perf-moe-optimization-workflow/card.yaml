@@ -205,4 +205,4 @@ evidence:
   - "Megatron-Core v0.16 benchmarks"
   - "DSV3 and Qwen3-235B empirical results"
   - "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
-  - "src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py"
+  - "src/megatron/bridge/training/perf_benchmark_overrides/qwen.py"

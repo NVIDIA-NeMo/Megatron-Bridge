@@ -14,22 +14,29 @@
 
 """Tests for explicit flat performance recipe environment settings."""
 
-import ast
+import importlib
 import re
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from megatron.bridge.perf_recipes._common import _benchmark_common
-from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
-from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
+from megatron.bridge.training.perf_benchmark_overrides import (
+    benchmark_family,
+    benchmark_names,
+    build_perf_benchmark_config,
+)
+from megatron.bridge.training.perf_benchmark_overrides._common import _benchmark_common
+from megatron.bridge.training.perf_benchmark_overrides.environment import COMMON_PERF_ENV_VARS
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
     r".+_(?:pretrain|sft|peft)_\d+gpu_[a-z0-9]+_(?:bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config"
 )
-_RECIPE_ROOT = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
+_RECIPE_ROOT = (
+    Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "training" / "perf_benchmark_overrides"
+)
 _INLINE_CORE_ENV_NAMES = {
     "CUDA_DEVICE_MAX_CONNECTIONS",
     "NCCL_NVLS_ENABLE",
@@ -81,63 +88,24 @@ _DEEPSEEK_MLPERF_EXEC_RECIPES = {
 }
 
 
-def _function(path: Path, function_name: str) -> ast.FunctionDef:
-    tree = ast.parse(path.read_text())
-    return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name)
+@pytest.fixture(autouse=True)
+def _offline_inherited_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
+    for family in {benchmark_family(name) for name in benchmark_names()}:
+        importlib.import_module(f"megatron.bridge.training.perf_benchmark_overrides.{family}")
+    patch_recipe_construction_dependencies(monkeypatch)
 
 
 def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
-    """Read the literal env mapping written in a flat recipe builder."""
-    function = _function(path, function_name)
-    local_constants = {
-        node.targets[0].id: node.value.value
-        for node in function.body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, (str, int, float, bool))
-    }
-    assignments = [
-        node
-        for node in function.body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Attribute)
-        and isinstance(node.targets[0].value, ast.Name)
-        and node.targets[0].value.id == "cfg"
-        and node.targets[0].attr == "env_vars"
-    ]
-    assert len(assignments) == 1
-    mapping = assignments[0].value
-    assert isinstance(mapping, ast.Dict)
-
-    result = COMMON_PERF_ENV_VARS.copy()
-    common_expansions = 0
-    for key, value in zip(mapping.keys, mapping.values):
-        if key is None:
-            assert isinstance(value, ast.Name) and value.id in {"COMMON_PERF_ENV_VARS", "DETERMINISM_ENV_VARS"}
-            if value.id == "COMMON_PERF_ENV_VARS":
-                common_expansions += 1
-            else:
-                result.update(DETERMINISM_ENV_VARS)
-            continue
-        if isinstance(value, ast.Name):
-            assert value.id in local_constants
-            env_value = local_constants[value.id]
-        else:
-            env_value = ast.literal_eval(value)
-        result[ast.literal_eval(key)] = env_value
-    assert common_expansions == 1
-    return result
+    return build_perf_benchmark_config(function_name).env_vars
 
 
 def _explicit_environments():
-    for path in _RECIPE_ROOT.glob("*/*/*.py"):
-        tree = ast.parse(path.read_text())
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef) and _CANONICAL_RECIPE_NAME.fullmatch(node.name) is not None:
-                yield path, node.name, _explicit_environment(path, node.name)
+    for name in benchmark_names():
+        match = re.search(r"_\d+gpu_([a-z0-9]+)_", name)
+        family = benchmark_family(name)
+        model = "deepseek_v3" if name.startswith("deepseek_v3_") else name.split("_pretrain_")[0]
+        path = Path(family) / match.group(1) / f"{model}.py"
+        yield path, name, build_perf_benchmark_config(name).env_vars
 
 
 def test_common_environment_defaults_are_small_and_universal():
@@ -183,31 +151,16 @@ def test_benchmark_common_disables_checkpoint_io_and_forces_moe_load_balancing()
     assert cfg.model.moe_router_force_load_balancing is True
 
 
-def test_every_flat_recipe_builder_declares_its_environment_inline():
-    invalid = []
-
-    for path in _RECIPE_ROOT.glob("*/*/*.py"):
-        tree = ast.parse(path.read_text())
-        for node in tree.body:
-            if not isinstance(node, ast.FunctionDef) or _CANONICAL_RECIPE_NAME.fullmatch(node.name) is None:
-                continue
-            builder = f"{path.relative_to(_RECIPE_ROOT)}:{node.name}"
-            try:
-                _explicit_environment(path, node.name)
-            except AssertionError:
-                invalid.append(builder)
-            assert not any(
-                isinstance(decorator, ast.Call)
-                and isinstance(decorator.func, ast.Name)
-                and decorator.func.id == "perf_recipe_environment"
-                for decorator in node.decorator_list
-            )
-
-    assert not invalid
+def test_every_benchmark_has_an_environment():
+    environments = list(_explicit_environments())
+    assert len(environments) == len(benchmark_names())
+    assert len(environments) >= 470
+    for _, name, environment in environments:
+        assert environment, name
 
 
 def test_explicit_environment_invariants_across_all_flat_recipes():
-    """Keep duplicated inline settings complete without deriving them at runtime."""
+    """Keep effective environments complete for both inherited and inline settings."""
     for path, function_name, environment in _explicit_environments():
         assert environment.keys() >= _INLINE_CORE_ENV_NAMES
 

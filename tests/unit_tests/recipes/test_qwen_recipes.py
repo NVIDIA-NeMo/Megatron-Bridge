@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 #
 # Test purpose:
 # - Parametrize over all exported Qwen recipe functions in `megatron.bridge.recipes.qwen`.
@@ -20,14 +19,13 @@
 # - Verify tokenizer selection: pretrain recipes honor `use_null_tokenizer`, sft/peft recipes always use HF tokenizer.
 # - Sanity-check parallelism fields and finetuning-specific requirements.
 #
-
 import importlib
 from typing import Callable
 
 import pytest
 import torch
 
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory, patch_recipe_module_global
 
 
 _qwen_module = importlib.import_module("megatron.bridge.recipes.qwen")
@@ -689,9 +687,7 @@ def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_main_config(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Test that the H100 BF16 perf recipe only adds benchmark-specific overrides."""
-    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
-        qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config,
-    )
+    qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config = benchmark_factory("qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config")
     from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
@@ -726,9 +722,11 @@ def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_main_config(
 
 def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
     """Keep non-H100-BF16 perf recipes isolated from the new generic default."""
-    from megatron.bridge.perf_recipes.qwen.common import qwen3_30b_a3b_pretrain_config as perf_base
     from megatron.bridge.recipes.qwen.h100.qwen3_moe import (
         qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config as legacy_base,
+    )
+    from megatron.bridge.training.perf_benchmark_overrides.qwen import (
+        qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config as perf_base,
     )
 
     assert perf_base is legacy_base
@@ -738,8 +736,8 @@ def test_qwen3_30b_a3b_h100_fp8cs_perf_recipe_uses_te_partial_cuda_graph(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """fp8cs H100 recipe uses TE partial CUDA graph (attn + moe_router + moe_preprocess)."""
-    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
-        qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
+    qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config = benchmark_factory(
+        "qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config"
     )
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
@@ -755,9 +753,11 @@ def test_qwen3_30b_a3b_h100_fp8ds_inherits_fp8cs_layout_with_delayed_scaling(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """fp8ds is fp8cs + delayed scaling; topology, env_vars, and CUDA graph settings must match."""
-    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
-        qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
-        qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config,
+    qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config = benchmark_factory(
+        "qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config"
+    )
+    qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config = benchmark_factory(
+        "qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config"
     )
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
@@ -781,8 +781,8 @@ def test_qwen3_30b_a3b_gb200_fp8mx_perf_recipe_uses_main_recipe(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """The GB200 MXFP8 perf recipe only layers benchmark behavior on its verified recipe."""
-    from megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe import (
-        qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config = benchmark_factory(
+        "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"
     )
     from megatron.bridge.recipes.qwen.gb200.qwen3_moe import (
         qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config as main_recipe,

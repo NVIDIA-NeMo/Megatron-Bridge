@@ -22,9 +22,24 @@ import pkgutil
 import socket
 import sys
 from collections.abc import Callable, Iterator
+from functools import lru_cache
 from types import ModuleType, SimpleNamespace
 
 import pytest
+
+
+@lru_cache(maxsize=None)
+def benchmark_factory(name: str) -> Callable[..., object]:
+    """Bind a benchmark selector for existing parametrized behavior tests."""
+    from functools import partial
+
+    from megatron.bridge.training.perf_benchmark_overrides import benchmark_family, build_perf_benchmark_config
+
+    factory = partial(build_perf_benchmark_config, name)
+    factory.__name__ = name
+    factory.__qualname__ = name
+    factory.__module__ = f"megatron.bridge.training.perf_benchmark_overrides.{benchmark_family(name)}"
+    return factory
 
 
 def _iter_recipe_owner_modules(module: ModuleType) -> Iterator[ModuleType]:
@@ -76,6 +91,13 @@ def discover_recipe_factories(
     name. Restricting discovery to functions owned by each leaf module keeps
     the construction matrix focused on unique implementations.
     """
+    if package.__name__.startswith("megatron.bridge.training.perf_benchmark_overrides"):
+        from megatron.bridge.training.perf_benchmark_overrides import benchmark_names
+
+        family = package.__name__.rsplit(".", 1)[1]
+        names = benchmark_names(None if family == "perf_benchmark_overrides" else family)
+        return tuple(benchmark_factory(name) for name in names)
+
     package_path = getattr(package, "__path__", None)
     if package_path is None:
         raise ValueError(f"{package.__name__} is not a package")
@@ -110,6 +132,8 @@ def recipe_factory_id(factory: Callable[..., object]) -> str:
 
 def exported_recipe_factory_keys(module: ModuleType) -> set[tuple[str, str]]:
     """Return identities of public ``*_config`` callables exported by a module."""
+    if hasattr(module, "LIBRARY_RECIPES"):
+        return {recipe_factory_key(benchmark_factory(name)) for name in module.LIBRARY_RECIPES}
     return {
         recipe_factory_key(value)
         for name, value in vars(module).items()
@@ -536,7 +560,7 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
 
-    recipe_prefixes = ("megatron.bridge.recipes.", "megatron.bridge.perf_recipes.")
+    recipe_prefixes = ("megatron.bridge.recipes.", "megatron.bridge.training.perf_benchmark_overrides.")
 
     for module_name, module in tuple(sys.modules.items()):
         if module is None or not module_name.startswith(recipe_prefixes):
