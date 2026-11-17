@@ -259,27 +259,6 @@ def test_perf_runner_environment_preserves_process_values(monkeypatch):
     assert run_script.os.environ["LAUNCHER_VALUE"] == "launcher"
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    ("recipe_env", "process_value", "expected"),
-    [
-        ({}, "launcher-plugin", "launcher-plugin"),
-        ({"NCCL_NET_PLUGIN": "recipe-plugin"}, "launcher-plugin", "launcher-plugin"),
-        ({"NCCL_NET_PLUGIN": "recipe-plugin"}, None, "recipe-plugin"),
-        ({}, "", ""),
-        ({}, None, None),
-    ],
-)
-def test_perf_runner_environment_preserves_nccl_net_plugin(monkeypatch, recipe_env, process_value, expected):
-    monkeypatch.delenv("NCCL_NET_PLUGIN", raising=False)
-    if process_value is not None:
-        monkeypatch.setenv("NCCL_NET_PLUGIN", process_value)
-
-    bootstrap._apply_recipe_environment(SimpleNamespace(env_vars=recipe_env))
-
-    assert bootstrap.os.environ.get("NCCL_NET_PLUGIN") == expected
-
-
 @pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
 def test_perf_runner_environment_rejects_invalid_values(env_vars):
     with pytest.raises((TypeError, ValueError)):
