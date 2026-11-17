@@ -201,6 +201,76 @@ def test_sd_mtp_reads_megatron_fsdp_from_the_ddp_config(pg_collection):
         builder.build_distributed_models(pg_collection, SimpleNamespace(use_megatron_fsdp=True), wrap_with_ddp=False)
 
 
+def test_peft_excluded_module_paths_cover_both_sides_of_every_alias(pg_collection):
+    """The model names the SD-MTP body and the decoder layers it aliases, and nothing else."""
+    model = _build(pg_collection)
+    excluded = model.peft_excluded_module_paths()
+    assert excluded
+    for alias, source in model.ernie55_mtp_aliases.items():
+        assert alias.rpartition(".")[0] in excluded
+        assert source.rpartition(".")[0] in excluded
+    for path in excluded:
+        model.get_submodule(path)
+    shared_layers = {int(path.split(".")[2]) for path in excluded if path.startswith("decoder.layers.")}
+    num_layers = len(model.decoder.layers)
+    assert shared_layers == set(range(num_layers - len(shared_layers), num_layers))
+    assert len(shared_layers) < num_layers
+    assert all(path.startswith(("mtp.", "decoder.layers.")) for path in excluded)
+
+
+def test_lora_pre_wrap_hook_keeps_the_sd_mtp_sharing(pg_collection):
+    """Bridge's LoRA skips the aliased modules, adapts the other targets, and the alias check still passes.
+
+    The CPU stand-ins for the TE linears are plain modules LoRA does not know, so the targets are the routed
+    experts' linears (Megatron-Core parallel linears); the MTP body's experts are aliased and must stay untouched.
+    Bridge's LoRA layers import Transformer Engine, so this test (and only this test) needs it.
+    """
+    pytest.importorskip("transformer_engine.pytorch", reason="Bridge's LoRA layers import Transformer Engine")
+    from megatron.bridge.peft.lora import LoRA
+    from megatron.bridge.peft.lora_layers import LoRALinear
+
+    lora = LoRA(
+        target_modules=["*.experts.local_experts.*.linear_fc1", "*.experts.local_experts.*.linear_fc2"],
+        dim=4,
+        alpha=8,
+        dropout=0.0,
+    )
+    config = _tiny_config()
+    config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=True))
+    models = Ernie55ModelBuilder(config).build_distributed_models(
+        pg_collection, wrap_with_ddp=False, mixed_precision_wrapper=None
+    )
+    model = models[0]
+    assert check_ernie55_mtp_aliases(models) == len(model.ernie55_mtp_aliases) > 0
+    adapted = {name for name, module in model.named_modules() if isinstance(module, LoRALinear)}
+    excluded = model.peft_excluded_module_paths()
+    assert adapted and not adapted & excluded
+    assert not any(name.startswith("mtp.") for name in adapted)
+    assert any(name.startswith("decoder.layers.") for name in adapted)
+    trainable = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+    assert trainable and all(".adapter." in name for name in trainable)
+    assert not any(name.rpartition(".")[0].rpartition(".adapter")[0] in excluded for name in trainable)
+
+
+class _ModuleWrapper(torch.nn.Module):
+    """An adapter-like wrapper that moves the base module to ``to_wrap``."""
+
+    def __init__(self, module):
+        super().__init__()
+        self.to_wrap = module
+
+
+def test_an_adapter_on_an_aliased_module_is_reported(pg_collection):
+    """A PEFT method that ignores the exclusions is caught with a message that names them."""
+    model = _build(pg_collection)
+    owner_name = sorted(model.ernie55_mtp_aliases)[0].rpartition(".")[0]
+    parent_name, _, child = owner_name.rpartition(".")
+    parent = model.get_submodule(parent_name) if parent_name else model
+    setattr(parent, child, _ModuleWrapper(getattr(parent, child)))
+    with pytest.raises(RuntimeError, match="peft_excluded_module_paths"):
+        check_ernie55_mtp_aliases(model)
+
+
 def test_wrapping_that_splits_an_alias_is_caught(pg_collection, monkeypatch):
     """A wrapper that re-creates an MTP parameter (FSDP-like) fails the build instead of training two copies."""
     build_wrapped = BridgeHybridModelBuilder.build_distributed_models
