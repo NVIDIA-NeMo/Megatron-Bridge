@@ -39,6 +39,11 @@ ARG VLLM_VERSION=v0.14.1
 ARG MAX_JOBS=4
 ENV VLLM_VERSION=$VLLM_VERSION
 
+# DeepGEMM's deep_jit requires elfutils/libdwfl.h during compilation.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libdw-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 # Build vllm
 RUN mkdir -p /src/vllm && \
     git clone https://github.com/vllm-project/vllm.git /src/vllm && \
