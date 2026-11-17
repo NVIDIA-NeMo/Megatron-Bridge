@@ -978,7 +978,13 @@ class TestQwen35VLBridgeModelConfig:
             "moe_layer_freq",
             "is_hybrid_model",
             "mtp_hybrid_override_pattern",
+            "hybrid_layer_pattern",
         }
+        # The provider uses paired TransformerBlock layers, whereas the builder uses a
+        # HybridStack pattern. Dev now declares the pattern on both config types.
+        assert getattr(provider, "hybrid_layer_pattern", None) is None
+        expected_pattern = "GEGEGE*EGEGEGE*E" if moe else "G-G-G-*-G-G-G-*-"
+        assert model_config.hybrid_layer_pattern == expected_pattern
         assert {"vision_config", "image_token_id", "mrope_section", "apply_rotary_pos_emb_in_fp32"} <= shared
         for field_name in sorted(shared):
             assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
