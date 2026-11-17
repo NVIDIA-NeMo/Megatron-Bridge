@@ -22,6 +22,7 @@ from megatron.core.extensions.transformer_engine import (
     TELayerNormColumnParallelLinear,
     TENorm,
 )
+from megatron.core.ssm.mamba_mixer import MambaMixer
 
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import (
     FalconH1MambaMixer,
@@ -184,4 +185,95 @@ def test_mamba_mixer_applies_ssm_multipliers():
     scaled = mixer._scale_zxbc_dt(zxbc_dt, use_context_parallel_dims=False)
 
     expected = torch.tensor([[[2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0]]])
+    torch.testing.assert_close(scaled, expected)
+
+
+def _mixer_with_distinct_dims():
+    mixer = object.__new__(FalconH1MambaMixer)
+    object.__setattr__(mixer, "config", SimpleNamespace(ssm_multipliers=(2.0, 3.0, 4.0, 5.0, 6.0)))
+    object.__setattr__(mixer, "d_state", 2)
+    object.__setattr__(mixer, "d_inner_local_tp", 2)
+    object.__setattr__(mixer, "ngroups_local_tp", 1)
+    object.__setattr__(mixer, "nheads_local_tp", 1)
+    object.__setattr__(mixer, "cp", SimpleNamespace(d_inner_local_tpcp=3, ngroups_local_tpcp=2, nheads_local_tpcp=4))
+    return mixer
+
+
+_RUNTIME_CP = SimpleNamespace(d_inner_local_tpcp=1, ngroups_local_tpcp=1, nheads_local_tpcp=1)
+_RUNTIME_CP_EXPECTED = torch.tensor([[[2.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0]]])
+_TP_EXPECTED = torch.tensor([[[2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0]]])
+
+
+def test_mamba_mixer_static_prefill_scales_with_runtime_cp_dims():
+    mixer = _mixer_with_distinct_dims()
+    calls = []
+
+    def fake_static_prefill(self, zxBCdt, conv_state, ssm_state, runtime_cp=None):
+        calls.append((zxBCdt, runtime_cp))
+        return zxBCdt
+
+    with patch.object(MambaMixer, "_static_prefill", fake_static_prefill):
+        mixer._static_prefill(torch.ones(1, 1, 7), conv_state=None, ssm_state=None, runtime_cp=_RUNTIME_CP)
+
+    assert len(calls) == 1
+    torch.testing.assert_close(calls[0][0], _RUNTIME_CP_EXPECTED)
+    assert calls[0][1] is _RUNTIME_CP
+
+
+def test_mamba_mixer_ssm_decode_scales_with_tp_dims():
+    mixer = _mixer_with_distinct_dims()
+    calls = []
+
+    def fake_ssm_decode(self, zxBCdt, conv_state, ssm_state, batch_indices=None):
+        calls.append((zxBCdt, batch_indices))
+        return zxBCdt
+
+    with patch.object(MambaMixer, "ssm_decode", fake_ssm_decode):
+        mixer.ssm_decode(torch.ones(1, 1, 9), conv_state=None, ssm_state=None, batch_indices=None)
+
+    assert len(calls) == 1
+    torch.testing.assert_close(calls[0][0], _TP_EXPECTED)
+    assert calls[0][1] is None
+
+
+def test_mamba_mixer_ssm_training_scales_with_runtime_cp_dims():
+    mixer = _mixer_with_distinct_dims()
+    calls = []
+
+    def fake_ssm_training(self, zxBCdt, packed_seq_params=None, runtime_cp=None):
+        calls.append((zxBCdt, packed_seq_params, runtime_cp))
+        return zxBCdt
+
+    with patch.object(MambaMixer, "_ssm_training", fake_ssm_training):
+        mixer._ssm_training(torch.ones(1, 1, 7), None, runtime_cp=_RUNTIME_CP)
+
+    assert len(calls) == 1
+    torch.testing.assert_close(calls[0][0], _RUNTIME_CP_EXPECTED)
+    assert calls[0][1] is None
+    assert calls[0][2] is _RUNTIME_CP
+
+
+def test_mamba_mixer_ssm_prefill_scales_with_tp_dims():
+    mixer = _mixer_with_distinct_dims()
+    calls = []
+
+    def fake_ssm_prefill(self, zxBCdt, conv_state, ssm_state, context):
+        calls.append((zxBCdt, context))
+        return zxBCdt
+
+    context = object()
+    with patch.object(MambaMixer, "ssm_prefill", fake_ssm_prefill):
+        mixer.ssm_prefill(torch.ones(1, 9), None, None, context)
+
+    assert len(calls) == 1
+    torch.testing.assert_close(calls[0][0], _TP_EXPECTED.view(1, 9))
+    assert calls[0][1] is context
+
+
+def test_mamba_mixer_scale_defaults_to_own_cp_dims():
+    mixer = _mixer_with_distinct_dims()
+
+    scaled = mixer._scale_zxbc_dt(torch.ones(1, 1, 18), use_context_parallel_dims=True)
+
+    expected = torch.tensor([[[2.0] * 3 + [3.0] * 3 + [4.0] * 4 + [5.0] * 4 + [6.0] * 4]])
     torch.testing.assert_close(scaled, expected)
