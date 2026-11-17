@@ -269,6 +269,7 @@ def test_deepseek_v3_vrnvl72_fp8mx_matches_rubin_execution_settings() -> None:
     assert cfg.optimizer.optimizer_cuda_graph is True
     assert cfg.dist.use_gloo_process_groups is False
     assert cfg.dataset.create_attention_mask is False
+    assert cfg.dataset.prefetch_factor == 32
 
 
 @pytest.mark.parametrize(

@@ -194,7 +194,8 @@ def check_ernie55_mtp_aliases(models: torch.nn.Module | Iterable[torch.nn.Module
         The number of aliases checked (0 for models without SD-MTP).
 
     Raises:
-        RuntimeError: If an MTP parameter is no longer the decoder parameter it aliases.
+        RuntimeError: If an MTP parameter is no longer the decoder parameter it aliases, or if a wrapper or
+            adapter replaced a module behind an alias so the parameter cannot be resolved by name.
     """
     roots = [models] if isinstance(models, torch.nn.Module) else list(models)
     checked, broken = 0, []
@@ -205,7 +206,16 @@ def check_ernie55_mtp_aliases(models: torch.nn.Module | Iterable[torch.nn.Module
                 continue
             for alias, source in aliases.items():
                 checked += 1
-                if module.get_parameter(alias) is not module.get_parameter(source):
+                try:
+                    shared = module.get_parameter(alias) is module.get_parameter(source)
+                except AttributeError as error:
+                    raise RuntimeError(
+                        f"ERNIE 5.5 SD-MTP: the recorded alias {alias} -> {source} cannot be resolved ({error}): a "
+                        "wrapper or adapter replaced a module on one of the two paths, so the alias no longer names "
+                        "the shared parameter. PEFT methods must leave the paths in "
+                        "Ernie55HybridModel.peft_excluded_module_paths() unchanged."
+                    ) from error
+                if not shared:
                     broken.append(f"{alias} -> {source}")
     if broken:
         raise RuntimeError(
