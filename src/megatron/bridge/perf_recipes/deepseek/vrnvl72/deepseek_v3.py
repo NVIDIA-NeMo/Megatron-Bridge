@@ -253,7 +253,6 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-    cfg.model.cuda_graph_scope = ["attn"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

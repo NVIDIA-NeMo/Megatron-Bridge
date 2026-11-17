@@ -254,6 +254,9 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             elif function_name in _DEEPSEEK_VRNVL72_NONDETERMINISTIC_RECIPES:
                 # The fused SwiGLU dprob uses atomic reductions.
                 assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
+            elif function_name == "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config":
+                # Rubin's cuDNN attention dprob kernel does not support deterministic execution.
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
             elif path.parent.name == "gb300" and path.stem == "deepseek_v3":
                 # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale
                 # gradient is accumulated with atomics; TE raises when bit-exact execution is requested,
