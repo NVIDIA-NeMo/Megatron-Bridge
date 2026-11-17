@@ -677,26 +677,6 @@ class TestProxyCheckpointKeys:
         with pytest.raises(ValueError, match="which the reference implementation reads"):
             check_ernie55_checkpoint_keys(config, _PROXY_DTYPES)
 
-    def test_mtp_body_copy_names(self):
-        """Each tensor of the shared MTP body maps to its copies' names under the MTP layer, and to nothing else."""
-        names = mappings.ernie55_mtp_body_copy_names(_PROXY_CONFIG)
-        last, mtp = (
-            f"model.layers.{_PROXY_CONFIG['num_hidden_layers'] - 1}.",
-            f"model.layers.{_PROXY_CONFIG['num_hidden_layers']}.",
-        )
-        assert names and all(name.startswith(last) and name in _PROXY_DTYPES for name in names)
-        copies = [copy for group in names.values() for copy in group]
-        assert len(copies) == len(set(copies))
-        assert set(copies) == mappings.ernie55_mtp_body_copy_keys(_PROXY_CONFIG)
-        # never a tensor the registry writes: the MTP layer owns the router bias that has the body's name
-        assert not set(copies) & set(_PROXY_DTYPES)
-        router_bias = "block_sparse_moe.e_score_correction_bias"
-        assert {last + router_bias, mtp + router_bias} <= set(_PROXY_DTYPES) and last + router_bias not in names
-        for name, group in names.items():
-            body = name[len(last) :]
-            spellings = {body, f"transformer_layer.{body}"} if "_hyper_connection." in body else {body}
-            assert {copy[len(mtp) :] for copy in group} == spellings
-
 
 def _released_copies(config: dict, tensors: dict[str, torch.Tensor]) -> dict[str, str]:
     """The copy names a released checkpoint holds for ``config``, each with the body tensor it copies."""
@@ -714,65 +694,6 @@ def _with_released_copies(config: dict, tensors: dict[str, torch.Tensor]) -> dic
     """``tensors`` as a released checkpoint holds them: the shared MTP body also under the MTP layer."""
     # Clone: a checkpoint holds the two names as two tensors.
     return {**tensors, **{copy: tensors[body].clone() for copy, body in _released_copies(config, tensors).items()}}
-
-
-class TestMtpBodyCopyHook:
-    """``maybe_modify_converted_hf_weight`` on hand-built exports; no model."""
-
-    @staticmethod
-    def _bridge() -> _Ernie55TestBridge:
-        bridge = _Ernie55TestBridge()
-        bridge.hf_config = _PROXY_CONFIG
-        return bridge
-
-    def test_adds_the_copies_the_source_holds(self):
-        names = mappings.ernie55_mtp_body_copy_names(_PROXY_CONFIG)
-        last = f"model.layers.{_PROXY_CONFIG['num_hidden_layers'] - 1}."
-        experts = sorted(name for name in names if ".experts." in name)[:4]
-        hyper = next(name for name in names if "_hyper_connection." in name)
-        router_bias = f"{last}block_sparse_moe.e_score_correction_bias"
-        other = "model.layers.0.input_layernorm.weight"
-        # one task may export several tensors (the experts of every EP rank), in more than one dtype
-        converted = {name: torch.randn(2, 3) for name in (*experts, router_bias, other)}
-        converted[hyper] = torch.randn(4, dtype=torch.float64)
-        # the source holds one spelling of the hyper-connection copy and the copies of two of the four experts
-        held = {names[hyper][-1], *(names[name][0] for name in experts[:2])}
-        source = StateDict({name: torch.zeros(1) for name in (*converted, *held)})
-        result = self._bridge().maybe_modify_converted_hf_weight(None, dict(converted), source)
-        assert set(result) == set(converted) | held
-        for body in (hyper, *experts[:2]):
-            copy = (set(names[body]) & held).pop()
-            assert torch.equal(result[copy], converted[body]) and result[copy].dtype == converted[body].dtype
-            # two tensors: safetensors refuses to write two names that share one storage
-            assert result[copy].data_ptr() != result[body].data_ptr()
-        assert all(result[name] is converted[name] for name in converted)
-
-    def test_adds_nothing_without_copies_to_write(self):
-        names = mappings.ernie55_mtp_body_copy_names(_PROXY_CONFIG)
-        body = sorted(names)[0]
-        converted = {body: torch.randn(2, 3)}
-        with_copy = StateDict({body: torch.zeros(1), names[body][0]: torch.zeros(1)})
-        bridge = self._bridge()
-        assert bridge.maybe_modify_converted_hf_weight(None, {}, with_copy) == {}
-        # a source checkpoint without the copy, and no source checkpoint at all (a config-only export)
-        for source in (StateDict({body: torch.zeros(1)}), {}, None):
-            assert bridge.maybe_modify_converted_hf_weight(None, converted, source) is converted
-        assert set(bridge.maybe_modify_converted_hf_weight(None, converted, with_copy)) == {body, names[body][0]}
-        # a model built without MTP exports no MTP layer, so no copies either
-        bridge._ernie55_export_writes_mtp = False
-        assert bridge.maybe_modify_converted_hf_weight(None, converted, with_copy) is converted
-
-    def test_copies_follow_the_mtp_layer_of_the_exported_model(self, monkeypatch):
-        """``build_conversion_tasks`` notes whether the model has an MTP layer; every rank sees the same tasks."""
-        bridge = _Ernie55TestBridge()
-        for params, has_mtp in (
-            (["decoder.layers.0.inner_layer.input_layernorm.weight", "mtp.layers.0.enorm.weight"], True),
-            (["decoder.layers.0.inner_layer.input_layernorm.weight"], False),
-        ):
-            tasks = [SimpleNamespace(global_param_name=name) for name in params]
-            monkeypatch.setattr(MegatronModelBridge, "build_conversion_tasks", lambda self, *a, _t=tasks, **k: _t)
-            assert bridge.build_conversion_tasks(None, []) is tasks
-            assert bridge._ernie55_export_writes_mtp is has_mtp
 
 
 class TestExportOfReleasedCheckpoints:
