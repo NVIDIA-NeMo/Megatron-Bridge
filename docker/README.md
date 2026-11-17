@@ -269,10 +269,10 @@ docker build \
 
 ## Supporting files
 
-FW-final removes Ray's optional `jars/` directory, including `ray_dist.jar`, and clears
-the uv cache. Python Ray workloads remain supported; Java workers and Python-to-Java
-cross-language calls are unsupported in this image. A later Ray reinstall restores
-the Java archive and requires rerunning the removal.
+FW-final removes only Ray's optional `jars/ray_dist.jar` archive and clears the uv
+cache. Other files in `jars/` remain. Python Ray workloads remain supported; Java
+workers and Python-to-Java cross-language calls are unsupported in this image.
+A later Ray reinstall restores the archive and requires rerunning the removal.
 
 | File | Description |
 |---|---|
