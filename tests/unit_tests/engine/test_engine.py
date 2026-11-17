@@ -1,10 +1,8 @@
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 import torch
 from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker, get_moe_metrics_tracker
-from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.engine import AdamParams, Datum, ForwardBackwardOutput, TrainingEngine, topology_from_recipe
 from megatron.bridge.engine.accumulation import AccumulationWindow
@@ -13,7 +11,6 @@ from megatron.bridge.engine.datum import NormalizationPolicy, PreparedMicrobatch
 from megatron.bridge.engine.engine import Topology, _build_frozen_model, _SharedRuntime
 from megatron.bridge.engine.recipes import check_supported, data_parallel_size
 from megatron.bridge.engine.router_replay import RouterReplayState
-from megatron.bridge.models.model_provider import ModelProviderMixin
 
 
 def _recipe_like() -> SimpleNamespace:
@@ -196,17 +193,20 @@ def test_forward_backward_runs_pipeline_and_opens_window(monkeypatch):
     )
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head, router_replay: (
-            torch.tensor(6.0),
-            torch.tensor(3),
-            {"clipped_tokens": torch.tensor(1.0)},
+        lambda model, mbs, loss_method, pg_collection, mrope, mtp_target_scope, output_head, router_replay: (
+            calls.append(("run", mrope))
+            or (
+                torch.tensor(6.0),
+                torch.tensor(3),
+                {"clipped_tokens": torch.tensor(1.0)},
+            )
         ),
     )
     out = engine.forward_backward(_datums())
     assert out == ForwardBackwardOutput(
         loss_sum=6.0, num_loss_tokens=3, metrics={"clipped_tokens": 1.0}, num_samples=2
     )
-    assert calls == [("preprocess", True), ("check", ["mb"])]
+    assert calls == [("preprocess", True), ("check", ["mb"]), ("run", False)]
     assert engine._window.is_open and engine._window.num_loss_tokens == 3 and engine._window.num_samples == 2
 
 
@@ -256,7 +256,7 @@ def test_unknown_sample_count_under_sample_mean_discards_the_window(monkeypatch)
     ran = []
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head, router_replay: (
+        lambda model, mbs, loss_method, pg_collection, mrope, mtp_target_scope, output_head, router_replay: (
             ran.append(1) or (torch.tensor(6.0), torch.tensor(3), {})
         ),
     )
@@ -319,13 +319,18 @@ def test_forward_only_runs_preprocess_check_then_postprocess(monkeypatch):
     )
     engine._runtime.pg_collection = None
     engine._model = []
-    engine._recipe = SimpleNamespace(mtp_target_scope="primary")
+    # A builder-backed config carries position_embedding_type itself; the built model's config does not.
+    engine._recipe = SimpleNamespace(
+        model=SimpleNamespace(position_embedding_type="mrope"), mtp_target_scope="primary"
+    )
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_only",
-        lambda model, mbs, pg_collection, mtp_target_scope, output_head, router_replay: [output_head],
+        lambda model, mbs, pg_collection, mrope, mtp_target_scope, output_head, router_replay: (
+            calls.append(("run", mrope)) or [output_head]
+        ),
     )
     assert engine.forward_only(_datums(), gather_output=False) == "out"
-    assert calls == [("preprocess", False), ("check", ["mb"]), ("post", False)]
+    assert calls == [("preprocess", False), ("check", ["mb"]), ("run", True), ("post", False)]
     # Each compute call installs the engine's own MoE metrics tracker (per-layer buffers differ per model).
     assert get_moe_metrics_tracker() is engine._moe_metrics_tracker
 
@@ -368,7 +373,7 @@ def test_value_head_engine_defaults_to_value_loss_and_rejects_export(monkeypatch
     seen = []
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.run_forward_backward",
-        lambda model, mbs, loss_method, pg_collection, mtp_target_scope, output_head, router_replay: (
+        lambda model, mbs, loss_method, pg_collection, mrope, mtp_target_scope, output_head, router_replay: (
             seen.append((loss_method.__func__, output_head)) or (torch.tensor(1.0), torch.tensor(2), {})
         ),
     )
@@ -454,37 +459,15 @@ def test_shared_runtime_tracks_attached_engines():
     assert runtime.num_engines == 1
 
 
-def _frozen_recipe(model):
-    return SimpleNamespace(model=model, rng=SimpleNamespace(data_parallel_random_init=False))
-
-
-def test_frozen_engine_builds_a_builder_backed_config_without_ddp(monkeypatch):
+def test_frozen_engine_builds_through_bridge_without_ddp(monkeypatch):
     calls = []
 
-    def build(model_config, pg_collection, **kwargs):
-        calls.append((model_config, pg_collection, kwargs))
+    def build(cfg, pg_collection, *, wrap_with_ddp):
+        calls.append((cfg, pg_collection, wrap_with_ddp))
         return [torch.nn.Linear(2, 2)]
 
-    monkeypatch.setattr("megatron.bridge.engine.engine.build_distributed_models", build)
-    config = Mock(spec=ModelConfig)
-    model = _build_frozen_model(_frozen_recipe(config), "pg")
-    assert calls == [(config, "pg", {"ddp_config": None, "wrap_with_ddp": False, "data_parallel_random_init": False})]
+    monkeypatch.setattr("megatron.bridge.engine.engine._build_distributed_model", build)
+    recipe = SimpleNamespace(model=object())
+    model = _build_frozen_model(recipe, "pg")
+    assert calls == [(recipe, "pg", False)]
     assert not any(parameter.requires_grad for parameter in model[0].parameters())
-
-
-def test_frozen_engine_still_builds_a_provider(monkeypatch):
-    provider = Mock(spec=ModelProviderMixin)
-    provider.provide_distributed_model.return_value = [torch.nn.Linear(2, 2)]
-    monkeypatch.setattr(
-        "megatron.bridge.engine.engine.build_distributed_models", lambda *a, **k: pytest.fail("builder path used")
-    )
-    model = _build_frozen_model(_frozen_recipe(provider), "pg")
-    provider.provide_distributed_model.assert_called_once_with(
-        ddp_config=None, wrap_with_ddp=False, data_parallel_random_init=False, pg_collection="pg"
-    )
-    assert not any(parameter.requires_grad for parameter in model[0].parameters())
-
-
-def test_frozen_engine_rejects_other_model_configs():
-    with pytest.raises(TypeError, match="ModelConfig or a ModelProviderMixin"):
-        _build_frozen_model(_frozen_recipe(SimpleNamespace()), "pg")

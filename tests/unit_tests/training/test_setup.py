@@ -570,6 +570,43 @@ class TestBuildDistributedModel:
         assert mock_provider.provide_distributed_model.call_args.kwargs["use_torch_fsdp2"] is use_torch_fsdp2
         assert result == mock_dist_model
 
+    def test_build_with_model_config_without_ddp(self):
+        """wrap_with_ddp=False builds unwrapped chunks: no DDP config and none of the wrapper settings."""
+        cfg, model_cfg = self._make_cfg_with_model_config()
+        # FSDP would leave device placement to a wrapper that is never applied.
+        cfg.ddp.use_megatron_fsdp = True
+        pg_collection = MagicMock()
+
+        mock_dist_model = [MagicMock()]
+        with patch.object(training_setup, "build_distributed_models", return_value=mock_dist_model) as mock_build:
+            result = _build_distributed_model(cfg, pg_collection, wrap_with_ddp=False)
+
+        mock_build.assert_called_once_with(
+            model_cfg, pg_collection, ddp_config=None, wrap_with_ddp=False, data_parallel_random_init=False
+        )
+        assert result == mock_dist_model
+
+    def test_build_with_provider_without_ddp(self):
+        """Providers build unwrapped through provide_distributed_model(wrap_with_ddp=False)."""
+        mock_provider = MagicMock()
+        mock_provider.__class__ = type("FakeProvider", (), {})
+        mock_dist_model = [MagicMock()]
+        mock_provider.provide_distributed_model.return_value = mock_dist_model
+        cfg = MagicMock()
+        cfg.model = mock_provider
+        cfg.ddp.use_megatron_fsdp = True
+        cfg.dist = DistributedInitConfig()
+        cfg.rng.data_parallel_random_init = False
+        pg_collection = MagicMock()
+
+        result = _build_distributed_model(cfg, pg_collection, wrap_with_ddp=False)
+
+        mock_provider.finalize.assert_called_once_with()
+        mock_provider.provide_distributed_model.assert_called_once_with(
+            ddp_config=None, wrap_with_ddp=False, data_parallel_random_init=False, pg_collection=pg_collection
+        )
+        assert result == mock_dist_model
+
     def test_builder_path_keeps_float32_router_bias_loaded_before_wrap(self, monkeypatch, tmp_path):
         """Router biases loaded in a pre-wrap hook, as PEFT loads base weights, stay exact through the cast."""
         if not torch.cuda.is_available():

@@ -15,6 +15,7 @@ from megatron.bridge.engine.recipes.registry import (
     detect_hardware,
     resolve_recipe,
 )
+from megatron.bridge.engine.schedule import uses_mrope
 
 
 def _recipe(tp=1, pp=1, cp=8, ep=16, etp=1):
@@ -244,6 +245,7 @@ def test_qwen35_text_recipe_builds_a_builder_backed_config(monkeypatch, tmp_path
     recipe = qwen35.qwen35_text_35b_a3b_rl_16gpu_gb200_bf16(hf_path=str(tmp_path), seq_length=4096)
     _assert_35b_a3b_execution_settings(recipe.model, 4096)
     assert not is_multimodal(recipe)
+    assert not uses_mrope(recipe.model)
     # TrainingEngine.from_recipe deep-copies the recipe; the copy must keep the outer config.
     _assert_35b_a3b_execution_settings(copy.deepcopy(recipe).model, 4096)
 
@@ -265,6 +267,9 @@ def test_qwen35_vl_recipe_builds_a_builder_backed_config(monkeypatch, tmp_path):
     recipe = qwen35.qwen35_vl_35b_a3b_rl_16gpu_gb200_bf16(hf_path=str(tmp_path), seq_length=4096)
     _assert_35b_a3b_execution_settings(recipe.model, 4096)
     assert is_multimodal(recipe)
+    # The built model only carries the nested TransformerConfig, so M-RoPE must come from the recipe's config.
+    assert uses_mrope(recipe.model)
+    assert not hasattr(recipe.model.transformer, "position_embedding_type")
     # The vision-freeze overrides and LoRA's target scoping read these flags from the recipe's config.
     assert recipe.model.freeze_vision_model is False
     assert recipe.model.vision_recompute_granularity == "full"

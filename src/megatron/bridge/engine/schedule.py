@@ -50,22 +50,33 @@ def model_loss_mask(microbatch: PreparedMicrobatch, mtp_target_scope: str) -> to
     return selected.to(microbatch.loss_mask.dtype)
 
 
+def uses_mrope(model_config: object) -> bool:
+    """Whether the model built from ``model_config`` takes M-RoPE position ids ``[3, B, T]``.
+
+    Pass the recipe's model config, as Bridge's own step does: a model built from a builder-backed
+    config carries only the nested ``TransformerConfig``, which has no ``position_embedding_type``.
+    """
+    return getattr(model_config, "position_embedding_type", None) == "mrope"
+
+
 def call_model(
     model: MegatronModule,
     microbatch: PreparedMicrobatch,
     pg_collection: ProcessGroupCollection,
     *,
     mtp_target_scope: str,
+    mrope: bool,
     output_head: str = "lm",
 ) -> torch.Tensor:
     """Run one microbatch through the model: per-token NLL ``[B, T_local]`` on the labels path
-    (``output_head="lm"``), or FP32 per-token values ``[B, T_local]`` from the value head."""
+    (``output_head="lm"``), or FP32 per-token values ``[B, T_local]`` from the value head. ``mrope``
+    (``uses_mrope`` of the recipe's model config) hands the model ``[3, B, T_local]`` position ids."""
     config = get_model_config(model)
     padding_mask = _prepare_packed_padding_mask(
         microbatch.padding_mask, config=config, model=model, pg_collection=pg_collection
     )
     position_ids = microbatch.position_ids
-    if getattr(config, "position_embedding_type", None) == "mrope":
+    if mrope:
         # Text tokens have the same position on the temporal, height and width axes: [3, B, T_local].
         # TODO(multimodal): image and video tokens need grid positions and pixel inputs from the Datum.
         position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
@@ -101,6 +112,7 @@ def scored_tensor(output: ModelOutput) -> torch.Tensor:
 def _make_scoring_step(
     pg_collection: ProcessGroupCollection,
     mtp_target_scope: str,
+    mrope: bool,
     output_head: str,
     router_replay: RouterReplayState | None,
 ) -> Callable:
@@ -110,7 +122,9 @@ def _make_scoring_step(
         microbatch = next(data_iterator)
         if router_replay is not None:
             router_replay.arm_forward(microbatch)
-        raw = call_model(model, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, output_head=output_head)
+        raw = call_model(
+            model, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, mrope=mrope, output_head=output_head
+        )
 
         def collect(output_tensor: torch.Tensor, non_loss_data: bool = False) -> torch.Tensor:
             return scored_tensor(to_model_output(output_tensor, output_head))[0].detach().float()
@@ -125,6 +139,7 @@ def run_forward_only(
     microbatches: list[PreparedMicrobatch],
     *,
     pg_collection: ProcessGroupCollection,
+    mrope: bool,
     mtp_target_scope: str = "primary",
     output_head: str = "lm",
     router_replay: RouterReplayState | None = None,
@@ -134,6 +149,7 @@ def run_forward_only(
     Runs in eval mode under ``no_grad`` so dropout, router expert-bias updates and auxiliary-loss
     bookkeeping are untouched; an open accumulation window is preserved. ``router_replay`` (the
     engine's ``RouterReplayState``) arms the MoE routers per microbatch when it carries routing.
+    ``mrope`` is ``uses_mrope`` of the recipe's model config.
     """
     if not microbatches:
         return []
@@ -143,7 +159,9 @@ def run_forward_only(
     try:
         with torch.no_grad():
             store: list[Any] = get_forward_backward_func()(
-                forward_step_func=_make_scoring_step(pg_collection, mtp_target_scope, output_head, router_replay),
+                forward_step_func=_make_scoring_step(
+                    pg_collection, mtp_target_scope, mrope, output_head, router_replay
+                ),
                 data_iterator=iter(microbatches),
                 model=model,
                 num_microbatches=len(microbatches),
@@ -167,6 +185,7 @@ def run_forward_backward(
     loss_method: Callable[[PreparedMicrobatch, ModelOutput], Any],
     *,
     pg_collection: ProcessGroupCollection,
+    mrope: bool,
     mtp_target_scope: str = "primary",
     output_head: str = "lm",
     router_replay: RouterReplayState | None = None,
@@ -180,7 +199,7 @@ def run_forward_backward(
     a dictionary of additive scalar metrics; with ``calculate_per_token_loss=True`` the schedule leaves
     the scalar unscaled. ``router_replay`` (the engine's ``RouterReplayState``) arms the MoE routers
     per microbatch when it carries routing: replay mode for the forward, queued replay for the
-    recompute in the backward.
+    recompute in the backward. ``mrope`` is ``uses_mrope`` of the recipe's model config.
 
     Returns:
         ``(loss_sum, num_loss_tokens, metrics)`` for this rank's microbatches, un-reduced, detached;
@@ -202,7 +221,9 @@ def run_forward_backward(
         microbatch = next(data_iterator)
         if router_replay is not None:
             router_replay.arm_forward(microbatch)
-        raw = call_model(chunk, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, output_head=output_head)
+        raw = call_model(
+            chunk, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, mrope=mrope, output_head=output_head
+        )
         if router_replay is not None:
             router_replay.arm_backward(microbatch)
 
