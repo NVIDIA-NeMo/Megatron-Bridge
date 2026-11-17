@@ -253,7 +253,6 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-    cfg.model.cuda_graph_scope = ["attn"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -488,8 +487,8 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Allow cuDNN attention kernels without deterministic dprob support on Rubin.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
@@ -528,7 +527,8 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Allow cuDNN attention kernels without deterministic dprob support on Rubin.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
         "NVTE_USE_FAST_MATH": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
