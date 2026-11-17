@@ -29,6 +29,7 @@ license = { text = "Apache 2.0" }
 # Define the core libraries
 dependencies = [
     "nemo-export-deploy",
+    "grpcio-reflection==1.81.1",
     "nemo-evaluator",
     "nemo-run",
     "nvidia-lm-eval",
