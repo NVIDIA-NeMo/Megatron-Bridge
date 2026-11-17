@@ -145,10 +145,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB300" data-status="unverified" data-entry="qwen3-6-35b-a3b-sft-long-context-gb300" aria-controls="qwen3-6-35b-a3b-sft-long-context-gb300" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB300" data-status="verified" data-entry="qwen3-6-35b-a3b-sft-long-context-gb300" aria-controls="qwen3-6-35b-a3b-sft-long-context-gb300" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · GB300</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -166,10 +166,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB300" data-status="unverified" data-entry="qwen3-6-35b-a3b-peft-gb300" aria-controls="qwen3-6-35b-a3b-peft-gb300" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB300" data-status="verified" data-entry="qwen3-6-35b-a3b-peft-gb300" aria-controls="qwen3-6-35b-a3b-peft-gb300" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>LoRA · GB300</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -689,35 +689,35 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 0.9914345, &quot;initial_loss
     <article id="qwen3-6-35b-a3b-sft-long-context-gb300" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-sft-long-context-gb300" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · GB300</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB300</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-16</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.998137</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.9824696</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>106,054.890 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>117.930 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>4,943.553 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -733,7 +733,7 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 0.9914345, &quot;initial_loss
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+        <p>Qwen3.6 on eight GB300 GPUs: the command above, loading the card&#x27;s imported-megatron checkpoint, completed all 20 MedPix-VQA SFT steps at sequence length 8192 with in-batch packing and CP2 active, with finite losses and zero skipped or NaN iterations. The persisted runtime config records TP1/PP1/CP2/EP8/ETP1 and MBS2/GBS512. Metrics average steps 11-20; token-slot throughput uses 8192 times GBS512 per step. Run at this card&#x27;s Bridge commit on a NeMo nightly base container (2026-11-16). This verifies padded 8K execution with packing and CP, not long-document answer quality or full convergence; no checkpoint was requested for this item.
 
 Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
 Executed Qwen3.5 command(s):
@@ -849,35 +849,35 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 1.024277, &quot;initial_loss&
     <article id="qwen3-6-35b-a3b-peft-gb300" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-peft-gb300" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>LoRA · GB300</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB300</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-16</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>2.211639</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>1.275493</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>4,353.950 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>86.580 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>3,763.020 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -893,7 +893,7 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 1.024277, &quot;initial_loss&
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+        <p>Qwen3.6 on eight GB300 GPUs: the command above, loading the card&#x27;s imported-megatron checkpoint, completed all 100 MedPix-VQA LoRA steps with finite losses and zero skipped or NaN iterations, and step 100 saved the adapter checkpoint. The persisted runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096 and MBS1/GBS32. Metrics average steps 91-100; token-slot throughput uses 4096 times GBS32 per step. Run at this card&#x27;s Bridge commit on a NeMo nightly base container (2026-11-16). This verifies bounded adapter training, not full convergence.
 
 Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
 Executed Qwen3.5 command(s):
