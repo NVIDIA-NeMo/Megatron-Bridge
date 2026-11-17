@@ -315,7 +315,8 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
     MXFP8 backward combine requires Megatron Core support for quantized communication with
     1F1B EP overlap and paged stashing. Forward dispatch retains the shared base's dtype unless
-    explicitly overridden. Megatron Bridge does not expose MLPerf's DataLoader prefetch factor.
+    explicitly overridden. Dataloader workers prefetch 32 batches each, as MLPerf does, so the
+    microbatches of a whole step are loaded before the full-iteration CUDA graph replays.
     """
     cfg = _build_deepseek_v3_gb300_fp8mx()
 
@@ -355,6 +356,10 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     cfg.train.check_optimizer_step_success = False
     # The attention backend builds the causal mask, so the dataloader skips building one.
     cfg.dataset.create_attention_mask = False
+    # The full-iteration CUDA graph replays only after every microbatch of the step is loaded.
+    # PyTorch's default of 2 batches per worker leaves most of a step to load on demand before
+    # the replay; 32 per worker (MLPerf's DATA_PREFETCH_FACTOR) buffers more than a whole step.
+    cfg.dataset.prefetch_factor = 32
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
