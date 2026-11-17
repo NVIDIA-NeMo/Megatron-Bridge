@@ -5987,6 +5987,47 @@ class TestGlobalBatchPackingValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.skipif(
+        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
+    )
+    @pytest.mark.parametrize(("world_size", "supported"), [(16, True), (32, False)])
+    def test_dynamic_cp_pool_must_divide_gated_delta_net_heads(self, world_size, supported):
+        """Qwen3.5-35B-A3B has 16 Gated DeltaNet key heads: a 16-rank pool splits them, a 32-rank pool cannot."""
+        model_cfg = _HybridStackModelProvider(
+            num_layers=1,
+            hidden_size=128,
+            num_attention_heads=4,
+            seq_length=512,
+            apply_rope_fusion=False,
+            context_parallel_size=8,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=64,
+            dynamic_context_parallel=True,
+            is_hybrid_model=True,
+            hybrid_layer_pattern="GE*E",
+            linear_num_key_heads=16,
+            linear_num_value_heads=32,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=world_size,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        try:
+            if supported:
+                container._validate_global_batch_packing()
+                assert container.model.sequence_packing_scheduler == "default_dynamic_cp"
+            else:
+                with pytest.raises(ValueError, match="pool of 32 ranks.*linear_num_key_heads=16"):
+                    container._validate_global_batch_packing()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_offline_packed_row_must_fit_the_bin_capacity(self):
         model_cfg = create_test_gpt_config(
             context_parallel_size=2, calculate_per_token_loss=True, max_seqlen_per_dp_cp_rank=256

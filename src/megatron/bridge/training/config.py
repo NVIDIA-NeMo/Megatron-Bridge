@@ -1391,6 +1391,7 @@ class ConfigContainer(Container):
                 raise ValueError(
                     f"model.min_dynamic_context_parallel_size must be a power of two in [1, dp * cp = {pool}], got {min_cp}."
                 )
+            self._validate_dynamic_cp_gated_delta_net_heads(pool)
         capacity = pool * model.max_seqlen_per_dp_cp_rank
         seq_length = getattr(self.dataset, "seq_length", None) or model.seq_length
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
@@ -1408,6 +1409,29 @@ class ConfigContainer(Container):
                 f"Samples of up to {seq_length} tokens (dataset.seq_length or the offline packed row length) exceed "
                 f"model.seq_length={model.seq_length}."
             )
+
+    def _validate_dynamic_cp_gated_delta_net_heads(self, pool: int) -> None:
+        """Require Gated DeltaNet's heads to split over the largest dynamic CP group, the whole ``dp * cp`` pool.
+
+        Megatron-Core's Gated DeltaNet shards its key and value heads across the context-parallel group of a
+        microbatch, and rejects at model construction a pool whose size does not divide them.
+        """
+        model = self.model
+        has_gated_delta_net = "G" in (getattr(model, "hybrid_layer_pattern", None) or "") or getattr(
+            model, "experimental_attention_variant", None
+        ) in ("gdn", "gated_delta_net")
+        if not has_gated_delta_net:
+            return
+        tp_size = getattr(model, "tensor_model_parallel_size", None) or 1
+        for name in ("linear_num_key_heads", "linear_num_value_heads"):
+            heads = getattr(model, name, None)
+            if heads is not None and (heads // tp_size) % pool:
+                raise ValueError(
+                    f"Dynamic context parallelism can run a bin on the whole dp * cp pool of {pool} ranks, but Gated "
+                    f"DeltaNet splits its {heads // tp_size} heads per tensor-parallel rank (model.{name}={heads}) "
+                    "across the bin's group. Use a dp * cp pool that divides them, for example fewer GPUs per job, "
+                    "or static context parallelism (model.dynamic_context_parallel=False)."
+                )
 
     def _apply_global_batch_packing_padding(self, collate_padding_multiple: int) -> None:
         """Push the CP alignment multiple to the dataset that yields unpacked samples."""
