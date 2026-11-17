@@ -170,6 +170,10 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
 
 from megatron.bridge.models.ernie.modeling_ernie55 import fused_dispatch
+from megatron.bridge.models.ernie.modeling_ernie55.expert_load import (
+    attach_expert_load_probe,
+    expert_load_logging_enabled,
+)
 from megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_core import _param_device
 
 
@@ -820,6 +824,10 @@ class Ernie55MoELayer(MoELayer):
     Megatron-Core's ``TENorm``. With ``ernie_fused_situ_prob`` the routed ``TEGroupedMLP`` becomes
     :class:`Ernie55GroupedMLP` (:func:`use_ernie55_fused_situ_prob`).
 
+    With ``ERNIE55_LOG_EXPERT_LOAD=1`` (a diagnostic, off by default) the constructor also attaches the layer to
+    :mod:`~megatron.bridge.models.ernie.modeling_ernie55.expert_load`, which records the tokens its router sends to
+    every expert and its local experts receive.
+
     Arguments after ``config`` are passed through to ``MoELayer``.
     """
 
@@ -840,3 +848,5 @@ class Ernie55MoELayer(MoELayer):
             )
         if getattr(self.config, "ernie_fused_situ_prob", False):
             use_ernie55_fused_situ_prob(self)
+        if expert_load_logging_enabled():
+            attach_expert_load_probe(self)

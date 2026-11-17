@@ -53,6 +53,7 @@ from megatron.bridge.models.ernie.ernie55_context_parallel import (
     ernie55_cp_min_local_rows,
     ernie55_per_row_lm_loss,
 )
+from megatron.bridge.models.ernie.modeling_ernie55.expert_load import note_microbatch
 from megatron.bridge.training.losses import masked_next_token_loss
 
 
@@ -243,6 +244,8 @@ def forward_step(
 
     if return_schedule_plan:
         raise NotImplementedError("ERNIE 5.5 does not support the MoE A2A overlap schedule plan.")
+    # Numbers the micro-batches for the opt-in expert-load diagnostic (ERNIE55_LOG_EXPERT_LOAD); a no-op when off.
+    note_microbatch(state, training=model.training)
     config = get_model_config(model)
     cp_group = get_pg_collection(model).cp
     timers = state.timers
