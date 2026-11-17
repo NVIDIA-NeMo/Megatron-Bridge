@@ -105,8 +105,13 @@ class TestStrictOverrides:
         assert config.transformer.specialized_field is True
         assert config.get_builder_cls() is BridgeHybridModelBuilder
 
-    @pytest.mark.parametrize("config_class", [BeamModelConfig, MuseSparkModelConfig])
+    @pytest.mark.parametrize("config_class", [BeamModelConfig, "Inkling2ModelConfig", MuseSparkModelConfig])
     def test_hybrid_family_configs_share_the_strict_config(self, config_class) -> None:
+        if config_class == "Inkling2ModelConfig":
+            pytest.importorskip("transformers", minversion="5.23")
+            from megatron.bridge.models.inkling import Inkling2ModelConfig
+
+            config_class = Inkling2ModelConfig
         assert issubclass(config_class, BridgeHybridModelConfig)
         assert config_class.get_builder_cls is BridgeHybridModelConfig.get_builder_cls
         assert config_class.as_dict is BridgeHybridModelConfig.as_dict

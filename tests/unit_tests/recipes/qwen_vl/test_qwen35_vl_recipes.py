@@ -782,6 +782,8 @@ def test_qwen35_vl_27b_sft_fits_16_h100(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.recompute_num_layers is None
     # No CUDA graph scope can split a recomputed module.
     assert cfg.model.cuda_graph_impl == "none"
+    # Eager NCCL communicators leave the first pipeline stage too little memory.
+    assert cfg.env_vars["TORCH_DIST_USE_NCCL2"] == 0
 
 
 def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyPatch):

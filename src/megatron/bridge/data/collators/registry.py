@@ -55,6 +55,12 @@ _MODEL_COLLATE_SPECS = {
         "megatron.bridge.models.qwen_audio.data.collate_fn", "qwen2_audio_collate_fn"
     ),
     "Glm4vProcessor": _ModelCollateSpec("megatron.bridge.models.glm_vl.data.collate_fn", "glm4v_collate_fn"),
+    # Inkling2's processor renders the reference framing token by token instead of a chat template.
+    "Inkling2Processor": _ModelCollateSpec(
+        "megatron.bridge.models.inkling.data.collate_fn",
+        "inkling2_collate_fn",
+        always_use_model_collate=True,
+    ),
     "KimiK25Processor": _ModelCollateSpec("megatron.bridge.models.kimi_vl.data.collate_fn", "kimi_k25_vl_collate_fn"),
     "MuseGlimmerProcessor": _ModelCollateSpec(
         "megatron.bridge.models.muse_glimmer.data.collate_fn", "muse_glimmer_collate_fn"

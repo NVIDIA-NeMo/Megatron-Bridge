@@ -15,6 +15,9 @@
 # Import model providers for easy access
 import importlib.util
 
+from packaging.version import Version as _Version
+from transformers import __version__ as _transformers_version
+
 
 _BAGEL_EXPORTS = []
 if (
@@ -133,6 +136,13 @@ from megatron.bridge.models.hybrid import (
     HybridModelConfig,
     HybridModelProvider,
 )
+
+
+_INKLING_EXPORTS = []
+if _Version(_transformers_version) >= _Version("5.23"):
+    from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2ModelConfig
+
+    _INKLING_EXPORTS = ["Inkling2Bridge", "Inkling2ModelConfig"]
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
     KimiK3Bridge,
@@ -420,3 +430,5 @@ __all__ = [
     "ExaoneMoeBridge",
     "ExaoneMoeModelProvider",
 ] + _BAGEL_EXPORTS
+
+__all__ += _INKLING_EXPORTS

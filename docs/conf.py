@@ -85,8 +85,8 @@ myst_heading_anchors = 5  # Generates anchor links for headings up to level 5
 myst_fence_as_directive = ["mermaid"]
 
 # -- Options for Mermaid -----------------------------------------------------
-# Configure mermaid diagrams
-mermaid_version = "latest"  # Use the latest version of mermaid
+# sphinxcontrib-mermaid 3 serves its bundled Mermaid build. It reads mermaid_version only together with a
+# remote mermaid_base_url and warns otherwise, which fails the --fail-on-warning docs build, so leave it unset.
 
 # -- Options for Autodoc2 ---------------------------------------------------
 sys.path.insert(0, os.path.abspath(".."))

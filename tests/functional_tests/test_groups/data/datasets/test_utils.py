@@ -232,8 +232,8 @@ class TestDataUtils:
             assert index_fn == "mapping_dir/path/to/data.jsonl.idx"
 
             # Test case 6: File with MSC URL (should strip leading /)
-            index_fn = _index_fn("data.jsonl", f"msc://default{temp_dir}/index_mapping_dir")
-            assert index_fn == f"msc://default{temp_dir}/index_mapping_dir/data.jsonl.idx"
+            index_fn = _index_fn("data.jsonl", f"msc://__filesystem__{temp_dir}/index_mapping_dir")
+            assert index_fn == f"msc://__filesystem__{temp_dir}/index_mapping_dir/data.jsonl.idx"
 
             # Test case 7: object-store DATA file with a local index_mapping_dir. The scheme must
             # not survive into the local path — an embedded "://" makes the writer and the parent
@@ -275,7 +275,7 @@ class TestDataUtils:
                     f.write(jsonl_example)
 
             ds = _JSONLMemMapDataset(
-                dataset_paths=[f"msc://default{temp_dir}/test.jsonl"],
+                dataset_paths=[f"msc://__filesystem__{temp_dir}/test.jsonl"],
             )
 
             assert len(ds) > 0
@@ -315,12 +315,12 @@ class TestDataUtils:
             assert _build_memmap_index_files(
                 10,
                 build_index_from_memdata,
-                f"msc://default{temp_dir}/training.jsonl",
+                f"msc://__filesystem__{temp_dir}/training.jsonl",
                 None,
             )
 
-            assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.npy")
-            assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.info")
+            assert msc.Path(f"msc://__filesystem__{temp_dir}/training.jsonl.idx.npy")
+            assert msc.Path(f"msc://__filesystem__{temp_dir}/training.jsonl.idx.info")
 
     def test_build_index_files_raises_when_a_file_fails(self):
         jsonl_example = '{"input": "a", "output": "b"}\n'
