@@ -93,8 +93,10 @@ Non-default expert rank ordering and offsets also require the separate
 
 Core returns a complete `ProcessGroupCollection`, including ordinary groups and
 the optional AG groups; Bridge passes that collection to the model. The standard
-initializer returns a collection even with the AG flag off. Ordinary groups still
-come from the existing MPU bootstrap, and AG handles have no MPU accessor. When reusing an
+initializer returns a collection even with the AG flag off. Use the Core revision
+selected by this branch's submodule and commit selectors; this integration requires
+the collection-return API from [Core #9482](https://github.com/NVIDIA/Megatron-LM/pull/9482).
+Ordinary groups still come from the existing MPU bootstrap, and AG handles have no MPU accessor. When reusing an
 initialized standard Core grid with this option, pass the retained collection as `pg_collection` to
 `initialize_megatron`; otherwise initialization fails rather than allocating duplicates.
 
