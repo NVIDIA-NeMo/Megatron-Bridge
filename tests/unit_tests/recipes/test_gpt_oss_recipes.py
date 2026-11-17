@@ -288,13 +288,13 @@ class _BuilderOnlyBridge:
 
 
 def _gpt_oss_perf_recipe_factories():
-    from megatron.bridge import perf_recipes
+    from megatron.bridge.training import perf_benchmark_overrides as perf_recipes
     from tests.unit_tests.recipes.recipe_test_utils import discover_recipe_factories
 
     return [
         factory
         for factory in discover_recipe_factories(perf_recipes)
-        if factory.__module__.startswith("megatron.bridge.perf_recipes.gpt_oss.")
+        if factory.__module__.startswith("megatron.bridge.training.perf_benchmark_overrides.gpt_oss")
     ]
 
 

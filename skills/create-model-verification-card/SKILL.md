@@ -679,7 +679,7 @@ Make every bounded convergence override explicit in the card command and apply
 the same cohort values across models; never tune these values merely to improve
 throughput. Library recipes own global and micro batch size. If a recipe batch
 disagrees with the cohort contract, update and validate the recipe separately
-instead of overriding it in the card. A canonical `perf_recipes` benchmark may
+instead of overriding it in the card. A canonical performance benchmark may
 intentionally use mock data, forced balancing, or a different batch and is not
 convergence evidence.
 

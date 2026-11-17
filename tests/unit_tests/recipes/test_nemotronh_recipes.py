@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 #
 # Test purpose:
 # - Parametrize over all exported NemotronH recipe functions in `megatron.bridge.recipes.nemotronh`.
@@ -19,7 +18,6 @@
 # - Verify flat CLI overrides reach the nested transformer config, and stale fields fail without creating
 #   phantom config attributes.
 #
-
 import importlib
 import re
 from types import SimpleNamespace
@@ -32,8 +30,8 @@ from omegaconf import OmegaConf
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.hybrid import BridgeHybridModelConfig
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.training import checkpointing
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.training.utils.omegaconf_utils import (
     OverridesError,
     apply_overrides,
@@ -45,6 +43,7 @@ from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import (
     NemotronHBuilderOnlyBridge,
     NemotronHUltraBuilderOnlyBridge,
+    benchmark_factory,
     discover_recipe_factories,
     patch_recipe_module_global,
     recipe_factory_id,
@@ -59,13 +58,13 @@ _NEMOTRONH_RECIPE_FUNCS = [
     if callable(getattr(_nemotronh_module, name, None))
 ]
 _NEMOTRONH_PERF_RECIPE_FUNCS = discover_recipe_factories(
-    importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
+    importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.nemotronh")
 )
 
 
 def test_nemotron_3_5_lightning_library_recipe_names_are_hardware_agnostic():
     """Library names describe behavior and do not collide with performance recipes."""
-    perf_module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
+    perf_module = importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.nemotronh")
     library_names = {name for name in _nemotronh_module.__all__ if name.startswith("nemotron_3_5_lightning_")}
     perf_names = {name for name in dir(perf_module) if name.startswith("nemotron_3_5_lightning_")}
 
@@ -279,42 +278,42 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
     ("module_name", "factory_name", "has_comm_overlap", "expected_preprocessing_sms"),
     [
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+            "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
             "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config",
             True,
             108,
             id="nano-gb200",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+            "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
             "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config",
             True,
             108,
             id="nano-gb300",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+            "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
             "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config",
             True,
             108,
             id="nano-vrnvl72",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+            "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
             "nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config",
             False,
             32,
             id="super-gb200",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+            "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
             "nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config",
             False,
             32,
             id="super-gb300",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+            "megatron.bridge.training.perf_benchmark_overrides.nemotronh",
             "nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config",
             False,
             32,
@@ -329,8 +328,8 @@ def test_nemotron_3_mxfp8_perf_recipes_enable_cutedsl_fusion(
     expected_preprocessing_sms: int,
 ) -> None:
     """Selected MXFP8 recipes match the measured CutDSL and MoE overlap settings."""
-    module = importlib.import_module(module_name)
-    cfg = getattr(module, factory_name)()
+    importlib.import_module(module_name)
+    cfg = benchmark_factory(factory_name)()
 
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] == 8
@@ -349,8 +348,8 @@ def test_nemotron_3_mxfp8_perf_recipes_enable_cutedsl_fusion(
 
 def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration():
     """The training recipe should share the tuned GB200 layout without benchmark-only behavior."""
-    from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
-        nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+    nemotron_3_super_pretrain_64gpu_gb200_bf16_config = benchmark_factory(
+        "nemotron_3_super_pretrain_64gpu_gb200_bf16_config"
     )
 
     training_cfg = _nemotronh_module.nemotron_3_super_pretrain_64gpu_gb200_bf16_config()
@@ -415,8 +414,8 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
 
 def test_nemotron_3_super_64gpu_h100_matches_benchmark_execution_configuration():
     """The H100 convergence and benchmark recipes should share their execution mapping."""
-    from megatron.bridge.perf_recipes.nemotronh.h100.nemotronh import (
-        nemotron_3_super_pretrain_64gpu_h100_bf16_config,
+    nemotron_3_super_pretrain_64gpu_h100_bf16_config = benchmark_factory(
+        "nemotron_3_super_pretrain_64gpu_h100_bf16_config"
     )
 
     training_cfg = _nemotronh_module.nemotron_3_super_pretrain_config()
@@ -501,8 +500,7 @@ def test_nemotron_3_super_64gpu_h100_matches_benchmark_execution_configuration()
 )
 def test_nemotron_3_super_64gpu_b200_uses_topology_compatible_nccl_ep(recipe_name, expected_ep, expected_pull_push):
     """All B200 Super precisions keep EP8 within one NVLink domain with pull/push enabled."""
-    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
-    cfg = getattr(module, recipe_name)()
+    cfg = benchmark_factory(recipe_name)()
 
     assert cfg.model.expert_model_parallel_size == expected_ep
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
@@ -519,8 +517,7 @@ def test_nemotron_3_super_64gpu_b200_uses_topology_compatible_nccl_ep(recipe_nam
 )
 def test_nemotron_3_super_64gpu_b200_uses_selective_recompute_with_scoped_graphs(recipe_name):
     """TP2/EP8 uses activation, layernorm, and attention recompute with scoped TE graphs."""
-    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
-    cfg = getattr(module, recipe_name)()
+    cfg = benchmark_factory(recipe_name)()
 
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe_act", "layernorm", "core_attn"]
@@ -537,8 +534,8 @@ def test_nemotron_3_super_64gpu_b200_uses_selective_recompute_with_scoped_graphs
 
 def test_nemotron_3_super_64gpu_b200_nvfp4_keeps_cuda_graphs_with_light_recompute():
     """B200 NVFP4 retains all four measured TE graph scopes with light recompute."""
-    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
-    cfg = module.nemotron_3_super_pretrain_64gpu_b200_nvfp4_config()
+    importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.nemotronh")
+    cfg = benchmark_factory("nemotron_3_super_pretrain_64gpu_b200_nvfp4_config")()
 
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe_act", "layernorm"]

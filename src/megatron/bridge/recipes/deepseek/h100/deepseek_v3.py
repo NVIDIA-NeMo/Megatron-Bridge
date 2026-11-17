@@ -194,7 +194,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     # post-init default-fill (transformer_config.py) to silently fill
     # recompute_modules with ["core_attn"], giving a surprise recompute
     # across all layers. Workloads that want recompute install it via
-    # their flat perf recipe (src/megatron/bridge/perf_recipes/...), or users can
+    # their model-specific benchmark overrides, or users can
     # enable it via argparse (--recompute_modules ...) or Hydra.
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None

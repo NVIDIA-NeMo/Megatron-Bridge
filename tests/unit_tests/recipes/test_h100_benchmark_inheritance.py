@@ -6,12 +6,12 @@ import pytest
 import torch
 
 from megatron.bridge.training.config import ConfigContainer
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory, patch_recipe_construction_dependencies
 
 
 pytestmark = pytest.mark.unit
-_LLAMA = "megatron.bridge.perf_recipes.llama.h100.llama3"
-_QWEN = "megatron.bridge.perf_recipes.qwen.h100.qwen3_moe"
+_LLAMA = "megatron.bridge.training.perf_benchmark_overrides.llama"
+_QWEN = "megatron.bridge.training.perf_benchmark_overrides.qwen"
 _CASES = [
     (
         _LLAMA,
@@ -32,7 +32,7 @@ _CASES = [
 
 @pytest.fixture(autouse=True)
 def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
-    for module in (_LLAMA, _QWEN, "megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl"):
+    for module in (_LLAMA, _QWEN, "megatron.bridge.training.perf_benchmark_overrides.qwen_vl"):
         importlib.import_module(module)
     patch_recipe_construction_dependencies(monkeypatch)
 
@@ -43,7 +43,7 @@ def test_library_environment_updates_reach_benchmark(
 ) -> None:
     """A library-owned resource setting must not be shadowed by a copied mapping."""
     module = importlib.import_module(module_name)
-    library_factory = getattr(module, library_name)
+    library_factory = module.LIBRARY_RECIPES[benchmark_name]
 
     def library_with_resource_setting() -> ConfigContainer:
         cfg = library_factory()
@@ -51,8 +51,8 @@ def test_library_environment_updates_reach_benchmark(
         cfg.env_vars["NCCL_GRAPH_REGISTER"] = 1
         return cfg
 
-    monkeypatch.setattr(module, library_name, library_with_resource_setting)
-    cfg = getattr(module, benchmark_name)()
+    monkeypatch.setitem(module.LIBRARY_RECIPES, benchmark_name, library_with_resource_setting)
+    cfg = benchmark_factory(benchmark_name)()
     assert cfg.env_vars["NCCL_GRAPH_REGISTER"] == 1
     assert cfg.train.train_iters == 50
     assert cfg.ddp.check_for_nan_in_grad is False
@@ -96,7 +96,7 @@ def test_qwen_library_keeps_real_routing_and_optimizer_state() -> None:
 
 
 def test_vl_library_environment_is_not_shadowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    module = importlib.import_module("megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl")
+    module = importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.qwen_vl")
     library_policy = module._apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config
 
     def library_with_resource_setting(cfg: ConfigContainer) -> None:
@@ -104,7 +104,7 @@ def test_vl_library_environment_is_not_shadowed(monkeypatch: pytest.MonkeyPatch)
         cfg.env_vars["NCCL_GRAPH_REGISTER"] = 1
 
     monkeypatch.setattr(module, "_apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config", library_with_resource_setting)
-    cfg = module.qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config()
+    cfg = benchmark_factory("qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config")()
     assert cfg.env_vars["NCCL_GRAPH_REGISTER"] == 1
     assert getattr(cfg.model, "moe_router_force_load_balancing") is True
     assert cfg.train.train_iters == 50

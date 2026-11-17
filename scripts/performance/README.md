@@ -15,9 +15,9 @@ supplied.
 
 ## Performance recipe configs
 
-Performance-optimized recipes live in `src/megatron/bridge/perf_recipes`. The performance
-launcher resolves recipes from that package by model, task, GPU count, GPU type, precision,
-and config variant.
+Performance benchmarks combine library recipes with general and model-specific overrides in
+`src/megatron/bridge/training/perf_benchmark_overrides`. The launcher selects them using the same
+model, task, GPU count, GPU type, precision, and config-variant arguments.
 
 `setup_experiment.py` launches `bootstrap.py` on each rank. The bootstrap resolves and
 applies recipe-owned process settings before importing the training loop, then replaces itself with
@@ -25,7 +25,7 @@ either `run_script.py` for flat performance recipes or `run_recipe.py` for model
 Each training entrypoint therefore executes only once.
 
 - Prefer command-line overrides for one-off changes.
-- Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
+- Add shared benchmark policy to `_common.py` or model-specific overrides to the corresponding family module. Keep convergence-neutral training defaults in library recipes.
 
 ### DeepSeek V3 GB300 MXFP8 proxy
 

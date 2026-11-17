@@ -95,10 +95,11 @@ def test_nemotron_3_finetune_name_is_not_a_retirement_signal():
 
 
 def test_nemotron_h_v1_factories_are_not_exported():
-    from megatron.bridge import perf_recipes, recipes
-    from megatron.bridge.perf_recipes import nemotronh as perf_nemotron
+    from megatron.bridge import recipes
     from megatron.bridge.recipes import nemotronh as library_nemotron
     from megatron.bridge.recipes.nemotronh import h100
+    from megatron.bridge.training import perf_benchmark_overrides as perf_recipes
+    from megatron.bridge.training.perf_benchmark_overrides import nemotronh as perf_nemotron
 
     for module in (recipes, library_nemotron, h100, perf_recipes, perf_nemotron):
         assert not any(name.startswith("nemotronh_") and callable(value) for name, value in vars(module).items())

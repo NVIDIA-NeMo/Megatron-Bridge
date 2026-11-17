@@ -19,7 +19,6 @@ from __future__ import annotations
 import ast
 import importlib.util
 import logging
-import re
 import sys
 from pathlib import Path
 
@@ -48,14 +47,10 @@ def _load_module():
 
 def test_every_flat_recipe_has_registered_family_and_metadata():
     module = _load_module()
-    root = Path(__file__).resolve().parents[4] / "src" / "megatron" / "bridge" / "perf_recipes"
-    definition_pattern = re.compile(r"^def ([a-zA-Z0-9_]+_config)\(", re.MULTILINE)
-    recipes = [
-        (recipe_name, path.relative_to(root).parts[0])
-        for path in root.rglob("*.py")
-        for recipe_name in definition_pattern.findall(path.read_text())
-        if module.BENCHMARK_RECIPE_PATTERN.search(recipe_name)
-    ]
+    from megatron.bridge.training.perf_benchmark_overrides import benchmark_family, benchmark_names
+
+    recipes = [(name, benchmark_family(name)) for name in benchmark_names()]
+    assert len(recipes) == 476
 
     for recipe_name, owning_family in recipes:
         metadata = module.available_benchmark_recipe_metadata(recipe_name)
@@ -295,7 +290,7 @@ def test_known_cross_package_collisions_have_explicit_benchmark_precedence():
                     recipe_names.add(node.value)
         return recipe_names
 
-    collisions = exported_recipe_names("recipes") & exported_recipe_names("perf_recipes")
+    collisions = exported_recipe_names("recipes") & set(module.benchmark_recipe_names())
 
     assert collisions == (module.BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS | module.LIBRARY_RECIPE_PRECEDENCE_COLLISIONS)
     for recipe_name in module.BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS:

@@ -154,7 +154,7 @@ checkpoint evidence are recorded in the verification card.
 
 Compatibility aliases such as `deepseek_v4_flash_pretrain_mxfp8_config` remain
 exported, but new launches should use the hardware-qualified names above.
-Canonical benchmark recipes under `src/megatron/bridge/perf_recipes/` are
+Canonical benchmark recipes under `src/megatron/bridge/training/perf_benchmark_overrides/` are
 performance references, not substitutes for the library recipes.
 
 ## Supervised Fine-Tuning

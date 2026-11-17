@@ -1,3 +1,6 @@
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +21,7 @@ import importlib
 
 import pytest
 
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -26,7 +29,7 @@ pytestmark = pytest.mark.unit
 
 _NCCL_EP_ENV = {"NCCL_EP_HT_EM_PULL_PUSH": 1}
 
-# (module under megatron.bridge.perf_recipes, recipe factory) for the GB200 recipes switched to NCCL EP.
+# (module under megatron.bridge.training.perf_benchmark_overrides, recipe factory) for the GB200 recipes switched to NCCL EP.
 _GB200_NCCLEP_RECIPES = (
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_bf16_config"),
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_fp8mx_config"),
@@ -66,13 +69,15 @@ _GB200_HYBRIDEP_RECIPES = (
 # Import the recipe modules at collection time: the offline-construction fixture patches ``AutoBridge`` in
 # every recipe module that is already loaded, so a lazy import inside a test would escape the patch.
 _RECIPE_MODULES = {
-    module_name: importlib.import_module(f"megatron.bridge.perf_recipes.{module_name}")
+    module_name: importlib.import_module(
+        f"megatron.bridge.training.perf_benchmark_overrides.{module_name.split(chr(46))[0]}"
+    )
     for module_name in sorted({name for name, _ in (*_GB200_NCCLEP_RECIPES, *_GB200_HYBRIDEP_RECIPES)})
 }
 
 
 def _build(module_name: str, factory_name: str):
-    return getattr(_RECIPE_MODULES[module_name], factory_name)()
+    return benchmark_factory(factory_name)()
 
 
 @pytest.fixture(autouse=True)

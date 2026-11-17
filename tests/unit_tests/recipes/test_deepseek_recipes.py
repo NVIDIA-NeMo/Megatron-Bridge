@@ -30,7 +30,6 @@ from megatron.core.transformer.pipeline_parallel_layer_layout import PipelinePar
 
 from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.deepseek import (
     set_deepseek_v3_pipeline_model_parallel_layout,
     set_deepseek_v4_pipeline_model_parallel_layout,
@@ -39,7 +38,12 @@ from megatron.bridge.recipes.deepseek.h100.deepseek_v3 import (
     _build_standalone_mtp_layout,
     _get_deepseek_v3_pipeline_layout,
 )
-from tests.unit_tests.recipes.recipe_test_utils import DeepSeekV4BuilderOnlyBridge, patch_recipe_module_global
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
+from tests.unit_tests.recipes.recipe_test_utils import (
+    DeepSeekV4BuilderOnlyBridge,
+    benchmark_factory,
+    patch_recipe_module_global,
+)
 from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
@@ -180,8 +184,8 @@ def test_model_and_perf_deepseek_recipes_bake_environment_defaults(monkeypatch: 
     patch_recipe_module_global(monkeypatch, recipe_module, "AutoBridge", _FakeBridge)
     recipe_config = recipe_module.deepseek_v3_pretrain_1024gpu_h100_bf16_config()
 
-    perf_module = importlib.import_module("megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3")
-    perf_config = perf_module.deepseek_v3_pretrain_256gpu_gb200_bf16_config()
+    importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.deepseek")
+    perf_config = benchmark_factory("deepseek_v3_pretrain_256gpu_gb200_bf16_config")()
 
     expected_recipe = {
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

@@ -32,17 +32,23 @@ pytestmark = pytest.mark.unit
     [
         ("recipes.qwen", "qwen3_30b_a3b_pretrain_config", "hybridep"),
         ("recipes.qwen", "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config", "ncclep"),
-        ("perf_recipes.qwen", "qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config", "hybridep"),
-        ("perf_recipes.qwen", "qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config", "hybridep"),
-        ("perf_recipes.qwen", "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config", "hybridep"),
-        ("perf_recipes.qwen", "qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config", "hybridep"),
+        ("benchmark", "qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config", "hybridep"),
+        ("benchmark", "qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config", "hybridep"),
+        ("benchmark", "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config", "hybridep"),
+        ("benchmark", "qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config", "hybridep"),
     ],
 )
 @pytest.mark.parametrize("cuda_available", [False, True])
 def test_recipe_selects_backend_before_hardware_validation(
     monkeypatch, package, factory_name, backend, cuda_available
 ):
-    factory = getattr(importlib.import_module(f"megatron.bridge.{package}"), factory_name)
+    from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+    factory = (
+        benchmark_factory(factory_name)
+        if package == "benchmark"
+        else getattr(importlib.import_module(f"megatron.bridge.{package}"), factory_name)
+    )
     patch_recipe_construction_dependencies(monkeypatch)
     with (
         patch("torch.cuda.is_available", return_value=cuda_available),

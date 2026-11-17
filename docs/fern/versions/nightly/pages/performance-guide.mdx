@@ -783,7 +783,9 @@ uv run python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 
 ## Perf benchmark overrides
 
-The refactor toward **library recipe + perf benchmark overrides** starts by moving supported resource settings into the existing library recipes. Existing recipe names, imports, launch commands and override precedence are preserved:
+Library recipes provide the training configuration. Performance benchmarks apply general and model-specific overrides to those recipes. The overrides live in `src/megatron/bridge/training/perf_benchmark_overrides/`: `_common.py` contains shared benchmark policy, and each model family has one module with its library selection and overrides.
+
+Existing launch commands and exact benchmark names work as before:
 
 ```bash
 uv run python scripts/performance/setup_experiment.py \
@@ -791,19 +793,16 @@ uv run python scripts/performance/setup_experiment.py \
   --task pretrain --max_steps 100
 ```
 
-A setting belongs in the library recipe, the common benchmark overrides, or the per-model benchmark overrides. There is no separate execution configuration or case registry. The existing `_benchmark_common` / `_perf_precision` functions hold shared benchmark selections; model-specific differences remain in the existing performance recipe functions.
+Python callers construct the same benchmark config explicitly:
 
-This first stage covers ten H100 benchmark variants:
+```python
+from megatron.bridge.training.perf_benchmark_overrides import build_perf_benchmark_config
 
-| Model/task | GPUs | Precision |
-| --- | --- | --- |
-| Llama 3 8B pretrain | 8, 64 | BF16, FP8 current scaling |
-| Llama 3 8B SFT | 8 | BF16, FP8 current scaling |
-| Qwen3 30B-A3B pretrain | 16 | BF16, FP8 current/delayed scaling |
-| Qwen3.5-VL 35B-A3B pretrain | 16 | BF16 |
+cfg = build_perf_benchmark_config("llama3_8b_pretrain_8gpu_h100_bf16_config")
+```
 
-The Llama BF16 library recipe owns its CP2 stream-connection setting. The Qwen3 16-H100 BF16 library recipe owns its stream capacity and eight-GPU NVLink transport topology. The Qwen3.5-VL library already supplies the benchmark's environment. Benchmark variants inherit these settings instead of copying the complete environment.
+This replaces imports of individual factory functions from `megatron.bridge.perf_recipes`. All 470 benchmark variants and six exported aliases remain selectable. Library recipe imports, performance selectors, allocation defaults, config variants, and CLI override precedence are preserved. Allocation-aware Nemotron Ultra benchmarks also retain the optional `num_gpus` argument. GLM-5.1/5.2 currently have no model-specific library recipe; their overrides start from the existing shared SFT configuration and select the model through AutoBridge.
 
-Changes to compute/reduction precision, optimizer policy, routing, RNG, workload, schedule, evaluation and checks remain benchmark selections. Communication-overlap configurations, FP8 recompute choices, additional MoE fusion, LayerNorm SM margins and cuDNN normalization remain explicit per-model benchmark settings pending evidence that they are appropriate library defaults. The existing 50-step benchmark policy is preserved; it is not a convergence recipe.
+A knob belongs in the library recipe, common benchmark overrides, or model-specific benchmark overrides. Supported resource settings can be shared through library recipes. Changes to precision, optimizer state, routing, RNG, workload, schedules, evaluation, or numerical checks remain explicit benchmark choices. Overlap, fusion and recompute choices whose convergence effects are uncertain remain model-specific overrides until validated.
 
-The performance configurations must remain identical before and after this refactor. Library changes are restricted to convergence-neutral resource settings. Configuration comparisons do not establish hardware memory fit or throughput. Other recipes and the eventual relocation/removal of `perf_recipes/` remain later stages; this change does not add a new launch path.
+The common benchmark policy usually selects 50 steps and disables checkpointing, evaluation and numerical checks. Exceptions, including the Llama 2 LoRA workload, retain their original policy. Override order is preserved where graph, RNG, precision or communication settings depend on earlier selections. Benchmark configs therefore retain their previous behavior; their loss and throughput are not evidence of convergence for ordinary training.

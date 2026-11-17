@@ -53,7 +53,9 @@ BENCHMARK_RECIPE_PATTERN = re.compile(
 # with its counterpart in LEGACY_GPU_ALIASES (scripts/performance/argument_parser.py).
 LEGACY_HARDWARE_ALIASES = {"vr200": "vrnvl72"}
 
-BENCHMARK_RECIPE_ROOT = Path(__file__).resolve().parents[2] / "src" / "megatron" / "bridge" / "perf_recipes"
+BENCHMARK_RECIPE_ROOT = (
+    Path(__file__).resolve().parents[2] / "src" / "megatron" / "bridge" / "training" / "perf_benchmark_overrides"
+)
 
 # These names are exported by both recipe packages today. Bare recipe lookup
 # selects the benchmark definition; each library workload remains
@@ -170,16 +172,19 @@ def benchmark_recipe_names(family: str | None = None) -> frozenset[str]:
     login node.
     """
     recipe_names: set[str] = set()
-    recipe_root = BENCHMARK_RECIPE_ROOT / family if family is not None else BENCHMARK_RECIPE_ROOT
-    for init_path in recipe_root.rglob("__init__.py"):
-        module = ast.parse(init_path.read_text(), filename=str(init_path))
-        for node in ast.walk(module):
-            if isinstance(node, ast.alias):
-                candidate = node.asname or node.name
-                if candidate.endswith("_config"):
-                    recipe_names.add(candidate)
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.endswith("_config"):
-                recipe_names.add(node.value)
+    paths = BENCHMARK_RECIPE_ROOT.glob("*.py") if family is None else (BENCHMARK_RECIPE_ROOT / f"{family}.py",)
+    for path in paths:
+        if not path.is_file():
+            continue
+        module = ast.parse(path.read_text(), filename=str(path))
+        for node in module.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "LIBRARY_RECIPES" for target in node.targets
+            ):
+                assert isinstance(node.value, ast.Dict)
+                for key in node.value.keys:
+                    assert isinstance(key, ast.Constant) and isinstance(key.value, str)
+                    recipe_names.add(key.value)
     return frozenset(recipe_names)
 
 

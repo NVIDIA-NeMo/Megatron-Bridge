@@ -22,10 +22,9 @@ import pytest
 from megatron.core.pipeline_parallel.schedules import forward_backward_no_pipelining, get_forward_backward_func
 from megatron.core.transformer.enums import AttnBackend
 
-from megatron.bridge.perf_recipes import deepseek
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.training.config import ConfigContainer
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory, patch_recipe_construction_dependencies
 
 
 pytestmark = pytest.mark.unit
@@ -71,11 +70,11 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_proxy_preserves_parent_except_depth_layout_and_mxfp8_tuning(
     precision: str, parent_pipeline: tuple[int, int], parent_mesh: tuple[int, int, int]
 ) -> None:
-    parent_fn: Callable[[], ConfigContainer] = getattr(
-        deepseek, f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config"
+    parent_fn: Callable[[], ConfigContainer] = benchmark_factory(
+        f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config"
     )
-    proxy_fn: Callable[[], ConfigContainer] = getattr(
-        deepseek, f"deepseek_v3_pretrain_64gpu_vrnvl72_{precision}_proxy_config"
+    proxy_fn: Callable[[], ConfigContainer] = benchmark_factory(
+        f"deepseek_v3_pretrain_64gpu_vrnvl72_{precision}_proxy_config"
     )
     parent = parent_fn()
     proxy = proxy_fn()
@@ -162,7 +161,7 @@ def test_proxy_preserves_parent_except_depth_layout_and_mxfp8_tuning(
 def test_gb300_mxfp8_proxy_uses_nccl_ep() -> None:
     # The GB300 proxy shrinks its NCCL EP parent. It no longer matches the VRNVL72 MXFP8 proxy, which follows
     # the MLPerf execution settings.
-    gb300 = deepseek.deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config()
+    gb300 = benchmark_factory("deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config")()
 
     assert gb300.model.moe_token_dispatcher_type == "flex"
     assert gb300.model.moe_flex_dispatcher_backend == "ncclep"
@@ -177,10 +176,10 @@ def test_4gpu_proxy_only_resizes_its_parent(precision: str) -> None:
     # The MXFP8 proxy resizes the 256-GPU GB300 MXFP8 recipe, which shares the VRNVL72 model without the
     # MLPerf execution settings that the 256-GPU VRNVL72 MXFP8 recipe adds.
     if precision == "fp8mx":
-        parent = deepseek.deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+        parent = benchmark_factory("deepseek_v3_pretrain_256gpu_gb300_fp8mx_config")()
     else:
-        parent = deepseek.deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config()
-    proxy = getattr(deepseek, f"deepseek_v3_pretrain_4gpu_vrnvl72_{precision}_proxy_config")()
+        parent = benchmark_factory("deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config")()
+    proxy = benchmark_factory(f"deepseek_v3_pretrain_4gpu_vrnvl72_{precision}_proxy_config")()
 
     assert {key: value for key, value in vars(proxy.model).items() if key not in _4GPU_PROXY_MODEL_FIELDS} == {
         key: value for key, value in vars(parent.model).items() if key not in _4GPU_PROXY_MODEL_FIELDS
@@ -235,8 +234,8 @@ def test_4gpu_proxy_only_resizes_its_parent(precision: str) -> None:
 
 
 def test_4gpu_proxies_differ_only_in_quantization() -> None:
-    mxfp8 = deepseek.deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config()
-    nvfp4 = deepseek.deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config()
+    mxfp8 = benchmark_factory("deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config")()
+    nvfp4 = benchmark_factory("deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config")()
 
     # Same model, parallelism, batch, CUDA graph, dispatcher, overlap, optimizer and runtime settings.
     assert vars(mxfp8.model) == vars(nvfp4.model)
@@ -278,7 +277,7 @@ def test_4gpu_proxies_differ_only_in_quantization() -> None:
 def test_proxy_overlap_setup_without_pipeline_parallelism(
     monkeypatch: pytest.MonkeyPatch, gpu: str, precision: str, num_gpus: int
 ) -> None:
-    cfg = getattr(deepseek, f"deepseek_v3_pretrain_{num_gpus}gpu_{gpu}_{precision}_proxy_config")()
+    cfg = benchmark_factory(f"deepseek_v3_pretrain_{num_gpus}gpu_{gpu}_{precision}_proxy_config")()
     # Validate the topology without requiring the GPU libraries in this unit test.
     monkeypatch.setattr("megatron.bridge.training.comm_overlap.is_te_min_version", lambda *_: True)
     monkeypatch.setattr("megatron.bridge.training.comm_overlap.is_torch_min_version", lambda *_: True)

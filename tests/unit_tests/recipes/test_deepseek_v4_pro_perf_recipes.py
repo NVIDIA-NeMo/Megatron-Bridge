@@ -21,9 +21,14 @@ import pytest
 import torch
 
 from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelConfig
-from megatron.bridge.perf_recipes.deepseek import (
-    deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config,
-    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config = benchmark_factory(
+    "deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config"
+)
+deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config = benchmark_factory(
+    "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config"
 )
 from tests.unit_tests.recipes.recipe_test_utils import (
     DeepSeekV4BuilderOnlyBridge,

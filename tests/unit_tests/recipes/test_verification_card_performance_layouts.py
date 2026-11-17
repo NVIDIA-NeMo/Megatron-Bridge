@@ -14,7 +14,6 @@
 
 """Check that verified card performance layouts match what their published recipes build."""
 
-import importlib
 import re
 import shlex
 from pathlib import Path
@@ -31,7 +30,7 @@ CARDS = Path(__file__).resolve().parents[3] / "examples" / "model_verification_c
 
 # (card directory, pretrain_performance hardware leaf, perf recipe module)
 PERFORMANCE_LEAVES = [
-    ("deepseek-v4-flash", "GB200", "megatron.bridge.perf_recipes.deepseek"),
+    ("deepseek-v4-flash", "GB200", "megatron.bridge.training.perf_benchmark_overrides.deepseek"),
 ]
 
 
@@ -57,7 +56,9 @@ def test_verified_performance_layout_matches_the_published_recipe(card: str, har
     leaf = yaml.safe_load((CARDS / card / "card.yaml").read_text())["items"]["pretrain_performance"][hardware]
     assert leaf["status"] == "verified"
     tokens = shlex.split(leaf["command"])
-    cfg = getattr(importlib.import_module(module), tokens[tokens.index("--recipe") + 1])()
+    from megatron.bridge.training.perf_benchmark_overrides import build_perf_benchmark_config
+
+    cfg = build_perf_benchmark_config(tokens[tokens.index("--recipe") + 1])
 
     built = (cfg.model.expert_model_parallel_size, cfg.train.global_batch_size, cfg.train.micro_batch_size)
     assert _recorded_layout(leaf["expected_result"]) == built

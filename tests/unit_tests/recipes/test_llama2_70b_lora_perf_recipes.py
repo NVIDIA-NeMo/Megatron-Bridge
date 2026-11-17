@@ -29,16 +29,17 @@ from dataclasses import dataclass
 import pytest
 from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
-from megatron.bridge.perf_recipes.llama import (
-    llama2_70b_peft_4gpu_gb200_fp8ds_config,
-    llama2_70b_peft_4gpu_gb300_fp8ds_config,
-    llama2_70b_peft_8gpu_gb200_fp8ds_config,
-    llama2_70b_peft_8gpu_gb300_fp8ds_config,
-    llama2_70b_peft_72gpu_gb200_fp8ds_config,
-    llama2_70b_peft_72gpu_gb300_fp8ds_config,
-    llama2_70b_peft_512gpu_gb200_fp8ds_config,
-    llama2_70b_peft_512gpu_gb300_fp8ds_config,
-)
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+llama2_70b_peft_4gpu_gb200_fp8ds_config = benchmark_factory("llama2_70b_peft_4gpu_gb200_fp8ds_config")
+llama2_70b_peft_4gpu_gb300_fp8ds_config = benchmark_factory("llama2_70b_peft_4gpu_gb300_fp8ds_config")
+llama2_70b_peft_8gpu_gb200_fp8ds_config = benchmark_factory("llama2_70b_peft_8gpu_gb200_fp8ds_config")
+llama2_70b_peft_8gpu_gb300_fp8ds_config = benchmark_factory("llama2_70b_peft_8gpu_gb300_fp8ds_config")
+llama2_70b_peft_72gpu_gb200_fp8ds_config = benchmark_factory("llama2_70b_peft_72gpu_gb200_fp8ds_config")
+llama2_70b_peft_72gpu_gb300_fp8ds_config = benchmark_factory("llama2_70b_peft_72gpu_gb300_fp8ds_config")
+llama2_70b_peft_512gpu_gb200_fp8ds_config = benchmark_factory("llama2_70b_peft_512gpu_gb200_fp8ds_config")
+llama2_70b_peft_512gpu_gb300_fp8ds_config = benchmark_factory("llama2_70b_peft_512gpu_gb300_fp8ds_config")
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
     discover_recipe_factories,
@@ -48,7 +49,7 @@ from tests.unit_tests.recipes.recipe_test_utils import (
 
 pytestmark = pytest.mark.unit
 
-_LLAMA_PACKAGE = importlib.import_module("megatron.bridge.perf_recipes.llama")
+_LLAMA_PACKAGE = importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.llama")
 _LLAMA2_70B_LORA_RECIPES = tuple(
     factory for factory in discover_recipe_factories(_LLAMA_PACKAGE) if "llama2_70b_peft_" in factory.__name__
 )

@@ -10,9 +10,14 @@ import pytest
 import torch
 
 from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.perf_recipes.muse_glimmer.h100 import (
-    muse_glimmer_30b_pretrain_32gpu_h100_bf16_config,
-    muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config,
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+muse_glimmer_30b_pretrain_32gpu_h100_bf16_config = benchmark_factory(
+    "muse_glimmer_30b_pretrain_32gpu_h100_bf16_config"
+)
+muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config = benchmark_factory(
+    "muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config"
 )
 from megatron.bridge.recipes.muse_glimmer.h100 import muse_glimmer as muse_glimmer_recipes
 from megatron.bridge.recipes.muse_glimmer.h100 import (

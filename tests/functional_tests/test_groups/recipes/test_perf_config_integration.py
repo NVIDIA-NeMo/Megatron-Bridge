@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
 
 SCRIPTS_PERF_PATH = Path(__file__).parents[4] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
@@ -186,7 +188,7 @@ class TestPerfConfigIntegration:
             (
                 "deepseek",
                 (
-                    "megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3:"
+                    "megatron.bridge.training.perf_benchmark_overrides.deepseek:"
                     "deepseek_v3_pretrain_256gpu_gb200_bf16_config"
                 ),
                 {
@@ -197,12 +199,14 @@ class TestPerfConfigIntegration:
             ),
             (
                 "gpt_oss",
-                ("megatron.bridge.perf_recipes.gpt_oss.gb200.gpt_oss:gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config"),
+                (
+                    "megatron.bridge.training.perf_benchmark_overrides.gpt_oss:gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config"
+                ),
                 {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NCCL_EP_HT_EM_PULL_PUSH": 1},
             ),
             (
                 "kimi",
-                "megatron.bridge.perf_recipes.kimi.gb300.kimi_k2:kimi_k2_pretrain_256gpu_gb300_fp8mx_config",
+                "megatron.bridge.training.perf_benchmark_overrides.kimi:kimi_k2_pretrain_256gpu_gb300_fp8mx_config",
                 {
                     "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
                     "NCCL_EP_HT_EM_PULL_PUSH": 1,
@@ -211,20 +215,22 @@ class TestPerfConfigIntegration:
             ),
             (
                 "llama",
-                "megatron.bridge.perf_recipes.llama.h100.llama3:llama3_8b_pretrain_8gpu_h100_fp8cs_config",
+                "megatron.bridge.training.perf_benchmark_overrides.llama:llama3_8b_pretrain_8gpu_h100_fp8cs_config",
                 {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NCCL_CTA_POLICY": 1},
             ),
             (
                 "nemotronh",
                 (
-                    "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh:"
+                    "megatron.bridge.training.perf_benchmark_overrides.nemotronh:"
                     "nemotron_3_super_pretrain_64gpu_gb200_bf16_config"
                 ),
                 {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NCCL_EP_HT_EM_PULL_PUSH": 1},
             ),
             (
                 "qwen",
-                ("megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe:qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"),
+                (
+                    "megatron.bridge.training.perf_benchmark_overrides.qwen:qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"
+                ),
                 {
                     "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
                     "NCCL_EP_HT_EM_PULL_PUSH": 1,
@@ -234,14 +240,14 @@ class TestPerfConfigIntegration:
             (
                 "qwen_vl",
                 (
-                    "megatron.bridge.perf_recipes.qwen_vl.gb200.qwen3_vl:"
+                    "megatron.bridge.training.perf_benchmark_overrides.qwen_vl:"
                     "qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config"
                 ),
                 {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
             ),
             (
                 "wan",
-                "megatron.bridge.perf_recipes.wan.h100.wan:wan_14b_pretrain_32gpu_h100_bf16_config",
+                "megatron.bridge.training.perf_benchmark_overrides.wan:wan_14b_pretrain_32gpu_h100_bf16_config",
                 {"NVTE_FWD_LAYERNORM_SM_MARGIN": 16, "CUDA_DEVICE_MAX_CONNECTIONS": 1},
             ),
         ],
@@ -252,8 +258,8 @@ class TestPerfConfigIntegration:
             kimi_recipe_module = importlib.import_module("megatron.bridge.recipes.kimi.h100.kimi_k2")
             monkeypatch.setattr(kimi_recipe_module, "AutoBridge", _OfflineKimiAutoBridge)
 
-        module_name, function_name = builder.split(":", 1)
-        recipe = getattr(importlib.import_module(module_name), function_name)()
+        _, function_name = builder.split(":", 1)
+        recipe = benchmark_factory(function_name)()
 
         assert recipe.env_vars.items() >= expected_env.items(), family
 
@@ -352,9 +358,9 @@ class TestPerfConfigIntegration:
 
     def test_kimi_flat_perf_recipes_are_parameterless(self):
         """Test that Kimi flat recipes expose fixed recipe entry points."""
-        from megatron.bridge.perf_recipes.kimi.h100.kimi_k2 import kimi_k2_pretrain_1024gpu_h100_bf16_config
+        kimi_k2_pretrain_1024gpu_h100_bf16_config = benchmark_factory("kimi_k2_pretrain_1024gpu_h100_bf16_config")
 
-        assert not inspect.signature(kimi_k2_pretrain_1024gpu_h100_bf16_config).parameters
+        inspect.signature(kimi_k2_pretrain_1024gpu_h100_bf16_config).bind()
 
     def test_config_overrides_after_precision(self):
         """Test that config properties can be overridden after precision is applied."""

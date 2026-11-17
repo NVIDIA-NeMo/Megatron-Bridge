@@ -92,7 +92,7 @@ Every new **pretraining library recipe** needs measured steady-state
 performance on its intended workload and allocation. For BF16, aim for roughly
 **200 model TFLOP/s/GPU on H100** or **400 on GB200**. For VLMs, use realistic
 multimodal input. These targets assess the base library recipe, not a
-`perf_recipes` benchmark; SFT/PEFT and long-context SFT are excluded. If
+performance benchmark; SFT/PEFT and long-context SFT are excluded. If
 performance is severely below the target, withhold the recipe or clearly mark
 it **early, unoptimized** in the recipe, public documentation/card, and PR.
 Follow the [recipe publication guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes)

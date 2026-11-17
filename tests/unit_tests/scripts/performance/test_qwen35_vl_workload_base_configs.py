@@ -27,36 +27,87 @@ import torch
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
 
 from megatron.bridge.models.qwen_vl.data.collate_fn import QWEN_VL_MAX_PIXELS, QWEN_VL_MIN_PIXELS
-from megatron.bridge.perf_recipes.qwen_vl.common import _select_gdn_kernel_backend
-from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
-    qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+from megatron.bridge.training.perf_benchmark_overrides.qwen_vl import _select_gdn_kernel_backend
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+def _build_qwen35_vl_35b_a3b_gb300_bf16():
+    from megatron.bridge.training.perf_benchmark_overrides import qwen_vl
+
+    cfg = qwen_vl.LIBRARY_RECIPES["qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"]()
+    qwen_vl._apply_qwen35_vl_35b_a3b_gb300_bf16(cfg)
+    return cfg
+
+
+def _build_qwen35_vl_397b_a17b_gb300_fp8mx():
+    from megatron.bridge.training.perf_benchmark_overrides import qwen_vl
+
+    cfg = qwen_vl.LIBRARY_RECIPES["qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config"]()
+    qwen_vl._apply_qwen35_vl_397b_a17b_gb300_fp8mx(cfg)
+    return cfg
+
+
+qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config"
 )
-from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
-    _build_qwen35_vl_35b_a3b_gb300_bf16,
-    _build_qwen35_vl_397b_a17b_gb300_fp8mx,
-    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
-    qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
+qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config"
 )
-from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
-    qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config,
-    qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config,
-    qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config,
-    qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config,
+qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config"
 )
-from megatron.bridge.perf_recipes.qwen_vl.vrnvl72.qwen35_vl import (
-    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
+
+
+qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"
+)
+qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config"
+)
+qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config"
+)
+qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config = benchmark_factory(
+    "qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config"
+)
+qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config = benchmark_factory(
+    "qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config"
+)
+qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config = benchmark_factory(
+    "qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config"
+)
+qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config = benchmark_factory(
+    "qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config"
+)
+qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config"
+)
+qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config"
+)
+qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config = benchmark_factory(
+    "qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config"
+)
+qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config = benchmark_factory(
+    "qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config"
+)
+qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config"
+)
+qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config"
+)
+qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config = benchmark_factory(
+    "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"
+)
+qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config = benchmark_factory(
+    "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config"
+)
+qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config = benchmark_factory(
+    "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config"
+)
+qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config = benchmark_factory(
+    "qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config"
 )
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import (
@@ -675,7 +726,9 @@ _VRNVL72_FLA_ALIASES = (
 )
 _QWEN35_VL_PERF_RECIPES = tuple(
     factory
-    for factory in discover_recipe_factories(importlib.import_module("megatron.bridge.perf_recipes.qwen_vl"))
+    for factory in discover_recipe_factories(
+        importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.qwen_vl")
+    )
     if factory.__name__.startswith("qwen35_vl_")
 )
 
@@ -799,6 +852,6 @@ def test_qwen35_vl_perf_recipe_discovery_covers_the_cudnn_gdn_recipes() -> None:
     """The recipe matrix above must keep finding every recipe the cuDNN GDN tests reason about."""
     discovered = set(_QWEN35_VL_PERF_RECIPES)
     assert set(_GB300_CUDNN_GDN_RECIPES + _VRNVL72_CUDNN_GDN_RECIPES + _VRNVL72_FLA_ALIASES) <= discovered
-    platforms = {factory.__module__.split(".")[-2] for factory in discovered}
+    platforms = {factory.__name__.split("gpu_", 1)[1].split("_", 1)[0] for factory in discovered}
     assert {"b200", "b300", "gb200", "gb300", "h100", "vrnvl72"} <= platforms
     assert any("122b" in factory.__name__ for factory in discovered)

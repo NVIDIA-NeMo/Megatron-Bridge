@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import pytest
 
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
@@ -32,6 +31,7 @@ from megatron.bridge.recipes.wan import (
     wan_1_3b_text2video_pretrain_config as canonical_wan_1_3b_text2video_pretrain_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
 
 
 pytestmark = [pytest.mark.unit]
@@ -216,7 +216,7 @@ class TestWan14BPerfRecipes:
     """Tests for Wan 14B GB200, GB300, and H100 performance recipes."""
 
     def test_gb200_16gpu_perf_recipe_aligned_with_dfm(self):
-        from megatron.bridge.perf_recipes.wan.gb200.wan import wan_14b_pretrain_16gpu_gb200_bf16_config
+        wan_14b_pretrain_16gpu_gb200_bf16_config = benchmark_factory("wan_14b_pretrain_16gpu_gb200_bf16_config")
 
         cfg = wan_14b_pretrain_16gpu_gb200_bf16_config()
 
@@ -249,7 +249,7 @@ class TestWan14BPerfRecipes:
         assert cfg.env_vars["NVTE_FUSED_ATTN"] == 1
 
     def test_gb300_16gpu_perf_recipe_aligned_with_dfm(self):
-        from megatron.bridge.perf_recipes.wan.gb300.wan import wan_14b_pretrain_16gpu_gb300_bf16_config
+        wan_14b_pretrain_16gpu_gb300_bf16_config = benchmark_factory("wan_14b_pretrain_16gpu_gb300_bf16_config")
 
         cfg = wan_14b_pretrain_16gpu_gb300_bf16_config()
 
@@ -280,7 +280,7 @@ class TestWan14BPerfRecipes:
         assert cfg.env_vars["NVTE_FUSED_ATTN"] == 1
 
     def test_h100_32gpu_perf_recipe_aligned_with_dfm(self):
-        from megatron.bridge.perf_recipes.wan.h100.wan import wan_14b_pretrain_32gpu_h100_bf16_config
+        wan_14b_pretrain_32gpu_h100_bf16_config = benchmark_factory("wan_14b_pretrain_32gpu_h100_bf16_config")
 
         cfg = wan_14b_pretrain_32gpu_h100_bf16_config()
 

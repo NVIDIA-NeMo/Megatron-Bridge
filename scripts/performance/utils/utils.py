@@ -18,7 +18,6 @@ import functools
 import importlib
 import logging
 import os
-import pkgutil
 import re
 import select
 import shlex
@@ -49,8 +48,7 @@ from benchmark_parallelism import (
 # Default timeout for interactive config variant selection (in seconds)
 CONFIG_VARIANT_SELECTION_TIMEOUT = 15
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_PERF_RECIPES_ROOT = _REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
-_PERF_RECIPE_DEF_PATTERN = re.compile(r"^def ([a-zA-Z0-9_]+_config)\(", re.MULTILINE)
+_PERF_RECIPES_ROOT = _REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "perf_benchmark_overrides"
 
 _PRECISION_NAME_MAP = {
     "bf16": "bf16",
@@ -293,7 +291,7 @@ def apply_target_topology_environment(
     model-specific environment stays explicit in the recipe. Explicit
     ``env_vars`` overrides remain final.
     """
-    from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
+    from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
 
     topology_names = {
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
@@ -497,33 +495,43 @@ def _emit(message: str = "", *, end: str = "\n", flush: bool = False) -> None:
 
 @functools.lru_cache(maxsize=1)
 def perf_recipe_family_modules() -> tuple[str, ...]:
-    """Return import paths for flat performance recipe family packages."""
-    import megatron.bridge.perf_recipes as perf_recipes
-
-    module_names = [
-        f"{perf_recipes.__name__}.{module_info.name}"
-        for module_info in pkgutil.iter_modules(perf_recipes.__path__)
-        if module_info.ispkg and not module_info.name.startswith("_")
-    ]
-    return tuple(sorted(module_names))
+    """Return the model-specific benchmark override modules."""
+    return tuple(
+        f"megatron.bridge.training.perf_benchmark_overrides.{path.stem}"
+        for path in sorted(_PERF_RECIPES_ROOT.glob("*.py"))
+        if path.stem not in {"__init__", "_common", "environment"}
+    )
 
 
 def find_perf_recipe(recipe_name: str) -> Callable | None:
-    """Find a flat perf recipe function by exported function name."""
-    for module_name in perf_recipe_family_modules():
-        recipe_fn = getattr(importlib.import_module(module_name), recipe_name, None)
-        if callable(recipe_fn):
-            return recipe_fn
-    return None
+    """Resolve the existing selector to a library recipe with benchmark overrides."""
+    from megatron.bridge.training.perf_benchmark_overrides import get_perf_benchmark_recipe
+
+    return get_perf_benchmark_recipe(recipe_name)
 
 
 @functools.lru_cache(maxsize=1)
 def flat_perf_recipe_names() -> tuple[str, ...]:
-    """Return flat perf recipe names without importing recipe family modules."""
+    """Return benchmark selectors without importing the GPU training stack."""
+    # Keep discovery source-only on submission hosts.
+    import ast
+
     names = set()
-    if _PERF_RECIPES_ROOT.exists():
-        for path in _PERF_RECIPES_ROOT.rglob("*.py"):
-            names.update(_PERF_RECIPE_DEF_PATTERN.findall(path.read_text()))
+    for path in _PERF_RECIPES_ROOT.glob("*.py"):
+        nodes = ast.parse(path.read_text()).body
+        for node in nodes:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "LIBRARY_RECIPES" for target in node.targets
+            ):
+                assert isinstance(node.value, ast.Dict)
+                for key in node.value.keys:
+                    assert isinstance(key, ast.Constant) and isinstance(key.value, str)
+                    names.add(key.value)
+        for node in nodes:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "BENCHMARK_ALIASES" for target in node.targets
+            ):
+                names.difference_update(ast.literal_eval(node.value))
     return tuple(sorted(names))
 
 
@@ -535,7 +543,7 @@ def get_perf_recipe_by_name(
     precision: str,
     config_variant: str | None = None,
 ):
-    """Load an environment-finalized recipe from ``megatron.bridge.perf_recipes``."""
+    """Load an environment-finalized recipe from library recipes and benchmark overrides."""
     name = _recipe_function_name(
         model_recipe_name=model_recipe_name,
         task=task,

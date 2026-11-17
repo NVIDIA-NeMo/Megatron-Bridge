@@ -17,13 +17,26 @@
 import pytest
 from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
-from megatron.bridge.perf_recipes.qwen import (
-    qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config,
-    qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config"
 )
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 

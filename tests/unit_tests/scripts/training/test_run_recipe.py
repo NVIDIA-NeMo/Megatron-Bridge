@@ -626,7 +626,7 @@ def test_benchmark_ep_override_updates_hybridep_topology_environment(monkeypatch
         return recipe
 
     handles.recipe_runner.apply_cli_overrides.side_effect = apply_overrides
-    environment_module = types.ModuleType("megatron.bridge.perf_recipes.environment")
+    environment_module = types.ModuleType("megatron.bridge.training.perf_benchmark_overrides.environment")
     environment_module.HYBRID_EP_ENV_NAMES = {
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
@@ -635,8 +635,14 @@ def test_benchmark_ep_override_updates_hybridep_topology_environment(monkeypatch
     }
     monkeypatch.setitem(sys.modules, "megatron", _package("megatron"))
     monkeypatch.setitem(sys.modules, "megatron.bridge", _package("megatron.bridge"))
-    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes", _package("megatron.bridge.perf_recipes"))
-    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes.environment", environment_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "megatron.bridge.training.perf_benchmark_overrides",
+        _package("megatron.bridge.training.perf_benchmark_overrides"),
+    )
+    monkeypatch.setitem(
+        sys.modules, "megatron.bridge.training.perf_benchmark_overrides.environment", environment_module
+    )
 
     module.main(
         [

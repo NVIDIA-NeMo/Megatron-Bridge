@@ -18,27 +18,44 @@ from collections.abc import Callable
 
 import pytest
 
-from megatron.bridge.perf_recipes.gpt_oss import (
-    gpt_oss_120b_pretrain_64gpu_gb300_bf16_config,
-    gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config,
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+gpt_oss_120b_pretrain_64gpu_gb300_bf16_config = benchmark_factory("gpt_oss_120b_pretrain_64gpu_gb300_bf16_config")
+gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config = benchmark_factory("gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config")
+nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config"
 )
-from megatron.bridge.perf_recipes.nemotronh import (
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config"
 )
-from megatron.bridge.perf_recipes.qwen import (
-    qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
+nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config"
+)
+nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config = benchmark_factory(
+    "nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config"
+)
+qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config")
+qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config")
+qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config")
+qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config")
+qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config"
 )
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies

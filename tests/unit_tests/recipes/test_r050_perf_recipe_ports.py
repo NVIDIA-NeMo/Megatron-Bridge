@@ -17,20 +17,33 @@
 import pytest
 import torch
 
-from megatron.bridge.perf_recipes.deepseek import (
-    deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
-    deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
-    deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
-    deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
-    deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
-    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+deepseek_v3_pretrain_256gpu_b300_fp8mx_config = benchmark_factory("deepseek_v3_pretrain_256gpu_b300_fp8mx_config")
+deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config = benchmark_factory(
+    "deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config"
 )
-from megatron.bridge.perf_recipes.qwen import (
-    qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_large_scale_config,
-    qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config,
+deepseek_v3_pretrain_256gpu_gb200_nvfp4_config = benchmark_factory("deepseek_v3_pretrain_256gpu_gb200_nvfp4_config")
+deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config = benchmark_factory(
+    "deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config"
+)
+deepseek_v3_pretrain_256gpu_gb300_nvfp4_config = benchmark_factory("deepseek_v3_pretrain_256gpu_gb300_nvfp4_config")
+deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config = benchmark_factory(
+    "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config"
+)
+qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config")
+qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_large_scale_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_large_scale_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config"
 )
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 

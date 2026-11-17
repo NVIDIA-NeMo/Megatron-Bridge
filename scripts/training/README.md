@@ -61,13 +61,13 @@ scored reference artifact, so `--dataset` presets do not apply and the forward s
 
 ### Benchmark recipe
 
-The training launcher can run exact exported recipes from `src/megatron/bridge/perf_recipes`, including text
+The training launcher accepts the existing exact benchmark names, composing library recipes with
+overrides from `src/megatron/bridge/training/perf_benchmark_overrides`. This includes text
 pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining. The GPU count encoded by the recipe name is its
 canonical tuned allocation. The user selects the node shape and may weak-scale to a different compatible world size;
 the Slurm partition must provide the requested hardware:
 
-`benchmark` is the unified runner's user-facing term. The existing `perf_recipes` package and `scripts/performance/`
-compatibility paths retain their legacy names.
+`benchmark` is the unified runner's user-facing term. Existing `scripts/performance/` commands also retain their selectors and launch behavior.
 
 > **DeepSeek V4:** The 26.08 DeepSeek V4 benchmark recipes require the Megatron-Core `dev` branch, and the default MCore submodule revision in `r0.6.0` is insufficient. Follow the [DeepSeek V4 setup instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.6.0/examples/models/deepseek_v4).
 

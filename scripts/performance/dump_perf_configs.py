@@ -35,7 +35,6 @@ YAML is directly comparable.
 from __future__ import annotations
 
 import argparse
-import importlib
 import sys
 from pathlib import Path
 
@@ -576,11 +575,9 @@ def load_new_recipe(
     variant_suffix = _flat_recipe_variant_suffix(config_variant)
     fn_name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{prec}{variant_suffix}_config"
 
-    mod = importlib.import_module(f"megatron.bridge.perf_recipes.{family}")
-    fn = getattr(mod, fn_name, None)
-    if fn is None:
-        raise ValueError(f"Recipe function {fn_name!r} not found in megatron.bridge.perf_recipes.{family}")
-    return _apply_flat_recipe_runtime_overrides(fn(), precision)
+    from megatron.bridge.training.perf_benchmark_overrides import build_perf_benchmark_config
+
+    return _apply_flat_recipe_runtime_overrides(build_perf_benchmark_config(fn_name), precision)
 
 
 def _resolve_combo(combo: tuple, fallback_config_variant: str | None):

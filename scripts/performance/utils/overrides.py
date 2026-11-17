@@ -19,13 +19,13 @@ from typing import List, Optional
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+from megatron.bridge.training.perf_benchmark_overrides.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,

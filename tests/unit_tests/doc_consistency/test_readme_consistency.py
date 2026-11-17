@@ -32,7 +32,7 @@ README = REPO_ROOT / "README.md"
 DOCS_MODELS = REPO_ROOT / "docs" / "models"
 SUPPORTED_MODELS_HEADING = "## Supported Models"
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
-PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
+PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "perf_benchmark_overrides"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
 DATASET_UTILS = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "utils" / "dataset_utils.py"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
@@ -110,7 +110,7 @@ def _read(p: Path) -> str:
 
 
 def _defined_recipe_names() -> set[str]:
-    """All recipe-config functions and public aliases under src/.../recipes/** and perf_recipes/**."""
+    """All library recipe functions, public aliases, and benchmark override selectors."""
     names: set[str] = set()
     recipe_files = list(RECIPES_DIR.rglob("*.py"))
     if PERF_RECIPES_DIR.is_dir():
@@ -125,6 +125,10 @@ def _defined_recipe_names() -> set[str]:
                     public_name = alias.asname or alias.name.rsplit(".", 1)[-1]
                     if public_name.endswith("_config"):
                         names.add(public_name)
+            elif isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "LIBRARY_RECIPES" for target in node.targets
+            ):
+                names.update(ast.literal_eval(key) for key in node.value.keys)
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 names.update(

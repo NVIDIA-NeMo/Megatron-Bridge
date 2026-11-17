@@ -29,14 +29,15 @@ from dataclasses import dataclass
 import pytest
 from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
-from megatron.bridge.perf_recipes.llama import (
-    llama31_8b_pretrain_8gpu_gb200_nvfp4_config,
-    llama31_8b_pretrain_8gpu_gb300_nvfp4_config,
-    llama31_8b_pretrain_72gpu_gb200_nvfp4_config,
-    llama31_8b_pretrain_72gpu_gb300_nvfp4_config,
-    llama31_8b_pretrain_512gpu_gb200_fp8cs_config,
-    llama31_8b_pretrain_512gpu_gb300_fp8cs_config,
-)
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+llama31_8b_pretrain_8gpu_gb200_nvfp4_config = benchmark_factory("llama31_8b_pretrain_8gpu_gb200_nvfp4_config")
+llama31_8b_pretrain_8gpu_gb300_nvfp4_config = benchmark_factory("llama31_8b_pretrain_8gpu_gb300_nvfp4_config")
+llama31_8b_pretrain_72gpu_gb200_nvfp4_config = benchmark_factory("llama31_8b_pretrain_72gpu_gb200_nvfp4_config")
+llama31_8b_pretrain_72gpu_gb300_nvfp4_config = benchmark_factory("llama31_8b_pretrain_72gpu_gb300_nvfp4_config")
+llama31_8b_pretrain_512gpu_gb200_fp8cs_config = benchmark_factory("llama31_8b_pretrain_512gpu_gb200_fp8cs_config")
+llama31_8b_pretrain_512gpu_gb300_fp8cs_config = benchmark_factory("llama31_8b_pretrain_512gpu_gb300_fp8cs_config")
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
     discover_recipe_factories,
@@ -46,7 +47,7 @@ from tests.unit_tests.recipes.recipe_test_utils import (
 
 pytestmark = pytest.mark.unit
 
-_LLAMA_PACKAGE = importlib.import_module("megatron.bridge.perf_recipes.llama")
+_LLAMA_PACKAGE = importlib.import_module("megatron.bridge.training.perf_benchmark_overrides.llama")
 _LLAMA31_8B_RECIPES = tuple(
     factory for factory in discover_recipe_factories(_LLAMA_PACKAGE) if "llama31_8b_" in factory.__name__
 )

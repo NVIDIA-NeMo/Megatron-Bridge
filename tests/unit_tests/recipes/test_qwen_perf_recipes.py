@@ -22,37 +22,82 @@ non-NVFP4 (FP8 current-scaling) siblings keep it enabled.
 import pytest
 from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
-from megatron.bridge.perf_recipes.qwen import (
-    qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config,
-    qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_config,
-    qwen3_30b_a3b_pretrain_8gpu_b300_fp8cs_config,
-    qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
-    qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config,
-    qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config,
-    qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config,
-    qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config,
-    qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config,
-    qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_b200_fp8cs_config,
-    qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_b300_fp8cs_config,
-    qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config,
+from tests.unit_tests.recipes.recipe_test_utils import benchmark_factory
+
+
+qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config")
+qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_config")
+qwen3_30b_a3b_pretrain_8gpu_b300_fp8cs_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_b300_fp8cs_config")
+qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_config")
+qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config")
+qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config")
+qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config")
+qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config = benchmark_factory("qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config")
+qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config = benchmark_factory(
+    "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config"
+)
+qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b200_fp8cs_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b200_fp8cs_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b300_fp8cs_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b300_fp8cs_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config"
+)
+qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config = benchmark_factory(
+    "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config"
 )
 
 

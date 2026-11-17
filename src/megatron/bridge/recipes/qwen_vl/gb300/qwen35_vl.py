@@ -33,7 +33,7 @@ def _apply_qwen35_vl_397b_a17b_64gpu_gb300_execution_config(cfg: ConfigContainer
     """Apply the 64-GB300 execution policy for Qwen3.5/Qwen3.6-VL 397B-A17B.
 
     Mirrors ``qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config`` in
-    ``perf_recipes/qwen_vl/gb300`` so real-data runs share the benchmark's
+    ``training/perf_benchmark_overrides/qwen_vl.py`` so real-data runs share the benchmark's
     execution policy. Only the parallel layout, dispatcher, graph and env
     settings are copied; dataset/tokenizer/freeze policy stay real-data.
     """
@@ -380,7 +380,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config() -> ConfigContai
     cfg.model.overlap_dispatch_backward_with_experts_wgrad = True
 
     # cuDNN GDN (FROST engine: cuDNN frontend >= 1.29 and nvidia-cutlass-dsl >= 4.7): measured +12.0% to +19.4% end
-    # to end at 35B-A3B on 16 GB300 GPUs (see _select_gdn_kernel_backend in perf_recipes/qwen_vl/common.py). Guarded
+    # to end at 35B-A3B on 16 GB300 GPUs (see _select_gdn_kernel_backend in training/perf_benchmark_overrides/qwen_vl.py). Guarded
     # like _enable_gdn_conv_fusion: assigning a field Megatron-Core lacks would not raise, and the recipe would look
     # enabled while FLA keeps running.
     if hasattr(type(cfg.model), "gdn_kernel_backend") or hasattr(cfg.model, "gdn_kernel_backend"):
