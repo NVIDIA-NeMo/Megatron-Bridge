@@ -9,3 +9,30 @@ and supervised fine-tuning on NVIDIA GB300. For requirements, data preparation, 
 format, see the
 [ERNIE 5.5 examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/ernie55/README.md).
 The examples also cover a fine-tuning recipe for NVIDIA GB200.
+
+## Performance Options (Opt-In)
+
+The recipes leave the following model options off. Each one keeps the training math unless noted, up to
+floating-point summation order: `ernie_fused_mhc`, `ernie_muon_ns_batch_size` above 1 and `ernie_vha_batched_mix`
+are not bitwise identical to the default path, and `ernie_cp_key_gather_inverse_grad` keeps `-0.0` (and, on CUDA,
+subnormal) key-gradient elements that the default path turns into `+0.0`. Set them on the command line, for example
+`model.ernie_vha_batched_mix=true`. The config docstrings in `src/megatron/bridge/models/ernie/ernie55_config.py` give
+the details and requirements.
+
+- `ernie_fused_mhc`: fused fp32 Triton kernels for the hyper-connection (mHC) mappings and mixing.
+- `cuda_graph_impl=transformer_engine` with `cuda_graph_modules=["attn"]`: Transformer Engine CUDA graphs of the
+  H attention layers. `ernie_graph_d_layers` and `ernie_graph_mtp_layers` also graph the D attention layers of the
+  decoder and of the MTP depth (one document per row, `thd_max_packed_sequences=1`).
+- `ernie_muon_ns_batch_size`: batch Muon's Newton-Schulz over up to this many same-shape blocks (1 keeps
+  Megatron-Core's Muon).
+- `ernie_cp_key_gather_inverse_grad`: under context parallelism, gather the key gradients by the inverse
+  permutation instead of `index_select`'s backward.
+- `ernie_vha_batched_mix`: apply the VHA head mix as one strided-batched GEMM.
+- `ernie_fused_situ_prob`: fuse the routed SiTU-GLU with the routing-probability multiply (needs
+  `ernie_fused_ops` and Megatron-Core dev).
+- `ernie_router_force_balance`: benchmark only. It changes the training math: the routers pick uniformly random
+  experts, as Megatron-Core's `moe_router_force_load_balancing` does.
+- `ERNIE55_LOG_EXPERT_LOAD=1` (environment variable): diagnostic only. It writes the tokens each rank's experts
+  receive, per MoE layer and micro-batch, to JSON files (see `modeling_ernie55/expert_load.py`).
+
+Checkpoint import also reads the block-scaled FP8 release of ERNIE-5.5-Flash-Base and dequantizes it on load.
